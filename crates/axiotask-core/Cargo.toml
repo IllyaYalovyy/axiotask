@@ -1,0 +1,42 @@
+[package]
+name = "axiotask-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core logic for axiotask: auth, API client, store, sync. No UI framework dependency."
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+oauth2 = { workspace = true }
+url = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+jiff = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+keyring = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+open = { workspace = true }
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
+tracing-subscriber = { workspace = true }

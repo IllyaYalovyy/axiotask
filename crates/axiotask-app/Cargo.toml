@@ -1,0 +1,36 @@
+[package]
+name = "axiotask-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "axiotask desktop app — Tauri shell over axiotask-core."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "axiotask"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+axiotask-core = { path = "../axiotask-core" }
+tauri = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+jiff = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

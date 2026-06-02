@@ -1,0 +1,67 @@
+# === AI / Chatbot / Agent files ===
+# NEVER commit any AI-related files to this repository
+.claude/
+.claude_*
+.kiro/
+.codex/
+.cursor/
+.copilot/
+.aider*
+.codeium/
+.tabnine/
+.continue/
+.windsurf/
+.ktask/
+.rttx-context*
+.aim/
+*.prompt
+*.prompt.md
+.chat_history/
+.ai/
+.agent/
+
+# === Build artifacts ===
+/target/
+/build/
+/dist/
+/out/
+node_modules/
+pkg/
+
+# === Secrets and credentials ===
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+credentials.json
+client_secret*.json
+token.json
+oauth2_tokens/
+secrets/
+.secrets/
+
+# === OS and editor junk ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# === Coverage and profiling ===
+/coverage/
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+
+# === Logs ===
+*.log
+logs/
+crates/axiotask-app/ui/dist/

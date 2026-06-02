@@ -1,0 +1,15 @@
+# axiotask configuration
+# Place this file at: ~/.config/axiotask/config.toml
+
+[google]
+# OAuth credentials — obtain from https://console.cloud.google.com/apis/credentials
+# Application type: Desktop app
+client_id = ""
+client_secret = ""
+scopes = ["https://www.googleapis.com/auth/tasks"]
+
+[sync]
+# Push local changes to Google Tasks (requires valid credentials)
+push_enabled = false
+# Sync automatically on app startup
+auto_sync_on_start = true

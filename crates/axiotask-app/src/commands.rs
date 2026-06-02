@@ -1,0 +1,416 @@
+//! Tauri IPC commands. Each function is exposed to the Svelte frontend.
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use tauri::State;
+
+use crate::state::AppState;
+use axiotask_core::dates::{DateMove, apply_date_move};
+use axiotask_core::model::{TaskStatus};
+use axiotask_core::store::{StoredTask, SyncState};
+
+/// DTO sent to the frontend for a task list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskListView {
+    pub id: String,
+    pub title: String,
+}
+
+/// DTO sent to the frontend for a task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskView {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub notes: Option<String>,
+    pub status: String,
+    pub due: Option<String>,
+    pub position: String,
+    pub sync_state: String,
+}
+
+impl From<&StoredTask> for TaskView {
+    fn from(st: &StoredTask) -> Self {
+        Self {
+            id: st.task.id.clone(),
+            parent_id: st.task.parent.clone(),
+            title: st.task.title.clone(),
+            notes: st.task.notes.clone(),
+            status: st.task.status.as_api_str().to_string(),
+            due: st.task.due.clone(),
+            position: st.task.position.clone(),
+            sync_state: st.sync_state.as_str().to_string(),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn list_tasklists(state: State<'_, Arc<AppState>>) -> Result<Vec<TaskListView>, String> {
+    let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
+    Ok(lists
+        .iter()
+        .map(|l| TaskListView {
+            id: l.list.id.clone(),
+            title: l.list.title.clone(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn create_list(
+    state: State<'_, Arc<AppState>>,
+    title: String,
+) -> Result<TaskListView, String> {
+    use axiotask_core::model::TaskList;
+    use axiotask_core::store::StoredTaskList;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = now_str();
+    let stored = StoredTaskList {
+        list: TaskList {
+            id: id.clone(),
+            title: title.clone(),
+            etag: None,
+            updated: now.clone(),
+        },
+        sync_state: SyncState::Dirty,
+        local_updated: now,
+    };
+    state.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(TaskListView { id, title })
+}
+
+#[tauri::command]
+pub async fn rename_list(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
+    let mut list = lists.into_iter().find(|l| l.list.id == id).ok_or("list not found")?;
+    list.list.title = title;
+    list.sync_state = axiotask_core::store::SyncState::Dirty;
+    list.local_updated = now_str();
+    state.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_list(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    // Delete all tasks in the list first
+    let tasks = state.store.list_tasks(&id).await.map_err(|e| e.to_string())?;
+    for t in tasks {
+        state.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
+    }
+    // Delete the list
+    state.store.delete_list_hard(&id).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_tasks(
+    state: State<'_, Arc<AppState>>,
+    list_id: String,
+) -> Result<Vec<TaskView>, String> {
+    let tasks = state
+        .store
+        .list_tasks(&list_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(tasks.iter().map(TaskView::from).collect())
+}
+
+#[tauri::command]
+pub async fn create_task(
+    state: State<'_, Arc<AppState>>,
+    list_id: String,
+    parent_id: Option<String>,
+    title: String,
+) -> Result<TaskView, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = jiff::Zoned::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let stored = StoredTask {
+        task: axiotask_core::model::Task {
+            id: id.clone(),
+            parent: parent_id,
+            position: "00000000000000".into(), // prepend (top of list)
+            title,
+            notes: None,
+            status: TaskStatus::NeedsAction,
+            due: None,
+            completed: None,
+            etag: None,
+            updated: now.clone(),
+        },
+        list_id,
+        sync_state: SyncState::Dirty,
+        local_updated: now,
+        pending_op: Some("create".into()),
+    };
+    state
+        .store
+        .upsert_task(&stored)
+        .await
+        .map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(TaskView::from(&stored))
+}
+
+#[tauri::command]
+pub async fn rename_task(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    let tasks = find_task(&state, &id).await?;
+    let mut t = tasks;
+    t.task.title = title;
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some(if t.task.etag.is_none() {
+        "create".into()
+    } else {
+        "update".into()
+    });
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_complete(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+    t.task.status = match t.task.status {
+        TaskStatus::NeedsAction => TaskStatus::Completed,
+        TaskStatus::Completed => TaskStatus::NeedsAction,
+    };
+    t.task.completed = if t.task.status == TaskStatus::Completed {
+        Some(now_str())
+    } else {
+        None
+    };
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some("update".into());
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+    if t.task.etag.is_none() {
+        // Never pushed — just hard-delete locally.
+        state
+            .store
+            .delete_task_hard(&id)
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        t.sync_state = SyncState::Deleted;
+        t.pending_op = Some("delete".into());
+        t.local_updated = now_str();
+        state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    }
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_due(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    mv: String,
+) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+
+    if let Some(raw) = mv.strip_prefix("raw:") {
+        // Direct date string from detail panel
+        t.task.due = Some(raw.to_string());
+    } else {
+        let date_move = match mv.as_str() {
+            "Tomorrow" => DateMove::Tomorrow,
+            "NextWeek" => DateMove::NextWeek,
+            "NextMonth" => DateMove::NextMonth,
+            "Clear" => DateMove::Clear,
+            _ => return Err(format!("unknown date move: {mv}")),
+        };
+        let today = jiff::civil::Date::from(jiff::Zoned::now().date());
+        let new_due = apply_date_move(today, date_move);
+        t.task.due = new_due.map(|d| format!("{}T00:00:00.000Z", d));
+    }
+
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some("update".into());
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_task(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    parent_id: Option<String>,
+    previous_id: Option<String>,
+) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+    t.task.parent = parent_id;
+    // Position will be resolved by the sync engine via the move API.
+    if let Some(ref prev) = previous_id {
+        t.task.position = format!("after-{prev}");
+    } else {
+        t.task.position = "00000000000001".into();
+    }
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some("update".into());
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_to_list(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    target_list_id: String,
+) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+    t.list_id = target_list_id;
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some("update".into());
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn clear_completed(
+    state: State<'_, Arc<AppState>>,
+    list_id: String,
+) -> Result<u32, String> {
+    let tasks = state.store.list_tasks(&list_id).await.map_err(|e| e.to_string())?;
+    let mut count = 0u32;
+    for t in tasks {
+        if t.task.status == TaskStatus::Completed {
+            if t.task.etag.is_none() {
+                state.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
+            } else {
+                let mut d = t;
+                d.sync_state = SyncState::Deleted;
+                d.pending_op = Some("delete".into());
+                d.local_updated = now_str();
+                state.store.upsert_task(&d).await.map_err(|e| e.to_string())?;
+            }
+            count += 1;
+        }
+    }
+    state.schedule_sync();
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    let outcome = state.run_sync().await.map_err(|e| e.to_string())?;
+    Ok(format!(
+        "pulled={}, pushed={}, conflicts={}, deleted={}",
+        outcome.pulled, outcome.pushed, outcome.conflicts, outcome.deleted
+    ))
+}
+
+#[tauri::command]
+pub async fn set_notes(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    notes: String,
+) -> Result<(), String> {
+    let mut t = find_task(&state, &id).await?;
+    t.task.notes = if notes.is_empty() { None } else { Some(notes) };
+    t.sync_state = SyncState::Dirty;
+    t.pending_op = Some("update".into());
+    t.local_updated = now_str();
+    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reorder_task(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    direction: String,
+) -> Result<(), String> {
+    let t = find_task(&state, &id).await?;
+    let all = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+    // Find siblings (same parent)
+    let siblings: Vec<_> = all.iter().filter(|s| s.task.parent == t.task.parent).collect();
+    let idx = siblings.iter().position(|s| s.task.id == id).ok_or("not found in siblings")?;
+    let swap_idx = match direction.as_str() {
+        "up" if idx > 0 => idx - 1,
+        "down" if idx < siblings.len() - 1 => idx + 1,
+        _ => return Ok(()), // no-op at boundary
+    };
+    // Swap positions
+    let mut current = t.clone();
+    let mut other = siblings[swap_idx].clone();
+    let tmp = current.task.position.clone();
+    current.task.position = other.task.position.clone();
+    other.task.position = tmp;
+    current.sync_state = SyncState::Dirty;
+    current.pending_op = Some("update".into());
+    current.local_updated = now_str();
+    other.sync_state = SyncState::Dirty;
+    other.pending_op = Some("update".into());
+    other.local_updated = now_str();
+    state.store.upsert_task(&current).await.map_err(|e| e.to_string())?;
+    state.store.upsert_task(&other).await.map_err(|e| e.to_string())?;
+    state.schedule_sync();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auth_status(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(state.is_authenticated())
+}
+
+#[tauri::command]
+pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.start_login().await.map_err(|e| e.to_string())
+}
+
+async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
+    // Search all lists for this task id.
+    let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
+    for list in &lists {
+        let tasks = state
+            .store
+            .list_tasks(&list.list.id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(t) = tasks.into_iter().find(|t| t.task.id == id) {
+            return Ok(t);
+        }
+    }
+    Err(format!("task {id} not found"))
+}
+
+fn now_str() -> String {
+    jiff::Zoned::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
+}

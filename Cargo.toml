@@ -1,0 +1,98 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/axiotask-core",
+    "crates/axiotask-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Illya Yalovyy"]
+license = "Apache-2.0"
+repository = "https://github.com/yalovoy/axiotask"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+format_push_string = "allow"
+manual_string_new = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_possible_truncation = "allow"
+needless_pass_by_value = "allow"
+match_same_arms = "allow"
+unused_async = "allow"
+map_unwrap_or = "allow"
+return_self_not_must_use = "allow"
+significant_drop_tightening = "allow"
+
+[workspace.dependencies]
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# HTTP / OAuth
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
+url = "2"
+
+# Storage
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time
+jiff = { version = "0.2", features = ["serde"] }
+
+# Errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# OS integration
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+dirs = "5"
+toml = "0.8"
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.22"
+sha2 = "0.10"
+rand = "0.8"
+open = "5"
+urlencoding = "2"
+
+# Tauri
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2" }
+
+# Dev / test
+wiremock = "0.6"
+proptest = "1"
+insta = { version = "1", features = ["yaml"] }
+tempfile = "3"
+mockall = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
