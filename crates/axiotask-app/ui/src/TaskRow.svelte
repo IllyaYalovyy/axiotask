@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  let { task, focused, editing, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null } = $props();
+  let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null } = $props();
 
   let editInput = $state(null);
   let editValue = $state("");
@@ -86,6 +86,7 @@
   bind:this={rowEl}
   class="task-widget"
   class:focused
+  class:completing
   class:completed={task.status === "completed"}
   style="padding-left: {task.depth * 1.5 + 0.5}rem"
   onclick={handleRowClick}
@@ -163,11 +164,13 @@
 
 <style>
   .task-widget {
-    border-radius: 4px; cursor: pointer; transition: background 0.1s, opacity 0.4s, transform 0.3s;
+    border-radius: 4px; cursor: pointer; transition: background 0.1s, opacity 0.3s, transform 0.3s;
     padding: 0.4rem 0.5rem;
   }
   .task-widget:hover { background: #1a2a4a; }
   .task-widget.focused { background: #0f3460; }
+  .task-widget.completing { opacity: 0.5; transform: scale(0.98); }
+  .task-widget.completing .title { text-decoration: line-through; }
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completed .title { text-decoration: line-through; }
   .task-widget.completed .meta-row { opacity: 0.6; }

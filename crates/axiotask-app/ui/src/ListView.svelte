@@ -1,7 +1,7 @@
 <script>
   import TaskRow from "./TaskRow.svelte";
 
-  let { tasks, focusIndex, editingId, onrename, oncanceledit, onfocus, ontoggle, onsetdue, oncontextmenu, onaddsubtask, getSubtaskProgress, isCrossList } = $props();
+  let { tasks, focusIndex, editingId, completingIds = new Set(), onrename, oncanceledit, onfocus, ontoggle, onsetdue, oncontextmenu, onaddsubtask, getSubtaskProgress, isCrossList } = $props();
 </script>
 
 <div class="list-view">
@@ -10,6 +10,7 @@
       {task}
       focused={i === focusIndex}
       editing={editingId === task.id}
+      completing={completingIds.has(task.id)}
       {onrename}
       {oncanceledit}
       onclick={(id, action) => action === "edit" ? onfocus?.(i, "edit") : onfocus?.(i)}

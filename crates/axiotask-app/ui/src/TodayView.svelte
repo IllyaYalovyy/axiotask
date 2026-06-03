@@ -1,7 +1,7 @@
 <script>
   import TaskRow from "./TaskRow.svelte";
 
-  let { tasks, focusIndex, editingId, onrename, oncanceledit, onfocus, ontoggle, onsetdue, oncontextmenu, onaddsubtask, getSubtaskProgress, showCompleted, viewType = "focus" } = $props();
+  let { tasks, focusIndex, editingId, completingIds = new Set(), onrename, oncanceledit, onfocus, ontoggle, onsetdue, oncontextmenu, onaddsubtask, getSubtaskProgress, showCompleted, viewType = "focus" } = $props();
 
   const emptyStates = {
     focus: { icon: "✓", text: "All clear for this week", sub: "Nothing needs your attention right now." },
@@ -18,6 +18,7 @@
         {task}
         focused={i === focusIndex}
         editing={editingId === task.id}
+        completing={completingIds.has(task.id)}
         {onrename}
         {oncanceledit}
         onclick={(id, action) => action === "edit" ? onfocus?.(i, "edit") : onfocus?.(i)}

@@ -36,6 +36,7 @@
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let collapsed = $state(new Set());
+  let completingIds = $state(new Set());
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -249,10 +250,16 @@
     const task = allTasks.find(t => t.id === id);
     const wasOpen = task?.status === "needsAction";
     await cmd("toggle_complete", { id });
-    await loadAll();
     if (wasOpen) {
-      // Completed — offer undo
-      undoItem = { id, title: task.title, listId: task.listId, isComplete: true, timer: setTimeout(() => { undoItem = null; }, 10000) };
+      // Animate: add completing class, wait 300ms, then reload
+      completingIds = new Set([...completingIds, id]);
+      setTimeout(async () => {
+        completingIds = new Set([...completingIds].filter(x => x !== id));
+        await loadAll();
+        undoItem = { id, title: task.title, listId: task.listId, isComplete: true, timer: setTimeout(() => { undoItem = null; }, 10000) };
+      }, 300);
+    } else {
+      await loadAll();
     }
   }
 
@@ -603,15 +610,15 @@
     {:else if error}
       <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="focus" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="focus" />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="upcoming" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="upcoming" />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="missed" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="missed" />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="unscheduled" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="unscheduled" />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} isCrossList={selectedView === "all"} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} isCrossList={selectedView === "all"} />
     {/if}
   </section>
   {#if detailTask}
