@@ -144,13 +144,7 @@ describe("GH#3: Sync Pull", () => {
     await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("Inbox"));
 
-    // No tasks initially
-    expect(screen.queryByText("Synced task")).not.toBeInTheDocument();
-
-    // Trigger sync
-    await fireEvent.click(screen.getByText(/Sync now/));
-
-    // Task appears after sync
+    // Auto-sync on startup reloads tasks — task appears after sync completes
     await waitFor(() => {
       expect(screen.getByText("Synced task")).toBeInTheDocument();
     });

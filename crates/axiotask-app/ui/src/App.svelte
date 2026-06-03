@@ -66,7 +66,15 @@
     authenticated = r === true;
   }
 
-  $effect(() => { checkAuth(); loadAll(); });
+  async function init() {
+    await checkAuth();
+    await loadAll();
+    if (authenticated) {
+      doSync();
+    }
+  }
+
+  $effect(() => { init(); });
 
   // Restore view from localStorage
   $effect(() => {
