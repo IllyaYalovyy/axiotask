@@ -1,6 +1,32 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null } = $props();
+  let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+
+  let touchTimer = $state(null);
+  let touchDragging = $state(false);
+  let isDragging = $state(false);
+
+  function handleTouchStart(e) {
+    if (!draggable) return;
+    touchTimer = setTimeout(() => { touchDragging = true; }, 300);
+  }
+  function handleTouchMove(e) {
+    if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+  }
+  function handleTouchEnd(e) {
+    if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; }
+    touchDragging = false;
+  }
+  function handleDragStart(e) {
+    if (!draggable) { e.preventDefault(); return; }
+    e.dataTransfer.setData("text/plain", task.id);
+    e.dataTransfer.effectAllowed = "move";
+    isDragging = true;
+    ondragstart?.(task.id);
+  }
+  function handleDragEnd(e) { isDragging = false; ondragend?.(); touchDragging = false; }
+  function handleDragOver(e) { if (!draggable) return; e.preventDefault(); ondragover?.(task.id, e.clientY); }
+  function handleDrop(e) { if (!draggable) return; e.preventDefault(); ondrop?.(task.id, e.clientY); }
 
   let editInput = $state(null);
   let editValue = $state("");
@@ -88,12 +114,30 @@
   class:focused
   class:completing
   class:completed={task.status === "completed"}
+  class:touch-dragging={touchDragging}
+  class:dragging={isDragging}
   style="padding-left: {task.depth * 1.5 + 0.5}rem"
   onclick={handleRowClick}
   oncontextmenu={handleContextMenu}
+  ondragover={handleDragOver}
+  ondrop={handleDrop}
+  data-testid="drop-zone"
 >
   <!-- Line 1: Main row -->
   <div class="main-row">
+    {#if draggable}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span
+        class="drag-handle"
+        data-testid="drag-handle"
+        draggable="true"
+        ondragstart={handleDragStart}
+        ondragend={handleDragEnd}
+        ontouchstart={handleTouchStart}
+        ontouchmove={handleTouchMove}
+        ontouchend={handleTouchEnd}
+      >⠿</span>
+    {/if}
     {#if task.hasChildren}
       <span class="tree-icon">{task.isCollapsed ? "▸" : "▾"}</span>
     {:else if task.parent_id}
@@ -174,6 +218,12 @@
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completed .title { text-decoration: line-through; }
   .task-widget.completed .meta-row { opacity: 0.6; }
+  .task-widget.dragging { opacity: 0.4; }
+  .task-widget.touch-dragging { opacity: 0.6; transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+
+  .drag-handle { flex-shrink: 0; cursor: grab; color: #555; font-size: 0.9rem; user-select: none; padding: 0 0.2rem; }
+  .drag-handle:hover { color: #7ec8e3; }
+  .drag-handle:active { cursor: grabbing; }
 
   .main-row { display: flex; align-items: center; gap: 0.4rem; }
 

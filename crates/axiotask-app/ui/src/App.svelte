@@ -294,6 +294,13 @@
     await loadAll();
   }
 
+  async function handleDragReorder(id, direction, steps = 1) {
+    for (let i = 0; i < steps; i++) {
+      await cmd("reorder_task", { id, direction });
+    }
+    await loadAll();
+  }
+
   async function handleUndo() {
     if (!undoItem) return;
     clearTimeout(undoItem.timer);
@@ -610,15 +617,15 @@
     {:else if error}
       <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="focus" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="upcoming" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="missed" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="unscheduled" />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} isCrossList={selectedView === "all"} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   {#if detailTask}
