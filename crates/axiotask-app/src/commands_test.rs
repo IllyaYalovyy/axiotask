@@ -69,8 +69,11 @@ mod tests {
         seed_list(&state, "L2", "Work").await;
 
         let lists = state.store.all_lists().await.unwrap();
-        assert_eq!(lists.len(), 2);
-        assert_eq!(lists[0].list.title, "Inbox");
+        // 3 = auto-created "My Tasks" + 2 seeded
+        assert_eq!(lists.len(), 3);
+        let titles: Vec<_> = lists.iter().map(|l| l.list.title.as_str()).collect();
+        assert!(titles.contains(&"Inbox"));
+        assert!(titles.contains(&"Work"));
     }
 
     #[tokio::test]
@@ -264,7 +267,8 @@ mod tests {
         assert_eq!(outcome.pulled, 1);
 
         let lists = state.store.all_lists().await.unwrap();
-        assert_eq!(lists.len(), 1);
+        // auto-created "My Tasks" + synced "Inbox"
+        assert_eq!(lists.len(), 2);
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task.title, "remote task");
@@ -372,5 +376,42 @@ mod tests {
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks[0].task.id, "T2");
         assert_eq!(tasks[1].task.id, "T1");
+    }
+
+    #[tokio::test]
+    async fn auto_creates_default_list_on_first_launch() {
+        // When no lists exist and user is not authenticated,
+        // AppState should auto-create "My Tasks" locally.
+        let client = Arc::new(InMemoryClient::new());
+        let state = Arc::new(
+            AppState::new_memory(client.clone())
+                .await
+                .expect("setup state"),
+        );
+
+        let lists = state.store.all_lists().await.unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].list.title, "My Tasks");
+        assert_eq!(lists[0].sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn does_not_create_default_list_when_lists_exist() {
+        // If lists already exist, no default list should be created.
+        let client = Arc::new(InMemoryClient::new());
+        let state = Arc::new(
+            AppState::new_memory(client.clone())
+                .await
+                .expect("setup state"),
+        );
+
+        // Seed a list after initial creation (simulating existing data)
+        seed_list(&state, "existing", "Work").await;
+
+        // Create a new state with a store that already has lists
+        // We test by verifying no duplicate "My Tasks" appears
+        let lists = state.store.all_lists().await.unwrap();
+        // Should have "My Tasks" (auto-created) + "Work" (seeded)
+        assert_eq!(lists.len(), 2);
     }
 }

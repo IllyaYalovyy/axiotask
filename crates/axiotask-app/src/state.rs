@@ -93,13 +93,15 @@ impl AppState {
             }
         };
 
-        Ok(Self {
+        let state = Self {
             store,
             client: Arc::new(Mutex::new(client)),
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
-        })
+        };
+        state.ensure_default_list().await;
+        Ok(state)
     }
 
     /// Build state with an in-memory database (for tests).
@@ -112,18 +114,44 @@ impl AppState {
         let token_store: Arc<dyn TokenStore> = Arc::new(InMemoryTokenStore::new());
         let oauth_config = OAuthConfig::google_tasks("test-client-id", "test-secret");
 
-        Ok(Self {
+        let state = Self {
             store,
             client: Arc::new(Mutex::new(client)),
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
-        })
+        };
+        state.ensure_default_list().await;
+        Ok(state)
     }
 
     /// Whether we have stored tokens (user is logged in).
     pub fn is_authenticated(&self) -> bool {
         matches!(self.token_store.load(), Ok(Some(_)))
+    }
+
+    /// Create a default "My Tasks" list if no lists exist and user is not authenticated.
+    async fn ensure_default_list(&self) {
+        if self.is_authenticated() {
+            return;
+        }
+        let Ok(lists) = self.store.all_lists().await else { return };
+        if !lists.is_empty() {
+            return;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let stored = axiotask_core::store::StoredTaskList {
+            list: axiotask_core::model::TaskList {
+                id,
+                title: "My Tasks".into(),
+                etag: None,
+                updated: now.clone(),
+            },
+            sync_state: axiotask_core::store::SyncState::Dirty,
+            local_updated: now,
+        };
+        let _ = self.store.upsert_list(&stored).await;
     }
 
     /// Run the OAuth login flow (opens browser).
