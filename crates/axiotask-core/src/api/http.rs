@@ -51,6 +51,25 @@ impl HttpClient {
         self.max_retries = n;
         self
     }
+
+    /// Send with retry, and on 401 refresh the token and retry once.
+    async fn send_authed<F, Fut>(&self, mut req: F) -> Result<reqwest::Response, ApiError>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
+    {
+        match send_with_retry(self.max_retries, &mut req).await {
+            Err(ApiError::Unauthorized) => {
+                // Attempt token refresh, then retry once.
+                self.auth
+                    .refresh_now()
+                    .await
+                    .map_err(|e| ApiError::Other(format!("refresh failed: {e}")))?;
+                send_with_retry(self.max_retries, &mut req).await
+            }
+            other => other,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,8 +209,7 @@ impl GoogleTasksClient for HttpClient {
     async fn list_tasklists(&self) -> Result<Vec<TaskList>, ApiError> {
         let url = format!("{}/users/@me/lists", self.base_url);
         let auth = &self.auth;
-        let resp =
-            send_with_retry(self.max_retries, || async { auth.get(&url).send().await }).await?;
+        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
         let body: TaskListsResponse = resp
             .json()
             .await
@@ -218,8 +236,7 @@ impl GoogleTasksClient for HttpClient {
             url.push_str(tok);
         }
         let auth = &self.auth;
-        let resp =
-            send_with_retry(self.max_retries, || async { auth.get(&url).send().await }).await?;
+        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
         let body: TasksResponse = resp
             .json()
             .await
@@ -253,7 +270,7 @@ impl GoogleTasksClient for HttpClient {
             "status": new.status.unwrap_or(crate::model::TaskStatus::NeedsAction).as_api_str(),
         });
         let auth = &self.auth;
-        let resp = send_with_retry(self.max_retries, || async {
+        let resp = self.send_authed(|| async {
             auth.post(&url).json(&body).send().await
         })
         .await?;
@@ -289,7 +306,7 @@ impl GoogleTasksClient for HttpClient {
             );
         }
         let auth = &self.auth;
-        let resp = send_with_retry(self.max_retries, || async {
+        let resp = self.send_authed(|| async {
             let mut req = auth.patch(&url);
             if let Some(e) = etag {
                 req = req.header(reqwest::header::IF_MATCH, e);
@@ -307,7 +324,7 @@ impl GoogleTasksClient for HttpClient {
     async fn delete_task(&self, list_id: &str, id: &str) -> Result<(), ApiError> {
         let url = format!("{}/lists/{}/tasks/{}", self.base_url, list_id, id);
         let auth = &self.auth;
-        let _ = send_with_retry(self.max_retries, || async {
+        let _ = self.send_authed(|| async {
             auth.delete(&url).send().await
         })
         .await?;
@@ -335,8 +352,7 @@ impl GoogleTasksClient for HttpClient {
             url.push_str(prev);
         }
         let auth = &self.auth;
-        let resp =
-            send_with_retry(self.max_retries, || async { auth.post(&url).send().await }).await?;
+        let resp = self.send_authed(|| async { auth.post(&url).send().await }).await?;
         let wire: TaskWire = resp
             .json()
             .await
@@ -348,6 +364,13 @@ impl GoogleTasksClient for HttpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::auth::{AuthedClient, InMemoryTokenStore, RefreshFn, StoredTokens};
 
     #[test]
     fn backoff_grows_then_caps() {
@@ -373,5 +396,86 @@ mod tests {
             map_status(StatusCode::SERVICE_UNAVAILABLE, None),
             ApiError::Server { status: 503 }
         ));
+    }
+
+    fn make_tokens(access: &str) -> StoredTokens {
+        StoredTokens {
+            access_token: access.into(),
+            refresh_token: "rt".into(),
+            access_expires_at: Some(i64::MAX),
+            scope: "tasks".into(),
+        }
+    }
+
+    fn counting_refresh(counter: Arc<AtomicU32>) -> RefreshFn {
+        Arc::new(move |_rt: String| {
+            let counter = counter.clone();
+            Box::pin(async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(make_tokens("refreshed-token"))
+            })
+        })
+    }
+
+    fn build_test_client(base_url: &str, tokens: StoredTokens, refresh: RefreshFn) -> HttpClient {
+        let store: Arc<dyn crate::auth::TokenStore> = Arc::new(InMemoryTokenStore::new());
+        store.save(&tokens).unwrap();
+        let authed = AuthedClient::new(reqwest::Client::new(), tokens, store, refresh);
+        HttpClient::with_base_url(authed, base_url).with_max_retries(0)
+    }
+
+    #[tokio::test]
+    async fn refresh_on_401_then_retry_succeeds() {
+        let server = MockServer::start().await;
+        let refresh_count = Arc::new(AtomicU32::new(0));
+
+        // First call returns 401, second (after refresh) returns 200.
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(401))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"items": [{"id": "L1", "title": "Inbox", "updated": "2026-01-01T00:00:00Z"}]}),
+            ))
+            .mount(&server)
+            .await;
+
+        let client = build_test_client(
+            &server.uri(),
+            make_tokens("expired-token"),
+            counting_refresh(refresh_count.clone()),
+        );
+
+        let lists = client.list_tasklists().await.unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].title, "Inbox");
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_on_401_still_fails_returns_unauthorized() {
+        let server = MockServer::start().await;
+        let refresh_count = Arc::new(AtomicU32::new(0));
+
+        // Both calls return 401 — refresh doesn't help.
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = build_test_client(
+            &server.uri(),
+            make_tokens("bad-token"),
+            counting_refresh(refresh_count.clone()),
+        );
+
+        let err = client.list_tasklists().await.unwrap_err();
+        assert!(matches!(err, ApiError::Unauthorized));
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
     }
 }
