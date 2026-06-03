@@ -661,16 +661,16 @@
   .status { color: #888; text-align: center; margin-top: 4rem; }
   .status.error { color: #e74c3c; }
 
-  /* Mobile: sidebar becomes a top nav or hidden */
+  /* Mobile (<700px): sidebar becomes top nav, full-screen detail */
   @media (max-width: 700px) {
     .app { flex-direction: column; }
     .toolbar { padding: 0.3rem 0.75rem; }
   }
 
-  /* Touch devices: larger tap targets */
+  /* Touch devices: 44px minimum tap targets */
   @media (pointer: coarse) {
-    .toggle { font-size: 0.9rem; padding: 0.3rem 0; }
-    .toggle input { width: 1.2rem; height: 1.2rem; }
-    .clear-btn { padding: 0.4rem 0.7rem; font-size: 0.85rem; }
+    .toggle { font-size: 0.9rem; padding: 0.3rem 0; min-height: 44px; }
+    .toggle input { width: 1.5rem; height: 1.5rem; }
+    .clear-btn { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
   }
 </style>

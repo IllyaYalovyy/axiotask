@@ -139,7 +139,10 @@
     .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }
   }
   @media (pointer: coarse) {
-    .field input, .field textarea, .field select { padding: 0.6rem; font-size: 1rem; }
-    .quick-dates button { padding: 0.4rem 0.7rem; font-size: 0.85rem; }
+    .field input, .field textarea, .field select { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
+    .quick-dates button { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
+    .save-btn, .close-btn { min-height: 44px; min-width: 44px; }
+    .delete-btn { min-height: 44px; }
+    .subtask-item { min-height: 44px; }
   }
 </style>

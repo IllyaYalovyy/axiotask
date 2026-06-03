@@ -115,10 +115,10 @@
     .no-lists { display: none; }
   }
 
-  /* Touch: larger tap targets */
+  /* Touch: 44px minimum tap targets */
   @media (pointer: coarse) {
-    .views button, .lists button { padding: 0.5rem 0.8rem; min-height: 2.2rem; }
-    .icon-btn { width: 28px; height: 28px; }
-    .action-btn { padding: 0.6rem; font-size: 0.9rem; }
+    .views button, .lists button { padding: 0.6rem 0.8rem; min-height: 44px; }
+    .icon-btn { width: 44px; height: 44px; }
+    .action-btn { padding: 0.6rem; font-size: 0.9rem; min-height: 44px; }
   }
 </style>

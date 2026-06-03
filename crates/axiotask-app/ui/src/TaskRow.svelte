@@ -191,12 +191,12 @@
   }
   .actions button:hover { background: #0f3460; color: #7ec8e3; }
 
-  /* Touch/mobile: always show actions, larger tap targets */
+  /* Touch/mobile: always show actions, 44px min tap targets */
   @media (pointer: coarse) {
     .actions { display: flex; }
-    .actions button { min-width: 2.5rem; min-height: 2rem; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
-    .checkbox { font-size: 1.3rem; padding: 0.2rem; }
-    .task-widget { padding: 0.6rem 0.5rem; }
+    .actions button { min-width: 44px; min-height: 44px; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
+    .checkbox { font-size: 1.3rem; padding: 0.2rem; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .task-widget { padding: 0.6rem 0.5rem; min-height: 44px; }
     .title { font-size: 1rem; }
     .meta-row { font-size: 0.8rem; padding-top: 0.3rem; }
   }
