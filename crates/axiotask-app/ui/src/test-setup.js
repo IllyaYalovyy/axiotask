@@ -48,8 +48,15 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 // Mock @tauri-apps/api/window
+const mockWindow = {
+  setTitle: vi.fn().mockResolvedValue(undefined),
+  outerSize: vi.fn().mockResolvedValue({ width: 1024, height: 768 }),
+  outerPosition: vi.fn().mockResolvedValue({ x: 100, y: 50 }),
+  setSize: vi.fn().mockResolvedValue(undefined),
+  setPosition: vi.fn().mockResolvedValue(undefined),
+};
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
-    setTitle: vi.fn().mockResolvedValue(undefined),
-  }),
+  getCurrentWindow: () => mockWindow,
+  LogicalSize: class LogicalSize { constructor(w, h) { this.width = w; this.height = h; } },
+  LogicalPosition: class LogicalPosition { constructor(x, y) { this.x = x; this.y = y; } },
 }));

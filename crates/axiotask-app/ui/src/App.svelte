@@ -1,6 +1,7 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
   import Sidebar from "./Sidebar.svelte";
   import QuickAdd from "./QuickAdd.svelte";
   import TodayView from "./TodayView.svelte";
@@ -23,7 +24,7 @@
   let authenticated = $state(false);
   let syncStatus = $state("idle");
   let lastSynced = $state(null);
-  let showCompleted = $state(false);
+  let showCompleted = $state(localStorage.getItem("axiotask:showCompleted") === "true");
   let completedBottom = $state(true);
   let sortMode = $state("manual"); // per-view, restored from localStorage
   let notesTask = $state(null);
@@ -80,6 +81,29 @@
 
   $effect(() => { init(); });
 
+  // --- Window geometry persistence ---
+  $effect(() => {
+    // Restore window geometry on mount
+    const geo = JSON.parse(localStorage.getItem("axiotask:windowGeometry") || "null");
+    if (geo) {
+      try {
+        getCurrentWindow().setSize(new LogicalSize(geo.width, geo.height));
+        getCurrentWindow().setPosition(new LogicalPosition(geo.x, geo.y));
+      } catch {}
+    }
+  });
+
+  function saveWindowGeometry() {
+    Promise.all([
+      getCurrentWindow().outerSize(),
+      getCurrentWindow().outerPosition(),
+    ]).then(([size, pos]) => {
+      localStorage.setItem("axiotask:windowGeometry", JSON.stringify({
+        width: size.width, height: size.height, x: pos.x, y: pos.y,
+      }));
+    }).catch(() => {});
+  }
+
   // Restore view from localStorage
   $effect(() => {
     const saved = localStorage.getItem("axiotask:view");
@@ -98,6 +122,7 @@
   // --- Preferences ---
   let excludedLists = $state(JSON.parse(localStorage.getItem("axiotask:excludedLists") || "[]"));
   $effect(() => { localStorage.setItem("axiotask:excludedLists", JSON.stringify(excludedLists)); });
+  $effect(() => { localStorage.setItem("axiotask:showCompleted", String(showCompleted)); });
 
   function isExcluded(listId) { return excludedLists.includes(listId); }
   function toggleExclude(listId) {
@@ -597,7 +622,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} onpaste={handlePaste} />
+<svelte:window onkeydown={handleKeydown} onpaste={handlePaste} onbeforeunload={saveWindowGeometry} />
 
 <main class="app">
   <Sidebar
