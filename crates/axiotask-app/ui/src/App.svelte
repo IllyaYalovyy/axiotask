@@ -464,6 +464,12 @@
 
   function focused() { return flatTasks[focusIndex] ?? null; }
 
+  function quickAddTargetName() {
+    const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView);
+    if (!isSmartView) return lists.find(l => l.id === selectedView)?.title || null;
+    return lists[0]?.title || null;
+  }
+
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
@@ -564,7 +570,7 @@
     counts={viewCounts}
   />
   <section class="content">
-    <QuickAdd oncreate={createTask} currentListId={["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView) ? null : selectedView} />
+    <QuickAdd oncreate={createTask} currentListId={["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView) ? null : selectedView} targetListName={quickAddTargetName()} />
     <div class="toolbar">
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">
