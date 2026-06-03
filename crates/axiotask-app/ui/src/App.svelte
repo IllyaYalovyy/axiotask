@@ -632,7 +632,7 @@
   <Toast message={undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
 {/if}
 {#if errorToast}
-  <Toast message={errorToast.message} ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
+  <Toast message={errorToast.message} variant="error" ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
 {/if}
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />
