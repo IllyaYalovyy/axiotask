@@ -1,4 +1,5 @@
 <script>
+  import { invoke } from "@tauri-apps/api/core";
   let { task, focused, editing, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null } = $props();
 
   let editInput = $state(null);
@@ -144,7 +145,7 @@
       <span class="badge" title="Has notes">📝</span>
     {/if}
     {#if urls.length > 0}
-      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); window.open(urls[0], "_blank"); }} title={urls[0]}>🔗{urls.length > 1 ? ` ${urls.length}` : ""}</a>
+      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]}>🔗{urls.length > 1 ? ` ${urls.length}` : ""}</a>
     {/if}
     {#if isRecurrent}
       <span class="badge" title="Recurring">🔁</span>

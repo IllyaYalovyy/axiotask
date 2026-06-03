@@ -73,6 +73,7 @@ fn main() {
             commands::sync_now,
             commands::auth_status,
             commands::auth_login,
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

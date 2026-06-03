@@ -450,6 +450,11 @@ pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     state.start_login().await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), String> {
+    open::that(&url).map_err(|e| e.to_string())
+}
+
 async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
     // Search all lists for this task id.
     let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
