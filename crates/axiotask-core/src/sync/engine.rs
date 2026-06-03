@@ -333,4 +333,104 @@ mod tests {
         let outcome = eng.run().await.unwrap();
         assert_eq!(outcome.pulled, 0);
     }
+
+    #[tokio::test]
+    async fn pull_multiple_lists_stores_tasks_in_correct_list() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "T1", "work task", "00000000000001");
+        client.seed_task("L2", "T2", "personal task", "00000000000001");
+
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.pulled, 2);
+
+        let work_tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(work_tasks.len(), 1);
+        assert_eq!(work_tasks[0].task.title, "work task");
+        assert_eq!(work_tasks[0].list_id, "L1");
+
+        let personal_tasks = eng.store.list_tasks("L2").await.unwrap();
+        assert_eq!(personal_tasks.len(), 1);
+        assert_eq!(personal_tasks[0].task.title, "personal task");
+        assert_eq!(personal_tasks[0].list_id, "L2");
+    }
+
+    #[tokio::test]
+    async fn pull_inserts_parents_before_children_fk_safe() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        // Seed parent and child — child references parent
+        client.seed_task("L1", "P1", "parent", "00000000000001");
+        client.seed_task_with_parent("L1", "C1", "child", "00000000000002", Some("P1"));
+
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.pulled, 2);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        let child = tasks.iter().find(|t| t.task.id == "C1").unwrap();
+        assert_eq!(child.task.parent.as_deref(), Some("P1"));
+    }
+
+    #[tokio::test]
+    async fn pull_skips_locally_dirty_rows() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "remote version", "00000000000001");
+        client.seed_task("L1", "T2", "clean remote", "00000000000002");
+
+        // First pull to get everything
+        eng.run().await.unwrap();
+
+        // Now locally modify T1
+        let mut tasks = eng.store.list_tasks("L1").await.unwrap();
+        let mut t1 = tasks.iter_mut().find(|t| t.task.id == "T1").unwrap().clone();
+        t1.task.title = "local edit".into();
+        t1.sync_state = SyncState::Dirty;
+        t1.pending_op = Some("update".into());
+        eng.store.upsert_task(&t1).await.unwrap();
+
+        // Pull again — should skip T1 (dirty) but still pull T2
+        let outcome = eng.run().await.unwrap();
+        // T2 is re-pulled (idempotent upsert), T1 is skipped
+        assert_eq!(outcome.pulled, 1);
+
+        // Verify local edit is preserved
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(t1.task.title, "local edit");
+        assert_eq!(t1.sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn pull_handles_pagination() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        // Seed multiple tasks to verify all are pulled (single page in InMemoryClient)
+        for i in 0..10 {
+            client.seed_task("L1", &format!("T{i}"), &format!("task {i}"), &format!("{i:014}"));
+        }
+
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.pulled, 10);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn pull_upserts_lists_from_remote() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_list("L2", "Work");
+
+        eng.run().await.unwrap();
+
+        let lists = eng.store.all_lists().await.unwrap();
+        assert_eq!(lists.len(), 2);
+        let titles: Vec<_> = lists.iter().map(|l| l.list.title.as_str()).collect();
+        assert!(titles.contains(&"Inbox"));
+        assert!(titles.contains(&"Work"));
+    }
 }

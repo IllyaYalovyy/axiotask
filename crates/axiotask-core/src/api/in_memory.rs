@@ -32,7 +32,7 @@ pub enum Method {
 #[derive(Debug, Default)]
 struct State {
     lists: Vec<TaskList>,
-    tasks: Vec<Task>,
+    tasks: Vec<(String, Task)>, // (list_id, task)
     etag_counter: u64,
     faults: VecDeque<(Method, fn() -> ApiError)>,
     /// Number of recorded calls per method.
@@ -94,6 +94,18 @@ impl InMemoryClient {
 
     /// Seed a task. Caller controls id, parent, position to make tests deterministic.
     pub fn seed_task(&self, list_id: &str, id: &str, title: &str, position: &str) -> Task {
+        self.seed_task_with_parent(list_id, id, title, position, None)
+    }
+
+    /// Seed a task with optional parent. Used for hierarchy tests.
+    pub fn seed_task_with_parent(
+        &self,
+        list_id: &str,
+        id: &str,
+        title: &str,
+        position: &str,
+        parent: Option<&str>,
+    ) -> Task {
         let mut s = self.inner.lock().unwrap();
         assert!(
             s.lists.iter().any(|l| l.id == list_id),
@@ -102,7 +114,7 @@ impl InMemoryClient {
         let etag = s.fresh_etag();
         let task = Task {
             id: id.into(),
-            parent: None,
+            parent: parent.map(String::from),
             position: position.into(),
             title: title.into(),
             notes: None,
@@ -112,7 +124,7 @@ impl InMemoryClient {
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
         };
-        s.tasks.push(task.clone());
+        s.tasks.push((list_id.into(), task.clone()));
         task
     }
 
@@ -148,13 +160,11 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_fault(Method::ListTasks) {
             return Err(e);
         }
-        // MVP: no pagination in the in-memory client — return everything as one page.
-        // Real client must handle multi-page; contract test covers that against `wiremock`.
         let items: Vec<Task> = s
             .tasks
             .iter()
-            .filter(|t| task_in_list(t, &s.lists, list_id))
-            .cloned()
+            .filter(|(lid, _)| lid == list_id)
+            .map(|(_, t)| t.clone())
             .collect();
         Ok(Page {
             items,
@@ -172,7 +182,6 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         let etag = s.fresh_etag();
-        // Position: append-end-of-list lex string.
         let position = format!("{:020}", s.tasks.len() + 1);
         let id = format!("remote-{}", s.etag_counter);
         let task = Task {
@@ -187,9 +196,7 @@ impl GoogleTasksClient for InMemoryClient {
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
         };
-        s.tasks.push(task.clone());
-        // `previous` is honored conceptually by the position string assignment
-        // above (append). Real client respects API behavior fully.
+        s.tasks.push((list_id.into(), task.clone()));
         let _ = new.previous;
         Ok(task)
     }
@@ -210,7 +217,7 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         let new_etag = s.fresh_etag();
-        let Some(t) = s.tasks.iter_mut().find(|t| t.id == id) else {
+        let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == id) else {
             return Err(ApiError::NotFound);
         };
         if let Some(want) = etag
@@ -249,7 +256,7 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         let before = s.tasks.len();
-        s.tasks.retain(|t| t.id != id);
+        s.tasks.retain(|(_, t)| t.id != id);
         if s.tasks.len() == before {
             return Err(ApiError::NotFound);
         }
@@ -272,11 +279,10 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         let new_etag = s.fresh_etag();
-        let Some(t) = s.tasks.iter_mut().find(|t| t.id == id) else {
+        let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == id) else {
             return Err(ApiError::NotFound);
         };
         t.parent = parent.map(String::from);
-        // Position recomputation: deterministic synthetic value.
         t.position = match previous {
             Some(p) => format!("after-{p}"),
             None => "00000000000001".into(),
@@ -286,12 +292,6 @@ impl GoogleTasksClient for InMemoryClient {
     }
 }
 
-fn task_in_list(_t: &Task, _lists: &[TaskList], _list_id: &str) -> bool {
-    // The in-memory model doesn't store list_id on the task (Google's API
-    // routes by URL path); for the test double we treat all tasks as
-    // belonging to every list. Tests seed exactly what they need.
-    true
-}
 
 #[cfg(test)]
 mod tests {
