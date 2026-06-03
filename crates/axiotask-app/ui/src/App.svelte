@@ -206,25 +206,13 @@
   });
 
   function buildFlatTree(tasks) {
-    const roots = tasks.filter(t => !t.parent_id);
-    const childMap = {};
-    for (const t of tasks) {
-      if (t.parent_id) {
-        if (!childMap[t.parent_id]) childMap[t.parent_id] = [];
-        childMap[t.parent_id].push(t);
-      }
-    }
-    const flat = [];
-    function walk(node, depth) {
-      const hasChildren = !!(childMap[node.id]?.length);
-      const isCollapsed = collapsed.has(node.id);
-      flat.push({ ...node, depth, hasChildren, isCollapsed });
-      if (!isCollapsed) {
-        for (const c of (childMap[node.id] || [])) walk(c, depth + 1);
-      }
-    }
-    for (const r of roots) walk(r, 0);
-    return flat;
+    // Flat list: only top-level tasks, no tree indentation
+    return tasks.filter(t => !t.parent_id).map(t => ({
+      ...t,
+      depth: 0,
+      hasChildren: allTasks.some(c => c.parent_id === t.id),
+      isCollapsed: false,
+    }));
   }
 
   // --- Actions ---
@@ -247,10 +235,9 @@
     const task = await cmd("create_task", { listId: parent.listId, parentId, title: "" });
     if (task) {
       await loadAll();
+      // Open detail panel for the parent task to show subtasks
+      detailTask = allTasks.find(t => t.id === parentId) || parent;
       editingId = task.id;
-      // Focus the new subtask
-      const idx = flatTasks.findIndex(t => t.id === task.id);
-      if (idx >= 0) focusIndex = idx;
     }
   }
 
@@ -531,9 +518,14 @@
         {
           const targetList = f?.listId || (selectedView !== "today" && selectedView !== "all" ? selectedView : lists[0]?.id);
           if (!targetList) break;
-          const parentId = e.shiftKey ? f?.id : (f?.parent_id || null);
-          const task = await cmd("create_task", { listId: targetList, parentId, title: "" });
-          if (task) { await loadAll(); editingId = task.id; }
+          if (e.shiftKey && f) {
+            // Create subtask and open detail panel
+            await addSubtask(f.id);
+          } else {
+            const parentId = f?.parent_id || null;
+            const task = await cmd("create_task", { listId: targetList, parentId, title: "" });
+            if (task) { await loadAll(); editingId = task.id; }
+          }
         }
         break;
       case "e": e.preventDefault(); if (f) editingId = f.id; break;
@@ -603,10 +595,12 @@
     <TaskDetail
       task={detailTask}
       {lists}
+      subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
       onsave={saveDetail}
       onclose={() => detailTask = null}
       ondelete={deleteTask}
       onmovelist={moveToList}
+      ontogglesubtask={toggleComplete}
     />
   {:else if notesTask}
     <NotesPanel taskId={notesTask.id} notes={notesTask.notes || ""} onsave={saveNotes} onclose={() => notesTask = null} />

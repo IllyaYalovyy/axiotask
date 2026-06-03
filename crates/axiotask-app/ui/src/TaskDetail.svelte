@@ -1,5 +1,5 @@
 <script>
-  let { task, lists, onsave, onclose, ondelete, onmovelist } = $props();
+  let { task, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -68,6 +68,24 @@
     <textarea id="detail-notes" bind:value={notes} placeholder="Add notes..." rows="6"></textarea>
   </div>
 
+  {#if subtasks.length > 0}
+    <div class="field">
+      <span class="field-label">Subtasks</span>
+      <div class="subtask-list">
+        {#each subtasks as sub}
+          <div class="subtask-item" class:completed={sub.status === "completed"}>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span class="subtask-check" onclick={() => ontogglesubtask?.(sub.id)}>
+              {sub.status === "completed" ? "☑" : "☐"}
+            </span>
+            <span class="subtask-title">{sub.title || "Untitled"}</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <div class="danger-zone">
     <button class="delete-btn" onclick={() => { ondelete(task.id); onclose(); }}>🗑️ Delete task</button>
   </div>
@@ -88,6 +106,7 @@
 
   .field { margin-bottom: 1rem; }
   .field label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
+  .field-label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
   .field input[type="text"], .field textarea, .field select {
     width: 100%; background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 4px;
     color: #e0e0e0; padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
@@ -108,6 +127,13 @@
   .danger-zone { margin-top: auto; padding-top: 1rem; border-top: 1px solid #2a2a4a; }
   .delete-btn { background: none; border: 1px solid #5a2a2a; color: #e74c3c; padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
   .delete-btn:hover { background: #3a1a1a; }
+
+  .subtask-list { display: flex; flex-direction: column; gap: 0.3rem; }
+  .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
+  .subtask-item:hover { background: #1a2a4a; }
+  .subtask-item.completed .subtask-title { text-decoration: line-through; opacity: 0.5; }
+  .subtask-check { cursor: pointer; font-size: 0.9rem; }
+  .subtask-title { font-size: 0.85rem; }
 
   @media (max-width: 700px) {
     .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }
