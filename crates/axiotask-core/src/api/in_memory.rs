@@ -406,4 +406,56 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ApiError::NotFound));
     }
+
+    #[tokio::test]
+    async fn move_task_updates_parent_and_position() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "parent", "00000000000001");
+        c.seed_task("L1", "T2", "child", "00000000000002");
+        let moved = c.move_task("L1", "T2", Some("T1"), None).await.unwrap();
+        assert_eq!(moved.parent.as_deref(), Some("T1"));
+        assert_eq!(moved.position, "00000000000001");
+    }
+
+    #[tokio::test]
+    async fn move_task_with_previous_sets_position() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "first", "00000000000001");
+        c.seed_task("L1", "T2", "second", "00000000000002");
+        let moved = c.move_task("L1", "T2", None, Some("T1")).await.unwrap();
+        assert_eq!(moved.position, "after-T1");
+        assert!(moved.parent.is_none());
+    }
+
+    #[tokio::test]
+    async fn move_task_not_found() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let err = c.move_task("L1", "nope", None, None).await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn insert_to_nonexistent_list_returns_not_found() {
+        let c = InMemoryClient::new();
+        let err = c
+            .insert_task("no-list", NewTask { title: "x".into(), ..Default::default() })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApiError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn patch_without_etag_always_succeeds() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let t = c.seed_task("L1", "T1", "orig", "1");
+        let patched = c
+            .patch_task("L1", &t.id, TaskPatch { title: Some("new".into()), ..Default::default() }, None)
+            .await
+            .unwrap();
+        assert_eq!(patched.title, "new");
+    }
 }

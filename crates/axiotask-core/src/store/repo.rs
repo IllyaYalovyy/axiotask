@@ -451,4 +451,67 @@ mod tests {
         assert_eq!(child.task.parent.as_deref(), Some("remote-1"));
         assert!(parent.task.parent.is_none());
     }
+
+    #[tokio::test]
+    async fn delete_task_hard_removes_row() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        assert_eq!(s.list_tasks("L1").await.unwrap().len(), 1);
+        s.delete_task_hard("T1").await.unwrap();
+        assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_list_hard_removes_row() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        assert_eq!(s.all_lists().await.unwrap().len(), 1);
+        s.delete_list_hard("L1").await.unwrap();
+        assert!(s.all_lists().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_tasks_excludes_deleted() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Deleted;
+        t.pending_op = Some("delete".into());
+        s.upsert_task(&t).await.unwrap();
+        assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_lists_excludes_deleted() {
+        let s = fresh().await;
+        let mut l = list("L1");
+        l.sync_state = SyncState::Deleted;
+        s.upsert_list(&l).await.unwrap();
+        assert!(s.all_lists().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn sync_state_round_trips() {
+        assert_eq!(SyncState::parse(SyncState::Clean.as_str()), Some(SyncState::Clean));
+        assert_eq!(SyncState::parse(SyncState::Dirty.as_str()), Some(SyncState::Dirty));
+        assert_eq!(SyncState::parse(SyncState::Deleted.as_str()), Some(SyncState::Deleted));
+        assert_eq!(SyncState::parse("unknown"), None);
+    }
+
+    #[tokio::test]
+    async fn upsert_task_overwrites_existing() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        let mut updated = task("T1", "L1", None, "1");
+        updated.task.title = "renamed".into();
+        updated.sync_state = SyncState::Dirty;
+        updated.pending_op = Some("update".into());
+        s.upsert_task(&updated).await.unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].task.title, "renamed");
+        assert_eq!(rows[0].sync_state, SyncState::Dirty);
+    }
 }
