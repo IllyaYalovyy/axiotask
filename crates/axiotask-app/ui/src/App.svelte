@@ -37,6 +37,7 @@
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
+  let showClearConfirm = $state(false);
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -363,10 +364,24 @@
   }
 
   async function clearCompleted() {
+    showClearConfirm = true;
+  }
+
+  async function confirmClearCompleted() {
     const listId = selectedView !== "today" && selectedView !== "all" ? selectedView : null;
     if (!listId) return;
+    showClearConfirm = false;
     await cmd("clear_completed", { listId });
     await loadAll();
+  }
+
+  function cancelClearCompleted() {
+    showClearConfirm = false;
+  }
+
+  function completedCount() {
+    if (["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView)) return 0;
+    return allTasks.filter(t => t.listId === selectedView && t.status === "completed").length;
   }
 
   // Search
@@ -504,6 +519,7 @@
 
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
+    if (showClearConfirm) { showClearConfirm = false; e.preventDefault(); return; }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
@@ -662,6 +678,17 @@
 {#if movePickerTask}
   <MoveToListPicker {lists} currentListId={movePickerTask.listId} onselect={handleMovePickerSelect} onclose={() => movePickerTask = null} />
 {/if}
+{#if showClearConfirm}
+  <div class="confirm-overlay" role="dialog" aria-modal="true">
+    <div class="confirm-dialog">
+      <p>Delete {completedCount()} completed task{completedCount() === 1 ? "" : "s"}? This cannot be undone.</p>
+      <div class="confirm-actions">
+        <button class="confirm-cancel" onclick={cancelClearCompleted}>Cancel</button>
+        <button class="confirm-delete" onclick={confirmClearCompleted}>Delete</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; -webkit-tap-highlight-color: transparent; }
@@ -689,4 +716,13 @@
     .toggle input { width: 1.5rem; height: 1.5rem; }
     .clear-btn { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
   }
+
+  .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .confirm-dialog { background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 8px; padding: 1.5rem; max-width: 360px; width: 90%; }
+  .confirm-dialog p { margin: 0 0 1rem; color: #e0e0e0; }
+  .confirm-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+  .confirm-cancel { background: none; border: 1px solid #3a3a5a; color: #aaa; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
+  .confirm-cancel:hover { background: #3a3a5a; }
+  .confirm-delete { background: #e74c3c; border: none; color: #fff; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
+  .confirm-delete:hover { background: #c0392b; }
 </style>
