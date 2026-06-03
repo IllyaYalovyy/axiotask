@@ -63,6 +63,7 @@ fn main() {
             commands::rename_task,
             commands::toggle_complete,
             commands::delete_task,
+            commands::undo_delete,
             commands::set_due,
             commands::set_notes,
             commands::move_task,

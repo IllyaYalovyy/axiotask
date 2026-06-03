@@ -257,8 +257,8 @@
   async function deleteTask(id) {
     const task = allTasks.find(t => t.id === id);
     if (!task) return;
-    undoItem = { id, title: task.title, listId: task.listId, timer: setTimeout(() => { undoItem = null; }, 30000) };
-    await cmd("delete_task", { id });
+    const token = await cmd("delete_task", { id });
+    undoItem = { id, title: task.title, listId: task.listId, deleteToken: token, timer: setTimeout(() => { undoItem = null; }, 30000) };
     await loadAll();
     focusIndex = Math.min(focusIndex, Math.max(0, flatTasks.length - 1));
   }
@@ -291,8 +291,11 @@
     if (undoItem.isComplete) {
       // Undo completion — toggle it back
       await cmd("toggle_complete", { id: undoItem.id });
+    } else if (undoItem.deleteToken) {
+      // Undo delete — restore via token
+      await cmd("undo_delete", { token: undoItem.deleteToken });
     } else {
-      // Undo delete — re-create
+      // Fallback: re-create
       await cmd("create_task", { listId: undoItem.listId, parentId: null, title: undoItem.title || "Untitled" });
     }
     undoItem = null;

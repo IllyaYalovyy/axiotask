@@ -478,6 +478,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn undo_delete_restores_tombstoned_task() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task(&state, "T1", "L1", "restore me").await;
+
+        // Set notes on the task before delete
+        let mut t = state.store.list_tasks("L1").await.unwrap().remove(0);
+        t.task.notes = Some("important notes".into());
+        t.task.due = Some("2026-06-01T00:00:00.000Z".into());
+        state.store.upsert_task(&t).await.unwrap();
+
+        // Delete (tombstone since it has etag)
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let mut t = tasks[0].clone();
+        t.sync_state = SyncState::Deleted;
+        t.pending_op = Some("delete".into());
+        state.store.upsert_task(&t).await.unwrap();
+
+        // Verify deleted
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.is_empty());
+
+        // Undo: restore with dirty+create state
+        let mut restored = t.clone();
+        restored.sync_state = SyncState::Dirty;
+        restored.pending_op = Some("create".into());
+        state.store.upsert_task(&restored).await.unwrap();
+
+        // Verify restored
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.title, "restore me");
+        assert_eq!(tasks[0].task.notes.as_deref(), Some("important notes"));
+        assert_eq!(tasks[0].task.due.as_deref(), Some("2026-06-01T00:00:00.000Z"));
+        assert_eq!(tasks[0].sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn undo_delete_restores_hard_deleted_local_task() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+
+        // Create a local-only task (no etag)
+        let task = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-1".into(),
+                parent: None,
+                position: "00000000000001".into(),
+                title: "local task".into(),
+                notes: Some("my notes".into()),
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&task).await.unwrap();
+
+        // Hard delete
+        state.store.delete_task_hard("local-1").await.unwrap();
+        assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
+
+        // Undo: re-insert the same task
+        state.store.upsert_task(&task).await.unwrap();
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.title, "local task");
+        assert_eq!(tasks[0].task.notes.as_deref(), Some("my notes"));
+    }
+
+    #[tokio::test]
     async fn schedule_sync_is_noop_when_not_authenticated() {
         // GH#26: schedule_sync should not trigger sync when not authenticated.
         let (client, state) = setup().await;

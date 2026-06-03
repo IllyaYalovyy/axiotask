@@ -208,9 +208,35 @@ pub async fn toggle_complete(
     Ok(())
 }
 
+/// Token returned by delete_task to enable undo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteToken {
+    pub id: String,
+    pub list_id: String,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub notes: Option<String>,
+    pub status: String,
+    pub due: Option<String>,
+    pub position: String,
+    pub had_etag: bool,
+}
+
 #[tauri::command]
-pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
+pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<DeleteToken, String> {
+    let t = find_task(&state, &id).await?;
+    let token = DeleteToken {
+        id: t.task.id.clone(),
+        list_id: t.list_id.clone(),
+        parent_id: t.task.parent.clone(),
+        title: t.task.title.clone(),
+        notes: t.task.notes.clone(),
+        status: t.task.status.as_api_str().to_string(),
+        due: t.task.due.clone(),
+        position: t.task.position.clone(),
+        had_etag: t.task.etag.is_some(),
+    };
+
     if t.task.etag.is_none() {
         // Never pushed — just hard-delete locally.
         state
@@ -219,11 +245,42 @@ pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<
             .await
             .map_err(|e| e.to_string())?;
     } else {
+        let mut t = t;
         t.sync_state = SyncState::Deleted;
         t.pending_op = Some("delete".into());
         t.local_updated = now_str();
         state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
     }
+    state.schedule_sync();
+    Ok(token)
+}
+
+#[tauri::command]
+pub async fn undo_delete(state: State<'_, Arc<AppState>>, token: DeleteToken) -> Result<(), String> {
+    let now = now_str();
+    let status = match token.status.as_str() {
+        "completed" => TaskStatus::Completed,
+        _ => TaskStatus::NeedsAction,
+    };
+    let stored = StoredTask {
+        task: axiotask_core::model::Task {
+            id: token.id,
+            parent: token.parent_id,
+            position: token.position,
+            title: token.title,
+            notes: token.notes,
+            status,
+            due: token.due,
+            completed: None,
+            etag: None,
+            updated: now.clone(),
+        },
+        list_id: token.list_id,
+        sync_state: SyncState::Dirty,
+        pending_op: Some("create".into()),
+        local_updated: now,
+    };
+    state.store.upsert_task(&stored).await.map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }
