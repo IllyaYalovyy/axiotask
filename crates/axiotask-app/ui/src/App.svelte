@@ -439,8 +439,10 @@
 
     const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
     for (const line of lines) {
-      const title = line.length > 500 ? line.slice(0, 500) : line;
-      await cmd("create_task", { listId: targetList, parentId: null, title });
+      const isLong = line.length > 500;
+      const title = isLong ? line.slice(0, 500) : line;
+      const task = await cmd("create_task", { listId: targetList, parentId: null, title });
+      if (isLong && task) await cmd("set_notes", { id: task.id, notes: line });
     }
     await loadAll();
     selectedView = targetList;
