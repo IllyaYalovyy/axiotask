@@ -38,6 +38,9 @@ impl TokenStore for FileTokenStore {
     }
 
     fn save(&self, tokens: &StoredTokens) -> Result<(), axiotask_core::auth::AuthError> {
+        if let Some(parent) = self.path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let json = serde_json::to_string_pretty(tokens)
             .map_err(|e| axiotask_core::auth::AuthError::Format(e.to_string()))?;
         std::fs::write(&self.path, json)
@@ -262,4 +265,54 @@ fn build_http_client(
 pub fn default_db_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     data.join("axiotask").join("axiotask.sqlite")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axiotask_core::auth::{StoredTokens, TokenStore};
+    use tempfile::TempDir;
+
+    fn sample_tokens() -> StoredTokens {
+        StoredTokens {
+            access_token: "at-123".into(),
+            refresh_token: "rt-456".into(),
+            access_expires_at: Some(1_700_000_000),
+            scope: "https://www.googleapis.com/auth/tasks".into(),
+        }
+    }
+
+    #[test]
+    fn file_token_store_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("tokens.json");
+        let store = FileTokenStore::new(&path);
+
+        assert!(store.load().unwrap().is_none());
+        store.save(&sample_tokens()).unwrap();
+        assert_eq!(store.load().unwrap().unwrap(), sample_tokens());
+    }
+
+    #[test]
+    fn file_token_store_clear_removes_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("tokens.json");
+        let store = FileTokenStore::new(&path);
+
+        store.save(&sample_tokens()).unwrap();
+        assert!(path.exists());
+        store.clear().unwrap();
+        assert!(!path.exists());
+        assert!(store.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn file_token_store_creates_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("dir").join("tokens.json");
+        let store = FileTokenStore::new(&path);
+
+        store.save(&sample_tokens()).unwrap();
+        assert_eq!(store.load().unwrap().unwrap(), sample_tokens());
+    }
 }
