@@ -218,14 +218,16 @@
   // --- Actions ---
   async function createTask(title, listId) {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
-    const targetList = listId || (!isSmartView ? selectedView : lists[0]?.id);
+    const resolvedListId = isSmartView ? null : listId;
+    const targetList = resolvedListId || (!isSmartView ? selectedView : lists[0]?.id);
     if (!targetList || !title.trim()) return;
     const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
     if (task) {
       selectedView = targetList;
       await loadAll();
-      // New task is at top (position 00000000000000), focus it
+      // New task at top — focus it and enter edit mode
       focusIndex = 0;
+      editingId = task.id;
     }
   }
 
@@ -562,7 +564,7 @@
     counts={viewCounts}
   />
   <section class="content">
-    <QuickAdd oncreate={createTask} currentListId={selectedView !== "today" && selectedView !== "all" ? selectedView : null} />
+    <QuickAdd oncreate={createTask} currentListId={["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView) ? null : selectedView} />
     <div class="toolbar">
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">

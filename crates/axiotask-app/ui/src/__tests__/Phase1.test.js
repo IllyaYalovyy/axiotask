@@ -57,11 +57,12 @@ describe("Phase 1: Core Views", () => {
     it("creates a task on Enter", async () => {
       mockBackend(sampleLists, []);
       render(App);
-      await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+      // Wait for lists to be fully loaded (sidebar shows list names)
+      await waitFor(() => expect(screen.getByText("Work")).toBeInTheDocument());
       const input = screen.getByPlaceholderText("Add a task... (Enter)");
       await fireEvent.input(input, { target: { value: "New task" } });
       await fireEvent.keyDown(input, { key: "Enter" });
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "New task" }));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "New task" })));
     });
   });
 
