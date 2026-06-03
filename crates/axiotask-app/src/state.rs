@@ -61,6 +61,7 @@ pub struct AppState {
     token_store: Arc<dyn TokenStore>,
     oauth_config: OAuthConfig,
     sync_notify: Arc<Notify>,
+    push_enabled: bool,
 }
 
 impl AppState {
@@ -102,6 +103,7 @@ impl AppState {
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
+            push_enabled: config.sync.push_enabled,
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -123,6 +125,7 @@ impl AppState {
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
+            push_enabled: false,
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -188,9 +191,9 @@ impl AppState {
 
     /// Run sync immediately. Does not check authentication — use `run_sync_if_authed` for guarded access.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
-        tracing::info!("running sync...");
+        tracing::info!("running sync (push_enabled={})...", self.push_enabled);
         let client = self.client.lock().await.clone();
-        let engine = SyncEngine::new(client, self.store.clone());
+        let engine = SyncEngine::with_push(client, self.store.clone(), self.push_enabled);
         let result = engine.run().await;
         match &result {
             Ok(o) => tracing::info!("sync complete: pulled={}, pushed={}, conflicts={}", o.pulled, o.pushed, o.conflicts),

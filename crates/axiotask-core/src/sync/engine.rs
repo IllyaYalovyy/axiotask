@@ -25,12 +25,26 @@ pub struct SyncOutcome {
 pub struct SyncEngine {
     pub(crate) client: Arc<dyn GoogleTasksClient>,
     pub(crate) store: Store,
+    pub(crate) push_enabled: bool,
 }
 
 impl SyncEngine {
     /// Construct.
     pub fn new(client: Arc<dyn GoogleTasksClient>, store: Store) -> Self {
-        Self { client, store }
+        Self {
+            client,
+            store,
+            push_enabled: false,
+        }
+    }
+
+    /// Construct with explicit push setting.
+    pub fn with_push(client: Arc<dyn GoogleTasksClient>, store: Store, push_enabled: bool) -> Self {
+        Self {
+            client,
+            store,
+            push_enabled,
+        }
     }
 
     /// Run a single full sync: push then pull.
@@ -42,11 +56,19 @@ impl SyncEngine {
     }
 
     /// Push dirty rows. Handles id remap (local UUID → remote id) on success.
-    ///
-    /// ⚠️ DISABLED — DO NOT RE-ENABLE unless explicitly asked by the user.
-    /// Local changes stay local until the user explicitly requests push.
     async fn push(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
-        let _ = out;
+        if !self.push_enabled {
+            return Ok(());
+        }
+        let dirty = self.store.drain_dirty().await?;
+        for row in &dirty {
+            match row.pending_op.as_deref() {
+                Some("create") => self.push_create(row, out).await?,
+                Some("update") => self.push_update(row, out).await?,
+                Some("delete") => self.push_delete(row, out).await?,
+                _ => {} // unknown op, skip
+            }
+        }
         Ok(())
     }
 
@@ -215,6 +237,48 @@ mod tests {
         (client, eng)
     }
 
+    async fn engine_with_push() -> (Arc<InMemoryClient>, SyncEngine) {
+        let client = Arc::new(InMemoryClient::new());
+        let pool = open_memory().await.unwrap();
+        let store = Store::new(pool);
+        let eng = SyncEngine::with_push(client.clone(), store, true);
+        (client, eng)
+    }
+
+    #[tokio::test]
+    async fn push_disabled_does_not_push_dirty_rows() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+
+        // Pull so store knows about L1
+        eng.run().await.unwrap();
+
+        // Create a dirty task locally
+        let local = StoredTask {
+            task: crate::model::Task {
+                id: "local-uuid-1".into(),
+                parent: None,
+                position: "1".into(),
+                title: "unpushed".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-05-23T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-05-23T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.pushed, 0);
+        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0);
+    }
+
     #[tokio::test]
     async fn pull_seeds_local_store_from_remote() {
         let (client, eng) = engine().await;
@@ -232,9 +296,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn push_create_remaps_local_id_to_remote() {
-        let (client, eng) = engine().await;
+        let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
 
         // Pull once so the local store knows about L1.
@@ -277,9 +340,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn push_update_clears_dirty_flag() {
-        let (client, eng) = engine().await;
+        let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         let remote = client.seed_task("L1", "T1", "old", "1");
         // Pull
@@ -304,9 +366,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn push_delete_removes_local_row() {
-        let (client, eng) = engine().await;
+        let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "doomed", "1");
         eng.run().await.unwrap();
@@ -320,6 +381,27 @@ mod tests {
         assert_eq!(outcome.deleted, 1);
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_update_handles_412_conflict() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "original", "1");
+        // Pull
+        eng.run().await.unwrap();
+
+        // Locally edit with a stale etag
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "my edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale-etag".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.conflicts, 1);
+        assert_eq!(outcome.pushed, 0); // conflict, not pushed
     }
 
     #[tokio::test]
