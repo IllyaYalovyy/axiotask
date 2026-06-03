@@ -326,7 +326,7 @@ pub async fn clear_completed(
 
 #[tauri::command]
 pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String> {
-    let outcome = state.run_sync().await.map_err(|e| e.to_string())?;
+    let outcome = state.run_sync_if_authed().await?;
     Ok(format!(
         "pulled={}, pushed={}, conflicts={}, deleted={}",
         outcome.pulled, outcome.pushed, outcome.conflicts, outcome.deleted

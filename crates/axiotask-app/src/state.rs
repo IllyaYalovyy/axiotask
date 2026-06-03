@@ -183,7 +183,7 @@ impl AppState {
         self.sync_notify.notify_one();
     }
 
-    /// Run sync immediately.
+    /// Run sync immediately. Does not check authentication — use `run_sync_if_authed` for guarded access.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         tracing::info!("running sync...");
         let client = self.client.lock().await.clone();
@@ -194,6 +194,14 @@ impl AppState {
             Err(e) => tracing::error!("sync failed: {e}"),
         }
         result
+    }
+
+    /// Run sync only if the user is authenticated. Returns an error if not signed in.
+    pub async fn run_sync_if_authed(&self) -> Result<SyncOutcome, String> {
+        if !self.is_authenticated() {
+            return Err("not authenticated".into());
+        }
+        self.run_sync().await.map_err(|e| e.to_string())
     }
 
     /// Get a handle to the notify for the background loop.

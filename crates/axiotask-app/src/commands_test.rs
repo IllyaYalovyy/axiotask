@@ -414,4 +414,90 @@ mod tests {
         // Should have "My Tasks" (auto-created) + "Work" (seeded)
         assert_eq!(lists.len(), 2);
     }
+
+    #[tokio::test]
+    async fn sync_refuses_when_not_authenticated() {
+        // GH#26: sync_now must not run when user is not authenticated.
+        let (_client, state) = setup().await;
+        assert!(!state.is_authenticated());
+
+        let result = state.run_sync_if_authed().await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("not authenticated"), "expected auth error, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn crud_works_without_authentication() {
+        // GH#26: all CRUD operations work locally without sign-in.
+        let (_client, state) = setup().await;
+        assert!(!state.is_authenticated());
+
+        // Create list
+        let lists = state.store.all_lists().await.unwrap();
+        assert!(!lists.is_empty(), "default list should exist");
+        let list_id = lists[0].list.id.clone();
+
+        // Create task
+        let task = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-1".into(),
+                parent: None,
+                position: "00000000000001".into(),
+                title: "offline task".into(),
+                notes: Some("notes".into()),
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            list_id: list_id.clone(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&task).await.unwrap();
+
+        // Read
+        let tasks = state.store.list_tasks(&list_id).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.title, "offline task");
+
+        // Update
+        let mut t = tasks[0].clone();
+        t.task.title = "updated offline".into();
+        state.store.upsert_task(&t).await.unwrap();
+        let tasks = state.store.list_tasks(&list_id).await.unwrap();
+        assert_eq!(tasks[0].task.title, "updated offline");
+
+        // Delete
+        state.store.delete_task_hard("local-1").await.unwrap();
+        let tasks = state.store.list_tasks(&list_id).await.unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn schedule_sync_is_noop_when_not_authenticated() {
+        // GH#26: schedule_sync should not trigger sync when not authenticated.
+        let (client, state) = setup().await;
+        assert!(!state.is_authenticated());
+
+        // Seed remote data that would appear if sync ran
+        client.seed_list("REMOTE", "Remote List");
+        client.seed_task("REMOTE", "RT1", "remote task", "00000000000001");
+
+        // schedule_sync should be a no-op
+        state.schedule_sync();
+
+        // Give async a moment
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Local store should NOT have remote data
+        let lists = state.store.all_lists().await.unwrap();
+        assert!(
+            !lists.iter().any(|l| l.list.title == "Remote List"),
+            "sync should not have run"
+        );
+    }
 }

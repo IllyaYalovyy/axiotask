@@ -45,7 +45,7 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 if sync_state.is_authenticated() {
                     tracing::info!("auto-sync on startup...");
-                    if let Err(e) = sync_state.run_sync().await {
+                    if let Err(e) = sync_state.run_sync_if_authed().await {
                         tracing::warn!("startup sync failed: {e}");
                     }
                 }
