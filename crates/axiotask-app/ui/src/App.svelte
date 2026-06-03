@@ -12,6 +12,7 @@
   import SortDropdown from "./SortDropdown.svelte";
   import TaskDetail from "./TaskDetail.svelte";
   import SearchOverlay from "./SearchOverlay.svelte";
+  import MoveToListPicker from "./MoveToListPicker.svelte";
 
   // --- State ---
   let lists = $state([]);
@@ -33,6 +34,7 @@
   let contextMenu = $state(null); // { items, x, y }
   let detailTask = $state(null); // task object for detail panel
   let showSearch = $state(false);
+  let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let collapsed = $state(new Set());
 
   // --- Safe invoke ---
@@ -331,8 +333,19 @@
   }
 
   async function moveToList(taskId, targetListId) {
+    const task = allTasks.find(t => t.id === taskId);
+    const targetList = lists.find(l => l.id === targetListId);
     await cmd("move_to_list", { id: taskId, targetListId });
     await loadAll();
+    if (task && targetList) {
+      undoItem = { id: taskId, title: `Moved "${task.title}" to ${targetList.title}`, isMoveToast: true, timer: setTimeout(() => { undoItem = null; }, 5000) };
+    }
+  }
+
+  async function handleMovePickerSelect(list) {
+    const task = movePickerTask;
+    movePickerTask = null;
+    if (task) await moveToList(task.id, list.id);
   }
 
   async function clearCompleted() {
@@ -476,6 +489,7 @@
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
     if (detailTask && e.key === "Escape") { detailTask = null; e.preventDefault(); return; }
     if (notesTask || detailTask) return;
@@ -489,11 +503,7 @@
       case "m":
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          if (f) {
-            const target = prompt("Move to list:\n" + lists.map((l, i) => `${i+1}. ${l.title}`).join("\n") + "\n\nEnter number:");
-            const idx = parseInt(target) - 1;
-            if (idx >= 0 && idx < lists.length) { await moveToList(f.id, lists[idx].id); }
-          }
+          if (f) movePickerTask = f;
         } else {
           e.preventDefault(); if (f) await setDue(f.id, "NextMonth");
         }
@@ -619,7 +629,7 @@
 </main>
 
 {#if undoItem}
-  <Toast message={undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
+  <Toast message={undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
 {/if}
 {#if errorToast}
   <Toast message={errorToast.message} ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
@@ -632,6 +642,9 @@
 {/if}
 {#if showSearch}
   <SearchOverlay tasks={allTasks} onselect={handleSearchSelect} onclose={() => showSearch = false} />
+{/if}
+{#if movePickerTask}
+  <MoveToListPicker {lists} currentListId={movePickerTask.listId} onselect={handleMovePickerSelect} onclose={() => movePickerTask = null} />
 {/if}
 
 <style>

@@ -4,7 +4,9 @@
 
 <div class="toast">
   <span>{message}</span>
-  <button class="undo-btn" onclick={onundo}>Undo</button>
+  {#if onundo}
+    <button class="undo-btn" onclick={onundo}>Undo</button>
+  {/if}
   <button class="dismiss-btn" onclick={ondismiss}>✕</button>
 </div>
 

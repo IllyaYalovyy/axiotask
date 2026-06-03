@@ -576,4 +576,32 @@ mod tests {
             "sync should not have run"
         );
     }
+
+    #[tokio::test]
+    async fn move_to_list_changes_task_list_id() {
+        // GH#16: Moving a task between lists updates list_id and marks dirty.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Work").await;
+        seed_list(&state, "L2", "Personal").await;
+        seed_task(&state, "T1", "L1", "Task to move").await;
+
+        // Verify task is in L1
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        // Move task to L2
+        let mut t = tasks.into_iter().find(|t| t.task.id == "T1").unwrap();
+        t.list_id = "L2".into();
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        state.store.upsert_task(&t).await.unwrap();
+
+        // Verify task is now in L2, not in L1
+        let l1_tasks = state.store.list_tasks("L1").await.unwrap();
+        let l2_tasks = state.store.list_tasks("L2").await.unwrap();
+        assert_eq!(l1_tasks.len(), 0);
+        assert_eq!(l2_tasks.len(), 1);
+        assert_eq!(l2_tasks[0].task.title, "Task to move");
+        assert_eq!(l2_tasks[0].sync_state, SyncState::Dirty);
+    }
 }
