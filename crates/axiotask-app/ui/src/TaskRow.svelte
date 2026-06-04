@@ -83,10 +83,16 @@
   // Recurrence detection (Google Tasks uses "RFC 5545" style in notes or a hidden field)
   let isRecurrent = $derived(task.title?.includes("🔁") || task.notes?.includes("recur") || task.notes?.includes("repeat") || false);
 
+  function parseLocalDate(due) {
+    // Due dates are date-only. Parse YYYY-MM-DD portion to avoid timezone shift.
+    const [y, m, d] = due.slice(0, 10).split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
   function formatDue(due) {
     if (!due) return "";
-    const d = new Date(due); const now = new Date();
-    d.setHours(0,0,0,0); now.setHours(0,0,0,0);
+    const d = parseLocalDate(due);
+    const now = new Date(); now.setHours(0,0,0,0);
     const diff = Math.round((d - now) / 86400000);
     if (diff < -1) return `${-diff}d overdue`;
     if (diff === -1) return "yesterday";
@@ -98,8 +104,8 @@
 
   function dueClass(due) {
     if (!due) return "";
-    const d = new Date(due); const now = new Date();
-    d.setHours(0,0,0,0); now.setHours(0,0,0,0);
+    const d = parseLocalDate(due);
+    const now = new Date(); now.setHours(0,0,0,0);
     if (d < now) return "overdue";
     if (d.getTime() === now.getTime()) return "due-today";
     return "";
@@ -169,6 +175,7 @@
     <!-- Quick actions (hover) -->
     <span class="actions">
       <button onclick={(e) => { e.stopPropagation(); onaddsubtask?.(task.id); }} title="Add subtask">+</button>
+      <button onclick={(e) => handleDateAction(e, "Today")} title="Today (o)">→o</button>
       <button onclick={(e) => handleDateAction(e, "Tomorrow")} title="Tomorrow (t)">→t</button>
       <button onclick={(e) => handleDateAction(e, "NextWeek")} title="Next week (w)">→w</button>
       <button onclick={(e) => handleDateAction(e, "NextMonth")} title="Next month (m)">→m</button>
@@ -231,7 +238,7 @@
   .tree-icon.sub { color: #3a3a5a; font-size: 0.75rem; }
 
   .checkbox { flex-shrink: 0; font-size: 1rem; cursor: pointer; }
-  .checkbox:hover { transform: scale(1.2); }
+  .checkbox:hover { border-color: #7ec8e3; }
 
   .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; cursor: text; }
   .title:hover { text-decoration: underline; text-decoration-color: #3a3a5a; }

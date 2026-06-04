@@ -261,6 +261,17 @@ impl Store {
         Ok(())
     }
 
+    /// Drop all local tasks and lists. Used for fresh sync.
+    pub async fn clear_all(&self) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM tasks")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM task_lists")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Record a local UUID → remote id remap and rewrite child references.
     /// Uses `PRAGMA defer_foreign_keys` so FK checks are evaluated only at commit.
     pub async fn remap_id(&self, local_id: &str, remote_id: &str) -> Result<(), StoreError> {

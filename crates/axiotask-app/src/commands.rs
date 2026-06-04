@@ -141,7 +141,7 @@ pub async fn create_task(
         task: axiotask_core::model::Task {
             id: id.clone(),
             parent: parent_id,
-            position: "00000000000000".into(), // prepend (top of list)
+            position: "00000000000000000000".into(),
             title,
             notes: None,
             status: TaskStatus::NeedsAction,
@@ -298,6 +298,7 @@ pub async fn set_due(
         t.task.due = Some(raw.to_string());
     } else {
         let date_move = match mv.as_str() {
+            "Today" => DateMove::Today,
             "Tomorrow" => DateMove::Tomorrow,
             "NextWeek" => DateMove::NextWeek,
             "NextMonth" => DateMove::NextMonth,
@@ -387,6 +388,17 @@ pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String>
     Ok(format!(
         "pulled={}, pushed={}, conflicts={}, deleted={}",
         outcome.pulled, outcome.pushed, outcome.conflicts, outcome.deleted
+    ))
+}
+
+#[tauri::command]
+pub async fn fresh_sync(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+    // Drop all local data and re-pull from Google
+    state.store.clear_all().await.map_err(|e| e.to_string())?;
+    let outcome = state.run_sync_if_authed().await?;
+    Ok(format!(
+        "fresh sync: pulled={}, lists and tasks rebuilt from remote",
+        outcome.pulled
     ))
 }
 

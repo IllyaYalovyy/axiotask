@@ -30,6 +30,7 @@
   let notesTask = $state(null);
   let undoItem = $state(null);
   let showCheatsheet = $state(false);
+  let newestTaskId = $state(null); // transient: force this task to top of list
   let focusIndex = $state(0);
   let editingId = $state(null);
   let contextMenu = $state(null); // { items, x, y }
@@ -135,12 +136,17 @@
     return allTasks.filter(t => !isExcluded(t.listId) && (showCompleted || t.status !== "completed"));
   }
 
+  function parseLocalDate(due) {
+    const [y, m, d] = due.slice(0, 10).split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }
+
   function focusTasks() {
     const now = new Date(); now.setHours(0,0,0,0);
     const weekEnd = new Date(now.getTime() + 7 * 86400000);
     return smartTasks().filter(t => {
       if (!t.due) return false;
-      const d = new Date(t.due); d.setHours(0,0,0,0);
+      const d = parseLocalDate(t.due);
       return d < weekEnd;
     });
   }
@@ -150,7 +156,7 @@
     const end = new Date(now.getTime() + 14 * 86400000);
     return smartTasks().filter(t => {
       if (!t.due) return false;
-      const d = new Date(t.due); d.setHours(0,0,0,0);
+      const d = parseLocalDate(t.due);
       return d > now && d <= end;
     });
   }
@@ -159,9 +165,9 @@
     const now = new Date(); now.setHours(0,0,0,0);
     return smartTasks().filter(t => {
       if (!t.due) return false;
-      const d = new Date(t.due); d.setHours(0,0,0,0);
+      const d = parseLocalDate(t.due);
       return d < now;
-    }).sort((a, b) => new Date(a.due) - new Date(b.due)); // oldest first
+    }).sort((a, b) => parseLocalDate(a.due) - parseLocalDate(b.due));
   }
 
   function unscheduledTasks() {
@@ -204,6 +210,14 @@
       const done = sorted.filter(t => t.status === "completed");
       sorted = [...open, ...done];
     }
+    // Newest task always at top (transient, regardless of sort)
+    if (newestTaskId) {
+      const idx = sorted.findIndex(t => t.id === newestTaskId);
+      if (idx > 0) {
+        const [task] = sorted.splice(idx, 1);
+        sorted.unshift(task);
+      }
+    }
     return sorted;
   }
 
@@ -211,6 +225,7 @@
   $effect(() => {
     const saved = localStorage.getItem(`axiotask:sort:${selectedView}`);
     sortMode = saved || "manual";
+    newestTaskId = null; // clear pinned new-task on view switch
   });
   // Persist sort mode
   $effect(() => {
@@ -245,6 +260,20 @@
   }
 
   // --- Actions ---
+  async function newTask() {
+    const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
+    const targetList = isSmartView ? lists[0]?.id : selectedView;
+    if (!targetList) return;
+    const task = await cmd("create_task", { listId: targetList, parentId: null, title: "" });
+    if (task) {
+      newestTaskId = task.id;
+      if (isSmartView) selectedView = targetList;
+      await loadAll();
+      focusIndex = 0;
+      editingId = task.id;
+    }
+  }
+
   async function createTask(title, listId) {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
     const resolvedListId = isSmartView ? null : listId;
@@ -252,9 +281,9 @@
     if (!targetList || !title.trim()) return;
     const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
     if (task) {
+      newestTaskId = task.id;
       selectedView = targetList;
       await loadAll();
-      // New task at top — focus it and enter edit mode
       focusIndex = 0;
       editingId = task.id;
     }
@@ -358,6 +387,14 @@
     const r = await cmd("sync_now");
     if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
     else { syncStatus = "error"; error = "Sync failed"; }
+  }
+
+  async function doFreshSync() {
+    if (!confirm("Drop all local data and re-download from Google?")) return;
+    syncStatus = "syncing";
+    const r = await cmd("fresh_sync");
+    if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
+    else { syncStatus = "error"; error = "Fresh sync failed"; }
   }
 
   async function login() {
@@ -593,22 +630,17 @@
         break;
       case "Enter":
         e.preventDefault();
-        {
-          const targetList = f?.listId || (selectedView !== "today" && selectedView !== "all" ? selectedView : lists[0]?.id);
-          if (!targetList) break;
-          if (e.shiftKey && f) {
-            // Create subtask and open detail panel
-            await addSubtask(f.id);
-          } else {
-            const parentId = f?.parent_id || null;
-            const task = await cmd("create_task", { listId: targetList, parentId, title: "" });
-            if (task) { await loadAll(); editingId = task.id; }
-          }
+        if (f) {
+          // Open detail panel for existing task
+          detailTask = f;
+        } else {
+          await newTask();
         }
         break;
       case "e": e.preventDefault(); if (f) editingId = f.id; break;
-      case "n": e.preventDefault(); if (f) openNotes(f.id); break;
+      case "n": e.preventDefault(); await newTask(); break;
       case "d": e.preventDefault(); if (f) await deleteTask(f.id); break;
+      case "o": e.preventDefault(); if (f) await setDue(f.id, "Today"); break;
       case "t": e.preventDefault(); if (f) await setDue(f.id, "Tomorrow"); break;
       case "w": e.preventDefault(); if (f) await setDue(f.id, "NextWeek"); break;
       case "r": e.preventDefault(); if (f) await setDue(f.id, "Clear"); break;
@@ -631,6 +663,7 @@
     onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; }}
     onlogin={login}
     onsync={doSync}
+    onfreshsync={doFreshSync}
     oncreateList={createList}
     onlistaction={openListContextMenu}
     {authenticated}
@@ -640,8 +673,8 @@
     counts={viewCounts}
   />
   <section class="content">
-    <QuickAdd oncreate={createTask} currentListId={["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView) ? null : selectedView} targetListName={quickAddTargetName()} />
     <div class="toolbar">
+      <button class="new-task-btn" onclick={newTask}>+ New task</button>
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">
         <input type="checkbox" bind:checked={showCompleted} /> Show completed
@@ -672,6 +705,7 @@
   {#if detailTask}
     <TaskDetail
       task={detailTask}
+      parentTask={detailTask.parent_id ? allTasks.find(t => t.id === detailTask.parent_id) : null}
       {lists}
       subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
       onsave={saveDetail}
@@ -679,6 +713,11 @@
       ondelete={deleteTask}
       onmovelist={moveToList}
       ontogglesubtask={toggleComplete}
+      onopensubtask={(sub) => detailTask = sub}
+      onopenparent={(p) => detailTask = p}
+      onaddsubtask={addSubtask}
+      onprev={(() => { const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks; const i = siblings.findIndex(t => t.id === detailTask.id); return i > 0 ? () => { detailTask = siblings[i-1]; } : null; })()}
+      onnext={(() => { const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks; const i = siblings.findIndex(t => t.id === detailTask.id); return i < siblings.length - 1 ? () => { detailTask = siblings[i+1]; } : null; })()}
     />
   {:else if notesTask}
     <NotesPanel taskId={notesTask.id} notes={notesTask.notes || ""} onsave={saveNotes} onclose={() => notesTask = null} />
@@ -721,6 +760,8 @@
   .app { display: flex; height: 100vh; height: 100dvh; }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid #2a2a4a; gap: 0.5rem; flex-wrap: wrap; }
+  .new-task-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
+  .new-task-btn:hover { background: #1a2a4a; }
   .toggle { font-size: 0.8rem; color: #888; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
   .clear-btn { background: none; border: 1px solid #3a3a5a; color: #888; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }

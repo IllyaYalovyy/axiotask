@@ -9,6 +9,8 @@ use jiff::civil::Date;
 /// What date-move the user requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateMove {
+    /// `today` (the current date).
+    Today,
     /// `today + 1 day`.
     Tomorrow,
     /// `today + 7 days`.
@@ -22,6 +24,7 @@ pub enum DateMove {
 /// Apply `mv` relative to `today`. `None` means "clear the due date".
 pub fn apply_date_move(today: Date, mv: DateMove) -> Option<Date> {
     match mv {
+        DateMove::Today => Some(today),
         DateMove::Tomorrow => Some(today.tomorrow().expect("tomorrow within Date::MAX")),
         DateMove::NextWeek => Some(
             today

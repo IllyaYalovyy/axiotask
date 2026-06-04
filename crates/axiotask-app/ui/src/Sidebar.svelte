@@ -1,5 +1,5 @@
 <script>
-  let { lists, selectedView, onselect, onlogin, onsync, oncreateList, onlistaction, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {} } = $props();
+  let { lists, selectedView, onselect, onlogin, onsync, onfreshsync, oncreateList, onlistaction, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {} } = $props();
 
   function formatSynced(date) {
     if (!date) return "";
@@ -55,8 +55,11 @@
         {syncStatus === "syncing" ? "Syncing..." : "↻ Sync now"}
       </button>
     {/if}
+    <button class="action-btn fresh-sync-btn" onclick={onfreshsync} disabled={syncStatus === "syncing" || !authenticated}>
+      ⟳ Fresh sync
+    </button>
     <div class="sync-info">
-      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error"}></span>
+      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error"} class:offline={!authenticated}></span>
       <span class="sync-text">
         {#if syncStatus === "error"}Sync error
         {:else if lastSynced}Synced {formatSynced(lastSynced)}
@@ -93,6 +96,7 @@
   .action-btn:disabled { opacity: 0.5; cursor: default; }
   .sync-info { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.2rem; }
   .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: #4caf50; }
+  .sync-dot.offline { background: #666; }
   .sync-dot.syncing { background: #ff9800; animation: pulse 1s infinite; }
   .sync-dot.error { background: #e74c3c; }
   .sync-text { font-size: 0.7rem; color: #666; }

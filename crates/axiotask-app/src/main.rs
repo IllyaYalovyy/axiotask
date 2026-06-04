@@ -71,6 +71,7 @@ fn main() {
             commands::reorder_task,
             commands::clear_completed,
             commands::sync_now,
+            commands::fresh_sync,
             commands::auth_status,
             commands::auth_login,
             commands::open_url,
