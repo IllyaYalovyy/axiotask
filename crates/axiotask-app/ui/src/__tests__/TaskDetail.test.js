@@ -176,15 +176,13 @@ describe("TaskDetail Panel (GH#7)", () => {
       const panel = container.querySelector(".detail-panel");
       await fireEvent.keyDown(panel, { key: "s", ctrlKey: true });
 
-      // Panel should close
-      await waitFor(() =>
-        expect(screen.queryByText("Task Details")).not.toBeInTheDocument()
-      );
+      // Panel stays open (save doesn't close)
+      expect(screen.getByText("Task Details")).toBeInTheDocument();
       // rename_task should have been called
       expect(invoke).toHaveBeenCalledWith("rename_task", { id: "t1", title: "Saved Title" });
     });
 
-    it("Save button saves and closes panel", async () => {
+    it("Save button saves without closing panel", async () => {
       mockBackend([task("t1", "Click Save")]);
       render(App);
       await waitFor(() => expect(screen.getByText("Click Save")).toBeInTheDocument());
@@ -193,9 +191,8 @@ describe("TaskDetail Panel (GH#7)", () => {
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByText("Save"));
-      await waitFor(() =>
-        expect(screen.queryByText("Task Details")).not.toBeInTheDocument()
-      );
+      // Panel stays open
+      expect(screen.getByText("Task Details")).toBeInTheDocument();
     });
   });
 

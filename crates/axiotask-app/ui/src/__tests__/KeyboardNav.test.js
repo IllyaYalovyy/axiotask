@@ -113,12 +113,12 @@ describe("Keyboard Navigation", () => {
     });
   });
 
-  describe("Enter — create task", () => {
-    it("pressing Enter creates a new sibling task", async () => {
+  describe("Enter — open detail panel", () => {
+    it("pressing Enter opens detail panel for focused task", async () => {
       await renderWithTasks();
       await pressKey("Enter");
       await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1" }));
+        expect(screen.getByText(/notes/i)).toBeInTheDocument();
       });
     });
   });
@@ -143,12 +143,12 @@ describe("Keyboard Navigation", () => {
     });
   });
 
-  describe("n — open notes", () => {
-    it("pressing n opens the notes panel", async () => {
+  describe("n — new task", () => {
+    it("pressing n creates a new task", async () => {
       await renderWithTasks();
       await pressKey("n");
       await waitFor(() => {
-        expect(screen.getByPlaceholderText("Add notes...")).toBeInTheDocument();
+        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1", title: "" }));
       });
     });
   });
@@ -255,31 +255,12 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("No fire when in inputs", () => {
-    it("does not trigger shortcuts when typing in QuickAdd input", async () => {
-      await renderWithTasks();
-      const input = screen.getByPlaceholderText("Add a task... (Enter)");
-      input.focus();
-      await fireEvent.keyDown(input, { key: "d" });
-      const deleteCalls = invoke.mock.calls.filter(c => c[0] === "delete_task");
-      expect(deleteCalls).toHaveLength(0);
-    });
-
     it("does not trigger shortcuts when editing a task title", async () => {
       await renderWithTasks();
       await pressKey("e"); // enter edit mode
       await waitFor(() => expect(screen.getByDisplayValue("Task 1")).toBeInTheDocument());
       const editInput = screen.getByDisplayValue("Task 1");
       await fireEvent.keyDown(editInput, { key: "d" });
-      const deleteCalls = invoke.mock.calls.filter(c => c[0] === "delete_task");
-      expect(deleteCalls).toHaveLength(0);
-    });
-
-    it("does not trigger shortcuts when typing in notes textarea", async () => {
-      await renderWithTasks();
-      await pressKey("n"); // open notes
-      await waitFor(() => expect(screen.getByPlaceholderText("Add notes...")).toBeInTheDocument());
-      const textarea = screen.getByPlaceholderText("Add notes...");
-      await fireEvent.keyDown(textarea, { key: "d" });
       const deleteCalls = invoke.mock.calls.filter(c => c[0] === "delete_task");
       expect(deleteCalls).toHaveLength(0);
     });

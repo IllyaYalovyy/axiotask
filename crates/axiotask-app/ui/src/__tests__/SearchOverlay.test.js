@@ -220,10 +220,11 @@ describe("GH#17: Search overlay", () => {
     render(App);
     await waitFor(() => expect(screen.getByText("Buy milk")).toBeInTheDocument());
 
-    // Focus the quick-add input
-    const quickAdd = screen.getByPlaceholderText("Add a task... (Enter)");
-    quickAdd.focus();
-    await fireEvent.keyDown(quickAdd, { key: "/" });
+    // Enter edit mode on the task
+    await fireEvent.keyDown(window, { key: "e" });
+    await waitFor(() => expect(screen.getByDisplayValue("Buy milk")).toBeInTheDocument());
+    const editInput = screen.getByDisplayValue("Buy milk");
+    await fireEvent.keyDown(editInput, { key: "/" });
 
     // Search should NOT open since we're in an input
     expect(screen.queryByPlaceholderText("Search tasks...")).not.toBeInTheDocument();

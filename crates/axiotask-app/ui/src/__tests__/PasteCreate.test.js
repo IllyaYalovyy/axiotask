@@ -44,7 +44,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     pasteText("Buy groceries");
 
@@ -57,7 +57,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     pasteText("Task one\nTask two\nTask three");
 
@@ -74,7 +74,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     pasteText("Task one\n\n  \nTask two\n");
 
@@ -88,7 +88,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     const longText = "A".repeat(600);
     pasteText(longText);
@@ -110,7 +110,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     pasteText("Task A\nTask B");
 
@@ -123,7 +123,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     pasteText("Single task");
 
@@ -134,22 +134,22 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
 
   it("does not intercept paste when input is focused", async () => {
     localStorage.setItem("axiotask:view", "L1");
-    mockBackend();
+    mockBackend([{ id: "t1", parent_id: null, title: "Existing", notes: null, status: "needsAction", due: null, position: "1", sync_state: "clean", listId: "L1", listTitle: "Work" }]);
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Existing")).toBeInTheDocument());
 
-    const input = screen.getByPlaceholderText("Add a task... (Enter)");
-    input.focus();
+    // Enter edit mode
+    await fireEvent.keyDown(window, { key: "e" });
+    await waitFor(() => expect(screen.getByDisplayValue("Existing")).toBeInTheDocument());
+    const input = screen.getByDisplayValue("Existing");
 
-    // Simulate paste on the input element directly — should NOT create task
+    // Simulate paste on the input element — should NOT create task
     const event = new Event("paste", { bubbles: true, cancelable: true });
     event.clipboardData = { getData: () => "Should not create" };
     event.preventDefault = vi.fn();
-    // The handler checks e.target.tagName === "INPUT"
     Object.defineProperty(event, "target", { value: input });
     window.dispatchEvent(event);
 
-    // Wait a bit and verify no create_task was called for this text
     await new Promise(r => setTimeout(r, 50));
     const createCalls = invoke.mock.calls.filter(c => c[0] === "create_task" && c[1]?.title === "Should not create");
     expect(createCalls.length).toBe(0);
@@ -159,7 +159,7 @@ describe("GH#20: Ctrl+V paste creates tasks", () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
-    await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
 
     const createBefore = invoke.mock.calls.filter(c => c[0] === "create_task").length;
     pasteText("   ");

@@ -129,16 +129,15 @@ describe("GH#2: Flat task list", () => {
     });
   });
 
-  describe("Creating subtask opens detail panel", () => {
-    it("Shift+Enter opens detail panel with new subtask", async () => {
+  describe("Enter opens detail panel", () => {
+    it("Enter opens detail panel for focused task", async () => {
       mockBackend([
         task("t1", "Parent task"),
       ]);
       render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
-      // Shift+Enter creates subtask and opens detail
-      await fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
-      await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
+      await fireEvent.keyDown(window, { key: "Enter" });
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
     });
   });
 });

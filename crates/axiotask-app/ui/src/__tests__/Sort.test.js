@@ -88,17 +88,17 @@ describe("Sort: Dropdown and modes", () => {
     localStorage.setItem("axiotask:view", "L1");
     localStorage.setItem("axiotask:sort:L1", "created");
     const tasks = [
-      task("t1", "Old", { position: "00001" }),
-      task("t2", "Middle", { position: "00005" }),
-      task("t3", "New", { position: "00009" }),
+      task("t1", "OldItem", { position: "00001" }),
+      task("t2", "MiddleItem", { position: "00005" }),
+      task("t3", "NewestItem", { position: "00009" }),
     ];
     mockBackend(tasks);
     render(App);
-    await waitFor(() => expect(screen.getByText("New")).toBeInTheDocument());
-    const rows = screen.getAllByText(/Old|Middle|New/);
-    expect(rows[0].textContent).toContain("New");
-    expect(rows[1].textContent).toContain("Middle");
-    expect(rows[2].textContent).toContain("Old");
+    await waitFor(() => expect(screen.getByText("NewestItem")).toBeInTheDocument());
+    const rows = screen.getAllByText(/OldItem|MiddleItem|NewestItem/);
+    expect(rows[0].textContent).toContain("NewestItem");
+    expect(rows[1].textContent).toContain("MiddleItem");
+    expect(rows[2].textContent).toContain("OldItem");
   });
 });
 

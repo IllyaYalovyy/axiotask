@@ -47,22 +47,19 @@ function sampleTasks() {
 describe("Phase 1: Core Views", () => {
   beforeEach(() => { localStorage.clear(); invoke.mockReset(); });
 
-  describe("Quick Add", () => {
-    it("shows the quick-add input", async () => {
+  describe("New Task", () => {
+    it("shows the + New task button", async () => {
       mockBackend(sampleLists, sampleTasks());
       render(App);
-      await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
     });
 
-    it("creates a task on Enter", async () => {
+    it("creates a task on button click", async () => {
       mockBackend(sampleLists, []);
       render(App);
-      // Wait for lists to be fully loaded (sidebar shows list names)
       await waitFor(() => expect(screen.getByText("Work")).toBeInTheDocument());
-      const input = screen.getByPlaceholderText("Add a task... (Enter)");
-      await fireEvent.input(input, { target: { value: "New task" } });
-      await fireEvent.keyDown(input, { key: "Enter" });
-      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "New task" })));
+      await fireEvent.click(screen.getByText("+ New task"));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "" })));
     });
   });
 
@@ -181,7 +178,7 @@ describe("Phase 1: Core Views", () => {
     it("? shows cheatsheet", async () => {
       mockBackend(sampleLists, []);
       render(App);
-      await waitFor(() => expect(screen.getByPlaceholderText("Add a task... (Enter)")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
       await fireEvent.keyDown(window, { key: "?" });
       await waitFor(() => expect(screen.getByText("Keyboard Shortcuts")).toBeInTheDocument());
     });

@@ -88,13 +88,12 @@ describe("GH#26: Offline-First", () => {
     await waitFor(() => expect(screen.getByText("My Tasks")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("My Tasks"));
 
-    // Create a task via quick-add
-    const input = screen.getByPlaceholderText(/add/i);
-    await fireEvent.input(input, { target: { value: "Offline task" } });
-    await fireEvent.keyDown(input, { key: "Enter" });
+    // Create a task via + New task button
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
+    await fireEvent.click(screen.getByText("+ New task"));
 
     await waitFor(() => {
-      expect(screen.getByText("Offline task")).toBeInTheDocument();
+      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "" }));
     });
   });
 
@@ -107,13 +106,12 @@ describe("GH#26: Offline-First", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /My Tasks/ })).toBeInTheDocument());
     await fireEvent.click(screen.getByRole("button", { name: /My Tasks/ }));
 
-    // Perform create operation
-    const input = screen.getByPlaceholderText(/add/i);
-    await fireEvent.input(input, { target: { value: "Task 1" } });
-    await fireEvent.keyDown(input, { key: "Enter" });
+    // Perform create operation via button
+    await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
+    await fireEvent.click(screen.getByText("+ New task"));
 
-    // Wait for re-render after create
-    await waitFor(() => expect(screen.getByText("Task 1")).toBeInTheDocument());
+    // Wait for create_task to be called
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "" })));
 
     // sync_now should never have been called
     expect(wasSyncCalled()).toBe(false);

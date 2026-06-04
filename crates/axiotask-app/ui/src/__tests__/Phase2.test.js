@@ -118,40 +118,40 @@ describe("Phase 2: Task Lifecycle", () => {
   });
 
   describe("Notes Panel", () => {
-    it("n opens notes panel", async () => {
+    it("Enter opens detail panel which shows notes", async () => {
       mockBackend([task("t1", "Has notes", { notes: "my note" })]);
       render(App);
       await waitFor(() => expect(screen.getByText("Has notes")).toBeInTheDocument());
-      await fireEvent.keyDown(window, { key: "n" });
+      await fireEvent.keyDown(window, { key: "Enter" });
       await waitFor(() => expect(screen.getByText("Notes")).toBeInTheDocument());
     });
 
-    it("Escape closes notes panel", async () => {
+    it("Escape closes detail panel", async () => {
       mockBackend([task("t1", "Task")]);
       render(App);
       await waitFor(() => expect(screen.getByText("Task")).toBeInTheDocument());
-      await fireEvent.keyDown(window, { key: "n" });
+      await fireEvent.keyDown(window, { key: "Enter" });
       await waitFor(() => expect(screen.getByText("Notes")).toBeInTheDocument());
       await fireEvent.keyDown(window, { key: "Escape" });
-      await waitFor(() => expect(screen.queryByText("Notes")).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByPlaceholderText("Add notes...")).not.toBeInTheDocument());
     });
   });
 
   describe("Subtasks & Indent", () => {
-    it("Shift+Enter creates subtask", async () => {
+    it("n key creates a new task (not subtask)", async () => {
       mockBackend([task("t1", "Parent")]);
       render(App);
       await waitFor(() => expect(screen.getByText("Parent")).toBeInTheDocument());
-      await fireEvent.keyDown(window, { key: "Enter", shiftKey: true });
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1" }));
+      await fireEvent.keyDown(window, { key: "n" });
+      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: null }));
     });
 
-    it("Enter creates sibling (not subtask)", async () => {
+    it("Enter opens detail panel for focused task", async () => {
       mockBackend([task("t1", "Sibling")]);
       render(App);
       await waitFor(() => expect(screen.getByText("Sibling")).toBeInTheDocument());
       await fireEvent.keyDown(window, { key: "Enter" });
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: null }));
+      await waitFor(() => expect(screen.getByText("Notes")).toBeInTheDocument());
     });
 
     it("Tab indents (calls move_task with parent)", async () => {
