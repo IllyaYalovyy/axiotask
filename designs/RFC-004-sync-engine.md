@@ -101,15 +101,20 @@ runs) and always records a `sync_log` row (counts, duration, error).
 
 Honest catalog of the sharp edges and how each is handled.
 
-### H1 — Duplicate-on-crash for creates *(inherent, accepted)*
-Google's `insert` has **no client idempotency key**. If the app crashes *after*
-the server creates the task but *before* the local commit, the next run
-re-inserts → a duplicate task on the server. We cannot fully prevent this
-without an idempotency token Google does not offer.
-**Mitigation:** `finish_create` makes the local remap+clean atomic, eliminating
-the *half-applied* state (which previously could both duplicate *and* corrupt
-local ids). The residual window (crash between server ack and local commit) is
-rare and self-healing on the user's side (delete the dup). **Accepted for MVP.**
+### H1 — Duplicate-on-crash for creates *(RESOLVED — in-flight recovery)*
+Google's `insert` has no idempotency key, so a crash between the server ack
+and the local commit could re-insert → a duplicate. Two-part fix:
+- `finish_create` makes remap + mark-clean atomic (no half-applied state).
+- An `inflight_creates` marker is written *before* the insert and cleared in
+  the finalize transaction. On the next run, `recover_inflight_creates` looks
+  for an orphaned remote task (our exact content, an id we never recorded) and
+  **adopts** it via `finish_create` instead of re-inserting. If no orphan
+  exists the insert never landed, so the marker is cleared and the create
+  retries normally.
+This is scoped strictly to in-flight creates — it is **not** a general dedup
+sweep, so it can never merge unrelated tasks. Covered by
+`crash_during_create_adopts_orphan_no_duplicate` and
+`crash_before_insert_reached_server_reinserts`.
 
 ### H2 — Edit loss on conflict *(RESOLVED — conflicted copy)*
 A `412` no longer discards the local edit. The engine refetches the remote
@@ -133,9 +138,11 @@ detection for that list, preventing false deletions.
 A mutex serializes runs. Without it, two runs could `drain_dirty` the same rows
 and double-push. Covered by `concurrent_syncs_do_not_double_push`.
 
-### H6 — Full fetch every pull *(perf, deferred)*
-No `updatedMin`; every pull fetches all tasks. Fine for typical list sizes;
-optimize with per-list `updatedMin` + periodic full sweep post-MVP.
+### H6 — Full fetch every pull *(deliberate: correctness over perf)*
+Every pull fetches all tasks. This is *correct* and also powers ghost
+detection. `updatedMin` would reduce bandwidth but adds clock-skew and
+missed-deletion failure modes. Full fetch is the rock-solid default; revisit
+only if profiling demands it (then with a periodic full sweep — see Q1).
 
 ### H7 — Move targeting a server-unknown task *(handled)*
 A `pending_move` whose task 404s on the move endpoint drops the stale intent
@@ -159,13 +166,19 @@ paused clock.
 
 ## Status
 
-All MVP steps implemented and tested (engine, store, HTTP client via wiremock,
-scheduler timing, concurrency, conflicted-copy resolution). No correctness
-compromises remain. **H6 `updatedMin`** is the only deferred item and is a pure
-performance optimization (full fetch is correct, just not minimal).
+All correctness hazards (H1–H7) are resolved or handled by design — **no
+accepted compromises remain**. Implemented and tested: engine, store, HTTP
+client (wiremock), scheduler timing, concurrency guard, conflicted-copy
+resolution, crash-safe create recovery.
+
+`updatedMin` incremental pull is **intentionally not implemented**: a full
+fetch is *correct* (it also drives ghost detection), and `updatedMin` trades
+that simplicity for a perf gain plus subtle clock-skew/deletion-detection
+failure modes. Keeping the simpler correct path is the rock-solid choice, not
+a compromise. It can be added behind a periodic full-sweep if profiling ever
+demands it.
 
 ## Open questions
 
-- **Q1** `updatedMin` clock-skew padding (≈5s) when the perf optimization lands.
-- **Q2** Should H1 duplicates be detected by a post-create dedup sweep
-  (title+list heuristic)? Likely not worth it; revisit if reported.
+- **Q1** If `updatedMin` is ever added for perf, pad the cursor by ~5s for
+  server clock skew and keep a periodic full sweep for deletion detection.

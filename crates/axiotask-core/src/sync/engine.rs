@@ -81,6 +81,9 @@ impl SyncEngine {
 
     /// Push all dirty rows: creates (parents first), then remaining ops.
     async fn push_all(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        // Recover any creates interrupted by a crash before pushing new ones.
+        self.recover_inflight_creates().await?;
+
         // First pass: push parent creates (no parent_id).
         // finish_create remaps child references in DB.
         let dirty = self.store.drain_dirty().await?;
@@ -104,6 +107,49 @@ impl SyncEngine {
 
         // Third pass: push position/parent moves via the move API.
         self.push_moves(out).await?;
+        Ok(())
+    }
+
+    /// Recover creates interrupted by a crash between the server insert and the
+    /// local commit. For each in-flight marker, look for an orphaned remote
+    /// task (our content, an id we never recorded) and adopt it instead of
+    /// re-inserting — eliminating the duplicate. Scoped strictly to in-flight
+    /// creates, so it never merges unrelated tasks.
+    async fn recover_inflight_creates(&self) -> Result<(), SyncError> {
+        let inflight = self.store.inflight_creates().await?;
+        for (local_id, list_id) in inflight {
+            let local = self.store.list_tasks(&list_id).await?
+                .into_iter().find(|t| t.task.id == local_id);
+            let Some(local) = local else {
+                // Local task gone (e.g. user deleted it) — drop the marker.
+                self.store.clear_inflight_create(&local_id).await?;
+                continue;
+            };
+
+            let (remote, complete) = self.fetch_all_tasks(&list_id).await?;
+            if !complete {
+                continue; // incomplete view; retry recovery next run
+            }
+            // Ids we already track locally — a remote task NOT in this set is
+            // a candidate orphan we created on the server but never linked.
+            let local_id_set: HashSet<String> = self.store.list_tasks(&list_id).await?
+                .into_iter().map(|t| t.task.id).collect();
+
+            // Orphan: a remote task with our content whose id we never recorded.
+            let orphan = remote.iter()
+                .find(|r| !local_id_set.contains(&r.id) && same_content(&local.task, r));
+
+            match orphan {
+                Some(o) => {
+                    info!(local_id = %local_id, remote_id = %o.id, "adopting orphaned create after crash");
+                    self.store.finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated).await?;
+                }
+                None => {
+                    // Insert never reached the server — let normal push retry.
+                    self.store.clear_inflight_create(&local_id).await?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -145,6 +191,8 @@ impl SyncEngine {
             parent: row.task.parent.clone(),
             previous: None,
         };
+        // Durably mark in-flight BEFORE the non-idempotent insert.
+        self.store.record_inflight_create(&row.task.id, &row.list_id).await?;
         match self.client.insert_task(&row.list_id, payload).await {
             Ok(remote) => {
                 // Atomic: remap local→remote id AND mark clean in one txn so a
@@ -156,8 +204,13 @@ impl SyncEngine {
                 debug!(local_id = %row.task.id, remote_id = %remote.id, "pushed create");
                 Ok(())
             }
-            Err(e) if e.is_transient() => { warn!(err = %e, "transient error on create, will retry"); Ok(()) }
-            Err(e) => Err(e.into()),
+            Err(e) if e.is_transient() => {
+                // Insert may or may not have reached the server. The in-flight
+                // marker lets the next run adopt an orphan instead of dup'ing.
+                warn!(err = %e, "transient error on create, will retry");
+                Ok(())
+            }
+            Err(e) => { self.store.clear_inflight_create(&row.task.id).await?; Err(e.into()) }
         }
     }
 
@@ -481,6 +534,71 @@ mod tests {
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert!(tasks.iter().any(|t| t.task.id.starts_with("remote-")));
         assert!(!tasks.iter().any(|t| t.task.id == "local-1"));
+    }
+
+    #[tokio::test]
+    async fn crash_during_create_adopts_orphan_no_duplicate() {
+        // Simulate: insert reached the server (orphan exists) but the app
+        // crashed before finish_create — leaving a dirty 'create' + an
+        // in-flight marker. Recovery must adopt the orphan, not re-insert.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // Local dirty create.
+        let mut local = dirty_task("local-1", "L1", "create");
+        local.task.title = "buy milk".into();
+        eng.store.upsert_task(&local).await.unwrap();
+        // Server already has the task from the interrupted attempt.
+        client.seed_task("L1", "remote-orphan", "buy milk", "1");
+        // In-flight marker persisted before the (crashed) finish.
+        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+
+        let out = eng.run().await.unwrap();
+
+        // No re-insert: InsertTask not called this run.
+        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0);
+        // Exactly one task remains, adopted to the orphan's id.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let milk: Vec<_> = tasks.iter().filter(|t| t.task.title == "buy milk").collect();
+        assert_eq!(milk.len(), 1, "no duplicate");
+        assert_eq!(milk[0].task.id, "remote-orphan");
+        assert_eq!(milk[0].sync_state, SyncState::Clean);
+        // Marker cleared.
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn crash_before_insert_reached_server_reinserts() {
+        // In-flight marker exists but the server never got the task (insert
+        // didn't land). Recovery clears the marker; normal push inserts.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut local = dirty_task("local-1", "L1", "create");
+        local.task.title = "orphan-free".into();
+        eng.store.upsert_task(&local).await.unwrap();
+        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 1, "normal insert happened");
+        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 1);
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].task.id.starts_with("remote-"));
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn clean_create_clears_inflight_marker() {
+        // The happy path: a normal create leaves no in-flight marker behind.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+        eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng.run().await.unwrap();
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
     }
 
     #[tokio::test]

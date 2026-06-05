@@ -363,6 +363,9 @@ impl Store {
         sqlx::query("DELETE FROM pending_moves")
             .execute(&self.pool)
             .await?;
+        sqlx::query("DELETE FROM inflight_creates")
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -447,7 +450,48 @@ impl Store {
         .bind(remote_id)
         .execute(&mut *tx)
         .await?;
+        // Clear the in-flight create marker in the same transaction.
+        sqlx::query("DELETE FROM inflight_creates WHERE local_id = ?")
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Durably mark a create as in-flight before calling the (non-idempotent)
+    /// server insert. Cleared by [`finish_create`] on success.
+    pub async fn record_inflight_create(
+        &self,
+        local_id: &str,
+        list_id: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO inflight_creates (local_id, list_id) VALUES (?, ?)",
+        )
+        .bind(local_id)
+        .bind(list_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// All in-flight create markers (non-empty only after a crash mid-create).
+    pub async fn inflight_creates(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT local_id, list_id FROM inflight_creates")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows)
+    }
+
+    /// Clear an in-flight marker without finalizing (e.g. the insert never
+    /// reached the server, so the create will be retried normally).
+    pub async fn clear_inflight_create(&self, local_id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM inflight_creates WHERE local_id = ?")
+            .bind(local_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 }
@@ -753,6 +797,39 @@ mod tests {
         s.record_move("T1", "L1", None, None).await.unwrap();
         s.delete_task_hard("T1").await.unwrap();
         assert!(s.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inflight_create_record_and_list() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        s.record_inflight_create("T1", "L1").await.unwrap();
+        let inflight = s.inflight_creates().await.unwrap();
+        assert_eq!(inflight, vec![("T1".into(), "L1".into())]);
+    }
+
+    #[tokio::test]
+    async fn finish_create_clears_inflight_marker() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("local-1", "L1", None, "1");
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("create".into());
+        s.upsert_task(&t).await.unwrap();
+        s.record_inflight_create("local-1", "L1").await.unwrap();
+        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z").await.unwrap();
+        assert!(s.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_task_cascades_inflight_marker() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        s.record_inflight_create("T1", "L1").await.unwrap();
+        s.delete_task_hard("T1").await.unwrap();
+        assert!(s.inflight_creates().await.unwrap().is_empty());
     }
 
     #[tokio::test]

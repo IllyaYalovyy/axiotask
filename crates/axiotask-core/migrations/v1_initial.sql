@@ -61,3 +61,13 @@ CREATE TABLE sync_log (
   conflicts   INTEGER NOT NULL DEFAULT 0,
   error       TEXT
 );
+
+-- Crash-safety for non-idempotent creates. A row is written here BEFORE
+-- calling Google's insert (which has no idempotency key) and cleared in the
+-- same transaction that finalizes the create. If the app crashes between the
+-- server ack and the local commit, recovery finds the in-flight marker and
+-- adopts the orphaned remote task instead of re-inserting (no duplicate).
+CREATE TABLE inflight_creates (
+  local_id  TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  list_id   TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE
+);
