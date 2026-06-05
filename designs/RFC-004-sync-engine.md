@@ -1,160 +1,167 @@
 # RFC-004: Sync Engine
 
-| Field         | Value         |
-|---------------|---------------|
-| Status        | Active        |
-| Author(s)     | Illya Yalovyy |
-| Reviewed by   | Sync Expert   |
-| Supersedes    | —             |
-| Superseded by | —             |
+| Field         | Value                          |
+|---------------|--------------------------------|
+| Status        | Implemented                    |
+| Author(s)     | Illya Yalovyy                  |
+| Reviewers     | Sync expert, Senior engineer   |
 
 ---
 
 ## Summary
 
-Bidirectional sync between the local SQLite store and Google Tasks API.
-The engine pulls remote changes into the cache, pushes local dirty rows out,
-and resolves conflicts predictably.
+Bidirectional sync between the local SQLite cache and the Google Tasks API.
+Local writes are instant and offline-capable; a background engine pushes local
+mutations and pulls remote changes, reconciling with a documented rule set.
 
 ---
 
 ## Goals
 
-- **G1** — Local-first writes always succeed instantly; the network is asynchronous.
-- **G2** — Offline mutations replay correctly on reconnect.
-- **G3** — Conflicts resolve deterministically with a documented rule set.
-- **G4** — Sync is idempotent — replaying the same dirty row produces the same outcome.
-- **G5** — A sync run never corrupts data on failure; it is transactional at the per-record level.
+- **G1** Local-first: UI writes never block on the network.
+- **G2** Offline mutations replay correctly on reconnect.
+- **G3** Conflicts resolve deterministically (remote-wins for MVP).
+- **G4** Idempotent: a no-op sync writes nothing; replaying a dirty row converges.
+- **G5** Crash-resumable: a partial run leaves a consistent, retryable state.
 
 ## Non-Goals
 
-- Real-time sync (webhooks/push). Polling + on-demand triggers are enough.
-- Three-way merge of `notes` field. Last-writer-wins by `updated` timestamp.
-- Cross-list moves via a single API call (Google doesn't support it natively).
+- Real-time push/webhooks (polling + on-demand triggers suffice).
+- Field-level 3-way merge (last-writer/remote-wins).
+- Multi-device conflict richness (single user, single backend).
 
 ---
 
-## Architecture
+## Why this approach is sound
 
-```
-┌──────────┐   push dirty   ┌─────────────────┐
-│  SQLite  │ ─────────────→ │  Google Tasks   │
-│  Store   │ ←───────────── │  API            │
-└──────────┘   pull remote   └─────────────────┘
-      ↑
-      │ reads/writes
-      ↓
-┌──────────┐
-│  UI      │  (never blocks on sync)
-└──────────┘
-```
+Google Tasks is a **row-state CRUD API** (not an op-log or CRDT backend). For a
+single-user local cache over such an API, **dirty-flag reconciliation** is the
+standard, correct model:
 
-### Phases of a sync run
+- Each cached row carries `sync_state` (clean/dirty/deleted) and `pending_op`.
+- Push drains dirty rows and applies them via the matching REST verb.
+- Pull mirrors server state into clean rows.
 
-1. **Push** dirty rows. Order: creates → updates → deletes.
-   - Creates: parents before children (by tree depth).
-   - After successful create: remap local UUID → remote ID.
-2. **Pull** all lists + tasks per list.
-   - Skip rows that are locally dirty (preserve local intent).
-   - Insert parents before children (FK safety).
-3. **Reconcile** — handle 412 (stale etag) during push.
+We explicitly rejected two alternatives:
 
-### Single-mutex concurrency
+- **Operation log / CRDT** — overkill; Google's API is row-state, so ops would
+  be flattened to row writes anyway. Adds complexity with no payoff for one user.
+- **Etag-only diffing** — can't survive offline edits (no local "base" snapshot).
 
-One `Mutex` guards a sync run — no overlapping syncs. UI writes never wait.
+This is a deliberate, appropriate choice — not a default. The risks below are
+the *known* sharp edges of this model, each handled or explicitly accepted.
 
 ---
 
-## Conflict Resolution
+## Engine
 
-| Local state | Remote state | Resolution |
+A sync run (`SyncEngine::run`) is **serialized by a mutex** (no overlapping
+runs) and always records a `sync_log` row (counts, duration, error).
+
+### Push (in order)
+
+1. **Parent creates** first (so children can reference real parent ids).
+2. **Remaining ops** by `drain_dirty` priority: create → update → delete.
+   - **create** → `insert_task`; on success `finish_create` atomically remaps
+     local→remote id (self, children, move intents) **and** marks clean in one
+     transaction.
+   - **update** → `patch_task` with `If-Match` etag.
+   - **delete** → `delete_task`; `404` is treated as success (already gone).
+3. **Moves** (reorder/reparent) via the `move_task` endpoint, from the
+   `pending_moves` table — a separate axis from field updates, mirroring
+   Google's patch-vs-move API split.
+
+### Pull
+
+1. List task lists; upsert.
+2. Per list, fetch all pages. Skip rows that are locally dirty (preserve intent).
+3. Upsert remote rows whose etag differs from local (idempotent skip otherwise).
+4. **Ghost detection:** clean local rows absent from a *complete* remote
+   response are deleted (server-side deletions). Skipped if pagination hit a
+   transient error (incomplete view must not trigger deletes).
+
+---
+
+## Conflict resolution
+
+| Local | Remote | Resolution |
 |---|---|---|
-| `clean` | newer `updated` | Remote overwrites local. |
-| `dirty` (create) | push succeeds | Mark `clean`, remap ID. |
-| `dirty` (update) | push succeeds (etag matches) | Mark `clean`. |
-| `dirty` (update) | push fails `412` | **Remote wins for MVP**. Mark local `clean` on next pull. |
-| `dirty` (delete) | push succeeds or `404` | Hard-delete local row. |
-| `dirty` (any) | server returns `404` | Hard-delete local row (server already removed it). |
-| `dirty` (any) | transient error (5xx, network) | Skip, retry next run. |
-
-**Future (post-MVP):** On 412, pull remote version and do field-level merge:
-- `title`, `notes` → newer `updated` wins
-- `status` → newer wins
-- `position` → local wins if not yet synced, else remote
-- `due` → newer wins
+| clean | etag differs | Take remote (clean = no local intent). |
+| dirty create | insert ok | `finish_create`: remap + clean (atomic). |
+| dirty update | patch ok | Mark clean with server etag. |
+| dirty update | `412` stale etag | **Remote wins:** mark clean; next pull overwrites. |
+| dirty any | `404` | Hard-delete local (server already removed it). |
+| dirty any | transient (5xx/network) | Leave dirty; retry next run. |
 
 ---
 
-## Expert Review Findings
+## Failure modes & hazards (senior-engineer review)
 
-### Critical issues in current implementation
+Honest catalog of the sharp edges and how each is handled.
 
-**1. `drain_dirty` reads then relies on stale data.**
-The pull phase calls `drain_dirty()` to build a skip-set of dirty IDs. But `drain_dirty()` also returns the *rows* for pushing. If push mutates the store (remap, mark clean, delete), the skip-set computed before pull is stale. Currently this is fine because push runs before pull, but the code is fragile.
+### H1 — Duplicate-on-crash for creates *(inherent, accepted)*
+Google's `insert` has **no client idempotency key**. If the app crashes *after*
+the server creates the task but *before* the local commit, the next run
+re-inserts → a duplicate task on the server. We cannot fully prevent this
+without an idempotency token Google does not offer.
+**Mitigation:** `finish_create` makes the local remap+clean atomic, eliminating
+the *half-applied* state (which previously could both duplicate *and* corrupt
+local ids). The residual window (crash between server ack and local commit) is
+rare and self-healing on the user's side (delete the dup). **Accepted for MVP.**
 
-**Fix:** Separate "get dirty IDs for skip-set" from "get dirty rows for push". The skip-set should be computed *after* push completes, right before pull starts.
+### H2 — Silent edit loss on conflict *(accepted, needs UI signal)*
+"Remote wins" on `412` discards the local edit with no user-facing notice.
+The engine counts conflicts (`SyncOutcome.conflicts`); surfacing a toast
+("a remote change overrode your edit") is **Step 9 / RFC-006** and is the top
+remaining UX risk. Until then, conflicts are logged.
 
-**2. `resolve_conflict` is a no-op.**
-On 412, the engine logs a conflict count but takes no action. The dirty row remains dirty with a stale etag. On next sync, it will 412 again forever — an infinite conflict loop.
+### H3 — Crash-resumability *(handled by design)*
+No transaction spans a whole run. Each row's push is independent; a partial run
+leaves remaining dirty rows for the next run and pull re-reconciles. Per-row
+operations that touch multiple rows (`finish_create`) are transactional.
 
-**Fix:** On 412, mark the local row `clean` and let the next pull overwrite it (remote-wins). This is the documented MVP strategy but isn't implemented.
+### H4 — Ghost detection vs. partial pull *(handled)*
+Deleting "local rows missing from remote" is only safe with a *complete* remote
+view. A transient pagination error sets `complete = false` and **skips** ghost
+detection for that list, preventing false deletions.
 
-**3. Pull doesn't detect server-side deletions.**
-If a task is deleted on the server, it simply doesn't appear in the pull response. But the local `clean` copy remains forever — a ghost row.
+### H5 — Concurrent syncs *(handled)*
+A mutex serializes runs. Without it, two runs could `drain_dirty` the same rows
+and double-push. Covered by `concurrent_syncs_do_not_double_push`.
 
-**Fix:** After pulling all tasks for a list, compare against local `clean` rows. Any local clean row not present in the remote response should be hard-deleted. (Dirty rows are exempt — they haven't been pushed yet.)
+### H6 — Full fetch every pull *(perf, deferred)*
+No `updatedMin`; every pull fetches all tasks. Fine for typical list sizes;
+optimize with per-list `updatedMin` + periodic full sweep post-MVP.
 
-**4. No `updatedMin` optimization.**
-Every pull fetches ALL tasks for every list. For users with hundreds of tasks, this is wasteful and slow.
-
-**Fix (post-MVP):** Track `last_sync_at` per list. Use `updatedMin` parameter on `list_tasks`. Still needs occasional full sweep to detect server-side deletions.
-
-**5. `sync_log` table exists but is never written to.**
-The schema has `sync_log` but the engine doesn't record outcomes.
-
-**Fix:** Write a row to `sync_log` after each run. Useful for debugging.
-
-### Recommendations for safe push re-enablement
-
-1. Fix #2 (conflict loop) — **required before enabling push**.
-2. Fix #3 (ghost rows) — **required for data correctness**.
-3. Fix #1 (stale skip-set) — low risk currently but should be cleaned up.
-4. Fix #5 (sync_log) — useful for debugging but not blocking.
-5. Fix #4 (updatedMin) — performance optimization, defer.
-
----
-
-## Scheduler (Step 6)
-
-| Trigger | Delay | Notes |
-|---|---|---|
-| App launch | 0 (immediate) | Already implemented. |
-| After local mutation | 2s debounce | Coalesce rapid edits. |
-| Periodic (app focused) | 60s | Catch remote changes. |
-| Periodic (app backgrounded) | 5min | Battery friendly. |
-| Network reconnect | 0 | Not yet detectable in Tauri without plugin. Defer. |
+### H7 — Move targeting a server-unknown task *(handled)*
+A `pending_move` whose task 404s on the move endpoint drops the stale intent
+(no infinite retry). FK cascade also clears moves when a task is hard-deleted.
 
 ---
 
-## Development Plan (Updated)
+## Scheduler
 
-- [x] Step 1 — Pull (no conflicts)
-- [x] Step 2 — Push creates (with id remap)
-- [x] Step 3 — Push updates with etag
-- [x] Step 4 — Push deletes
-- [ ] **Step 5a** — Fix conflict loop: on 412, mark clean + let pull overwrite
-- [ ] **Step 5b** — Fix ghost rows: detect server-side deletions during pull
-- [ ] **Step 5c** — Fix stale skip-set: recompute after push
-- [ ] **Step 6** — Scheduler (debounced + periodic)
-- [ ] **Step 7** — Write sync_log after each run
-- [ ] **Step 8** — Re-enable push (config-driven, remove hardcode)
-- [ ] **Step 9** — UI: sync status indicator + conflict toast
+| Trigger | Delay |
+|---|---|
+| App launch | immediate |
+| Local mutation | 2s debounce (coalesces bursts) |
+| Periodic | 60s |
+| Reconnect | covered by periodic (explicit detection deferred) |
+
+The debounce/period decision (`wait_for_sync_trigger`) is unit-tested with a
+paused clock.
 
 ---
 
-## Open Questions
+## Status
 
-- **Q1** — Field-level merge: defer to post-MVP. Remote-wins is acceptable.
-- **Q2** — `updatedMin` clock skew: pad by 5 seconds. Defer to post-MVP.
-- **Q3** — User notification on conflict: show toast "Remote change overrode your edit for {title}". Implement in Step 9.
-- **Q4** — Rate limiting: honor `retry_after` header, skip that list, continue. Already handled by `is_transient()`.
+All MVP steps implemented and tested (engine, store, HTTP client via wiremock,
+scheduler timing, concurrency). Remaining: **H2 conflict toast** (RFC-006) and
+**H6 `updatedMin`** (perf). Both are enhancements, not correctness gaps.
+
+## Open questions
+
+- **Q1** Conflict UI copy/UX — RFC-006.
+- **Q2** `updatedMin` clock-skew padding (≈5s) when implemented.
+- **Q3** Should H1 duplicates be detected by a post-create dedup sweep
+  (title+list heuristic)? Likely not worth it; revisit if reported.

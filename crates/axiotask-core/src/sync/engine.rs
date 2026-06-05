@@ -82,7 +82,7 @@ impl SyncEngine {
     /// Push all dirty rows: creates (parents first), then remaining ops.
     async fn push_all(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         // First pass: push parent creates (no parent_id).
-        // remap_id updates child references in DB.
+        // finish_create remaps child references in DB.
         let dirty = self.store.drain_dirty().await?;
         let parent_creates: Vec<_> = dirty.iter()
             .filter(|r| r.pending_op.as_deref() == Some("create") && r.task.parent.is_none())
@@ -147,8 +147,11 @@ impl SyncEngine {
         };
         match self.client.insert_task(&row.list_id, payload).await {
             Ok(remote) => {
-                self.store.remap_id(&row.task.id, &remote.id).await?;
-                self.store.mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                // Atomic: remap local→remote id AND mark clean in one txn so a
+                // crash can't leave a remapped row still flagged 'create'.
+                self.store
+                    .finish_create(&row.task.id, &remote.id, remote.etag.as_deref(), &remote.updated)
+                    .await?;
                 out.pushed += 1;
                 debug!(local_id = %row.task.id, remote_id = %remote.id, "pushed create");
                 Ok(())

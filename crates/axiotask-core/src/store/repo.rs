@@ -387,12 +387,28 @@ impl Store {
         .bind(&error)
         .execute(&self.pool)
         .await;
+
+        // Bound growth: keep only the most recent 500 entries.
+        let _ = sqlx::query(
+            "DELETE FROM sync_log WHERE id NOT IN
+                 (SELECT id FROM sync_log ORDER BY id DESC LIMIT 500)",
+        )
+        .execute(&self.pool)
+        .await;
     }
 
-    /// Rewrite a local UUID to its server-assigned id across the task row,
-    /// its children's `parent_id`, and any pending move intents.
-    /// Uses `PRAGMA defer_foreign_keys` so FK checks are evaluated only at commit.
-    pub async fn remap_id(&self, local_id: &str, remote_id: &str) -> Result<(), StoreError> {
+    /// Atomically finalize a pushed create: rewrite the local id to the
+    /// server id (incl. children + move intents) AND mark the row clean,
+    /// in a single transaction. This removes the half-applied window where
+    /// a crash between remap and mark-clean would leave a remapped row still
+    /// flagged `pending_op='create'` (which would re-insert → duplicate).
+    pub async fn finish_create(
+        &self,
+        local_id: &str,
+        remote_id: &str,
+        etag: Option<&str>,
+        server_updated: &str,
+    ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("PRAGMA defer_foreign_keys = ON")
             .execute(&mut *tx)
@@ -407,7 +423,6 @@ impl Store {
             .bind(local_id)
             .execute(&mut *tx)
             .await?;
-        // Rewrite any pending move intents referencing the local id.
         sqlx::query("UPDATE pending_moves SET task_id = ? WHERE task_id = ?")
             .bind(remote_id)
             .bind(local_id)
@@ -423,6 +438,15 @@ impl Store {
             .bind(local_id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "UPDATE tasks SET sync_state = 'clean', pending_op = NULL,
+                 etag = COALESCE(?, etag), updated = ? WHERE id = ?",
+        )
+        .bind(etag)
+        .bind(server_updated)
+        .bind(remote_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -575,21 +599,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remap_id_rewrites_self_and_children() {
+    async fn finish_create_rewrites_self_and_children_and_marks_clean() {
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
-        s.upsert_task(&task("local-1", "L1", None, "1"))
-            .await
-            .unwrap();
+        let mut p = task("local-1", "L1", None, "1");
+        p.sync_state = SyncState::Dirty;
+        p.pending_op = Some("create".into());
+        s.upsert_task(&p).await.unwrap();
         s.upsert_task(&task("local-2", "L1", Some("local-1"), "1"))
             .await
             .unwrap();
-        s.remap_id("local-1", "remote-1").await.unwrap();
+        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z")
+            .await
+            .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
         let parent = rows.iter().find(|r| r.task.id == "remote-1").unwrap();
         let child = rows.iter().find(|r| r.task.id == "local-2").unwrap();
         assert_eq!(child.task.parent.as_deref(), Some("remote-1"));
         assert!(parent.task.parent.is_none());
+        // Marked clean atomically.
+        assert_eq!(parent.sync_state, SyncState::Clean);
+        assert!(parent.pending_op.is_none());
+        assert_eq!(parent.task.etag.as_deref(), Some("e9"));
     }
 
     #[tokio::test]
@@ -725,12 +756,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remap_id_rewrites_pending_move_task_id() {
+    async fn finish_create_rewrites_pending_move_task_id() {
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_task(&task("local-1", "L1", None, "1")).await.unwrap();
         s.record_move("local-1", "L1", None, Some("other")).await.unwrap();
-        s.remap_id("local-1", "remote-1").await.unwrap();
+        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z").await.unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].task_id, "remote-1");
