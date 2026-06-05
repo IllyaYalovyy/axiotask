@@ -305,8 +305,8 @@
     const task = allTasks.find(t => t.id === id);
     const wasOpen = task?.status === "needsAction";
     await cmd("toggle_complete", { id });
-    if (wasOpen) {
-      // Animate: add completing class, wait 300ms, then reload
+    if (wasOpen && !task?.parent_id) {
+      // Animate only top-level tasks in the list
       completingIds = new Set([...completingIds, id]);
       setTimeout(async () => {
         completingIds = new Set([...completingIds].filter(x => x !== id));

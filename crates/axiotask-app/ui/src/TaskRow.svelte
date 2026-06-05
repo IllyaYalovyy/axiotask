@@ -276,9 +276,9 @@
   }
 
   .progress { display: flex; align-items: center; gap: 0.3rem; }
-  .progress-bar { width: 50px; height: 4px; background: #2a2a4a; border-radius: 2px; overflow: hidden; }
-  .progress-fill { height: 100%; background: #4caf50; border-radius: 2px; transition: width 0.2s; }
-  .progress-text { color: #888; }
+  .progress-bar { display: inline-block; width: 60px; height: 6px; background: #2a3a5a; border-radius: 3px; overflow: hidden; }
+  .progress-fill { display: block; height: 100%; background: #7ec8e3; border-radius: 3px; transition: width 0.2s; }
+  .progress-text { color: #aaa; }
 
   .badge { font-size: 0.7rem; cursor: default; }
   .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }

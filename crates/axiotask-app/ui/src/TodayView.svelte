@@ -68,7 +68,7 @@
 </div>
 
 <style>
-  .smart-view { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; }
+  .smart-view { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; min-height: 0; }
   .empty { text-align: center; margin-top: 4rem; }
   .empty .icon { font-size: 2rem; margin-bottom: 0.5rem; }
   .empty p { color: #888; font-size: 1.1rem; margin: 0.3rem; }

@@ -234,6 +234,7 @@ impl Store {
                 WHEN 'update' THEN 1
                 WHEN 'delete' THEN 2
                 ELSE 3 END,
+                (parent_id IS NOT NULL),
                 local_updated ASC",
         )
         .fetch_all(&self.pool)
@@ -294,6 +295,27 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Record a sync run outcome.
+    pub async fn write_sync_log(
+        &self,
+        pulled: u32,
+        pushed: u32,
+        conflicts: u32,
+        error: Option<String>,
+    ) {
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let _ = sqlx::query(
+            "INSERT INTO sync_log (ran_at, pulled, pushed, conflicts, error) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&now)
+        .bind(i64::from(pulled))
+        .bind(i64::from(pushed))
+        .bind(i64::from(conflicts))
+        .bind(&error)
+        .execute(&self.pool)
+        .await;
     }
 
     /// Record a local UUID → remote id remap and rewrite child references.

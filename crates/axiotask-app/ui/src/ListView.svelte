@@ -60,7 +60,7 @@
 </div>
 
 <style>
-  .list-view { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; }
+  .list-view { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; min-height: 0; }
   .empty { text-align: center; margin-top: 4rem; }
   .empty p { color: #888; margin: 0.5rem; }
   .empty .sub { font-size: 0.85rem; color: #555; }
