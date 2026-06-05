@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify};
 
@@ -12,6 +13,11 @@ use axiotask_core::auth::{
 };
 use axiotask_core::store::Store;
 use axiotask_core::sync::{SyncEngine, SyncOutcome};
+
+/// Debounce window: coalesce rapid mutations into a single sync.
+const SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
+/// Periodic sync interval to catch remote changes.
+const SYNC_PERIOD: Duration = Duration::from_secs(60);
 
 /// File-based token store. Persists tokens as JSON to a file.
 struct FileTokenStore {
@@ -198,6 +204,24 @@ impl AppState {
         self.sync_notify.notify_one();
     }
 
+    /// Run the background sync loop forever. Spawn this once at startup.
+    ///
+    /// Triggers a sync when either:
+    /// - a mutation signals `sync_notify` (debounced by [`SYNC_DEBOUNCE`]), or
+    /// - the periodic [`SYNC_PERIOD`] timer elapses.
+    ///
+    /// Only runs sync when authenticated; otherwise the trigger is a no-op.
+    pub async fn run_sync_loop(self: Arc<Self>) {
+        loop {
+            wait_for_sync_trigger(&self.sync_notify, SYNC_DEBOUNCE, SYNC_PERIOD).await;
+            if self.is_authenticated() {
+                if let Err(e) = self.run_sync_if_authed().await {
+                    tracing::warn!("background sync failed: {e}");
+                }
+            }
+        }
+    }
+
     /// Run sync immediately. Does not check authentication — use `run_sync_if_authed` for guarded access.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         tracing::info!("running sync (push_enabled={})...", self.push_enabled);
@@ -219,9 +243,24 @@ impl AppState {
         self.run_sync().await.map_err(|e| e.to_string())
     }
 
-    /// Get a handle to the notify for the background loop.
-    pub fn sync_notify(&self) -> Arc<Notify> {
-        self.sync_notify.clone()
+    /// Whether push is enabled (read-only mode if false).
+    #[cfg(test)]
+    pub fn push_enabled(&self) -> bool {
+        self.push_enabled
+    }
+}
+
+/// Block until it's time to run a sync: either a debounced mutation trigger
+/// or the periodic timer, whichever comes first.
+///
+/// On a mutation trigger, waits `debounce` to let a burst settle (coalescing
+/// rapid mutations into one sync). Otherwise fires after `period`.
+async fn wait_for_sync_trigger(notify: &Notify, debounce: Duration, period: Duration) {
+    tokio::select! {
+        () = notify.notified() => {
+            tokio::time::sleep(debounce).await;
+        }
+        () = tokio::time::sleep(period) => {}
     }
 }
 
@@ -326,5 +365,57 @@ mod tests {
 
         store.save(&sample_tokens()).unwrap();
         assert_eq!(store.load().unwrap().unwrap(), sample_tokens());
+    }
+
+    // ─── Background sync trigger timing ──────────────────────────────────────
+
+    #[tokio::test(start_paused = true)]
+    async fn trigger_fires_after_debounce_on_mutation() {
+        let notify = Notify::new();
+        let debounce = Duration::from_secs(2);
+        let period = Duration::from_secs(60);
+
+        notify.notify_one(); // simulate a mutation
+        let start = tokio::time::Instant::now();
+        wait_for_sync_trigger(&notify, debounce, period).await;
+
+        // Should fire after the debounce window, not the full period.
+        assert_eq!(start.elapsed(), debounce);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn trigger_fires_after_period_when_idle() {
+        let notify = Notify::new();
+        let debounce = Duration::from_secs(2);
+        let period = Duration::from_secs(60);
+
+        let start = tokio::time::Instant::now();
+        wait_for_sync_trigger(&notify, debounce, period).await;
+
+        // No mutation → periodic timer fires.
+        assert_eq!(start.elapsed(), period);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rapid_mutations_coalesce_into_one_trigger() {
+        let notify = Notify::new();
+        let debounce = Duration::from_secs(2);
+        let period = Duration::from_secs(60);
+
+        // Burst of mutations before the trigger is awaited.
+        notify.notify_one();
+        notify.notify_one();
+        notify.notify_one();
+
+        let start = tokio::time::Instant::now();
+        wait_for_sync_trigger(&notify, debounce, period).await;
+        // First trigger fires after debounce.
+        assert_eq!(start.elapsed(), debounce);
+
+        // Notify permits coalesce: at most one is pending. The next wait
+        // (no new mutations) falls through to the periodic timer.
+        let start2 = tokio::time::Instant::now();
+        wait_for_sync_trigger(&notify, debounce, period).await;
+        assert_eq!(start2.elapsed(), period);
     }
 }

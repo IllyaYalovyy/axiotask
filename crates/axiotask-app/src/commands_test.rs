@@ -638,4 +638,12 @@ mod tests {
         let lists = state.store.all_lists().await.unwrap();
         assert!(lists.iter().any(|l| l.list.title == "Remote list"));
     }
+
+    #[tokio::test]
+    async fn test_state_defaults_to_read_only() {
+        // In-memory test state must default to push-disabled (read-only)
+        // so tests never accidentally push to a real backend.
+        let (_client, state) = setup().await;
+        assert!(!state.push_enabled());
+    }
 }

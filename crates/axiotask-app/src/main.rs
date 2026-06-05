@@ -51,6 +51,12 @@ fn main() {
                 }
             });
 
+            // Background sync loop: debounced on mutation + periodic.
+            let loop_state = state.clone();
+            tauri::async_runtime::spawn(async move {
+                loop_state.run_sync_loop().await;
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
