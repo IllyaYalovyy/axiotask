@@ -678,6 +678,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rename_list_marks_update_for_synced_and_keeps_create_for_new() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Old").await;
+        state.rename_list("L1", "New").await.unwrap();
+        let l = state.store.drain_dirty_lists().await.unwrap()
+            .into_iter().find(|l| l.list.id == "L1").unwrap();
+        assert_eq!(l.list.title, "New");
+        assert_eq!(l.pending_op.as_deref(), Some("update"));
+
+        let create = StoredTaskList {
+            list: axiotask_core::model::TaskList {
+                id: "local".into(), title: "Draft".into(), etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_list(&create).await.unwrap();
+        state.rename_list("local", "Renamed Draft").await.unwrap();
+        let l = state.store.drain_dirty_lists().await.unwrap()
+            .into_iter().find(|l| l.list.id == "local").unwrap();
+        assert_eq!(l.pending_op.as_deref(), Some("create"), "rename folds into create");
+    }
+
+    #[tokio::test]
+    async fn rename_list_syncs_to_remote() {
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Before");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+        state.rename_list("L1", "After").await.unwrap();
+        state.run_sync().await.unwrap();
+        let remote = client.list_tasklists().await.unwrap();
+        assert!(remote.iter().any(|l| l.id == "L1" && l.title == "After"));
+    }
+
+    #[tokio::test]
     async fn delete_list_tombstones_synced_list() {
         // A synced list (has etag) must tombstone so the delete reaches Google.
         let (_client, state) = setup().await;

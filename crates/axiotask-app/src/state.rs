@@ -268,6 +268,22 @@ impl AppState {
         self.run_sync().await.map_err(|e| e.to_string())
     }
 
+    /// Rename a list. Preserves a pending `create` (rename folds in); otherwise
+    /// marks `update` to push via `patch_tasklist`.
+    pub async fn rename_list(&self, id: &str, title: &str) -> Result<(), String> {
+        let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
+        let mut list = lists.into_iter().find(|l| l.list.id == id).ok_or("list not found")?;
+        list.list.title = title.to_string();
+        list.sync_state = axiotask_core::store::SyncState::Dirty;
+        if list.pending_op.as_deref() != Some("create") {
+            list.pending_op = Some("update".into());
+        }
+        list.local_updated = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+        self.schedule_sync();
+        Ok(())
+    }
+
     /// Delete a list. If it was ever synced (has an etag) it is tombstoned so
     /// the deletion reaches Google (which cascades to its tasks); otherwise it
     /// is hard-deleted locally. Local task rows are removed either way.

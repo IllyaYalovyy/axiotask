@@ -88,14 +88,7 @@ pub async fn rename_list(
     id: String,
     title: String,
 ) -> Result<(), String> {
-    let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
-    let mut list = lists.into_iter().find(|l| l.list.id == id).ok_or("list not found")?;
-    list.list.title = title;
-    list.sync_state = axiotask_core::store::SyncState::Dirty;
-    list.local_updated = now_str();
-    state.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
-    state.schedule_sync();
-    Ok(())
+    state.rename_list(&id, &title).await
 }
 
 #[tauri::command]
