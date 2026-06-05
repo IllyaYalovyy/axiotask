@@ -1,5 +1,23 @@
 <script>
-  let { lists, selectedView, onselect, onlogin, onsync, onfreshsync, oncreateList, onlistaction, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {} } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+
+  let newListMode = $state(false);
+  let newListValue = $state("");
+  let editingListId = $state(null);
+  let editingListValue = $state("");
+  let newListInput = $state(null);
+  let editListInput = $state(null);
+
+  $effect(() => {
+    if (renamingListId) {
+      const list = lists.find(l => l.id === renamingListId);
+      if (list) {
+        editingListId = renamingListId;
+        editingListValue = list.title;
+        setTimeout(() => editListInput?.focus(), 0);
+      }
+    }
+  });
 
   function formatSynced(date) {
     if (!date) return "";
@@ -10,8 +28,33 @@
   }
 
   function handleNewList() {
-    const title = prompt("New list name:");
-    if (title?.trim()) oncreateList(title.trim());
+    newListMode = true;
+    newListValue = "";
+    setTimeout(() => newListInput?.focus(), 0);
+  }
+
+  function submitNewList() {
+    if (newListValue.trim()) oncreateList(newListValue.trim());
+    newListMode = false;
+    newListValue = "";
+  }
+
+  function cancelNewList() {
+    newListMode = false;
+    newListValue = "";
+  }
+
+  function submitRename() {
+    if (editingListValue.trim() && editingListId) {
+      onrenameList(editingListId, editingListValue.trim());
+    }
+    editingListId = null;
+    editingListValue = "";
+  }
+
+  function cancelRename() {
+    editingListId = null;
+    editingListValue = "";
   }
 </script>
 
@@ -32,24 +75,46 @@
   </div>
   <nav class="lists">
     {#each lists as list}
-      <button
-        class:active={selectedView === list.id}
-        class:excluded={excludedLists.includes(list.id)}
-        onclick={() => onselect(list.id)}
-        oncontextmenu={(e) => { e.preventDefault(); onlistaction?.(list, e.clientX, e.clientY); }}
-      >
-        {list.title}
-        {#if counts[list.id]}<span class="count">{counts[list.id]}</span>{/if}
-      </button>
+      {#if editingListId === list.id}
+        <input
+          bind:this={editListInput}
+          bind:value={editingListValue}
+          class="inline-input"
+          onkeydown={(e) => { if (e.key === "Enter") submitRename(); else if (e.key === "Escape") cancelRename(); }}
+          onblur={submitRename}
+        />
+      {:else}
+        <button
+          class:active={selectedView === list.id}
+          class:excluded={excludedLists.includes(list.id)}
+          onclick={() => onselect(list.id)}
+          oncontextmenu={(e) => { e.preventDefault(); onlistaction?.(list, e.clientX, e.clientY); }}
+        >
+          {list.title}
+          {#if counts[list.id]}<span class="count">{counts[list.id]}</span>{/if}
+        </button>
+      {/if}
     {/each}
-    {#if lists.length === 0}
+    {#if newListMode}
+      <input
+        bind:this={newListInput}
+        bind:value={newListValue}
+        class="inline-input"
+        placeholder="List name..."
+        onkeydown={(e) => { if (e.key === "Enter") submitNewList(); else if (e.key === "Escape") cancelNewList(); }}
+        onblur={submitNewList}
+      />
+    {/if}
+    {#if lists.length === 0 && !newListMode}
       <p class="no-lists">No lists yet</p>
     {/if}
   </nav>
 
   <div class="footer">
     {#if !authenticated}
-      <button class="action-btn" onclick={onlogin}>Sign in with Google</button>
+      <button class="action-btn" onclick={onlogin} disabled={syncStatus === "syncing"}>
+        {syncStatus === "syncing" ? "Signing in..." : "Sign in with Google"}
+      </button>
     {:else}
       <button class="action-btn sync-btn" onclick={onsync} disabled={syncStatus === "syncing"}>
         {syncStatus === "syncing" ? "Syncing..." : "↻ Sync now"}
@@ -67,6 +132,11 @@
         {:else}Offline
         {/if}
       </span>
+      {#if authenticated}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="sign-out" onclick={onlogout}>Sign out</span>
+      {/if}
     </div>
   </div>
 </aside>
@@ -90,6 +160,8 @@
   .icon-btn:hover { background: #0f3460; color: #fff; border-color: #0f3460; }
   .lists { padding: 0 0.5rem; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .no-lists { color: #444; font-size: 0.8rem; padding: 0.4rem 0.6rem; }
+  .inline-input { width: 100%; padding: 0.35rem 0.6rem; background: #1a2a4a; border: 1px solid #3a4a6a; border-radius: 4px; color: #e0e0e0; font-size: 0.85rem; outline: none; box-sizing: border-box; }
+  .inline-input:focus { border-color: #7ec8e3; }
   .footer { padding: 0.75rem; border-top: 1px solid #2a2a4a; display: flex; flex-direction: column; gap: 0.4rem; }
   .action-btn { width: 100%; background: #2a2a4a; color: #ccc; border: none; padding: 0.45rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-family: inherit; }
   .action-btn:hover { background: #3a3a5a; }
@@ -100,6 +172,8 @@
   .sync-dot.syncing { background: #ff9800; animation: pulse 1s infinite; }
   .sync-dot.error { background: #e74c3c; }
   .sync-text { font-size: 0.7rem; color: #666; }
+  .sign-out { font-size: 0.7rem; color: #666; cursor: pointer; margin-left: auto; }
+  .sign-out:hover { color: #e74c3c; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
   /* Mobile: horizontal compact nav */

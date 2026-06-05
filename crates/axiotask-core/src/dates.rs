@@ -59,6 +59,14 @@ mod tests {
     use jiff::civil::date;
 
     #[test]
+    fn today_returns_same_date() {
+        assert_eq!(
+            apply_date_move(date(2026, 5, 23), DateMove::Today),
+            Some(date(2026, 5, 23))
+        );
+    }
+
+    #[test]
     fn tomorrow_advances_one_day() {
         assert_eq!(
             apply_date_move(date(2026, 5, 23), DateMove::Tomorrow),

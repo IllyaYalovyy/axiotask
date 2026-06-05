@@ -92,6 +92,15 @@ describe("GH#10: One-click reschedule buttons", () => {
       expect(onsetdue).toHaveBeenCalledWith("t1", "Tomorrow");
     });
 
+    it("clicking →o calls onsetdue with Today", async () => {
+      const { container, onsetdue } = renderRow();
+      const btn = [...container.querySelectorAll(".actions button")].find(
+        (b) => b.textContent === "→o"
+      );
+      await fireEvent.click(btn);
+      expect(onsetdue).toHaveBeenCalledWith("t1", "Today");
+    });
+
     it("clicking →w calls onsetdue with NextWeek", async () => {
       const { container, onsetdue } = renderRow();
       const btn = [...container.querySelectorAll(".actions button")].find(

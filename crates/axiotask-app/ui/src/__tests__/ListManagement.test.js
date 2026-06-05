@@ -69,17 +69,21 @@ describe("GH#14: List Management", () => {
 
     it("calls oncreateList with trimmed title from prompt", async () => {
       const oncreateList = vi.fn();
-      vi.spyOn(window, "prompt").mockReturnValue("  Shopping  ");
       renderSidebar({ oncreateList });
       await fireEvent.click(screen.getByTitle("New list"));
+      const input = screen.getByPlaceholderText("List name...");
+      await fireEvent.input(input, { target: { value: "  Shopping  " } });
+      await fireEvent.keyDown(input, { key: "Enter" });
       expect(oncreateList).toHaveBeenCalledWith("Shopping");
     });
 
-    it("does not call oncreateList when prompt returns empty string", async () => {
+    it("does not call oncreateList when input is empty", async () => {
       const oncreateList = vi.fn();
-      vi.spyOn(window, "prompt").mockReturnValue("   ");
       renderSidebar({ oncreateList });
       await fireEvent.click(screen.getByTitle("New list"));
+      const input = screen.getByPlaceholderText("List name...");
+      await fireEvent.input(input, { target: { value: "   " } });
+      await fireEvent.keyDown(input, { key: "Enter" });
       expect(oncreateList).not.toHaveBeenCalled();
     });
 
@@ -147,13 +151,13 @@ describe("GH#14: List Management", () => {
   describe("App integration: create list", () => {
     it("creates a new list via + button and shows it in sidebar", async () => {
       mockBackend();
-      const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Shopping");
       render(App);
       await waitFor(() => expect(screen.getByRole("button", { name: /Work/i })).toBeInTheDocument());
       await fireEvent.click(screen.getByTitle("New list"));
-      await waitFor(() => expect(screen.getByRole("button", { name: /Shopping/i })).toBeInTheDocument());
-      expect(invoke).toHaveBeenCalledWith("create_list", { title: "Shopping" });
-      promptSpy.mockRestore();
+      const input = screen.getByPlaceholderText("List name...");
+      await fireEvent.input(input, { target: { value: "Shopping" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_list", { title: "Shopping" }));
     });
   });
 
@@ -169,15 +173,18 @@ describe("GH#14: List Management", () => {
       // Context menu should appear with Rename option
       await waitFor(() => expect(screen.getByText("Rename")).toBeInTheDocument());
 
-      // Click Rename — it will prompt for new name
-      const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Projects");
+      // Click Rename — triggers inline edit in sidebar
       await fireEvent.click(screen.getByText("Rename"));
+
+      // Inline input should appear with current title
+      await waitFor(() => expect(screen.getByDisplayValue("Work")).toBeInTheDocument());
+      const input = screen.getByDisplayValue("Work");
+      await fireEvent.input(input, { target: { value: "Projects" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
 
       await waitFor(() => {
         expect(invoke).toHaveBeenCalledWith("rename_list", { id: "L1", title: "Projects" });
       });
-      await waitFor(() => expect(screen.getByRole("button", { name: /Projects/i })).toBeInTheDocument());
-      promptSpy.mockRestore();
     });
   });
 

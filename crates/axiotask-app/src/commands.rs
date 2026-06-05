@@ -463,6 +463,11 @@ pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn auth_logout(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.logout()
+}
+
+#[tauri::command]
 pub async fn open_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }

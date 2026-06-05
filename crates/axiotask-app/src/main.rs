@@ -74,6 +74,7 @@ fn main() {
             commands::fresh_sync,
             commands::auth_status,
             commands::auth_login,
+            commands::auth_logout,
             commands::open_url,
         ])
         .run(tauri::generate_context!())

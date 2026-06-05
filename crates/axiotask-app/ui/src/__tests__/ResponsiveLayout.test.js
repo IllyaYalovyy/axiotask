@@ -189,7 +189,7 @@ describe("Responsive Layout", () => {
         },
       });
       const quickBtns = container.querySelectorAll(".quick-dates button");
-      expect(quickBtns.length).toBe(4);
+      expect(quickBtns.length).toBe(5);
       quickBtns.forEach(btn => {
         expect(btn.tagName).toBe("BUTTON");
       });

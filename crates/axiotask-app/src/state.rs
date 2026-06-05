@@ -184,6 +184,15 @@ impl AppState {
         Ok(())
     }
 
+    /// Sign out: clear tokens and switch back to in-memory (offline) client.
+    pub fn logout(&self) -> Result<(), String> {
+        self.token_store.clear().map_err(|e| e.to_string())?;
+        // Switch to offline client (block_on is fine here — quick operation)
+        let offline: Arc<dyn GoogleTasksClient> = Arc::new(InMemoryClient::new());
+        *tauri::async_runtime::block_on(self.client.lock()) = offline;
+        Ok(())
+    }
+
     /// Signal the background sync loop to run soon.
     pub fn schedule_sync(&self) {
         self.sync_notify.notify_one();

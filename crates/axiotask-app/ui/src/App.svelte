@@ -37,6 +37,7 @@
   let detailTask = $state(null); // task object for detail panel
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
+  let renamingListId = $state(null); // triggers inline rename in sidebar
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
   let showClearConfirm = $state(false);
@@ -295,9 +296,8 @@
     const task = await cmd("create_task", { listId: parent.listId, parentId, title: "" });
     if (task) {
       await loadAll();
-      // Open detail panel for the parent task to show subtasks
-      detailTask = allTasks.find(t => t.id === parentId) || parent;
-      editingId = task.id;
+      // Open the new subtask in detail panel so user can name it immediately
+      detailTask = allTasks.find(t => t.id === task.id) || task;
     }
   }
 
@@ -398,14 +398,33 @@
   }
 
   async function login() {
-    await cmd("auth_login");
-    authenticated = true;
-    await doSync();
+    syncStatus = "syncing"; // show loading state
+    const result = await cmd("auth_login");
+    if (result !== null) {
+      authenticated = true;
+      await doSync();
+    } else {
+      syncStatus = "idle";
+    }
+  }
+
+  async function logout() {
+    await cmd("auth_logout");
+    authenticated = false;
+    syncStatus = "idle";
+    lastSynced = null;
   }
 
   async function createList(title) {
     if (!title?.trim()) return;
     await cmd("create_list", { title: title.trim() });
+    await loadAll();
+  }
+
+  async function renameList(id, title) {
+    renamingListId = null;
+    if (!title?.trim()) return;
+    await cmd("rename_list", { id, title: title.trim() });
     await loadAll();
   }
 
@@ -547,8 +566,7 @@
       x, y,
       items: [
         { id: "rename", icon: "✏️", label: "Rename", action: async () => {
-          const name = prompt("Rename list:", list.title);
-          if (name?.trim()) { await cmd("rename_list", { id: list.id, title: name.trim() }); await loadAll(); }
+          renamingListId = list.id;
         }},
         { id: "exclude", icon: isExcl ? "✅" : "🚫", label: isExcl ? "Include in smart views" : "Exclude from smart views", action: () => toggleExclude(list.id) },
         "separator",
@@ -572,6 +590,17 @@
   }
 
   function focused() { return flatTasks[focusIndex] ?? null; }
+
+  function viewTitle() {
+    switch (selectedView) {
+      case "focus": return "Focus";
+      case "upcoming": return "Upcoming";
+      case "missed": return "Missed";
+      case "unscheduled": return "Unscheduled";
+      case "all": return "All Tasks";
+      default: return lists.find(l => l.id === selectedView)?.title || "";
+    }
+  }
 
   function quickAddTargetName() {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all", "today"].includes(selectedView);
@@ -631,8 +660,8 @@
       case "Enter":
         e.preventDefault();
         if (f) {
-          // Open detail panel for existing task
-          detailTask = f;
+          // Toggle detail panel
+          detailTask = (detailTask?.id === f.id) ? null : f;
         } else {
           await newTask();
         }
@@ -662,18 +691,22 @@
     {selectedView}
     onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; }}
     onlogin={login}
+    onlogout={logout}
     onsync={doSync}
     onfreshsync={doFreshSync}
     oncreateList={createList}
+    onrenameList={renameList}
     onlistaction={openListContextMenu}
     {authenticated}
     {syncStatus}
     {lastSynced}
+    {renamingListId}
     {excludedLists}
     counts={viewCounts}
   />
   <section class="content">
     <div class="toolbar">
+      <span class="view-title">{viewTitle()}</span>
       <button class="new-task-btn" onclick={newTask}>+ New task</button>
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">
@@ -762,6 +795,7 @@
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid #2a2a4a; gap: 0.5rem; flex-wrap: wrap; }
   .new-task-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: #1a2a4a; }
+  .view-title { font-size: 0.9rem; font-weight: 600; color: #e0e0e0; margin-right: auto; }
   .toggle { font-size: 0.8rem; color: #888; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
   .clear-btn { background: none; border: 1px solid #3a3a5a; color: #888; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }

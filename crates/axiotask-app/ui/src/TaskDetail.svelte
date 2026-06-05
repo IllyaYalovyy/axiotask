@@ -6,6 +6,17 @@
   let due = $state("");
   let selectedList = $state("");
 
+  let prevTaskId = $state(null);
+
+  // Auto-save when switching to a different task (prop change from parent)
+  $effect.pre(() => {
+    if (task && prevTaskId && prevTaskId !== task.id) {
+      // Save the previous task's edits before resetting
+      const dueVal = due ? `${due}T00:00:00.000Z` : null;
+      onsave(prevTaskId, { title, notes, due: dueVal });
+    }
+  });
+
   // Reset when task changes
   $effect(() => {
     if (task) {
@@ -13,6 +24,7 @@
       notes = task.notes || "";
       due = task.due ? task.due.slice(0, 10) : "";
       selectedList = task.listId || "";
+      prevTaskId = task.id;
     }
   });
 
@@ -69,7 +81,8 @@
     <div class="quick-dates">
       <button onclick={() => { const d = new Date(); due = d.toISOString().slice(0,10); }}>Today</button>
       <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); due = d.toISOString().slice(0,10); }}>Tomorrow</button>
-      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); due = d.toISOString().slice(0,10); }}>Next week</button>
+      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); due = d.toISOString().slice(0,10); }}>+1 week</button>
+      <button onclick={() => { const d = new Date(); d.setMonth(d.getMonth()+1); due = d.toISOString().slice(0,10); }}>+1 month</button>
       <button onclick={() => due = ""}>Clear</button>
     </div>
   </div>

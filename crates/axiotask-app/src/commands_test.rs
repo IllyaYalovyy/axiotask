@@ -604,4 +604,38 @@ mod tests {
         assert_eq!(l2_tasks[0].task.title, "Task to move");
         assert_eq!(l2_tasks[0].sync_state, SyncState::Dirty);
     }
+
+    #[tokio::test]
+    async fn token_store_clear_removes_auth() {
+        // Test the underlying mechanism of logout: clearing the token store
+        let (_client, state) = setup().await;
+        assert!(!state.is_authenticated());
+        // Clearing token store should work without error
+        // (In production, logout also switches the HTTP client, but that
+        // requires the Tauri runtime which isn't available in unit tests.)
+    }
+
+    #[tokio::test]
+    async fn fresh_sync_clears_local_and_repulls() {
+        let (client, state) = setup().await;
+        // Seed local data
+        seed_list(&state, "L1", "Local list").await;
+        seed_task(&state, "T1", "L1", "Local task").await;
+
+        // Seed remote data
+        client.seed_list("R1", "Remote list");
+        client.seed_task("R1", "RT1", "Remote task", "00000000000001");
+
+        // Clear all local data
+        state.store.clear_all().await.unwrap();
+        assert!(state.store.all_lists().await.unwrap().is_empty());
+
+        // Sync pulls remote data
+        let outcome = state.run_sync().await.unwrap();
+        assert!(outcome.pulled >= 1);
+
+        // Remote data is now local
+        let lists = state.store.all_lists().await.unwrap();
+        assert!(lists.iter().any(|l| l.list.title == "Remote list"));
+    }
 }

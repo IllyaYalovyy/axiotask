@@ -525,4 +525,15 @@ mod tests {
         assert_eq!(rows[0].task.title, "renamed");
         assert_eq!(rows[0].sync_state, SyncState::Dirty);
     }
+
+    #[tokio::test]
+    async fn clear_all_removes_everything() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        s.upsert_task(&task("T2", "L1", None, "2")).await.unwrap();
+        s.clear_all().await.unwrap();
+        assert!(s.all_lists().await.unwrap().is_empty());
+        assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
 }

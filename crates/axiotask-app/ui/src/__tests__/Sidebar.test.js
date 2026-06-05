@@ -85,20 +85,21 @@ describe("Sidebar", () => {
 
     it("calls oncreateList with entered title", async () => {
       const oncreateList = vi.fn();
-      vi.spyOn(window, "prompt").mockReturnValue("Shopping");
       renderSidebar({ oncreateList });
       await fireEvent.click(screen.getByTitle("New list"));
+      const input = screen.getByPlaceholderText("List name...");
+      await fireEvent.input(input, { target: { value: "Shopping" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
       expect(oncreateList).toHaveBeenCalledWith("Shopping");
-      window.prompt.mockRestore();
     });
 
-    it("does not call oncreateList if prompt is cancelled", async () => {
+    it("does not call oncreateList if Escape pressed", async () => {
       const oncreateList = vi.fn();
-      vi.spyOn(window, "prompt").mockReturnValue(null);
       renderSidebar({ oncreateList });
       await fireEvent.click(screen.getByTitle("New list"));
+      const input = screen.getByPlaceholderText("List name...");
+      await fireEvent.keyDown(input, { key: "Escape" });
       expect(oncreateList).not.toHaveBeenCalled();
-      window.prompt.mockRestore();
     });
   });
 
