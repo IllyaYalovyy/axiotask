@@ -12,6 +12,15 @@ pub trait GoogleTasksClient: Send + Sync {
     /// List all task lists the authenticated user can see.
     async fn list_tasklists(&self) -> Result<Vec<TaskList>, ApiError>;
 
+    /// Create a task list. Returns the server's view (id, etag, updated).
+    async fn insert_tasklist(&self, title: &str) -> Result<TaskList, ApiError>;
+
+    /// Rename a task list. Returns the server's view after the change.
+    async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError>;
+
+    /// Delete a task list (and, server-side, its tasks).
+    async fn delete_tasklist(&self, id: &str) -> Result<(), ApiError>;
+
     /// List tasks in `list_id`. Pass the previous page's `next_page_token`
     /// to continue; pass `None` to start.
     async fn list_tasks(

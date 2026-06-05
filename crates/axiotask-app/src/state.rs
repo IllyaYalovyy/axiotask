@@ -180,6 +180,9 @@ impl AppState {
             },
             sync_state: axiotask_core::store::SyncState::Dirty,
             local_updated: now,
+            // Pending create; on first authenticated pull, the engine adopts
+            // Google's existing "My Tasks" by title instead of duplicating.
+            pending_op: Some("create".into()),
         };
         let _ = self.store.upsert_list(&stored).await;
     }
@@ -263,6 +266,30 @@ impl AppState {
             return Err("not authenticated".into());
         }
         self.run_sync().await.map_err(|e| e.to_string())
+    }
+
+    /// Delete a list. If it was ever synced (has an etag) it is tombstoned so
+    /// the deletion reaches Google (which cascades to its tasks); otherwise it
+    /// is hard-deleted locally. Local task rows are removed either way.
+    pub async fn delete_list(&self, id: &str) -> Result<(), String> {
+        let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
+        let Some(mut list) = lists.into_iter().find(|l| l.list.id == id) else {
+            return Ok(()); // already gone
+        };
+        // Remove local task rows (server cascades on its side).
+        for t in self.store.list_tasks(id).await.map_err(|e| e.to_string())? {
+            self.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
+        }
+        if list.list.etag.is_some() {
+            list.sync_state = axiotask_core::store::SyncState::Deleted;
+            list.pending_op = Some("delete".into());
+            list.local_updated = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+            self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+        } else {
+            self.store.delete_list_hard(id).await.map_err(|e| e.to_string())?;
+        }
+        self.schedule_sync();
+        Ok(())
     }
 
     /// Move a task to a different list.

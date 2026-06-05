@@ -84,6 +84,10 @@ impl SyncEngine {
         // Recover any creates interrupted by a crash before pushing new ones.
         self.recover_inflight_creates().await?;
 
+        // List CREATES first — tasks reference lists, so the list must exist
+        // (with its remote id) before we push tasks into it.
+        self.push_list_creates(out).await?;
+
         // First pass: push parent creates (no parent_id).
         // finish_create remaps child references in DB.
         let dirty = self.store.drain_dirty().await?;
@@ -107,6 +111,83 @@ impl SyncEngine {
 
         // Third pass: push position/parent moves via the move API.
         self.push_moves(out).await?;
+
+        // Finally, list renames and deletes (after task ops so a deleted list's
+        // task tombstones are pushed first).
+        self.push_list_mutations(out).await?;
+        Ok(())
+    }
+
+    /// Push locally-created lists so their tasks can reference real ids.
+    /// Adopts an existing remote list with the same title instead of creating
+    /// a duplicate (covers the default "My Tasks" and same-named lists).
+    async fn push_list_creates(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        let creates: Vec<_> = self.store.drain_dirty_lists().await?
+            .into_iter()
+            .filter(|l| l.pending_op.as_deref() == Some("create"))
+            .collect();
+        if creates.is_empty() {
+            return Ok(());
+        }
+        // Snapshot remote lists once for adoption matching.
+        let remote = match self.client.list_tasklists().await {
+            Ok(v) => v,
+            Err(e) if e.is_transient() => { warn!(err = %e, "transient listing lists, retry"); return Ok(()); }
+            Err(e) => return Err(e.into()),
+        };
+        let local_ids: HashSet<String> = self.store.all_lists().await?
+            .into_iter().map(|l| l.list.id).collect();
+
+        for l in creates {
+            // Adopt a remote list with the same title we don't already track.
+            if let Some(existing) = remote.iter()
+                .find(|r| r.title == l.list.title && !local_ids.contains(&r.id))
+            {
+                self.store
+                    .remap_list_id(&l.list.id, &existing.id, existing.etag.as_deref(), &existing.updated)
+                    .await?;
+                debug!(local_id = %l.list.id, remote_id = %existing.id, "adopted existing list by title");
+                continue;
+            }
+            match self.client.insert_tasklist(&l.list.title).await {
+                Ok(remote_list) => {
+                    self.store
+                        .remap_list_id(&l.list.id, &remote_list.id, remote_list.etag.as_deref(), &remote_list.updated)
+                        .await?;
+                    out.pushed += 1;
+                    debug!(local_id = %l.list.id, remote_id = %remote_list.id, "pushed list create");
+                }
+                Err(e) if e.is_transient() => warn!(err = %e, "transient on list create, retry"),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Push list renames (update) and deletions.
+    async fn push_list_mutations(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        for l in self.store.drain_dirty_lists().await? {
+            match l.pending_op.as_deref() {
+                Some("update") => match self.client.patch_tasklist(&l.list.id, &l.list.title).await {
+                    Ok(remote) => {
+                        self.store.mark_list_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                        out.pushed += 1;
+                    }
+                    Err(ApiError::NotFound) => { self.store.delete_list_hard(&l.list.id).await?; }
+                    Err(e) if e.is_transient() => warn!(err = %e, "transient on list rename, retry"),
+                    Err(e) => return Err(e.into()),
+                },
+                Some("delete") => match self.client.delete_tasklist(&l.list.id).await {
+                    Ok(()) | Err(ApiError::NotFound) => {
+                        self.store.delete_list_hard(&l.list.id).await?;
+                        out.deleted += 1;
+                    }
+                    Err(e) if e.is_transient() => warn!(err = %e, "transient on list delete, retry"),
+                    Err(e) => return Err(e.into()),
+                },
+                _ => {}
+            }
+        }
         Ok(())
     }
 
@@ -331,6 +412,15 @@ impl SyncEngine {
             self.upsert_list(list).await?;
         }
 
+        // List ghost detection: a clean local list absent from the server was
+        // deleted remotely — remove it (FK cascade drops its tasks).
+        let remote_list_ids: HashSet<String> = lists.iter().map(|l| l.id.clone()).collect();
+        for ghost in self.store.clean_list_ids().await?.difference(&remote_list_ids) {
+            debug!(id = %ghost, "removing ghost list");
+            self.store.delete_list_hard(ghost).await?;
+            out.deleted += 1;
+        }
+
         // Compute skip-set after push so remapped IDs are current.
         let dirty_ids = self.store.dirty_ids().await?;
 
@@ -446,11 +536,33 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Reconcile one remote list into the local store.
     async fn upsert_list(&self, list: &TaskList) -> Result<(), SyncError> {
+        let locals = self.store.all_lists().await?;
+
+        // Locally dirty list with the same id → preserve local intent (push will handle it).
+        if locals.iter().any(|l| l.list.id == list.id && l.sync_state != SyncState::Clean) {
+            return Ok(());
+        }
+
+        // Adopt a local-only create (no etag) with the same title — covers the
+        // offline "My Tasks" bootstrap and any create that already landed.
+        if let Some(orphan) = locals.iter().find(|l| {
+            l.pending_op.as_deref() == Some("create")
+                && l.list.etag.is_none()
+                && l.list.title == list.title
+        }) {
+            self.store
+                .remap_list_id(&orphan.list.id, &list.id, list.etag.as_deref(), &list.updated)
+                .await?;
+            return Ok(());
+        }
+
         let stored = StoredTaskList {
             list: list.clone(),
             sync_state: SyncState::Clean,
             local_updated: list.updated.clone(),
+            pending_op: None,
         };
         self.store.upsert_list(&stored).await?;
         Ok(())
@@ -822,6 +934,7 @@ mod tests {
             list: TaskList { id: "ghost-list".into(), title: "Local".into(), etag: None, updated: "2026-01-01T00:00:00Z".into() },
             sync_state: SyncState::Dirty,
             local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
         }).await.unwrap();
         eng.store.upsert_task(&dirty_task("local-1", "ghost-list", "create")).await.unwrap();
 
@@ -1137,5 +1250,131 @@ mod tests {
         eng.run().await.unwrap();
         // Move intent preserved for retry.
         assert_eq!(eng.store.pending_moves().await.unwrap().len(), 1);
+    }
+
+    // ─── List sync ───────────────────────────────────────────────────────────
+
+    fn dirty_list(id: &str, title: &str, op: &str) -> StoredTaskList {
+        StoredTaskList {
+            list: TaskList { id: id.into(), title: title.into(), etag: if op == "create" { None } else { Some("e1".into()) }, updated: "2026-01-01T00:00:00Z".into() },
+            sync_state: if op == "delete" { SyncState::Deleted } else { SyncState::Dirty },
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some(op.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn push_list_create_remaps_and_tasks_follow() {
+        let (client, eng) = engine_with_push().await;
+        // Local list create + a task in it.
+        eng.store.upsert_list(&dirty_list("local-list", "Work", "create")).await.unwrap();
+        let mut t = dirty_task("local-task", "local-list", "create");
+        t.task.title = "do work".into();
+        eng.store.upsert_task(&t).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 2);
+        // List remapped to a remote id; task points at it.
+        let lists = eng.store.all_lists().await.unwrap();
+        let work = lists.iter().find(|l| l.list.title == "Work").unwrap();
+        assert!(work.list.id.starts_with("remote-list-"));
+        assert_eq!(work.sync_state, SyncState::Clean);
+        let tasks = eng.store.list_tasks(&work.list.id).await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].task.id.starts_with("remote-"));
+    }
+
+    #[tokio::test]
+    async fn push_list_rename() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Old Name");
+        eng.run().await.unwrap();
+
+        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        l.list.title = "New Name".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        let page = client.list_tasklists().await.unwrap();
+        assert!(page.iter().any(|l| l.id == "L1" && l.title == "New Name"));
+        let l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        assert_eq!(l.sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn push_list_delete() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Doomed");
+        eng.run().await.unwrap();
+
+        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1);
+        // Gone from server and local.
+        assert!(client.list_tasklists().await.unwrap().iter().all(|l| l.id != "L1"));
+        assert!(eng.store.all_lists().await.unwrap().iter().all(|l| l.list.id != "L1"));
+    }
+
+    #[tokio::test]
+    async fn pull_adopts_local_create_by_title() {
+        // Offline default "My Tasks" (local create) must adopt Google's
+        // existing "My Tasks" on pull instead of duplicating.
+        let (client, eng) = engine_with_push().await;
+        eng.store.upsert_list(&dirty_list("local-uuid", "My Tasks", "create")).await.unwrap();
+        client.seed_list("remote-mytasks", "My Tasks");
+
+        eng.run().await.unwrap();
+
+        let lists = eng.store.all_lists().await.unwrap();
+        let mt: Vec<_> = lists.iter().filter(|l| l.list.title == "My Tasks").collect();
+        assert_eq!(mt.len(), 1, "no duplicate My Tasks");
+        assert_eq!(mt[0].list.id, "remote-mytasks");
+        assert_eq!(mt[0].sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn pull_preserves_locally_renamed_list() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Server Title");
+        eng.run().await.unwrap();
+
+        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        l.list.title = "Local Rename".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        eng.run().await.unwrap(); // pull must not clobber the local rename (push disabled)
+        let l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        assert_eq!(l.list.title, "Local Rename");
+        assert_eq!(l.sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn pull_removes_ghost_list_and_its_tasks() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Keep");
+        client.seed_list("L2", "Vanish");
+        client.seed_task("L2", "T2", "doomed", "1");
+        eng.run().await.unwrap();
+        assert_eq!(eng.store.all_lists().await.unwrap().len(), 2);
+
+        // L2 deleted on the server.
+        client.delete_tasklist("L2").await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert!(out.deleted >= 1);
+        let lists = eng.store.all_lists().await.unwrap();
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].list.id, "L1");
+        // Cascade removed the ghost list's tasks.
+        assert!(eng.store.list_tasks("L2").await.unwrap().is_empty());
     }
 }

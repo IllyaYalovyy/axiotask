@@ -222,6 +222,37 @@ impl GoogleTasksClient for HttpClient {
             .collect())
     }
 
+    async fn insert_tasklist(&self, title: &str) -> Result<TaskList, ApiError> {
+        let url = format!("{}/users/@me/lists", self.base_url);
+        let body = serde_json::json!({ "title": title });
+        let auth = &self.auth;
+        let resp = self.send_authed(|| async { auth.post(&url).json(&body).send().await }).await?;
+        let wire: TaskListWire = resp
+            .json()
+            .await
+            .map_err(|e| ApiError::Other(format!("decode list insert: {e}")))?;
+        Ok(TaskList::from(wire))
+    }
+
+    async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError> {
+        let url = format!("{}/users/@me/lists/{}", self.base_url, urlencoding::encode(id));
+        let body = serde_json::json!({ "title": title });
+        let auth = &self.auth;
+        let resp = self.send_authed(|| async { auth.patch(&url).json(&body).send().await }).await?;
+        let wire: TaskListWire = resp
+            .json()
+            .await
+            .map_err(|e| ApiError::Other(format!("decode list patch: {e}")))?;
+        Ok(TaskList::from(wire))
+    }
+
+    async fn delete_tasklist(&self, id: &str) -> Result<(), ApiError> {
+        let url = format!("{}/users/@me/lists/{}", self.base_url, urlencoding::encode(id));
+        let auth = &self.auth;
+        let _ = self.send_authed(|| async { auth.delete(&url).send().await }).await?;
+        Ok(())
+    }
+
     async fn list_tasks(
         &self,
         list_id: &str,
@@ -670,5 +701,62 @@ mod tests {
         let client = plain_client(&server.uri());
         let task = client.move_task("L1", "T1", Some("P1"), Some("T0")).await.unwrap();
         assert_eq!(task.parent.as_deref(), Some("P1"));
+    }
+
+    #[tokio::test]
+    async fn insert_tasklist_sends_title_and_parses() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "L-new", "title": "Work", "etag": "e1", "updated": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        let list = client.insert_tasklist("Work").await.unwrap();
+        assert_eq!(list.id, "L-new");
+        assert_eq!(list.title, "Work");
+        assert_eq!(list.etag.as_deref(), Some("e1"));
+    }
+
+    #[tokio::test]
+    async fn patch_tasklist_renames() {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/users/@me/lists/L1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "L1", "title": "Renamed", "etag": "e2", "updated": "2026-01-02T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        let list = client.patch_tasklist("L1", "Renamed").await.unwrap();
+        assert_eq!(list.title, "Renamed");
+        assert_eq!(list.etag.as_deref(), Some("e2"));
+    }
+
+    #[tokio::test]
+    async fn delete_tasklist_succeeds() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/users/@me/lists/L1"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        assert!(client.delete_tasklist("L1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_tasklist_404_maps_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/users/@me/lists/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        assert!(matches!(client.delete_tasklist("gone").await.unwrap_err(), ApiError::NotFound));
     }
 }

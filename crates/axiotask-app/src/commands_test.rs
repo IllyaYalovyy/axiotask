@@ -37,6 +37,7 @@ mod tests {
             },
             sync_state: SyncState::Clean,
             local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
         };
         state.store.upsert_list(&list).await.unwrap();
     }
@@ -276,10 +277,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn sync_pushes_local_creates_to_remote() {
-        let (client, state) = setup().await;
+        let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
 
         // Pull to get the list locally
         state.run_sync().await.unwrap();
@@ -674,6 +675,47 @@ mod tests {
         let l2_remote = client.list_tasks("L2", None).await.unwrap();
         assert_eq!(l2_remote.items.len(), 1);
         assert_eq!(l2_remote.items[0].title, "movable");
+    }
+
+    #[tokio::test]
+    async fn delete_list_tombstones_synced_list() {
+        // A synced list (has etag) must tombstone so the delete reaches Google.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Doomed").await;
+        seed_task(&state, "T1", "L1", "child").await;
+
+        state.delete_list("L1").await.unwrap();
+
+        // Hidden from all_lists but present as a delete tombstone in drain.
+        assert!(state.store.all_lists().await.unwrap().iter().all(|l| l.list.id != "L1"));
+        let dirty = state.store.drain_dirty_lists().await.unwrap();
+        assert!(dirty.iter().any(|l| l.list.id == "L1" && l.pending_op.as_deref() == Some("delete")));
+        // Tasks removed locally.
+        assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_list_hard_deletes_local_only_list() {
+        // A never-synced list (no etag) is hard-deleted, no tombstone.
+        let (_client, state) = setup().await;
+        // create_list path makes a local-only list (etag None).
+        let lists_before = state.store.all_lists().await.unwrap().len();
+        let l = StoredTaskList {
+            list: axiotask_core::model::TaskList {
+                id: "local-list".into(), title: "Temp".into(), etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_list(&l).await.unwrap();
+        state.delete_list("local-list").await.unwrap();
+
+        // No tombstone — fully gone.
+        let dirty = state.store.drain_dirty_lists().await.unwrap();
+        assert!(dirty.iter().all(|l| l.list.id != "local-list"));
+        assert_eq!(state.store.all_lists().await.unwrap().len(), lists_before);
     }
 
     #[tokio::test]

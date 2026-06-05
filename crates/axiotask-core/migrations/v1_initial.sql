@@ -18,7 +18,8 @@ CREATE TABLE task_lists (
   etag            TEXT,                       -- NULL for local-only rows
   updated         TEXT NOT NULL,              -- server 'updated' (RFC-3339)
   local_updated   TEXT NOT NULL,              -- local last-edit (RFC-3339)
-  sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted'))
+  sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted')),
+  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL)
 );
 
 CREATE TABLE tasks (

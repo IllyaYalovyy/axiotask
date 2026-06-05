@@ -75,6 +75,7 @@ pub async fn create_list(
         },
         sync_state: SyncState::Dirty,
         local_updated: now,
+        pending_op: Some("create".into()),
     };
     state.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -102,15 +103,7 @@ pub async fn delete_list(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<(), String> {
-    // Delete all tasks in the list first
-    let tasks = state.store.list_tasks(&id).await.map_err(|e| e.to_string())?;
-    for t in tasks {
-        state.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
-    }
-    // Delete the list
-    state.store.delete_list_hard(&id).await.map_err(|e| e.to_string())?;
-    state.schedule_sync();
-    Ok(())
+    state.delete_list(&id).await
 }
 
 #[tauri::command]
@@ -305,9 +298,9 @@ pub async fn set_due(
             "Clear" => DateMove::Clear,
             _ => return Err(format!("unknown date move: {mv}")),
         };
-        let today = jiff::civil::Date::from(jiff::Zoned::now().date());
+        let today = jiff::Zoned::now().date();
         let new_due = apply_date_move(today, date_move);
-        t.task.due = new_due.map(|d| format!("{}T00:00:00.000Z", d));
+        t.task.due = new_due.map(|d| format!("{d}T00:00:00.000Z"));
     }
 
     t.sync_state = SyncState::Dirty;
@@ -463,7 +456,7 @@ pub async fn auth_status(state: State<'_, Arc<AppState>>) -> Result<bool, String
 
 #[tauri::command]
 pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.start_login().await.map_err(|e| e.to_string())
+    state.start_login().await
 }
 
 #[tauri::command]

@@ -60,16 +60,25 @@ runs) and always records a `sync_log` row (counts, duration, error).
 
 ### Push (in order)
 
-1. **Parent creates** first (so children can reference real parent ids).
-2. **Remaining ops** by `drain_dirty` priority: create → update → delete.
-   - **create** → `insert_task`; on success `finish_create` atomically remaps
-     local→remote id (self, children, move intents) **and** marks clean in one
-     transaction.
+Lists and tasks both follow the dirty-flag model. Ordering guarantees
+referential validity on the server:
+
+1. **List creates** first — a task can't be inserted into a list that doesn't
+   exist remotely yet. `insert_tasklist`, then `remap_list_id` rewrites the
+   local list UUID → server id across the list row, all its tasks' `list_id`,
+   move intents, and in-flight markers (one transaction). Adopts an existing
+   remote list of the same title instead of duplicating (covers default
+   "My Tasks").
+2. **Parent task creates** (so children can reference real parent ids).
+3. **Remaining task ops** by `drain_dirty` priority: create → update → delete.
+   - **create** → `insert_task`; `finish_create` atomically remaps id (self,
+     children, move intents) and marks clean. In-flight marker for crash safety.
    - **update** → `patch_task` with `If-Match` etag.
-   - **delete** → `delete_task`; `404` is treated as success (already gone).
-3. **Moves** (reorder/reparent) via the `move_task` endpoint, from the
-   `pending_moves` table — a separate axis from field updates, mirroring
-   Google's patch-vs-move API split.
+   - **delete** → `delete_task`; `404` treated as success.
+4. **Moves** (reorder/reparent) via `move_task`, from `pending_moves` — a
+   separate axis from field updates, mirroring Google's patch-vs-move split.
+5. **List renames/deletes** last (after task ops, so a deleted list's task
+   tombstones push first): `patch_tasklist` / `delete_tasklist`.
 
 ### Pull
 

@@ -17,6 +17,12 @@ use crate::model::{NewTask, Page, Task, TaskList, TaskPatch, TaskStatus};
 pub enum Method {
     /// `list_tasklists`
     ListTaskLists,
+    /// `insert_tasklist`
+    InsertTaskList,
+    /// `patch_tasklist`
+    PatchTaskList,
+    /// `delete_tasklist`
+    DeleteTaskList,
     /// `list_tasks`
     ListTasks,
     /// `insert_task`
@@ -38,7 +44,7 @@ struct State {
     etag_counter: u64,
     faults: VecDeque<(Method, fn() -> ApiError)>,
     /// Number of recorded calls per method.
-    calls: [u32; 7],
+    calls: [u32; 10],
 }
 
 impl State {
@@ -156,6 +162,49 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(e);
         }
         Ok(s.lists.clone())
+    }
+
+    async fn insert_tasklist(&self, title: &str) -> Result<TaskList, ApiError> {
+        let mut s = self.inner.lock().unwrap();
+        s.record(Method::InsertTaskList);
+        if let Some(e) = s.next_fault(Method::InsertTaskList) {
+            return Err(e);
+        }
+        let etag = s.fresh_etag();
+        let id = format!("remote-list-{}", s.etag_counter);
+        let list = TaskList { id, title: title.into(), etag: Some(etag), updated: "2026-01-01T00:00:00Z".into() };
+        s.lists.push(list.clone());
+        Ok(list)
+    }
+
+    async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError> {
+        let mut s = self.inner.lock().unwrap();
+        s.record(Method::PatchTaskList);
+        if let Some(e) = s.next_fault(Method::PatchTaskList) {
+            return Err(e);
+        }
+        let etag = s.fresh_etag();
+        let Some(l) = s.lists.iter_mut().find(|l| l.id == id) else {
+            return Err(ApiError::NotFound);
+        };
+        l.title = title.into();
+        l.etag = Some(etag);
+        Ok(l.clone())
+    }
+
+    async fn delete_tasklist(&self, id: &str) -> Result<(), ApiError> {
+        let mut s = self.inner.lock().unwrap();
+        s.record(Method::DeleteTaskList);
+        if let Some(e) = s.next_fault(Method::DeleteTaskList) {
+            return Err(e);
+        }
+        let before = s.lists.len();
+        s.lists.retain(|l| l.id != id);
+        if s.lists.len() == before {
+            return Err(ApiError::NotFound);
+        }
+        s.tasks.retain(|(lid, _)| lid != id); // server cascades
+        Ok(())
     }
 
     async fn list_tasks(

@@ -66,6 +66,8 @@ pub struct StoredTaskList {
     pub sync_state: SyncState,
     /// Local timestamp of the last edit.
     pub local_updated: String,
+    /// Pending push operation: `"create" | "update" | "delete"` or `None`.
+    pub pending_op: Option<String>,
 }
 
 /// A pending position/parent move to be pushed via the Tasks move API.
@@ -101,14 +103,15 @@ impl Store {
     /// Replace (or insert) a task-list row.
     pub async fn upsert_list(&self, list: &StoredTaskList) -> Result<(), StoreError> {
         sqlx::query(
-            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state)
-              VALUES (?, ?, ?, ?, ?, ?)
+            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 etag = excluded.etag,
                 updated = excluded.updated,
                 local_updated = excluded.local_updated,
-                sync_state = excluded.sync_state",
+                sync_state = excluded.sync_state,
+                pending_op = excluded.pending_op",
         )
         .bind(&list.list.id)
         .bind(&list.list.title)
@@ -116,6 +119,7 @@ impl Store {
         .bind(&list.list.updated)
         .bind(&list.local_updated)
         .bind(list.sync_state.as_str())
+        .bind(&list.pending_op)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -124,7 +128,7 @@ impl Store {
     /// All known lists, in arbitrary order.
     pub async fn all_lists(&self) -> Result<Vec<StoredTaskList>, StoreError> {
         let rows = sqlx::query(
-            r"SELECT id, title, etag, updated, local_updated, sync_state
+            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op
               FROM task_lists
               WHERE sync_state != 'deleted'",
         )
@@ -144,6 +148,7 @@ impl Store {
                     StoreError::Decode(format!("bad sync_state {sync_state_str}"))
                 })?,
                 local_updated: row.try_get("local_updated").map_err(StoreError::from)?,
+                pending_op: row.try_get("pending_op").map_err(StoreError::from)?,
             });
         }
         Ok(out)
@@ -296,6 +301,94 @@ impl Store {
             .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// All locally-dirty/deleted lists awaiting push, creates before
+    /// updates before deletes.
+    pub async fn drain_dirty_lists(&self) -> Result<Vec<StoredTaskList>, StoreError> {
+        let rows = sqlx::query(
+            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op
+              FROM task_lists
+              WHERE sync_state = 'dirty' OR sync_state = 'deleted'
+              ORDER BY CASE pending_op
+                WHEN 'create' THEN 0 WHEN 'update' THEN 1 WHEN 'delete' THEN 2 ELSE 3 END,
+                local_updated ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let s: String = row.try_get("sync_state")?;
+            out.push(StoredTaskList {
+                list: TaskList {
+                    id: row.try_get("id")?,
+                    title: row.try_get("title")?,
+                    etag: row.try_get("etag")?,
+                    updated: row.try_get("updated")?,
+                },
+                sync_state: SyncState::parse(&s)
+                    .ok_or_else(|| StoreError::Decode(format!("bad sync_state {s}")))?,
+                local_updated: row.try_get("local_updated")?,
+                pending_op: row.try_get("pending_op")?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Mark a list in-sync after a successful push.
+    pub async fn mark_list_clean(
+        &self,
+        id: &str,
+        new_etag: Option<&str>,
+        server_updated: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL,
+                 etag = COALESCE(?, etag), updated = ? WHERE id = ?",
+        )
+        .bind(new_etag)
+        .bind(server_updated)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Ids of all clean lists (for ghost detection).
+    pub async fn clean_list_ids(&self) -> Result<std::collections::HashSet<String>, StoreError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM task_lists WHERE sync_state = 'clean'")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Remap a local list UUID to its server id, rewriting the list row and
+    /// every task's `list_id` (and pending_moves) in one transaction.
+    pub async fn remap_list_id(
+        &self,
+        local_id: &str,
+        remote_id: &str,
+        etag: Option<&str>,
+        server_updated: &str,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+        sqlx::query("UPDATE task_lists SET id = ? WHERE id = ?")
+            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE tasks SET list_id = ? WHERE list_id = ?")
+            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE pending_moves SET list_id = ? WHERE list_id = ?")
+            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE inflight_creates SET list_id = ? WHERE list_id = ?")
+            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL,
+                 etag = COALESCE(?, etag), updated = ? WHERE id = ?",
+        )
+        .bind(etag).bind(server_updated).bind(remote_id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -544,6 +637,7 @@ mod tests {
             },
             sync_state: SyncState::Clean,
             local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
         }
     }
 
