@@ -281,6 +281,22 @@ impl GoogleTasksClient for HttpClient {
         Task::try_from(wire)
     }
 
+    async fn get_task(&self, list_id: &str, id: &str) -> Result<Task, ApiError> {
+        let url = format!(
+            "{}/lists/{}/tasks/{}",
+            self.base_url,
+            urlencoding::encode(list_id),
+            urlencoding::encode(id)
+        );
+        let auth = &self.auth;
+        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
+        let wire: TaskWire = resp
+            .json()
+            .await
+            .map_err(|e| ApiError::Other(format!("decode get: {e}")))?;
+        Task::try_from(wire)
+    }
+
     async fn patch_task(
         &self,
         list_id: &str,

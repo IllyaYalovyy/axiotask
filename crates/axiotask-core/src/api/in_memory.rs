@@ -21,6 +21,8 @@ pub enum Method {
     ListTasks,
     /// `insert_task`
     InsertTask,
+    /// `get_task`
+    GetTask,
     /// `patch_task`
     PatchTask,
     /// `delete_task`
@@ -36,7 +38,7 @@ struct State {
     etag_counter: u64,
     faults: VecDeque<(Method, fn() -> ApiError)>,
     /// Number of recorded calls per method.
-    calls: [u32; 6],
+    calls: [u32; 7],
 }
 
 impl State {
@@ -205,6 +207,19 @@ impl GoogleTasksClient for InMemoryClient {
         s.tasks.push((list_id.into(), task.clone()));
         let _ = new.previous;
         Ok(task)
+    }
+
+    async fn get_task(&self, list_id: &str, id: &str) -> Result<Task, ApiError> {
+        let mut s = self.inner.lock().unwrap();
+        s.record(Method::GetTask);
+        if let Some(e) = s.next_fault(Method::GetTask) {
+            return Err(e);
+        }
+        s.tasks
+            .iter()
+            .find(|(lid, t)| lid == list_id && t.id == id)
+            .map(|(_, t)| t.clone())
+            .ok_or(ApiError::NotFound)
     }
 
     async fn patch_task(

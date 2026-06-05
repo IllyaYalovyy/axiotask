@@ -89,7 +89,9 @@ runs) and always records a `sync_log` row (counts, duration, error).
 | clean | etag differs | Take remote (clean = no local intent). |
 | dirty create | insert ok | `finish_create`: remap + clean (atomic). |
 | dirty update | patch ok | Mark clean with server etag. |
-| dirty update | `412` stale etag | **Remote wins:** mark clean; next pull overwrites. |
+| dirty update | `412` stale etag, identical content | Adopt remote etag (no real divergence). |
+| dirty update | `412` stale etag, divergent content | **Conflicted copy:** remote becomes canonical; local edit kept as a new "(conflicted copy)" task. Nothing lost. |
+| dirty update | `412` then `404` on refetch | Hard-delete local (server removed it). |
 | dirty any | `404` | Hard-delete local (server already removed it). |
 | dirty any | transient (5xx/network) | Leave dirty; retry next run. |
 
@@ -109,11 +111,13 @@ the *half-applied* state (which previously could both duplicate *and* corrupt
 local ids). The residual window (crash between server ack and local commit) is
 rare and self-healing on the user's side (delete the dup). **Accepted for MVP.**
 
-### H2 — Silent edit loss on conflict *(accepted, needs UI signal)*
-"Remote wins" on `412` discards the local edit with no user-facing notice.
-The engine counts conflicts (`SyncOutcome.conflicts`); surfacing a toast
-("a remote change overrode your edit") is **Step 9 / RFC-006** and is the top
-remaining UX risk. Until then, conflicts are logged.
+### H2 — Edit loss on conflict *(RESOLVED — conflicted copy)*
+A `412` no longer discards the local edit. The engine refetches the remote
+task; if content is identical it simply adopts the etag, otherwise it keeps the
+remote as canonical AND preserves the local edit as a new "(conflicted copy)"
+task (Dropbox model). Nothing is silently lost, and the copy is its own visible
+user signal — no clock comparison, no toast needed. This deliberately avoids
+last-writer-wins-by-timestamp, which is unsound across local vs. server clocks.
 
 ### H3 — Crash-resumability *(handled by design)*
 No transaction spans a whole run. Each row's push is independent; a partial run
@@ -156,12 +160,12 @@ paused clock.
 ## Status
 
 All MVP steps implemented and tested (engine, store, HTTP client via wiremock,
-scheduler timing, concurrency). Remaining: **H2 conflict toast** (RFC-006) and
-**H6 `updatedMin`** (perf). Both are enhancements, not correctness gaps.
+scheduler timing, concurrency, conflicted-copy resolution). No correctness
+compromises remain. **H6 `updatedMin`** is the only deferred item and is a pure
+performance optimization (full fetch is correct, just not minimal).
 
 ## Open questions
 
-- **Q1** Conflict UI copy/UX — RFC-006.
-- **Q2** `updatedMin` clock-skew padding (≈5s) when implemented.
-- **Q3** Should H1 duplicates be detected by a post-create dedup sweep
+- **Q1** `updatedMin` clock-skew padding (≈5s) when the perf optimization lands.
+- **Q2** Should H1 duplicates be detected by a post-create dedup sweep
   (title+list heuristic)? Likely not worth it; revisit if reported.

@@ -24,6 +24,10 @@ pub trait GoogleTasksClient: Send + Sync {
     /// position, etc. filled in).
     async fn insert_task(&self, list_id: &str, new: NewTask) -> Result<Task, ApiError>;
 
+    /// Fetch a single task's current server state. Returns
+    /// [`ApiError::NotFound`] if it no longer exists.
+    async fn get_task(&self, list_id: &str, id: &str) -> Result<Task, ApiError>;
+
     /// Sparse update by id. If `etag` is `Some`, the request is sent with
     /// `If-Match` and will return [`ApiError::PreconditionFailed`] on conflict.
     async fn patch_task(

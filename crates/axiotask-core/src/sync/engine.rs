@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use super::SyncError;
 use crate::api::{ApiError, GoogleTasksClient};
-use crate::model::{NewTask, TaskList, TaskPatch};
+use crate::model::{NewTask, Task, TaskList, TaskPatch};
 use crate::store::{Store, StoredTask, StoredTaskList, SyncState};
 
 /// Counters from a single sync run.
@@ -176,11 +176,7 @@ impl SyncEngine {
                 Ok(())
             }
             Err(ApiError::PreconditionFailed) => {
-                // Remote wins: mark clean so pull overwrites.
-                info!(id = %row.task.id, "412 conflict — remote wins");
-                out.conflicts += 1;
-                self.store.mark_task_clean(&row.task.id, row.task.etag.as_deref(), &row.task.updated).await?;
-                Ok(())
+                self.resolve_conflict(row, out).await
             }
             Err(ApiError::NotFound) => {
                 debug!(id = %row.task.id, "task gone from server, deleting locally");
@@ -190,6 +186,69 @@ impl SyncEngine {
             Err(e) if e.is_transient() => { warn!(err = %e, "transient error on update, will retry"); Ok(()) }
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Resolve a `412` stale-etag conflict without losing the user's edit.
+    ///
+    /// Fetches the authoritative remote version, then:
+    ///  * if remote content already equals the local edit → no real conflict,
+    ///    just adopt the remote etag (mark clean);
+    ///  * otherwise → preserve BOTH: the remote becomes the canonical task,
+    ///    and the local edit is kept as a new "(conflicted copy)" task to be
+    ///    pushed on the next run. Nothing is silently discarded.
+    async fn resolve_conflict(&self, local: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        let remote = match self.client.get_task(&local.list_id, &local.task.id).await {
+            Ok(t) => t,
+            // Server deleted it; mirror the push_update NotFound behavior.
+            Err(ApiError::NotFound) => {
+                self.store.delete_task_hard(&local.task.id).await?;
+                return Ok(());
+            }
+            Err(e) if e.is_transient() => return Ok(()), // stays dirty, retry
+            Err(e) => return Err(e.into()),
+        };
+
+        // Adopt remote etag if the content is already identical (no real divergence).
+        if same_content(&local.task, &remote) {
+            self.store
+                .mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated)
+                .await?;
+            return Ok(());
+        }
+
+        // Real conflict: remote becomes canonical, local edit survives as a copy.
+        info!(id = %local.task.id, "412 conflict — preserving local edit as conflicted copy");
+        out.conflicts += 1;
+
+        let canonical = StoredTask {
+            task: remote.clone(),
+            list_id: local.list_id.clone(),
+            sync_state: SyncState::Clean,
+            pending_op: None,
+            local_updated: remote.updated.clone(),
+        };
+        self.store.upsert_task(&canonical).await?;
+
+        let copy = StoredTask {
+            task: Task {
+                id: uuid::Uuid::new_v4().to_string(),
+                parent: local.task.parent.clone(),
+                position: local.task.position.clone(),
+                title: format!("{} (conflicted copy)", local.task.title),
+                notes: local.task.notes.clone(),
+                status: local.task.status,
+                due: local.task.due.clone(),
+                completed: local.task.completed.clone(),
+                etag: None,
+                updated: remote.updated.clone(),
+            },
+            list_id: local.list_id.clone(),
+            sync_state: SyncState::Dirty,
+            pending_op: Some("create".into()),
+            local_updated: remote.updated.clone(),
+        };
+        self.store.upsert_task(&copy).await?;
+        Ok(())
     }
 
     async fn push_delete(&self, row: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
@@ -345,6 +404,12 @@ impl SyncEngine {
     }
 }
 
+/// Whether two tasks have identical user-visible content (the patchable
+/// fields). Used to tell a real conflict from an identical concurrent edit.
+fn same_content(a: &Task, b: &Task) -> bool {
+    a.title == b.title && a.notes == b.notes && a.due == b.due && a.status == b.status
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,7 +525,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_update_412_conflict_remote_wins() {
+    async fn push_update_412_real_conflict_preserves_both() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "server-version", "1");
@@ -476,14 +541,39 @@ mod tests {
         let out = eng.run().await.unwrap();
         assert_eq!(out.conflicts, 1);
 
-        // After pull, remote version wins
+        // Both survive: canonical remote version + a conflicted copy of the edit.
         let tasks = eng.store.list_tasks("L1").await.unwrap();
-        assert_eq!(tasks[0].sync_state, SyncState::Clean);
-        assert_eq!(tasks[0].task.title, "server-version");
+        assert_eq!(tasks.len(), 2, "remote + conflicted copy");
+        assert!(tasks.iter().any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean));
+        assert!(tasks.iter().any(|t| t.task.title == "local-edit (conflicted copy)"));
+        // Nothing lost.
     }
 
     #[tokio::test]
-    async fn push_update_412_no_loop_on_next_sync() {
+    async fn push_update_412_identical_edit_no_copy() {
+        // If the server already has the same content we tried to write, there's
+        // no real conflict — adopt the remote etag, create no copy.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "same-title", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        // Same content as server, but a stale etag triggers 412.
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "identical content is not a conflict");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "no conflicted copy created");
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn conflicted_copy_pushes_then_converges() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "server", "1");
@@ -496,10 +586,40 @@ mod tests {
         local.task.etag = Some("stale".into());
         eng.store.upsert_task(&local).await.unwrap();
 
-        eng.run().await.unwrap(); // resolves conflict
-        let out2 = eng.run().await.unwrap(); // must be noop
-        assert_eq!(out2.conflicts, 0);
-        assert_eq!(out2.pushed, 0);
+        eng.run().await.unwrap(); // resolves: canonical + conflicted copy (dirty create)
+        let out2 = eng.run().await.unwrap(); // pushes the conflicted copy
+        assert!(out2.pushed >= 1);
+        let out3 = eng.run().await.unwrap(); // now fully converged
+        assert_eq!(out3.conflicts, 0);
+        assert_eq!(out3.pushed, 0);
+
+        // The conflicted copy is now a real remote task.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.iter().all(|t| t.sync_state == SyncState::Clean));
+        assert!(tasks.iter().any(|t| t.task.title == "conflict (conflicted copy)"));
+    }
+
+    #[tokio::test]
+    async fn push_update_412_then_server_gone_deletes_local() {
+        // 412 then the task is deleted on the server before we fetch it.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "doomed", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // patch → 412, then get_task → NotFound (server deleted it).
+        client.delete_task_from_state("L1", "T1");
+
+        eng.run().await.unwrap();
+        // Local row dropped to mirror server.
+        assert!(eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.task.id != "T1"));
     }
 
     #[tokio::test]
