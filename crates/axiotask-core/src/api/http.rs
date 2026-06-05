@@ -233,7 +233,7 @@ impl GoogleTasksClient for HttpClient {
         );
         if let Some(tok) = page_token {
             url.push_str("&pageToken=");
-            url.push_str(tok);
+            url.push_str(&urlencoding::encode(tok));
         }
         let auth = &self.auth;
         let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
@@ -256,12 +256,12 @@ impl GoogleTasksClient for HttpClient {
     async fn insert_task(&self, list_id: &str, new: NewTask) -> Result<Task, ApiError> {
         let mut url = format!("{}/lists/{}/tasks", self.base_url, list_id);
         if let Some(p) = new.parent.as_deref() {
-            url.push_str(&format!("?parent={p}"));
+            url.push_str(&format!("?parent={}", urlencoding::encode(p)));
             if let Some(prev) = new.previous.as_deref() {
-                url.push_str(&format!("&previous={prev}"));
+                url.push_str(&format!("&previous={}", urlencoding::encode(prev)));
             }
         } else if let Some(prev) = new.previous.as_deref() {
-            url.push_str(&format!("?previous={prev}"));
+            url.push_str(&format!("?previous={}", urlencoding::encode(prev)));
         }
         let body = serde_json::json!({
             "title": new.title,
@@ -343,13 +343,13 @@ impl GoogleTasksClient for HttpClient {
         if let Some(p) = parent {
             url.push(sep);
             url.push_str("parent=");
-            url.push_str(p);
+            url.push_str(&urlencoding::encode(p));
             sep = '&';
         }
         if let Some(prev) = previous {
             url.push(sep);
             url.push_str("previous=");
-            url.push_str(prev);
+            url.push_str(&urlencoding::encode(prev));
         }
         let auth = &self.auth;
         let resp = self.send_authed(|| async { auth.post(&url).send().await }).await?;
@@ -477,5 +477,182 @@ mod tests {
         let err = client.list_tasklists().await.unwrap_err();
         assert!(matches!(err, ApiError::Unauthorized));
         assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+
+    // ─── Task method tests (request construction + response parsing) ──────────
+
+    fn plain_client(base_url: &str) -> HttpClient {
+        let refresh = Arc::new(AtomicU32::new(0));
+        build_test_client(base_url, make_tokens("token"), counting_refresh(refresh))
+    }
+
+    #[tokio::test]
+    async fn list_tasks_parses_response_and_pagination() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/lists/L1/tasks"))
+            .and(query_param("showCompleted", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [
+                    {"id": "T1", "title": "first", "status": "needsAction", "position": "00001", "updated": "2026-01-01T00:00:00Z"},
+                    {"id": "T2", "title": "done", "status": "completed", "position": "00002", "updated": "2026-01-01T00:00:00Z"}
+                ],
+                "nextPageToken": "page2"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let page = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].title, "first");
+        assert_eq!(page.items[1].status, crate::model::TaskStatus::Completed);
+        assert_eq!(page.next_page_token.as_deref(), Some("page2"));
+    }
+
+    #[tokio::test]
+    async fn list_tasks_passes_page_token() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/lists/L1/tasks"))
+            .and(query_param("pageToken", "tok-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let page = client.list_tasks("L1", Some("tok-abc")).await.unwrap();
+        assert!(page.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_tasks_encodes_special_page_token() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+
+        // Google page tokens can contain characters needing URL encoding.
+        // wiremock decodes query params, so query_param matcher sees the
+        // decoded value — this verifies we encoded it correctly on the wire.
+        Mock::given(method("GET"))
+            .and(path("/lists/L1/tasks"))
+            .and(query_param("pageToken", "a b+c/d=e"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let result = client.list_tasks("L1", Some("a b+c/d=e")).await;
+        assert!(result.is_ok(), "special page token must be URL-encoded");
+    }
+
+    #[tokio::test]
+    async fn insert_task_sends_body_and_parses_response() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/lists/L1/tasks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "remote-1", "title": "new task", "status": "needsAction",
+                "position": "00001", "etag": "etag-1", "updated": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let task = client.insert_task("L1", NewTask { title: "new task".into(), ..Default::default() }).await.unwrap();
+        assert_eq!(task.id, "remote-1");
+        assert_eq!(task.etag.as_deref(), Some("etag-1"));
+    }
+
+    #[tokio::test]
+    async fn patch_task_sends_if_match_etag() {
+        use wiremock::matchers::header;
+        let server = MockServer::start().await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/lists/L1/tasks/T1"))
+            .and(header("if-match", "etag-xyz"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "T1", "title": "updated", "status": "needsAction",
+                "position": "1", "etag": "etag-new", "updated": "2026-01-02T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let patch = TaskPatch { title: Some("updated".into()), ..Default::default() };
+        let task = client.patch_task("L1", "T1", patch, Some("etag-xyz")).await.unwrap();
+        assert_eq!(task.title, "updated");
+        assert_eq!(task.etag.as_deref(), Some("etag-new"));
+    }
+
+    #[tokio::test]
+    async fn patch_task_412_maps_to_precondition_failed() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/lists/L1/tasks/T1"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let patch = TaskPatch { title: Some("x".into()), ..Default::default() };
+        let err = client.patch_task("L1", "T1", patch, Some("stale")).await.unwrap_err();
+        assert!(matches!(err, ApiError::PreconditionFailed));
+    }
+
+    #[tokio::test]
+    async fn delete_task_succeeds() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/lists/L1/tasks/T1"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        assert!(client.delete_task("L1", "T1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn delete_task_404_maps_to_not_found() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/lists/L1/tasks/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let err = client.delete_task("L1", "gone").await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn move_task_sends_parent_and_previous() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/lists/L1/tasks/T1/move"))
+            .and(query_param("parent", "P1"))
+            .and(query_param("previous", "T0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "T1", "title": "moved", "status": "needsAction",
+                "parent": "P1", "position": "1", "updated": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let task = client.move_task("L1", "T1", Some("P1"), Some("T0")).await.unwrap();
+        assert_eq!(task.parent.as_deref(), Some("P1"));
     }
 }
