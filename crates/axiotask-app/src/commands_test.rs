@@ -8,6 +8,7 @@ mod tests {
     use std::sync::Arc;
 
     use axiotask_core::api::InMemoryClient;
+    use axiotask_core::api::GoogleTasksClient;
     use axiotask_core::model::TaskStatus;
     use axiotask_core::store::{StoredTask, StoredTaskList, SyncState};
 
@@ -578,31 +579,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_to_list_changes_task_list_id() {
-        // GH#16: Moving a task between lists updates list_id and marks dirty.
+    async fn move_to_list_creates_in_target_and_tombstones_old() {
+        // GH#16: cross-list move = create-in-new + delete-from-old.
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Work").await;
         seed_list(&state, "L2", "Personal").await;
-        seed_task(&state, "T1", "L1", "Task to move").await;
+        seed_task(&state, "T1", "L1", "Task to move").await; // has etag e1
 
-        // Verify task is in L1
-        let tasks = state.store.list_tasks("L1").await.unwrap();
-        assert_eq!(tasks.len(), 1);
+        state.move_task_to_list("T1", "L2").await.unwrap();
 
-        // Move task to L2
-        let mut t = tasks.into_iter().find(|t| t.task.id == "T1").unwrap();
-        t.list_id = "L2".into();
-        t.sync_state = SyncState::Dirty;
-        t.pending_op = Some("update".into());
-        state.store.upsert_task(&t).await.unwrap();
-
-        // Verify task is now in L2, not in L1
+        // Old list: T1 is tombstoned (excluded from list_tasks but pending delete).
         let l1_tasks = state.store.list_tasks("L1").await.unwrap();
+        assert!(l1_tasks.is_empty(), "old list should not show the task");
+
+        // New list: a fresh task with the same title, pending create.
         let l2_tasks = state.store.list_tasks("L2").await.unwrap();
-        assert_eq!(l1_tasks.len(), 0);
         assert_eq!(l2_tasks.len(), 1);
         assert_eq!(l2_tasks[0].task.title, "Task to move");
-        assert_eq!(l2_tasks[0].sync_state, SyncState::Dirty);
+        assert_ne!(l2_tasks[0].task.id, "T1", "moved task gets a fresh id");
+        assert_eq!(l2_tasks[0].pending_op.as_deref(), Some("create"));
+
+        // drain_dirty sees both the delete tombstone and the create.
+        let dirty = state.store.drain_dirty().await.unwrap();
+        let ops: std::collections::HashSet<_> =
+            dirty.iter().filter_map(|t| t.pending_op.clone()).collect();
+        assert!(ops.contains("create"));
+        assert!(ops.contains("delete"));
+    }
+
+    #[tokio::test]
+    async fn move_to_list_local_only_task_hard_deletes_old() {
+        // A never-synced task (no etag) is hard-deleted from the old list.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Work").await;
+        seed_list(&state, "L2", "Personal").await;
+
+        // Local-only task (no etag).
+        let local = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-1".into(),
+                parent: None,
+                position: "1".into(),
+                title: "unsynced".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&local).await.unwrap();
+
+        state.move_task_to_list("local-1", "L2").await.unwrap();
+
+        // Old gone entirely (no tombstone — never synced).
+        assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
+        // New exists in L2.
+        let l2 = state.store.list_tasks("L2").await.unwrap();
+        assert_eq!(l2.len(), 1);
+        assert_eq!(l2[0].task.title, "unsynced");
+        // No delete tombstone should remain (only the create).
+        let dirty = state.store.drain_dirty().await.unwrap();
+        assert!(dirty.iter().all(|t| t.pending_op.as_deref() != Some("delete")));
+    }
+
+    #[tokio::test]
+    async fn move_to_list_syncs_without_data_loss() {
+        // End-to-end: move then sync. Task ends up in the new remote list,
+        // removed from the old. No 404-delete data loss.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "T1", "movable", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone()).await.unwrap(),
+        );
+
+        // Pull so both lists + the task are local.
+        state.run_sync().await.unwrap();
+        assert_eq!(state.store.list_tasks("L1").await.unwrap().len(), 1);
+
+        // Move T1 → L2, then sync.
+        state.move_task_to_list("T1", "L2").await.unwrap();
+        state.run_sync().await.unwrap();
+
+        // Remote L1 no longer has T1; remote L2 has the new task.
+        let l1_remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(l1_remote.items.iter().all(|t| t.id != "T1"));
+        let l2_remote = client.list_tasks("L2", None).await.unwrap();
+        assert_eq!(l2_remote.items.len(), 1);
+        assert_eq!(l2_remote.items[0].title, "movable");
     }
 
     #[tokio::test]

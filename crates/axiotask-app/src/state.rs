@@ -265,6 +265,66 @@ impl AppState {
         self.run_sync().await.map_err(|e| e.to_string())
     }
 
+    /// Move a task to a different list.
+    ///
+    /// Google Tasks has no native cross-list move, so this is implemented as
+    /// delete-from-old + create-in-new. The new task gets a fresh local id;
+    /// on sync the delete removes it from the old remote list and the create
+    /// adds it to the new one. Avoids the 404-delete data-loss path that a
+    /// naive `patch_task(new_list, ...)` would trigger.
+    pub async fn move_task_to_list(
+        &self,
+        id: &str,
+        target_list_id: &str,
+    ) -> Result<(), String> {
+        // Locate the task across all lists.
+        let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
+        let mut found: Option<axiotask_core::store::StoredTask> = None;
+        for list in &lists {
+            let tasks = self.store.list_tasks(&list.list.id).await.map_err(|e| e.to_string())?;
+            if let Some(t) = tasks.into_iter().find(|t| t.task.id == id) {
+                found = Some(t);
+                break;
+            }
+        }
+        let Some(old) = found else {
+            return Err(format!("task {id} not found"));
+        };
+
+        if old.list_id == target_list_id {
+            return Ok(()); // already there
+        }
+
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        // Create the task in the target list with a fresh local id.
+        let mut new_task = old.clone();
+        new_task.task.id = uuid::Uuid::new_v4().to_string();
+        new_task.task.parent = None; // top-level in the new list
+        new_task.task.etag = None; // brand-new remote row
+        new_task.list_id = target_list_id.to_string();
+        new_task.sync_state = axiotask_core::store::SyncState::Dirty;
+        new_task.pending_op = Some("create".into());
+        new_task.local_updated = now.clone();
+        self.store.upsert_task(&new_task).await.map_err(|e| e.to_string())?;
+
+        // Remove the task from the old list.
+        if old.task.etag.is_some() {
+            // Synced row → tombstone so the delete reaches the server.
+            let mut tomb = old;
+            tomb.sync_state = axiotask_core::store::SyncState::Deleted;
+            tomb.pending_op = Some("delete".into());
+            tomb.local_updated = now;
+            self.store.upsert_task(&tomb).await.map_err(|e| e.to_string())?;
+        } else {
+            // Never synced → hard delete.
+            self.store.delete_task_hard(id).await.map_err(|e| e.to_string())?;
+        }
+
+        self.schedule_sync();
+        Ok(())
+    }
+
     /// Whether push is enabled (read-only mode if false).
     #[cfg(test)]
     pub fn push_enabled(&self) -> bool {

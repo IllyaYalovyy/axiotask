@@ -347,14 +347,7 @@ pub async fn move_to_list(
     id: String,
     target_list_id: String,
 ) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
-    t.list_id = target_list_id;
-    t.sync_state = SyncState::Dirty;
-    t.pending_op = Some("update".into());
-    t.local_updated = now_str();
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
-    state.schedule_sync();
-    Ok(())
+    state.move_task_to_list(&id, &target_list_id).await
 }
 
 #[tauri::command]
