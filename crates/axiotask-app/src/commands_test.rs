@@ -646,4 +646,58 @@ mod tests {
         let (_client, state) = setup().await;
         assert!(!state.push_enabled());
     }
+
+    #[tokio::test]
+    async fn concurrent_syncs_do_not_double_push() {
+        // Two concurrent run_sync calls must not both push the same dirty
+        // create. The sync_guard serializes them.
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .expect("setup push state"),
+        );
+
+        // Pull so the list exists locally.
+        state.run_sync().await.unwrap();
+
+        // Create one dirty task.
+        let task = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-1".into(),
+                parent: None,
+                position: "1".into(),
+                title: "push once".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-06-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-06-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&task).await.unwrap();
+
+        // Fire two syncs concurrently.
+        let s1 = state.clone();
+        let s2 = state.clone();
+        let (r1, r2) = tokio::join!(s1.run_sync(), s2.run_sync());
+        r1.unwrap();
+        r2.unwrap();
+
+        // insert_task must have been called exactly once — no double push.
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+
+        // Exactly one task in the list (no duplicate).
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].task.id.starts_with("remote-"));
+    }
 }

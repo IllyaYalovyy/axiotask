@@ -67,6 +67,8 @@ pub struct AppState {
     token_store: Arc<dyn TokenStore>,
     oauth_config: OAuthConfig,
     sync_notify: Arc<Notify>,
+    /// Serializes sync runs — only one sync executes at a time (RFC-004).
+    sync_guard: Arc<Mutex<()>>,
     push_enabled: bool,
 }
 
@@ -109,6 +111,7 @@ impl AppState {
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
+            sync_guard: Arc::new(Mutex::new(())),
             push_enabled: config.sync.push_enabled,
         };
         state.ensure_default_list().await;
@@ -118,6 +121,20 @@ impl AppState {
     /// Build state with an in-memory database (for tests).
     #[allow(dead_code)]
     pub async fn new_memory(client: Arc<dyn GoogleTasksClient>) -> Result<Self, String> {
+        Self::new_memory_inner(client, false).await
+    }
+
+    /// Build push-enabled in-memory state (for tests that exercise push).
+    #[cfg(test)]
+    pub async fn new_memory_with_push(client: Arc<dyn GoogleTasksClient>) -> Result<Self, String> {
+        Self::new_memory_inner(client, true).await
+    }
+
+    #[allow(dead_code)]
+    async fn new_memory_inner(
+        client: Arc<dyn GoogleTasksClient>,
+        push_enabled: bool,
+    ) -> Result<Self, String> {
         let pool = axiotask_core::store::open_memory()
             .await
             .map_err(|e| e.to_string())?;
@@ -131,7 +148,8 @@ impl AppState {
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
-            push_enabled: false,
+            sync_guard: Arc::new(Mutex::new(())),
+            push_enabled,
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -223,7 +241,11 @@ impl AppState {
     }
 
     /// Run sync immediately. Does not check authentication — use `run_sync_if_authed` for guarded access.
+    ///
+    /// Serialized via `sync_guard`: if another sync is in progress, this call
+    /// waits for it to finish before running. Prevents double-push races.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
+        let _guard = self.sync_guard.lock().await;
         tracing::info!("running sync (push_enabled={})...", self.push_enabled);
         let client = self.client.lock().await.clone();
         let engine = SyncEngine::with_push(client, self.store.clone(), self.push_enabled);
