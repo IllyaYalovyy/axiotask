@@ -216,6 +216,20 @@ impl Store {
     }
 
     /// IDs of all dirty/deleted tasks (for skip-set computation).
+    /// Fetch a single task by id regardless of sync_state (incl. tombstones).
+    pub async fn find_task_any(&self, id: &str) -> Result<Option<StoredTask>, StoreError> {
+        let row = sqlx::query(
+            r"SELECT id, list_id, parent_id, position, title, notes, status, due,
+                     completed_at, etag, updated, local_updated, sync_state, pending_op
+              FROM tasks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|r| stored_task_from_row(&r)).transpose()
+    }
+
+    /// Ids of all locally dirty or deleted tasks (the pull skip-set).
     pub async fn dirty_ids(&self) -> Result<std::collections::HashSet<String>, StoreError> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT id FROM tasks WHERE sync_state = 'dirty' OR sync_state = 'deleted'",
@@ -789,6 +803,21 @@ mod tests {
         t.pending_op = Some("delete".into());
         s.upsert_task(&t).await.unwrap();
         assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_task_any_sees_tombstones() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Deleted;
+        t.pending_op = Some("delete".into());
+        s.upsert_task(&t).await.unwrap();
+        // Excluded from list_tasks, but find_task_any sees it.
+        assert!(s.list_tasks("L1").await.unwrap().is_empty());
+        let found = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(found.sync_state, SyncState::Deleted);
+        assert!(s.find_task_any("nope").await.unwrap().is_none());
     }
 
     #[tokio::test]

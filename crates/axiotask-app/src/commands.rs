@@ -248,6 +248,29 @@ pub async fn undo_delete(state: State<'_, Arc<AppState>>, token: DeleteToken) ->
         "completed" => TaskStatus::Completed,
         _ => TaskStatus::NeedsAction,
     };
+
+    // If the tombstone is still present (delete not yet pushed), revive it in
+    // place — preserving its etag — so the un-pushed delete simply never fires.
+    // Reviving as a fresh 'create' here would leave the original remote task
+    // un-deleted AND create a second one → duplicate.
+    if let Some(mut existing) = state.store.find_task_any(&token.id).await.map_err(|e| e.to_string())? {
+        existing.task.status = status;
+        existing.task.completed = None;
+        existing.local_updated = now;
+        if existing.task.etag.is_some() {
+            // Was synced and the delete hasn't pushed → restore to clean.
+            existing.sync_state = SyncState::Clean;
+            existing.pending_op = None;
+        } else {
+            existing.sync_state = SyncState::Dirty;
+            existing.pending_op = Some("create".into());
+        }
+        state.store.upsert_task(&existing).await.map_err(|e| e.to_string())?;
+        state.schedule_sync();
+        return Ok(());
+    }
+
+    // Tombstone gone (delete already pushed) → recreate as a fresh task.
     let stored = StoredTask {
         task: axiotask_core::model::Task {
             id: token.id,
