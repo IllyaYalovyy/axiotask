@@ -197,6 +197,30 @@ impl Store {
         Ok(out)
     }
 
+    /// IDs of all dirty/deleted tasks (for skip-set computation).
+    pub async fn dirty_ids(&self) -> Result<std::collections::HashSet<String>, StoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM tasks WHERE sync_state = 'dirty' OR sync_state = 'deleted'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// IDs of all clean tasks in a list (for ghost row detection).
+    pub async fn clean_task_ids_for_list(
+        &self,
+        list_id: &str,
+    ) -> Result<std::collections::HashSet<String>, StoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean'",
+        )
+        .bind(list_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// All locally-dirty tasks awaiting push, ordered by pending_op priority
     /// (creates → updates → deletes).
     pub async fn drain_dirty(&self) -> Result<Vec<StoredTask>, StoreError> {

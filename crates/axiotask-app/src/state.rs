@@ -103,7 +103,7 @@ impl AppState {
             token_store,
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
-            push_enabled: false, // HARDCODED: read-only sync during development
+            push_enabled: config.sync.push_enabled,
         };
         state.ensure_default_list().await;
         Ok(state)

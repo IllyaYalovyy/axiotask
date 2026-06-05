@@ -50,9 +50,32 @@ impl SyncEngine {
     /// Run a single full sync: push then pull.
     pub async fn run(&self) -> Result<SyncOutcome, SyncError> {
         let mut out = SyncOutcome::default();
-        self.push(&mut out).await?;
-        self.pull(&mut out).await?;
+        let result = self.run_inner(&mut out).await;
+        // Always write sync_log regardless of success/failure
+        self.write_sync_log(&out, result.as_ref().err()).await;
+        result?;
         Ok(out)
+    }
+
+    async fn run_inner(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        self.push(out).await?;
+        self.pull(out).await?;
+        Ok(())
+    }
+
+    async fn write_sync_log(&self, out: &SyncOutcome, err: Option<&SyncError>) {
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let error_msg = err.map(|e| e.to_string());
+        let _ = sqlx::query(
+            "INSERT INTO sync_log (ran_at, pulled, pushed, conflicts, error) VALUES (?, ?, ?, ?, ?)"
+        )
+        .bind(&now)
+        .bind(i64::from(out.pulled))
+        .bind(i64::from(out.pushed))
+        .bind(i64::from(out.conflicts))
+        .bind(&error_msg)
+        .execute(self.store.pool())
+        .await;
     }
 
     /// Push dirty rows. Handles id remap (local UUID → remote id) on success.
@@ -140,20 +163,17 @@ impl SyncEngine {
         }
     }
 
-    /// Resolve a `412` precondition failure: pull the remote row, then merge.
-    /// RFC-004 conflict rule: title/notes/status → newer-wins by `updated`;
-    /// for MVP we treat the remote as authoritative because we just learned
-    /// our cached etag is stale.
-    async fn resolve_conflict(&self, _row: &StoredTask) -> Result<(), SyncError> {
-        // MVP behavior: remote wins. The next pull will overwrite the local
-        // copy. We just leave the local row dirty; the user's edit is lost
-        // for this field. Future work: field-level merge per RFC-004.
-        //
-        // Tracked in TECH_DEBT under SYNC-MERGE.
+    /// Resolve a `412` precondition failure: mark local row clean so the
+    /// subsequent pull overwrites it with the remote version (remote wins).
+    async fn resolve_conflict(&self, row: &StoredTask) -> Result<(), SyncError> {
+        self.store
+            .mark_task_clean(&row.task.id, row.task.etag.as_deref(), &row.task.updated)
+            .await?;
         Ok(())
     }
 
     /// Pull lists + tasks; upsert into store, preserving local dirty edits.
+    /// Detects server-side deletions (ghost rows).
     async fn pull(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         let lists = match self.client.list_tasklists().await {
             Ok(v) => v,
@@ -163,15 +183,12 @@ impl SyncEngine {
         for list in &lists {
             self.upsert_list_from_remote(list).await?;
         }
-        let local_dirty_ids: std::collections::HashSet<String> = self
-            .store
-            .drain_dirty()
-            .await?
-            .into_iter()
-            .map(|t| t.task.id)
-            .collect();
-        for list in lists {
+        // Compute skip-set AFTER push (Step 5c) so remapped IDs are current
+        let local_dirty_ids = self.store.dirty_ids().await?;
+
+        for list in &lists {
             let mut page_token: Option<String> = None;
+            let mut remote_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut all_tasks = Vec::new();
             loop {
                 let page = match self
@@ -184,6 +201,7 @@ impl SyncEngine {
                     Err(e) => return Err(e.into()),
                 };
                 for task in page.items {
+                    remote_ids.insert(task.id.clone());
                     if local_dirty_ids.contains(&task.id) {
                         continue;
                     }
@@ -207,6 +225,13 @@ impl SyncEngine {
                 self.store.upsert_task(&stored).await?;
                 out.pulled += 1;
             }
+
+            // Step 5b: Detect ghost rows — clean local rows not in remote response
+            let local_clean_ids = self.store.clean_task_ids_for_list(&list.id).await?;
+            for ghost_id in local_clean_ids.difference(&remote_ids) {
+                self.store.delete_task_hard(ghost_id).await?;
+                out.deleted += 1;
+            }
         }
         Ok(())
     }
@@ -228,6 +253,7 @@ mod tests {
     use crate::api::InMemoryClient;
     use crate::model::TaskStatus;
     use crate::store::open_memory;
+    use sqlx::Row as _;
 
     async fn engine() -> (Arc<InMemoryClient>, SyncEngine) {
         let client = Arc::new(InMemoryClient::new());
@@ -514,5 +540,211 @@ mod tests {
         let titles: Vec<_> = lists.iter().map(|l| l.list.title.as_str()).collect();
         assert!(titles.contains(&"Inbox"));
         assert!(titles.contains(&"Work"));
+    }
+
+    // === Step 5a: Conflict loop fix ===
+
+    #[tokio::test]
+    async fn conflict_412_marks_local_clean_so_pull_overwrites() {
+        // When push gets 412, the local row must be marked clean so the
+        // subsequent pull can overwrite it. Otherwise it loops forever.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        let remote = client.seed_task("L1", "T1", "remote version", "1");
+        // Pull to seed local
+        eng.run().await.unwrap();
+
+        // Locally edit with a stale etag (simulating concurrent remote edit)
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "my local edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale-etag".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // Run sync — push will get 412, should mark clean
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.conflicts, 1);
+
+        // After sync, local row should be clean (pull overwrote it)
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+        assert_eq!(tasks[0].pending_op, None);
+        // Remote version wins
+        assert_eq!(tasks[0].task.title, "remote version");
+    }
+
+    #[tokio::test]
+    async fn conflict_412_does_not_loop_on_second_sync() {
+        // After resolving a 412 conflict, the next sync must be a no-op
+        // (no push attempt, no conflict).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "server", "1");
+        eng.run().await.unwrap();
+
+        // Create conflict
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "conflict".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // First sync resolves conflict
+        eng.run().await.unwrap();
+
+        // Second sync should be a complete no-op
+        let outcome2 = eng.run().await.unwrap();
+        assert_eq!(outcome2.conflicts, 0);
+        assert_eq!(outcome2.pushed, 0);
+    }
+
+    // === Step 5b: Ghost row detection ===
+
+    #[tokio::test]
+    async fn pull_deletes_local_clean_rows_missing_from_remote() {
+        // If a task exists locally as clean but the server no longer returns it,
+        // the local row is a ghost and must be removed.
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "will-stay", "1");
+        client.seed_task("L1", "T2", "will-vanish", "2");
+
+        // Initial pull — both tasks land locally
+        eng.run().await.unwrap();
+        assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 2);
+
+        // Server-side deletion: remove T2 from the mock (simulates deletion on another device)
+        client.delete_task_from_state("L1", "T2");
+
+        // Pull again — T2 should be gone locally
+        let outcome = eng.run().await.unwrap();
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.id, "T1");
+        assert!(outcome.deleted >= 1);
+    }
+
+    #[tokio::test]
+    async fn pull_does_not_delete_locally_dirty_rows_missing_from_remote() {
+        // Dirty rows (not yet pushed) must NOT be deleted even if the server
+        // doesn't know about them.
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "remote", "1");
+        eng.run().await.unwrap();
+
+        // Create a local-only task (dirty, pending create)
+        let local = StoredTask {
+            task: crate::model::Task {
+                id: "local-only".into(),
+                parent: None,
+                position: "99".into(),
+                title: "not on server yet".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-06-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-06-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // Pull — local-only task must survive
+        eng.run().await.unwrap();
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.iter().any(|t| t.task.id == "local-only"));
+    }
+
+    // === Step 5c: Stale skip-set ===
+
+    #[tokio::test]
+    async fn skip_set_computed_after_push_not_before() {
+        // After push remaps an ID, the skip-set for pull must use the NEW id.
+        // If computed before push, the remapped task gets re-pulled and clobbered.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // Create a local task
+        let local = StoredTask {
+            task: crate::model::Task {
+                id: "local-uuid".into(),
+                parent: None,
+                position: "1".into(),
+                title: "locally created".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-06-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-06-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // Run sync — push creates remote, remap happens, then pull runs
+        let outcome = eng.run().await.unwrap();
+        assert_eq!(outcome.pushed, 1);
+
+        // The task should exist exactly once (not duplicated by pull)
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        // And it should be clean (not re-pulled as a separate row)
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+    }
+
+    // === Step 7: sync_log ===
+
+    #[tokio::test]
+    async fn sync_log_records_outcome() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+
+        eng.run().await.unwrap();
+
+        // Check sync_log table has a row
+        let row: (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT pulled, pushed, conflicts, COALESCE(error IS NULL, 1) FROM sync_log ORDER BY id DESC LIMIT 1"
+        )
+        .fetch_one(eng.store.pool())
+        .await
+        .unwrap();
+        assert_eq!(row.0, 1); // pulled
+        assert_eq!(row.1, 0); // pushed
+        assert_eq!(row.2, 0); // conflicts
+    }
+
+    #[tokio::test]
+    async fn sync_log_records_error_on_failure() {
+        let (client, eng) = engine().await;
+        // Fatal error (non-transient)
+        client.fail_next(crate::api::in_memory::Method::ListTaskLists, || {
+            ApiError::Other("fatal test error".into())
+        });
+
+        let result = eng.run().await;
+        assert!(result.is_err());
+
+        // sync_log should still have a row with the error
+        let row: (Option<String>,) = sqlx::query_as(
+            "SELECT error FROM sync_log ORDER BY id DESC LIMIT 1"
+        )
+        .fetch_one(eng.store.pool())
+        .await
+        .unwrap();
+        assert!(row.0.is_some());
+        assert!(row.0.unwrap().contains("fatal test error"));
     }
 }

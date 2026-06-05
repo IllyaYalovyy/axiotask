@@ -133,6 +133,12 @@ impl InMemoryClient {
         self.inner.lock().unwrap().faults.push_back((m, err));
     }
 
+    /// Remove a task from internal state (simulates server-side deletion by another client).
+    pub fn delete_task_from_state(&self, list_id: &str, task_id: &str) {
+        let mut s = self.inner.lock().unwrap();
+        s.tasks.retain(|(lid, t)| !(lid == list_id && t.id == task_id));
+    }
+
     /// How many times `m` has been invoked.
     pub fn call_count(&self, m: Method) -> u32 {
         self.inner.lock().unwrap().calls[m as usize]
