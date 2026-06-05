@@ -851,4 +851,52 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].task.id.starts_with("remote-"));
     }
+
+    #[test]
+    fn dirty_op_preserves_create_for_unsynced() {
+        use crate::commands::dirty_op;
+        assert_eq!(dirty_op(None), "create");
+        assert_eq!(dirty_op(Some("e1")), "update");
+    }
+
+    #[tokio::test]
+    async fn offline_created_then_edited_task_pushes_as_create_not_deleted() {
+        // Regression: a task created offline (no etag, pending create) and then
+        // edited (complete/due/notes) must STAY a create. Flipping to 'update'
+        // would patch a non-existent remote id → 404 → delete (data loss).
+        use crate::commands::dirty_op;
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        // Offline create.
+        let mut t = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-1".into(), parent: None, position: "1".into(),
+                title: "offline task".into(), notes: None,
+                status: TaskStatus::NeedsAction, due: None, completed: None,
+                etag: None, updated: "2026-06-01T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-06-01T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&t).await.unwrap();
+
+        // Simulate completing it before first sync (what the fixed command does).
+        t.task.status = TaskStatus::Completed;
+        t.pending_op = Some(dirty_op(t.task.etag.as_deref())); // must remain "create"
+        state.store.upsert_task(&t).await.unwrap();
+        assert_eq!(t.pending_op.as_deref(), Some("create"));
+
+        state.run_sync().await.unwrap();
+
+        // Pushed as a create (gets a remote id), NOT deleted.
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "task must survive");
+        assert!(tasks[0].task.id.starts_with("remote-"));
+        assert_eq!(tasks[0].task.status, TaskStatus::Completed);
+    }
 }

@@ -187,7 +187,7 @@ pub async fn toggle_complete(
         None
     };
     t.sync_state = SyncState::Dirty;
-    t.pending_op = Some("update".into());
+    t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -297,7 +297,7 @@ pub async fn set_due(
     }
 
     t.sync_state = SyncState::Dirty;
-    t.pending_op = Some("update".into());
+    t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -394,7 +394,7 @@ pub async fn set_notes(
     let mut t = find_task(&state, &id).await?;
     t.task.notes = if notes.is_empty() { None } else { Some(notes) };
     t.sync_state = SyncState::Dirty;
-    t.pending_op = Some("update".into());
+    t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -482,4 +482,11 @@ fn now_str() -> String {
     jiff::Zoned::now()
         .strftime("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
+}
+
+/// Pending op for a field edit. A row that was never pushed (no etag) must
+/// stay a `create` — flipping it to `update` would make push patch a
+/// non-existent remote id, 404, and delete the task. Otherwise it's `update`.
+pub(crate) fn dirty_op(etag: Option<&str>) -> String {
+    if etag.is_none() { "create" } else { "update" }.into()
 }
