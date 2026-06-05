@@ -372,13 +372,15 @@ impl Store {
         pulled: u32,
         pushed: u32,
         conflicts: u32,
+        duration_ms: u64,
         error: Option<String>,
     ) {
         let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
         let _ = sqlx::query(
-            "INSERT INTO sync_log (ran_at, pulled, pushed, conflicts, error) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO sync_log (ran_at, duration_ms, pulled, pushed, conflicts, error) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&now)
+        .bind(i64::try_from(duration_ms).unwrap_or(i64::MAX))
         .bind(i64::from(pulled))
         .bind(i64::from(pushed))
         .bind(i64::from(conflicts))
@@ -387,16 +389,12 @@ impl Store {
         .await;
     }
 
-    /// Record a local UUID → remote id remap and rewrite child references.
+    /// Rewrite a local UUID to its server-assigned id across the task row,
+    /// its children's `parent_id`, and any pending move intents.
     /// Uses `PRAGMA defer_foreign_keys` so FK checks are evaluated only at commit.
     pub async fn remap_id(&self, local_id: &str, remote_id: &str) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("PRAGMA defer_foreign_keys = ON")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("INSERT OR REPLACE INTO id_remap (local_id, remote_id) VALUES (?, ?)")
-            .bind(local_id)
-            .bind(remote_id)
             .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE tasks SET id = ? WHERE id = ?")
@@ -671,6 +669,10 @@ mod tests {
     #[tokio::test]
     async fn record_and_read_pending_move() {
         let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        s.upsert_task(&task("P1", "L1", None, "2")).await.unwrap();
+        s.upsert_task(&task("T0", "L1", None, "3")).await.unwrap();
         s.record_move("T1", "L1", Some("P1"), Some("T0")).await.unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
@@ -682,6 +684,8 @@ mod tests {
     #[tokio::test]
     async fn record_move_upserts_same_task() {
         let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
         s.record_move("T1", "L1", None, Some("A")).await.unwrap();
         s.record_move("T1", "L1", None, Some("B")).await.unwrap();
         let moves = s.pending_moves().await.unwrap();
@@ -692,6 +696,8 @@ mod tests {
     #[tokio::test]
     async fn clear_move_removes_it() {
         let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
         s.record_move("T1", "L1", None, None).await.unwrap();
         s.clear_move("T1").await.unwrap();
         assert!(s.pending_moves().await.unwrap().is_empty());
@@ -700,8 +706,21 @@ mod tests {
     #[tokio::test]
     async fn clear_all_removes_pending_moves() {
         let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
         s.record_move("T1", "L1", None, None).await.unwrap();
         s.clear_all().await.unwrap();
+        assert!(s.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_task_cascades_pending_move() {
+        // FK integrity: a hard-deleted task must not leave an orphan move.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        s.record_move("T1", "L1", None, None).await.unwrap();
+        s.delete_task_hard("T1").await.unwrap();
         assert!(s.pending_moves().await.unwrap().is_empty());
     }
 

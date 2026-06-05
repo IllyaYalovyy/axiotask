@@ -53,9 +53,19 @@ impl SyncEngine {
 
     /// Execute a full sync cycle: push then pull. Always writes to sync_log.
     pub async fn run(&self) -> Result<SyncOutcome, SyncError> {
+        let started = std::time::Instant::now();
         let mut outcome = SyncOutcome::default();
         let result = self.execute(&mut outcome).await;
-        self.store.write_sync_log(outcome.pulled, outcome.pushed, outcome.conflicts, result.as_ref().err().map(ToString::to_string)).await;
+        let duration_ms = started.elapsed().as_millis() as u64;
+        self.store
+            .write_sync_log(
+                outcome.pulled,
+                outcome.pushed,
+                outcome.conflicts,
+                duration_ms,
+                result.as_ref().err().map(ToString::to_string),
+            )
+            .await;
         result?;
         Ok(outcome)
     }
@@ -855,12 +865,17 @@ mod tests {
     async fn push_move_not_found_drops_intent() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
-        eng.run().await.unwrap();
+        eng.run().await.unwrap(); // list now exists locally
 
-        // Move references a task the server doesn't have.
+        // A clean task that exists locally but the server doesn't know.
+        let mut local = dirty_task("ghost", "L1", "update");
+        local.sync_state = SyncState::Clean;
+        local.pending_op = None;
+        local.task.etag = Some("e1".into());
+        eng.store.upsert_task(&local).await.unwrap();
         eng.store.record_move("ghost", "L1", None, None).await.unwrap();
-        let out = eng.run().await.unwrap();
 
+        let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0);
         // Stale move dropped, not retried forever.
         assert!(eng.store.pending_moves().await.unwrap().is_empty());
