@@ -44,3 +44,13 @@ CREATE TABLE IF NOT EXISTS sync_log (
   conflicts   INTEGER,
   error       TEXT
 );
+
+-- Pending position/parent moves to push via the Tasks move API.
+-- Separate from the dirty/pending_op flow because Google handles
+-- reordering and reparenting through a distinct endpoint, not patch.
+CREATE TABLE IF NOT EXISTS pending_moves (
+  task_id     TEXT PRIMARY KEY,
+  list_id     TEXT NOT NULL,
+  parent_id   TEXT,
+  previous_id TEXT
+);

@@ -326,17 +326,21 @@ pub async fn move_task(
     previous_id: Option<String>,
 ) -> Result<(), String> {
     let mut t = find_task(&state, &id).await?;
-    t.task.parent = parent_id;
-    // Position will be resolved by the sync engine via the move API.
+    t.task.parent = parent_id.clone();
     if let Some(ref prev) = previous_id {
         t.task.position = format!("after-{prev}");
     } else {
         t.task.position = "00000000000001".into();
     }
-    t.sync_state = SyncState::Dirty;
-    t.pending_op = Some("update".into());
+    // Local position/parent updated immediately. The actual reorder is pushed
+    // via the move API (recorded in pending_moves), not patch_task.
     t.local_updated = now_str();
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .record_move(&id, &t.list_id, parent_id.as_deref(), previous_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }
@@ -427,20 +431,27 @@ pub async fn reorder_task(
         "down" if idx < siblings.len() - 1 => idx + 1,
         _ => return Ok(()), // no-op at boundary
     };
-    // Swap positions
+
+    // Swap local positions so the UI reflects the new order immediately.
     let mut current = t.clone();
     let mut other = siblings[swap_idx].clone();
-    let tmp = current.task.position.clone();
-    current.task.position = other.task.position.clone();
-    other.task.position = tmp;
-    current.sync_state = SyncState::Dirty;
-    current.pending_op = Some("update".into());
+    std::mem::swap(&mut current.task.position, &mut other.task.position);
     current.local_updated = now_str();
-    other.sync_state = SyncState::Dirty;
-    other.pending_op = Some("update".into());
     other.local_updated = now_str();
     state.store.upsert_task(&current).await.map_err(|e| e.to_string())?;
     state.store.upsert_task(&other).await.map_err(|e| e.to_string())?;
+
+    // Determine the sibling the task now follows, and record a move to push
+    // via the Tasks move API (Google reorders through move, not patch).
+    let new_previous: Option<String> = match direction.as_str() {
+        "up" => (idx >= 2).then(|| siblings[idx - 2].task.id.clone()),
+        _ /* down */ => Some(siblings[idx + 1].task.id.clone()),
+    };
+    state
+        .store
+        .record_move(&id, &t.list_id, t.task.parent.as_deref(), new_previous.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }

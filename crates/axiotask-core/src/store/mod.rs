@@ -8,7 +8,7 @@ mod error;
 mod repo;
 
 pub use error::StoreError;
-pub use repo::{Store, StoredTask, StoredTaskList, SyncState};
+pub use repo::{PendingMove, Store, StoredTask, StoredTaskList, SyncState};
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};

@@ -68,6 +68,19 @@ pub struct StoredTaskList {
     pub local_updated: String,
 }
 
+/// A pending position/parent move to be pushed via the Tasks move API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingMove {
+    /// Task being moved.
+    pub task_id: String,
+    /// List the task belongs to.
+    pub list_id: String,
+    /// Target parent (`None` = top-level).
+    pub parent_id: Option<String>,
+    /// Task it should follow (`None` = first position).
+    pub previous_id: Option<String>,
+}
+
 /// Repository handle. Cheap to clone (wraps a pool).
 #[derive(Clone)]
 pub struct Store {
@@ -286,12 +299,68 @@ impl Store {
         Ok(())
     }
 
+    /// Record a pending position/parent move for a task (upsert).
+    pub async fn record_move(
+        &self,
+        task_id: &str,
+        list_id: &str,
+        parent_id: Option<&str>,
+        previous_id: Option<&str>,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO pending_moves (task_id, list_id, parent_id, previous_id)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(task_id) DO UPDATE SET
+               list_id = excluded.list_id,
+               parent_id = excluded.parent_id,
+               previous_id = excluded.previous_id",
+        )
+        .bind(task_id)
+        .bind(list_id)
+        .bind(parent_id)
+        .bind(previous_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// All pending moves awaiting push.
+    pub async fn pending_moves(&self) -> Result<Vec<PendingMove>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT task_id, list_id, parent_id, previous_id FROM pending_moves",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(PendingMove {
+                task_id: row.try_get("task_id")?,
+                list_id: row.try_get("list_id")?,
+                parent_id: row.try_get("parent_id")?,
+                previous_id: row.try_get("previous_id")?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Clear a pending move after it has been pushed (or remapped away).
+    pub async fn clear_move(&self, task_id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM pending_moves WHERE task_id = ?")
+            .bind(task_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Drop all local tasks and lists. Used for fresh sync.
     pub async fn clear_all(&self) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM tasks")
             .execute(&self.pool)
             .await?;
         sqlx::query("DELETE FROM task_lists")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM pending_moves")
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -336,6 +405,22 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE tasks SET parent_id = ? WHERE parent_id = ?")
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
+        // Rewrite any pending move intents referencing the local id.
+        sqlx::query("UPDATE pending_moves SET task_id = ? WHERE task_id = ?")
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE pending_moves SET parent_id = ? WHERE parent_id = ?")
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE pending_moves SET previous_id = ? WHERE previous_id = ?")
             .bind(remote_id)
             .bind(local_id)
             .execute(&mut *tx)
@@ -581,5 +666,54 @@ mod tests {
         s.clear_all().await.unwrap();
         assert!(s.all_lists().await.unwrap().is_empty());
         assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn record_and_read_pending_move() {
+        let s = fresh().await;
+        s.record_move("T1", "L1", Some("P1"), Some("T0")).await.unwrap();
+        let moves = s.pending_moves().await.unwrap();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].task_id, "T1");
+        assert_eq!(moves[0].parent_id.as_deref(), Some("P1"));
+        assert_eq!(moves[0].previous_id.as_deref(), Some("T0"));
+    }
+
+    #[tokio::test]
+    async fn record_move_upserts_same_task() {
+        let s = fresh().await;
+        s.record_move("T1", "L1", None, Some("A")).await.unwrap();
+        s.record_move("T1", "L1", None, Some("B")).await.unwrap();
+        let moves = s.pending_moves().await.unwrap();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].previous_id.as_deref(), Some("B"));
+    }
+
+    #[tokio::test]
+    async fn clear_move_removes_it() {
+        let s = fresh().await;
+        s.record_move("T1", "L1", None, None).await.unwrap();
+        s.clear_move("T1").await.unwrap();
+        assert!(s.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn clear_all_removes_pending_moves() {
+        let s = fresh().await;
+        s.record_move("T1", "L1", None, None).await.unwrap();
+        s.clear_all().await.unwrap();
+        assert!(s.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remap_id_rewrites_pending_move_task_id() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("local-1", "L1", None, "1")).await.unwrap();
+        s.record_move("local-1", "L1", None, Some("other")).await.unwrap();
+        s.remap_id("local-1", "remote-1").await.unwrap();
+        let moves = s.pending_moves().await.unwrap();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].task_id, "remote-1");
     }
 }

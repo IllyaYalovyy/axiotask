@@ -91,6 +91,38 @@ impl SyncEngine {
                 _ => {}
             }
         }
+
+        // Third pass: push position/parent moves via the move API.
+        self.push_moves(out).await?;
+        Ok(())
+    }
+
+    /// Push pending position/parent moves via the Tasks move endpoint.
+    async fn push_moves(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        for mv in self.store.pending_moves().await? {
+            match self.client.move_task(
+                &mv.list_id,
+                &mv.task_id,
+                mv.parent_id.as_deref(),
+                mv.previous_id.as_deref(),
+            ).await {
+                Ok(remote) => {
+                    self.store.mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                    self.store.clear_move(&mv.task_id).await?;
+                    out.pushed += 1;
+                    debug!(id = %mv.task_id, "pushed move");
+                }
+                // Task gone on server — drop the stale move intent.
+                Err(ApiError::NotFound) => {
+                    self.store.clear_move(&mv.task_id).await?;
+                    debug!(id = %mv.task_id, "move target gone, dropping move");
+                }
+                Err(e) if e.is_transient() => {
+                    warn!(err = %e, "transient error on move, will retry");
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
         Ok(())
     }
 
@@ -780,5 +812,74 @@ mod tests {
             .fetch_one(eng.store.pool())
             .await.unwrap();
         assert!(row.0.unwrap().contains("fatal"));
+    }
+
+    // ─── Move (reorder / reparent) ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn push_move_calls_move_api_and_clears() {
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "first", "1");
+        client.seed_task("L1", "T2", "second", "2");
+        eng.run().await.unwrap();
+
+        // Record a move: T1 should follow T2.
+        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        assert_eq!(client.call_count(Method::MoveTask), 1);
+        // Pending move cleared after successful push.
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_move_disabled_when_push_off() {
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine().await; // push disabled
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+        eng.run().await.unwrap();
+
+        eng.store.record_move("T1", "L1", None, Some("X")).await.unwrap();
+        eng.run().await.unwrap();
+
+        assert_eq!(client.call_count(Method::MoveTask), 0);
+        // Move intent preserved for when push is enabled.
+        assert_eq!(eng.store.pending_moves().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn push_move_not_found_drops_intent() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // Move references a task the server doesn't have.
+        eng.store.record_move("ghost", "L1", None, None).await.unwrap();
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(out.pushed, 0);
+        // Stale move dropped, not retried forever.
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_move_transient_retries() {
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+        client.seed_task("L1", "T2", "other", "2");
+        eng.run().await.unwrap();
+
+        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+        client.fail_next(Method::MoveTask, || ApiError::Server { status: 503 });
+
+        eng.run().await.unwrap();
+        // Move intent preserved for retry.
+        assert_eq!(eng.store.pending_moves().await.unwrap().len(), 1);
     }
 }
