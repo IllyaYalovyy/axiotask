@@ -798,7 +798,7 @@ mod tests {
         // In-memory test state must default to push-disabled (read-only)
         // so tests never accidentally push to a real backend.
         let (_client, state) = setup().await;
-        assert!(!state.push_enabled());
+        assert!(!state.is_push_enabled());
     }
 
     #[tokio::test]
@@ -1200,5 +1200,85 @@ mod tests {
             tasks.iter().any(|t| t.task.id == "KEEP"),
             "untouched row preserved"
         );
+    }
+
+    // ─── Properties / settings ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn set_push_enabled_flips_runtime_and_persists() {
+        let (_client, state) = setup().await;
+        assert!(!state.is_push_enabled(), "defaults to read-only");
+
+        state.set_push_enabled(true).unwrap();
+        assert!(state.is_push_enabled(), "runtime flag flips immediately");
+
+        // Persisted to the (temp) config file so the choice survives a restart.
+        let cfg = axiotask_core::config::AppConfig::load_from(state.config_path())
+            .expect("config written");
+        assert!(cfg.sync.push_enabled);
+
+        // And it can be turned back off.
+        state.set_push_enabled(false).unwrap();
+        assert!(!state.is_push_enabled());
+        let cfg = axiotask_core::config::AppConfig::load_from(state.config_path()).unwrap();
+        assert!(!cfg.sync.push_enabled);
+    }
+
+    #[tokio::test]
+    async fn set_auto_sync_persists() {
+        let (_client, state) = setup().await;
+        assert!(state.auto_sync_on_start(), "memory state defaults on");
+        state.set_auto_sync_on_start(false).unwrap();
+        assert!(!state.auto_sync_on_start());
+        let cfg = axiotask_core::config::AppConfig::load_from(state.config_path()).unwrap();
+        assert!(!cfg.sync.auto_sync_on_start);
+    }
+
+    #[tokio::test]
+    async fn sync_status_starts_empty_then_records_a_run() {
+        let (_client, state) = setup().await;
+        let before = state.sync_status().await;
+        assert!(before.last_synced.is_none());
+        assert_eq!(before.total_syncs, 0);
+        assert!(before.last_error.is_none());
+
+        // A direct sync against the in-memory client succeeds (empty pull).
+        state.run_sync().await.expect("sync ok");
+
+        let after = state.sync_status().await;
+        assert!(after.last_synced.is_some(), "timestamp recorded");
+        assert_eq!(after.total_syncs, 1);
+        assert!(after.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn pending_push_count_reflects_dirty_changes() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        // setup() auto-creates a pending "My Tasks" list, so measure deltas.
+        let baseline = state.pending_push_count().await.unwrap();
+
+        // A fresh create is a pending push.
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let t = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "T1".into(),
+                parent: None,
+                position: "1".into(),
+                title: "todo".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: now.clone(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: now,
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&t).await.unwrap();
+        assert_eq!(state.pending_push_count().await.unwrap(), baseline + 1);
     }
 }

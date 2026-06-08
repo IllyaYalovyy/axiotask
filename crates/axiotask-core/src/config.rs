@@ -105,6 +105,41 @@ impl AppConfig {
     pub fn default_toml() -> &'static str {
         include_str!("../config.default.toml")
     }
+
+    /// Persist the `[sync]` settings to `path`, preserving the rest of the
+    /// file — existing formatting, comments, and the `[google]` credentials.
+    ///
+    /// Uses `toml_edit` so a user's hand-written config (including the helpful
+    /// comments from the default template) survives a settings change made in
+    /// the app. If the file does not exist yet it is created from the embedded
+    /// default template first, so the comments are present either way.
+    pub fn save_sync_to(path: &std::path::Path, sync: &SyncConfig) -> std::io::Result<()> {
+        let text = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| Self::default_toml().to_string());
+        // Fall back to the default template if the existing file is malformed,
+        // rather than silently dropping the user's settings into a blank doc.
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .or_else(|_| Self::default_toml().parse::<toml_edit::DocumentMut>())
+            .expect("embedded default config is valid TOML");
+
+        if !doc.contains_key("sync") {
+            doc["sync"] = toml_edit::table();
+        }
+        doc["sync"]["push_enabled"] = toml_edit::value(sync.push_enabled);
+        doc["sync"]["auto_sync_on_start"] = toml_edit::value(sync.auto_sync_on_start);
+        doc["sync"]["full_sync_enabled"] = toml_edit::value(sync.full_sync_enabled);
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, doc.to_string())
+    }
+
+    /// Persist the `[sync]` settings to the default config path.
+    pub fn save_sync(sync: &SyncConfig) -> std::io::Result<()> {
+        Self::save_sync_to(&Self::default_path(), sync)
+    }
 }
 
 #[cfg(test)]
@@ -252,5 +287,67 @@ client_id = "partial-id"
         let cfg: AppConfig = toml::from_str(content).unwrap();
         assert!(cfg.google.client_id.is_empty());
         assert!(!cfg.sync.push_enabled);
+    }
+
+    #[test]
+    fn save_sync_round_trips_values() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let sync = SyncConfig {
+            push_enabled: true,
+            auto_sync_on_start: false,
+            full_sync_enabled: true,
+        };
+        AppConfig::save_sync_to(&path, &sync).unwrap();
+
+        let cfg = AppConfig::load_from(&path).unwrap();
+        assert!(cfg.sync.push_enabled);
+        assert!(!cfg.sync.auto_sync_on_start);
+        assert!(cfg.sync.full_sync_enabled);
+    }
+
+    #[test]
+    fn save_sync_preserves_credentials_and_comments() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "# my hand-written config\n\
+             [google]\n\
+             client_id = \"keep-me\"\n\
+             client_secret = \"secret-too\"\n\
+             scopes = [\"https://www.googleapis.com/auth/tasks\"]\n\n\
+             [sync]\n\
+             # push comment\n\
+             push_enabled = false\n",
+        )
+        .unwrap();
+
+        AppConfig::save_sync_to(&path, &SyncConfig { push_enabled: true, ..Default::default() })
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        // Credentials and comments survive the write.
+        assert!(raw.contains("client_id = \"keep-me\""));
+        assert!(raw.contains("client_secret = \"secret-too\""));
+        assert!(raw.contains("# my hand-written config"));
+        assert!(raw.contains("# push comment"));
+        // And the toggled value is persisted.
+        let cfg = AppConfig::load_from(&path).unwrap();
+        assert!(cfg.sync.push_enabled);
+        assert_eq!(cfg.google.client_id, "keep-me");
+    }
+
+    #[test]
+    fn save_sync_creates_file_from_template_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("config.toml");
+        AppConfig::save_sync_to(&path, &SyncConfig { push_enabled: true, ..Default::default() })
+            .unwrap();
+        assert!(path.exists());
+        let raw = std::fs::read_to_string(&path).unwrap();
+        // Created from the documented template, so the helpful comments exist.
+        assert!(raw.contains("[google]"));
+        assert!(raw.contains("push_enabled = true"));
     }
 }

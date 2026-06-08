@@ -1,5 +1,5 @@
 <script>
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onabout, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onproperties, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -146,7 +146,7 @@
         <span class="sign-out" onclick={onlogout}>Sign out</span>
       {/if}
     </div>
-    <button class="about-btn" onclick={onabout} title="About axiotask">About</button>
+    <button class="about-btn" onclick={onproperties} title="Properties (,)">⚙ Properties</button>
   </div>
 </aside>
 

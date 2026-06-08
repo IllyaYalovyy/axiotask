@@ -68,6 +68,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 dirs = "5"
 toml = "0.8"
+toml_edit = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 sha2 = "0.10"

@@ -533,6 +533,96 @@ pub async fn open_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }
 
+/// Sync status and running stats, surfaced to the Properties dialog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusView {
+    /// RFC-3339 timestamp of the last successful sync, or null if none yet.
+    pub last_synced: Option<String>,
+    pub last_pulled: u32,
+    pub last_pushed: u32,
+    pub last_conflicts: u32,
+    pub last_deleted: u32,
+    /// Successful syncs since the app started.
+    pub total_syncs: u64,
+    /// Most recent sync error, cleared on the next success.
+    pub last_error: Option<String>,
+}
+
+/// Everything the Properties dialog needs in a single round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    /// App version (from Cargo).
+    pub version: String,
+    /// Read-write sync (push local changes) vs. read-only (pull only).
+    pub push_enabled: bool,
+    /// Auto-sync on startup.
+    pub auto_sync_on_start: bool,
+    /// Whether the user is signed in to Google.
+    pub authenticated: bool,
+    /// OAuth scopes the app is configured to request (what it can access).
+    pub scopes: Vec<String>,
+    /// Local SQLite database path.
+    pub db_path: String,
+    /// Config file path (where settings are saved).
+    pub config_path: String,
+    /// Local changes awaiting push (0 in a fully-synced state).
+    pub pending_pushes: u32,
+    /// Last sync outcome and stats.
+    pub sync: SyncStatusView,
+}
+
+/// Assemble the full settings snapshot from app state.
+async fn build_settings(state: &AppState) -> Result<AppSettings, String> {
+    let status = state.sync_status().await;
+    Ok(AppSettings {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        push_enabled: state.is_push_enabled(),
+        auto_sync_on_start: state.auto_sync_on_start(),
+        authenticated: state.is_authenticated(),
+        scopes: state.scopes(),
+        db_path: state.db_path().display().to_string(),
+        config_path: state.config_path().display().to_string(),
+        pending_pushes: state.pending_push_count().await?,
+        sync: SyncStatusView {
+            last_synced: status.last_synced,
+            last_pulled: status.last_pulled,
+            last_pushed: status.last_pushed,
+            last_conflicts: status.last_conflicts,
+            last_deleted: status.last_deleted,
+            total_syncs: status.total_syncs,
+            last_error: status.last_error,
+        },
+    })
+}
+
+/// Read the current application settings and sync status.
+#[tauri::command]
+pub async fn get_settings(state: State<'_, Arc<AppState>>) -> Result<AppSettings, String> {
+    build_settings(&state).await
+}
+
+/// Toggle read-write sync (push enabled) vs. read-only. Persists to config and
+/// returns the refreshed settings so the UI stays in sync.
+#[tauri::command]
+pub async fn set_push_enabled(
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<AppSettings, String> {
+    state.set_push_enabled(enabled)?;
+    build_settings(&state).await
+}
+
+/// Toggle auto-sync on startup. Persists to config and returns refreshed
+/// settings.
+#[tauri::command]
+pub async fn set_auto_sync(
+    state: State<'_, Arc<AppState>>,
+    enabled: bool,
+) -> Result<AppSettings, String> {
+    state.set_auto_sync_on_start(enabled)?;
+    build_settings(&state).await
+}
+
 /// Result of an export, surfaced to the UI for a confirmation toast.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportResult {

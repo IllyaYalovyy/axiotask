@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify};
@@ -69,15 +70,48 @@ pub struct RestoreSummary {
     pub tasks: usize,
 }
 
+/// Live sync status and running stats, surfaced to the Properties dialog.
+///
+/// Updated after every sync run (success or failure) so the UI can show when
+/// the last sync happened, what it did, how many have run this session, and
+/// the most recent error (if any).
+#[derive(Debug, Clone, Default)]
+pub struct SyncStatus {
+    /// RFC-3339 timestamp of the last *successful* sync, if any.
+    pub last_synced: Option<String>,
+    /// Counts from the last successful sync.
+    pub last_pulled: u32,
+    pub last_pushed: u32,
+    pub last_conflicts: u32,
+    pub last_deleted: u32,
+    /// Number of successful syncs since the app started.
+    pub total_syncs: u64,
+    /// Message from the most recent sync failure, cleared on the next success.
+    pub last_error: Option<String>,
+}
+
 /// Shared application state managed by Tauri.
-pub struct AppState {    pub store: Store,
+pub struct AppState {
+    pub store: Store,
     client: Arc<Mutex<Arc<dyn GoogleTasksClient>>>,
     token_store: Arc<dyn TokenStore>,
     oauth_config: OAuthConfig,
     sync_notify: Arc<Notify>,
     /// Serializes sync runs — only one sync executes at a time (RFC-004).
     sync_guard: Arc<Mutex<()>>,
-    push_enabled: bool,
+    /// Whether local changes are pushed to Google. Mutable at runtime via the
+    /// Properties dialog (read-only vs. read-write sync) and persisted to the
+    /// config file. Read on every sync run.
+    push_enabled: AtomicBool,
+    /// Whether to sync automatically on startup. Persisted; display-only after
+    /// launch (it only governs the startup sync).
+    auto_sync_on_start: AtomicBool,
+    /// Path to the config file, so settings changes persist to the right place.
+    config_path: PathBuf,
+    /// Path to the SQLite database (shown in the Properties dialog).
+    db_path: PathBuf,
+    /// Last sync outcome and running stats.
+    sync_status: Mutex<SyncStatus>,
 }
 
 impl AppState {
@@ -120,7 +154,11 @@ impl AppState {
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
-            push_enabled: config.sync.push_enabled,
+            push_enabled: AtomicBool::new(config.sync.push_enabled),
+            auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
+            config_path: axiotask_core::config::AppConfig::default_path(),
+            db_path: db_path.to_owned(),
+            sync_status: Mutex::new(SyncStatus::default()),
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -157,7 +195,14 @@ impl AppState {
             oauth_config,
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
-            push_enabled,
+            push_enabled: AtomicBool::new(push_enabled),
+            auto_sync_on_start: AtomicBool::new(true),
+            // A throwaway temp path so settings writes in tests never touch the
+            // real user config.
+            config_path: std::env::temp_dir()
+                .join(format!("axiotask-test-{}.toml", uuid::Uuid::new_v4())),
+            db_path: PathBuf::from(":memory:"),
+            sync_status: Mutex::new(SyncStatus::default()),
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -307,15 +352,42 @@ impl AppState {
     /// waits for it to finish before running. Prevents double-push races.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         let _guard = self.sync_guard.lock().await;
-        tracing::info!("running sync (push_enabled={})...", self.push_enabled);
+        let push_enabled = self.push_enabled.load(Ordering::Relaxed);
+        tracing::info!("running sync (push_enabled={push_enabled})...");
         let client = self.client.lock().await.clone();
-        let engine = SyncEngine::with_push(client, self.store.clone(), self.push_enabled);
+        let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled);
         let result = engine.run().await;
-        match &result {
-            Ok(o) => tracing::info!("sync complete: pulled={}, pushed={}, conflicts={}", o.pulled, o.pushed, o.conflicts),
-            Err(e) => tracing::error!("sync failed: {e}"),
+        // Record status/stats for the Properties dialog.
+        {
+            let mut status = self.sync_status.lock().await;
+            match &result {
+                Ok(o) => {
+                    tracing::info!(
+                        "sync complete: pulled={}, pushed={}, conflicts={}",
+                        o.pulled, o.pushed, o.conflicts
+                    );
+                    status.last_synced = Some(
+                        jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                    );
+                    status.last_pulled = o.pulled;
+                    status.last_pushed = o.pushed;
+                    status.last_conflicts = o.conflicts;
+                    status.last_deleted = o.deleted;
+                    status.total_syncs += 1;
+                    status.last_error = None;
+                }
+                Err(e) => {
+                    tracing::error!("sync failed: {e}");
+                    status.last_error = Some(e.to_string());
+                }
+            }
         }
         result
+    }
+
+    /// A snapshot of the current sync status and running stats.
+    pub async fn sync_status(&self) -> SyncStatus {
+        self.sync_status.lock().await.clone()
     }
 
     /// Run sync only if the user is authenticated. Returns an error if not signed in.
@@ -466,9 +538,63 @@ impl AppState {
     }
 
     /// Whether push is enabled (read-only mode if false).
-    #[cfg(test)]
-    pub fn push_enabled(&self) -> bool {
-        self.push_enabled
+    pub fn is_push_enabled(&self) -> bool {
+        self.push_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Whether auto-sync-on-startup is enabled.
+    pub fn auto_sync_on_start(&self) -> bool {
+        self.auto_sync_on_start.load(Ordering::Relaxed)
+    }
+
+    /// Path to the SQLite database (display-only).
+    pub fn db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
+    /// Path to the config file (display-only).
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.config_path
+    }
+
+    /// OAuth scopes currently configured (display-only; what access the app
+    /// has to the Google account).
+    pub fn scopes(&self) -> Vec<String> {
+        self.oauth_config.scopes.clone()
+    }
+
+    /// Number of local changes awaiting push (delegates to the store).
+    pub async fn pending_push_count(&self) -> Result<u32, String> {
+        self.store.pending_push_count().await.map_err(|e| e.to_string())
+    }
+
+    /// Enable or disable pushing local changes to Google (read-write vs.
+    /// read-only sync). Takes effect on the next sync and is persisted to the
+    /// config file so the choice survives a restart.
+    pub fn set_push_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.push_enabled.store(enabled, Ordering::Relaxed);
+        self.persist_sync_settings()
+    }
+
+    /// Enable or disable the automatic sync on startup. Persisted to config.
+    pub fn set_auto_sync_on_start(&self, enabled: bool) -> Result<(), String> {
+        self.auto_sync_on_start.store(enabled, Ordering::Relaxed);
+        self.persist_sync_settings()
+    }
+
+    /// Write the current in-memory sync settings to the config file, preserving
+    /// the rest of the file (credentials, comments, and `full_sync_enabled`,
+    /// which is read fresh from disk so an experimental opt-in isn't clobbered).
+    fn persist_sync_settings(&self) -> Result<(), String> {
+        let on_disk = axiotask_core::config::AppConfig::load_from(&self.config_path)
+            .unwrap_or_default();
+        let sync = axiotask_core::config::SyncConfig {
+            push_enabled: self.push_enabled.load(Ordering::Relaxed),
+            auto_sync_on_start: self.auto_sync_on_start.load(Ordering::Relaxed),
+            full_sync_enabled: on_disk.sync.full_sync_enabled,
+        };
+        axiotask_core::config::AppConfig::save_sync_to(&self.config_path, &sync)
+            .map_err(|e| format!("failed to save config: {e}"))
     }
 }
 

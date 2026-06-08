@@ -566,6 +566,30 @@ impl Store {
         Ok(())
     }
 
+    /// Number of local changes awaiting push: dirty/deleted tasks and lists
+    /// plus recorded position moves, excluding local-only lists (which never
+    /// sync). Read-only — unlike `drain_*`, it does not consume the queue, so
+    /// the UI can display "N changes pending" without disturbing sync state.
+    pub async fn pending_push_count(&self) -> Result<u32, StoreError> {
+        let tasks: (i64,) = sqlx::query_as(
+            r"SELECT COUNT(*) FROM tasks t
+              JOIN task_lists l ON l.id = t.list_id
+              WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') AND l.local_only = 0",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let lists: (i64,) = sqlx::query_as(
+            r"SELECT COUNT(*) FROM task_lists
+              WHERE (sync_state = 'dirty' OR sync_state = 'deleted') AND local_only = 0",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let moves: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM pending_moves")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok((tasks.0 + lists.0 + moves.0) as u32)
+    }
+
     /// Drop all local tasks and lists. Used for fresh sync.
     pub async fn clear_all(&self) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM tasks")
@@ -874,6 +898,35 @@ mod tests {
         let drained = s.drain_dirty().await.unwrap();
         let ids: Vec<_> = drained.iter().map(|t| t.task.id.clone()).collect();
         assert_eq!(ids, vec!["ST"], "only the synced list's task is pushed");
+    }
+
+    #[tokio::test]
+    async fn pending_push_count_sums_tasks_lists_moves_excluding_local_only() {
+        let s = fresh().await;
+        s.upsert_list(&local_list("LOCAL")).await.unwrap();
+        s.upsert_list(&list("SYNCED")).await.unwrap();
+        assert_eq!(s.pending_push_count().await.unwrap(), 0, "all clean to start");
+
+        // Dirty task in synced list → counts.
+        let mut t = task("T1", "SYNCED", None, "1");
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        s.upsert_task(&t).await.unwrap();
+        // Dirty task in local-only list → must NOT count.
+        let mut lt = task("LT", "LOCAL", None, "1");
+        lt.sync_state = SyncState::Dirty;
+        lt.pending_op = Some("create".into());
+        s.upsert_task(&lt).await.unwrap();
+        // A dirty list and a recorded move → each counts.
+        let mut dl = list("SYNCED");
+        dl.list.title = "renamed".into();
+        dl.sync_state = SyncState::Dirty;
+        dl.pending_op = Some("update".into());
+        s.upsert_list(&dl).await.unwrap();
+        s.record_move("T1", "SYNCED", None, None).await.unwrap();
+
+        // 1 task + 1 list + 1 move = 3; the local-only task is excluded.
+        assert_eq!(s.pending_push_count().await.unwrap(), 3);
     }
 
     #[tokio::test]

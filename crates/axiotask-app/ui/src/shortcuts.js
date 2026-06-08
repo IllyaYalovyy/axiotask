@@ -63,6 +63,7 @@ export const SHORTCUT_CATEGORIES = [
     shortcuts: [
       { keys: ["Ctrl+E"], description: "Export backup (JSON)" },
       { keys: ["Ctrl+I"], description: "Restore latest backup" },
+      { keys: [","], description: "Open Properties" },
       { keys: ["?"], description: "This cheatsheet" },
       { keys: ["Esc"], description: "Close panel / cancel" },
     ],

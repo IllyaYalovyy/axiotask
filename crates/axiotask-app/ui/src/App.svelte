@@ -14,7 +14,7 @@
   import TaskDetail from "./TaskDetail.svelte";
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
-  import About from "./About.svelte";
+  import Properties from "./Properties.svelte";
 
   // --- State ---
   let lists = $state([]);
@@ -31,7 +31,9 @@
   let notesTask = $state(null);
   let undoItem = $state(null);
   let showCheatsheet = $state(false);
-  let showAbout = $state(false);
+  let showProperties = $state(false);
+  let settings = $state(null); // AppSettings snapshot for the Properties dialog
+  let propsBusy = $state(false);
   let newestTaskId = $state(null); // transient: force this task to top of list
   let focusIndex = $state(0);
   let editingId = $state(null);
@@ -438,6 +440,53 @@
     authenticated = false;
     syncStatus = "idle";
     lastSynced = null;
+    if (showProperties) await refreshSettings();
+  }
+
+  // --- Properties dialog ---
+  async function refreshSettings() {
+    const s = await cmd("get_settings");
+    if (s !== null) settings = s;
+  }
+
+  async function openProperties() {
+    await refreshSettings();
+    if (settings) showProperties = true;
+  }
+
+  async function setPushEnabled(enabled) {
+    propsBusy = true;
+    const s = await cmd("set_push_enabled", { enabled });
+    if (s !== null) settings = s;
+    propsBusy = false;
+  }
+
+  async function setAutoSync(enabled) {
+    propsBusy = true;
+    const s = await cmd("set_auto_sync", { enabled });
+    if (s !== null) settings = s;
+    propsBusy = false;
+  }
+
+  // Sync from within the dialog, then refresh its stats.
+  async function syncFromProperties() {
+    propsBusy = true;
+    await doSync();
+    await refreshSettings();
+    propsBusy = false;
+  }
+
+  async function freshSyncFromProperties() {
+    propsBusy = true;
+    await doFreshSync();
+    await refreshSettings();
+    propsBusy = false;
+  }
+
+  // Sign in from the dialog, then refresh so the Account tab updates.
+  async function loginFromProperties() {
+    await login();
+    await refreshSettings();
   }
 
   async function createList(title, localOnly = false) {
@@ -555,7 +604,7 @@
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
           await loadAll();
         }},
-        { id: "properties", icon: "ℹ️", label: "Properties", shortcut: "Enter", action: () => {
+        { id: "details", icon: "ℹ️", label: "Details", shortcut: "Enter", action: () => {
           detailTask = allTasks.find(t => t.id === task.id) || task;
         }},
         "separator",
@@ -638,7 +687,13 @@
 
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
-    if (showAbout) { showAbout = false; e.preventDefault(); return; }
+    if (showProperties) {
+      // Esc closes; all other keys are handled within the dialog (its buttons
+      // and checkboxes keep their default behavior) and must not reach the
+      // task view underneath.
+      if (e.key === "Escape") { showProperties = false; e.preventDefault(); }
+      return;
+    }
     if (showClearConfirm) { showClearConfirm = false; e.preventDefault(); return; }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
@@ -651,6 +706,7 @@
 
     switch (e.key) {
       case "?": e.preventDefault(); showCheatsheet = true; break;
+      case ",": e.preventDefault(); await openProperties(); break;
       case "/": e.preventDefault(); showSearch = true; break;
       case "e": case "E":
         if (e.ctrlKey || e.metaKey) {
@@ -740,7 +796,7 @@
     oncreateList={createList}
     onrenameList={renameList}
     onlistaction={openListContextMenu}
-    onabout={() => showAbout = true}
+    onproperties={openProperties}
     {authenticated}
     {syncStatus}
     {lastSynced}
@@ -813,8 +869,18 @@
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />
 {/if}
-{#if showAbout}
-  <About onclose={() => showAbout = false} />
+{#if showProperties && settings}
+  <Properties
+    {settings}
+    busy={propsBusy}
+    onclose={() => showProperties = false}
+    onsetpush={setPushEnabled}
+    onsetautosync={setAutoSync}
+    onlogin={loginFromProperties}
+    onlogout={logout}
+    onsync={syncFromProperties}
+    onfreshsync={freshSyncFromProperties}
+  />
 {/if}
 {#if contextMenu}
   <ContextMenu items={contextMenu.items} x={contextMenu.x} y={contextMenu.y} onclose={() => contextMenu = null} />

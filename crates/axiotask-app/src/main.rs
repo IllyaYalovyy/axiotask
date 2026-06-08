@@ -40,10 +40,10 @@ fn main() {
             let state = Arc::new(app_state);
             app.manage(state.clone());
 
-            // Auto-sync once on startup if authenticated
+            // Auto-sync once on startup if authenticated and enabled in config
             let sync_state = state.clone();
             tauri::async_runtime::spawn(async move {
-                if sync_state.is_authenticated() {
+                if sync_state.is_authenticated() && sync_state.auto_sync_on_start() {
                     tracing::info!("auto-sync on startup...");
                     if let Err(e) = sync_state.run_sync_if_authed().await {
                         tracing::warn!("startup sync failed: {e}");
@@ -84,6 +84,9 @@ fn main() {
             commands::open_url,
             commands::export_backup,
             commands::import_backup,
+            commands::get_settings,
+            commands::set_push_enabled,
+            commands::set_auto_sync,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
