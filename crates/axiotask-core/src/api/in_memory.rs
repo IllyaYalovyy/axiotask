@@ -45,6 +45,10 @@ struct State {
     faults: VecDeque<(Method, fn() -> ApiError)>,
     /// Number of recorded calls per method.
     calls: [u32; 10],
+    /// When set, the next `insert_task` commits the task server-side but then
+    /// returns a network error — models a response timeout after the server
+    /// already created the row (the at-least-once create hazard).
+    commit_then_fail_insert: bool,
 }
 
 impl State {
@@ -139,6 +143,12 @@ impl InMemoryClient {
     /// Schedule a fault to be returned by the next call to `m`.
     pub fn fail_next(&self, m: Method, err: fn() -> ApiError) {
         self.inner.lock().unwrap().faults.push_back((m, err));
+    }
+
+    /// Make the next `insert_task` commit the task server-side but return a
+    /// network error — models a response timeout after the server committed.
+    pub fn commit_then_fail_next_insert(&self) {
+        self.inner.lock().unwrap().commit_then_fail_insert = true;
     }
 
     /// Remove a task from internal state (simulates server-side deletion by another client).
@@ -255,6 +265,10 @@ impl GoogleTasksClient for InMemoryClient {
         };
         s.tasks.push((list_id.into(), task.clone()));
         let _ = new.previous;
+        if s.commit_then_fail_insert {
+            s.commit_then_fail_insert = false;
+            return Err(ApiError::Network("response timeout after commit".into()));
+        }
         Ok(task)
     }
 

@@ -83,11 +83,23 @@ referential validity on the server:
 ### Pull
 
 1. List task lists; upsert.
-2. Per list, fetch all pages. Skip rows that are locally dirty (preserve intent).
+2. Per list, fetch all pages. Skip rows that are locally dirty (preserve intent)
+   **and** remote rows whose content matches a pending in-flight create — those
+   are the (possibly committed) result of an interrupted create and must be
+   adopted by id-remap, not pulled as a separate clean row (which would both
+   duplicate and cause a PK collision on the next recovery).
 3. Upsert remote rows whose etag differs from local (idempotent skip otherwise).
 4. **Ghost detection:** clean local rows absent from a *complete* remote
    response are deleted (server-side deletions). Skipped if pagination hit a
    transient error (incomplete view must not trigger deletes).
+
+### Create attempt discipline
+
+A parentless create is attempted **exactly once per run** (pass 1); the second
+pass pushes only child creates. Re-attempting a parentless create in the same
+run could double-insert one whose response timed out after the server
+committed it — the in-flight orphan recovery only runs at the *start* of a run,
+not between passes.
 
 ---
 

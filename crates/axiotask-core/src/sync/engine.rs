@@ -88,8 +88,8 @@ impl SyncEngine {
         // (with its remote id) before we push tasks into it.
         self.push_list_creates(out).await?;
 
-        // First pass: push parent creates (no parent_id).
-        // finish_create remaps child references in DB.
+        // First pass: push parentless creates. finish_create remaps child
+        // references in DB so the second pass sees real parent ids.
         let dirty = self.store.drain_dirty().await?;
         let parent_creates: Vec<_> = dirty.iter()
             .filter(|r| r.pending_op.as_deref() == Some("create") && r.task.parent.is_none())
@@ -99,10 +99,16 @@ impl SyncEngine {
             self.push_create(row, out).await?;
         }
 
-        // Second pass: re-read DB for fresh parent_ids after remaps.
+        // Second pass: re-read DB for fresh parent_ids after remaps. Only
+        // CHILD creates are pushed here — parentless creates were attempted
+        // exactly once in pass 1. Re-attempting them here would double-insert
+        // a create whose response timed out after the server committed it
+        // (the in-flight recovery that dedups such orphans only runs at the
+        // start of a run, not between passes).
         for row in &self.store.drain_dirty().await? {
             match row.pending_op.as_deref() {
-                Some("create") => self.push_create(row, out).await?,
+                Some("create") if row.task.parent.is_some() => self.push_create(row, out).await?,
+                Some("create") => {} // parentless: already attempted in pass 1
                 Some("update") => self.push_update(row, out).await?,
                 Some("delete") => self.push_delete(row, out).await?,
                 _ => {}
@@ -424,8 +430,21 @@ impl SyncEngine {
         // Compute skip-set after push so remapped IDs are current.
         let dirty_ids = self.store.dirty_ids().await?;
 
+        // In-flight creates: a remote task matching one of these by content is
+        // the (possibly committed) result of an interrupted create. Don't pull
+        // it as a new clean row — leave it for recover_inflight_creates to
+        // adopt via id remap next run (avoids a duplicate / PK collision).
+        let mut inflight_by_list: HashMap<String, Vec<Task>> = HashMap::new();
+        for (local_id, list_id) in self.store.inflight_creates().await? {
+            if let Some(t) = self.store.find_task_any(&local_id).await? {
+                inflight_by_list.entry(list_id).or_default().push(t.task);
+            }
+        }
+        let empty = Vec::new();
+
         for list in &lists {
-            self.pull_list(list, &dirty_ids, out).await?;
+            let inflight = inflight_by_list.get(&list.id).unwrap_or(&empty);
+            self.pull_list(list, &dirty_ids, inflight, out).await?;
         }
         Ok(())
     }
@@ -435,15 +454,17 @@ impl SyncEngine {
         &self,
         list: &TaskList,
         dirty_ids: &HashSet<String>,
+        inflight: &[Task],
         out: &mut SyncOutcome,
     ) -> Result<(), SyncError> {
         let (remote_tasks, complete) = self.fetch_all_tasks(&list.id).await?;
 
         let remote_ids: HashSet<String> = remote_tasks.iter().map(|t| t.id.clone()).collect();
 
-        // Filter: skip dirty rows, collect tasks to upsert.
+        // Filter: skip dirty rows and orphans of in-flight creates.
         let mut to_upsert: Vec<_> = remote_tasks.into_iter()
             .filter(|t| !dirty_ids.contains(&t.id))
+            .filter(|t| !inflight.iter().any(|f| same_content(f, t)))
             .collect();
 
         // Parents before children for FK safety.
@@ -714,6 +735,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_commit_then_response_timeout_does_not_duplicate() {
+        // The exact at-least-once hazard: server commits the insert but the
+        // response times out. The create must NOT be re-attempted in the same
+        // run (which would duplicate), and the next run adopts the orphan.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut t = dirty_task("local-1", "L1", "create");
+        t.task.title = "buy milk".into();
+        eng.store.upsert_task(&t).await.unwrap();
+
+        // Run 1: insert commits server-side, then errors (timeout).
+        client.commit_then_fail_next_insert();
+        eng.run().await.unwrap();
+        // Exactly one insert attempted this run (no pass-2 re-insert).
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+        // Server has exactly one "buy milk".
+        assert_eq!(client.list_tasks("L1", None).await.unwrap().items.iter()
+            .filter(|t| t.title == "buy milk").count(), 1);
+
+        // Run 2: recovery adopts the orphan instead of inserting again.
+        eng.run().await.unwrap();
+        assert_eq!(client.call_count(Method::InsertTask), 1, "no second insert");
+        let milk: Vec<_> = eng.store.list_tasks("L1").await.unwrap()
+            .into_iter().filter(|t| t.task.title == "buy milk").collect();
+        assert_eq!(milk.len(), 1, "no duplicate after recovery");
+        assert!(milk[0].task.id.starts_with("remote-"));
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn push_create_parent_before_child() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
@@ -896,12 +950,17 @@ mod tests {
         eng.run().await.unwrap();
         eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
 
-        client.fail_next(crate::api::in_memory::Method::InsertTask, || ApiError::Network("timeout".into()));
+        // A single transient. A parentless create must be attempted EXACTLY
+        // once per run (no pass-2 re-attempt that could double-insert).
         client.fail_next(crate::api::in_memory::Method::InsertTask, || ApiError::Network("timeout".into()));
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0);
+        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 1,
+            "parentless create attempted exactly once per run");
+        // Still dirty + in-flight marker for next-run recovery.
         assert_eq!(eng.store.drain_dirty().await.unwrap().len(), 1);
+        assert_eq!(eng.store.inflight_creates().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

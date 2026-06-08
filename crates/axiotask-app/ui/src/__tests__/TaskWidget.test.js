@@ -119,20 +119,23 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
     });
 
     it("shows relative due date", () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      // Build tomorrow's *local* date (date-only dues are interpreted locally;
+      // toISOString() would roll the date forward near the UTC day boundary).
+      const t = new Date();
+      t.setDate(t.getDate() + 1);
+      const due = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}T00:00:00.000Z`;
       const { container } = render(TaskRow, {
-        props: { ...defaultProps, task: makeTask({ due: tomorrow.toISOString() }) },
+        props: { ...defaultProps, task: makeTask({ due }) },
       });
       expect(container.querySelector(".due")).toBeInTheDocument();
       expect(container.querySelector(".due").textContent).toBe("tomorrow");
     });
 
     it("shows 'today' for tasks due today", () => {
-      const today = new Date();
-      today.setHours(12, 0, 0, 0);
+      const t = new Date();
+      const due = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}T00:00:00.000Z`;
       const { container } = render(TaskRow, {
-        props: { ...defaultProps, task: makeTask({ due: today.toISOString() }) },
+        props: { ...defaultProps, task: makeTask({ due }) },
       });
       expect(container.querySelector(".due").textContent).toBe("today");
     });
