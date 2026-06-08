@@ -960,4 +960,95 @@ mod tests {
             "local-only list must be excluded from ghost detection"
         );
     }
+
+    // ─── Export / backup ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn build_backup_includes_all_lists_and_tasks() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_list(&state, "L2", "Work").await;
+        seed_task(&state, "T1", "L1", "Buy milk").await;
+        seed_task(&state, "T2", "L1", "Pay rent").await;
+        seed_task(&state, "T3", "L2", "Ship release").await;
+
+        let backup = state.build_backup().await.unwrap();
+
+        // Envelope is self-describing.
+        assert_eq!(backup.version, axiotask_core::export::BACKUP_VERSION);
+        assert_eq!(backup.app, "axiotask");
+        assert!(!backup.exported_at.is_empty());
+
+        // All lists (auto-created "My Tasks" + 2 seeded) and all tasks present.
+        assert_eq!(backup.lists.len(), 3);
+        assert_eq!(backup.task_count(), 3);
+
+        let inbox = backup
+            .lists
+            .iter()
+            .find(|l| l.id == "L1")
+            .expect("Inbox in backup");
+        let titles: Vec<&str> = inbox.tasks.iter().map(|t| t.title.as_str()).collect();
+        assert!(titles.contains(&"Buy milk"));
+        assert!(titles.contains(&"Pay rent"));
+    }
+
+    #[tokio::test]
+    async fn build_backup_preserves_full_task_metadata_losslessly() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+
+        let now = "2026-06-08T00:00:00Z".to_string();
+        let stored = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "T1".into(),
+                parent: None,
+                position: "00000000000042".into(),
+                title: "Recurring chore".into(),
+                notes: Some(
+                    "Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into(),
+                ),
+                status: TaskStatus::Completed,
+                due: Some("2026-06-10T00:00:00Z".into()),
+                completed: Some("2026-06-09T08:00:00Z".into()),
+                etag: Some("etag-1".into()),
+                updated: now.clone(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: now.clone(),
+            pending_op: Some("update".into()),
+        };
+        state.store.upsert_task(&stored).await.unwrap();
+
+        let backup = state.build_backup().await.unwrap();
+        let task = backup
+            .lists
+            .iter()
+            .flat_map(|l| &l.tasks)
+            .find(|t| t.id == "T1")
+            .expect("task in backup");
+
+        assert_eq!(task.parent, None);
+        assert_eq!(task.position, "00000000000042");
+        assert_eq!(task.status, "completed");
+        assert_eq!(task.due.as_deref(), Some("2026-06-10T00:00:00Z"));
+        assert_eq!(task.completed.as_deref(), Some("2026-06-09T08:00:00Z"));
+        assert_eq!(task.etag.as_deref(), Some("etag-1"));
+        assert_eq!(task.sync_state, "dirty");
+        assert_eq!(task.pending_op.as_deref(), Some("update"));
+        // Notes (including the recurrence trailer) survive verbatim.
+        assert_eq!(
+            task.notes.as_deref(),
+            Some("Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]")
+        );
+        // Derived recurrence is surfaced for human readers.
+        let rec = task.recurrence.as_ref().expect("recurrence derived");
+        assert!(rec.rrule.contains("FREQ=WEEKLY"));
+        assert!(!rec.summary.is_empty());
+
+        // Whole snapshot serializes to valid, re-parseable JSON.
+        let json = backup.to_json_pretty().unwrap();
+        let _: axiotask_core::export::Backup = serde_json::from_str(&json).unwrap();
+    }
 }

@@ -160,6 +160,28 @@ impl AppState {
         matches!(self.token_store.load(), Ok(Some(_)))
     }
 
+    /// Collect every task list and its tasks into a lossless backup snapshot.
+    ///
+    /// Pure data gathering — no IO beyond the store reads — so it can be unit
+    /// tested without a Tauri runtime or the filesystem. The caller decides
+    /// how to serialize and where to write.
+    pub async fn build_backup(&self) -> Result<axiotask_core::export::Backup, String> {
+        let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
+        let mut pairs = Vec::with_capacity(lists.len());
+        for list in lists {
+            let tasks = self
+                .store
+                .list_tasks(&list.list.id)
+                .await
+                .map_err(|e| e.to_string())?;
+            pairs.push((list, tasks));
+        }
+        let now = jiff::Zoned::now()
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        Ok(axiotask_core::export::Backup::build(now, pairs))
+    }
+
     /// Create a default "My Tasks" list if no lists exist and user is not authenticated.
     async fn ensure_default_list(&self) {
         if self.is_authenticated() {
@@ -481,6 +503,17 @@ fn build_http_client(
 pub fn default_db_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     data.join("axiotask").join("axiotask.sqlite")
+}
+
+/// Default backup path: a timestamped JSON file under
+/// `$XDG_DATA_HOME/axiotask/backups/`. Timestamping keeps successive backups
+/// from clobbering each other.
+pub fn default_backup_path() -> PathBuf {
+    let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+    data.join("axiotask")
+        .join("backups")
+        .join(format!("axiotask-backup-{stamp}.json"))
 }
 
 #[cfg(test)]

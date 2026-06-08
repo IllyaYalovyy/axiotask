@@ -46,6 +46,7 @@
 
   // --- Safe invoke ---
   let errorToast = $state(null);
+  let infoToast = $state(null);
 
   async function cmd(name, args = {}) {
     try { return await invoke(name, args); }
@@ -399,6 +400,16 @@
     else { syncStatus = "error"; error = "Fresh sync failed"; }
   }
 
+  // Export a complete, human-readable JSON backup of every list and task.
+  async function doExport() {
+    const r = await cmd("export_backup");
+    if (r !== null) {
+      const msg = `Backed up ${r.tasks} task${r.tasks === 1 ? "" : "s"} in ${r.lists} list${r.lists === 1 ? "" : "s"} → ${r.path}`;
+      if (infoToast) clearTimeout(infoToast.timer);
+      infoToast = { message: msg, timer: setTimeout(() => { infoToast = null; }, 6000) };
+    }
+  }
+
   async function login() {
     syncStatus = "syncing"; // show loading state
     const result = await cmd("auth_login");
@@ -629,6 +640,14 @@
     switch (e.key) {
       case "?": e.preventDefault(); showCheatsheet = true; break;
       case "/": e.preventDefault(); showSearch = true; break;
+      case "e": case "E":
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          await doExport();
+        } else {
+          e.preventDefault(); if (f) editingId = f.id;
+        }
+        break;
       case "m":
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
@@ -672,7 +691,6 @@
           await newTask();
         }
         break;
-      case "e": e.preventDefault(); if (f) editingId = f.id; break;
       case "n": e.preventDefault(); await newTask(); break;
       case "s": e.preventDefault(); if (f) await addSubtask(f.id); break;
       case "d": e.preventDefault(); if (f) await deleteTask(f.id); break;
@@ -770,6 +788,9 @@
 {/if}
 {#if errorToast}
   <Toast message={errorToast.message} variant="error" ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
+{/if}
+{#if infoToast}
+  <Toast message={infoToast.message} ondismiss={() => { clearTimeout(infoToast.timer); infoToast = null; }} />
 {/if}
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />

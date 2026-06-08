@@ -533,6 +533,49 @@ pub async fn open_url(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| e.to_string())
 }
 
+/// Result of an export, surfaced to the UI for a confirmation toast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    /// Absolute path the backup was written to.
+    pub path: String,
+    /// Number of task lists included.
+    pub lists: usize,
+    /// Total number of tasks included.
+    pub tasks: usize,
+    /// Size of the written file in bytes.
+    pub bytes: usize,
+}
+
+/// Export a complete, human-readable JSON backup of every list and task.
+///
+/// Writes to `path` when given (non-empty), otherwise to a timestamped file in
+/// the default backups directory. The backup is lossless: every field and all
+/// sync metadata are preserved (see [`axiotask_core::export`]).
+#[tauri::command]
+pub async fn export_backup(
+    state: State<'_, Arc<AppState>>,
+    path: Option<String>,
+) -> Result<ExportResult, String> {
+    let backup = state.build_backup().await?;
+    let json = backup.to_json_pretty().map_err(|e| e.to_string())?;
+
+    let target = match path {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => crate::state::default_backup_path(),
+    };
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&target, json.as_bytes()).map_err(|e| e.to_string())?;
+
+    Ok(ExportResult {
+        path: target.display().to_string(),
+        lists: backup.lists.len(),
+        tasks: backup.task_count(),
+        bytes: json.len(),
+    })
+}
+
 async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
     // Search all lists for this task id.
     let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
