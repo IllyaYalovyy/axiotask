@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { extractFromNotes, summarize } from "./recurrence.js";
   let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
@@ -78,10 +79,14 @@
     const re = /https?:\/\/[^\s)>\]]+/g;
     return text.match(re) || [];
   }
-  let urls = $derived([...extractUrls(task.title), ...extractUrls(task.notes)]);
+  // Recurrence: the rule is carried in the notes trailer ([[recur:RRULE]]).
+  let parsedNotes = $derived(extractFromNotes(task.notes || ""));
+  let recurrence = $derived(parsedNotes.rule);
+  let recurrenceLabel = $derived(recurrence ? summarize(recurrence) : "");
 
-  // Recurrence detection (Google Tasks uses "RFC 5545" style in notes or a hidden field)
-  let isRecurrent = $derived(task.title?.includes("🔁") || task.notes?.includes("recur") || task.notes?.includes("repeat") || false);
+  // URLs and the notes badge use the visible notes, not the rule trailer.
+  let urls = $derived([...extractUrls(task.title), ...extractUrls(parsedNotes.visible)]);
+  let hasVisibleNotes = $derived(parsedNotes.visible.length > 0);
 
   function parseLocalDate(due) {
     // Due dates are date-only. Parse YYYY-MM-DD portion to avoid timezone shift.
@@ -193,14 +198,14 @@
         <span class="progress-text">{subtaskProgress.done}/{subtaskProgress.total}</span>
       </span>
     {/if}
-    {#if task.notes}
+    {#if hasVisibleNotes}
       <span class="badge" title="Has notes">📝</span>
     {/if}
     {#if urls.length > 0}
       <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]}>🔗{urls.length > 1 ? ` ${urls.length}` : ""}</a>
     {/if}
-    {#if isRecurrent}
-      <span class="badge" title="Recurring">🔁</span>
+    {#if recurrence}
+      <span class="badge recur-badge" title={recurrenceLabel} aria-label="Recurring: {recurrenceLabel}">🔁 {recurrenceLabel}</span>
     {/if}
     {#if task.due}
       <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled">📅</span>
@@ -282,6 +287,7 @@
   .progress-text { color: #aaa; }
 
   .badge { font-size: 0.7rem; cursor: default; }
+  .recur-badge { color: #b08fe0; white-space: nowrap; }
   .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
 

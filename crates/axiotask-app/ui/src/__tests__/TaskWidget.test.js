@@ -111,11 +111,23 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(container.querySelector(".link-badge")).not.toBeInTheDocument();
     });
 
-    it("shows recurrence badge 🔁 when task has recurrence indicator", () => {
+    it("shows recurrence badge 🔁 with a human summary when the notes carry a rule", () => {
       const { container } = render(TaskRow, {
-        props: { ...defaultProps, task: makeTask({ title: "Daily standup 🔁" }) },
+        props: {
+          ...defaultProps,
+          task: makeTask({ title: "Daily standup", notes: "[[recur:FREQ=WEEKLY;BYDAY=MO,WE,FR]]" }),
+        },
       });
-      expect(container.querySelector(".meta-row").textContent).toContain("🔁");
+      const text = container.querySelector(".meta-row").textContent;
+      expect(text).toContain("🔁");
+      expect(text).toContain("Weekly on Mon, Wed, Fri");
+    });
+
+    it("does not show a recurrence badge for a plain task", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ title: "One-off task" }) },
+      });
+      expect(container.querySelector(".meta-row").textContent).not.toContain("🔁");
     });
 
     it("shows relative due date", () => {

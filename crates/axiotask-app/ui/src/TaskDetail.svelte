@@ -1,10 +1,14 @@
 <script>
+  import RecurrenceEditor from "./RecurrenceEditor.svelte";
+  import { extractFromNotes, embedInNotes, summarize } from "./recurrence.js";
+
   let { task, parentTask, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
   let due = $state("");
   let selectedList = $state("");
+  let recurrence = $state(null);
 
   let prevTaskId = $state(null);
 
@@ -13,15 +17,17 @@
     if (task && prevTaskId && prevTaskId !== task.id) {
       // Save the previous task's edits before resetting
       const dueVal = due ? `${due}T00:00:00.000Z` : null;
-      onsave(prevTaskId, { title, notes, due: dueVal });
+      onsave(prevTaskId, { title, notes: embedInNotes(notes, recurrence), due: dueVal });
     }
   });
 
   // Reset when task changes
   $effect(() => {
     if (task) {
+      const { visible, rule } = extractFromNotes(task.notes || "");
       title = task.title || "";
-      notes = task.notes || "";
+      notes = visible;
+      recurrence = rule;
       due = task.due ? task.due.slice(0, 10) : "";
       selectedList = task.listId || "";
       prevTaskId = task.id;
@@ -30,7 +36,7 @@
 
   function save() {
     const dueVal = due ? `${due}T00:00:00.000Z` : null;
-    onsave(task.id, { title, notes, due: dueVal });
+    onsave(task.id, { title, notes: embedInNotes(notes, recurrence), due: dueVal });
     if (selectedList !== task.listId) onmovelist(task.id, selectedList);
   }
 
@@ -99,6 +105,11 @@
   <div class="field">
     <label for="detail-notes">Notes</label>
     <textarea id="detail-notes" bind:value={notes} placeholder="Add notes..." rows="6"></textarea>
+  </div>
+
+  <div class="field">
+    <span class="field-label">Repeat</span>
+    <RecurrenceEditor rule={recurrence} onchange={(r) => recurrence = r} />
   </div>
 
   {#if !parentTask}
