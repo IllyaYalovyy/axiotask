@@ -8,6 +8,7 @@ pub mod config;
 pub mod dates;
 pub mod error;
 pub mod model;
+pub mod recurrence;
 pub mod store;
 pub mod sync;
 
