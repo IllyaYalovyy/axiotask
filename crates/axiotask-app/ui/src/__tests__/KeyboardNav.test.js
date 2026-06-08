@@ -153,6 +153,26 @@ describe("Keyboard Navigation", () => {
     });
   });
 
+  describe("s — create subtask", () => {
+    it("pressing s creates a subtask of the focused task", async () => {
+      await renderWithTasks();
+      await pressKey("s");
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("create_task", { listId: "L1", parentId: "t1", title: "" });
+      });
+    });
+
+    it("pressing s with no focused task does not create a subtask", async () => {
+      mockBackend(lists, []);
+      localStorage.setItem("axiotask:view", "L1");
+      render(App);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_tasks", expect.anything()));
+      await pressKey("s");
+      const createCalls = invoke.mock.calls.filter(c => c[0] === "create_task");
+      expect(createCalls).toHaveLength(0);
+    });
+  });
+
   describe("t/w/m/r — date shortcuts", () => {
     it("t sets due to Tomorrow", async () => {
       await renderWithTasks();

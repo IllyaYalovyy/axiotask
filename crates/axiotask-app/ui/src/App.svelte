@@ -674,6 +674,7 @@
         break;
       case "e": e.preventDefault(); if (f) editingId = f.id; break;
       case "n": e.preventDefault(); await newTask(); break;
+      case "s": e.preventDefault(); if (f) await addSubtask(f.id); break;
       case "d": e.preventDefault(); if (f) await deleteTask(f.id); break;
       case "o": e.preventDefault(); if (f) await setDue(f.id, "Today"); break;
       case "t": e.preventDefault(); if (f) await setDue(f.id, "Tomorrow"); break;
