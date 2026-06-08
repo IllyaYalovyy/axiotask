@@ -1,5 +1,14 @@
 <script>
+  import { SHORTCUT_CATEGORIES, formatKeys } from "./shortcuts.js";
+
   let { onclose } = $props();
+
+  // Split categories across two columns to preserve the existing layout.
+  const mid = Math.ceil(SHORTCUT_CATEGORIES.length / 2);
+  const columns = [
+    SHORTCUT_CATEGORIES.slice(0, mid),
+    SHORTCUT_CATEGORIES.slice(mid),
+  ];
 </script>
 
 <div class="overlay" onclick={onclose} onkeydown={(e) => e.key === "Escape" && onclose()} role="dialog" tabindex="-1">
@@ -8,44 +17,18 @@
   <div class="sheet" role="document" onclick={(e) => e.stopPropagation()}>
     <h2>Keyboard Shortcuts</h2>
     <div class="columns">
-      <div class="col">
-        <h3>Navigation</h3>
-        <dl>
-          <dt>j / ↓</dt><dd>Next task</dd>
-          <dt>k / ↑</dt><dd>Previous task</dd>
-          <dt>h / ←</dt><dd>Collapse / go to parent</dd>
-          <dt>l / →</dt><dd>Expand</dd>
-        </dl>
-        <h3>Actions</h3>
-        <dl>
-          <dt>Enter</dt><dd>New task</dd>
-          <dt>e</dt><dd>Edit title</dd>
-          <dt>Space</dt><dd>Toggle complete</dd>
-          <dt>d</dt><dd>Delete task</dd>
-          <dt>n</dt><dd>Open notes</dd>
-        </dl>
-      </div>
-      <div class="col">
-        <h3>Due dates</h3>
-        <dl>
-          <dt>t</dt><dd>Tomorrow</dd>
-          <dt>w</dt><dd>Next week</dd>
-          <dt>m</dt><dd>Next month</dd>
-          <dt>r</dt><dd>Remove due date</dd>
-        </dl>
-        <h3>Organization</h3>
-        <dl>
-          <dt>Tab</dt><dd>Indent (make subtask)</dd>
-          <dt>Shift+Tab</dt><dd>Outdent</dd>
-          <dt>Alt+↑</dt><dd>Move up</dd>
-          <dt>Alt+↓</dt><dd>Move down</dd>
-        </dl>
-        <h3>Other</h3>
-        <dl>
-          <dt>?</dt><dd>This cheatsheet</dd>
-          <dt>Esc</dt><dd>Close panel / cancel</dd>
-        </dl>
-      </div>
+      {#each columns as column}
+        <div class="col">
+          {#each column as category}
+            <h3>{category.name}</h3>
+            <dl>
+              {#each category.shortcuts as shortcut}
+                <dt>{formatKeys(shortcut.keys)}</dt><dd>{shortcut.description}</dd>
+              {/each}
+            </dl>
+          {/each}
+        </div>
+      {/each}
     </div>
     <p class="hint">Press any key to close</p>
   </div>
