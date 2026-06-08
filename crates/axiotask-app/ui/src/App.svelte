@@ -532,6 +532,9 @@
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
           await loadAll();
         }},
+        { id: "properties", icon: "ℹ️", label: "Properties", shortcut: "Enter", action: () => {
+          detailTask = allTasks.find(t => t.id === task.id) || task;
+        }},
         "separator",
         { id: "delete", icon: "🗑️", label: "Delete", shortcut: "d", action: () => deleteTask(task.id) },
       ]

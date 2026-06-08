@@ -216,6 +216,34 @@ describe("GH#19: Custom context menu", () => {
     });
   });
 
+  describe("Properties", () => {
+    it("displays Properties option", async () => {
+      mockBackend([task("t1", "Test task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
+      await openContextMenu(container);
+      expect(screen.getByText("Properties")).toBeInTheDocument();
+    });
+
+    it("clicking Properties opens the task detail panel", async () => {
+      mockBackend([task("t1", "Test task", { notes: "some notes" })]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
+      await openContextMenu(container);
+      await fireEvent.click(screen.getByText("Properties"));
+      await waitFor(() => expect(container.querySelector(".detail-panel")).toBeInTheDocument());
+    });
+
+    it("Properties closes the context menu", async () => {
+      mockBackend([task("t1", "Test task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
+      await openContextMenu(container);
+      await fireEvent.click(screen.getByText("Properties"));
+      await waitFor(() => expect(container.querySelector(".context-menu")).not.toBeInTheDocument());
+    });
+  });
+
   describe("Keyboard navigation", () => {
     it("ArrowDown moves focus to next item", async () => {
       mockBackend([task("t1", "Test task")]);
