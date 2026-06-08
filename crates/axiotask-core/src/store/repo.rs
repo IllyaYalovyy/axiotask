@@ -582,6 +582,19 @@ impl Store {
         Ok(())
     }
 
+    /// Drop all *synced* lists and their tasks, preserving local-only lists.
+    ///
+    /// Fresh sync rebuilds the cache from Google, which is the source of truth
+    /// for synced data. Local-only lists exist nowhere but this device, so they
+    /// must survive. Relies on `ON DELETE CASCADE` to clear each removed list's
+    /// tasks, pending moves, and in-flight create markers.
+    pub async fn clear_synced(&self) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM task_lists WHERE local_only = 0")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Record a sync run outcome.
     pub async fn write_sync_log(
         &self,
@@ -1131,6 +1144,44 @@ mod tests {
         s.clear_all().await.unwrap();
         assert!(s.all_lists().await.unwrap().is_empty());
         assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn clear_synced_preserves_local_only_lists_and_tasks() {
+        // Fresh sync drops synced data (the server is the source of truth) but
+        // local-only lists exist nowhere else, so they must survive.
+        let s = fresh().await;
+        s.upsert_list(&local_list("LOCAL")).await.unwrap();
+        s.upsert_list(&list("SYNCED")).await.unwrap();
+        s.upsert_task(&task("LT", "LOCAL", None, "1")).await.unwrap();
+        s.upsert_task(&task("ST", "SYNCED", None, "1")).await.unwrap();
+
+        s.clear_synced().await.unwrap();
+
+        let lists = s.all_lists().await.unwrap();
+        assert_eq!(lists.len(), 1, "only the local-only list survives");
+        assert_eq!(lists[0].list.id, "LOCAL");
+        assert!(lists[0].local_only);
+        assert_eq!(
+            s.list_tasks("LOCAL").await.unwrap().len(),
+            1,
+            "local-only list's tasks survive"
+        );
+        assert!(
+            s.list_tasks("SYNCED").await.unwrap().is_empty(),
+            "synced list's tasks are cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_synced_cascades_moves_of_synced_tasks() {
+        // Deleting synced lists must not leave orphan pending moves.
+        let s = fresh().await;
+        s.upsert_list(&list("SYNCED")).await.unwrap();
+        s.upsert_task(&task("ST", "SYNCED", None, "1")).await.unwrap();
+        s.record_move("ST", "SYNCED", None, None).await.unwrap();
+        s.clear_synced().await.unwrap();
+        assert!(s.pending_moves().await.unwrap().is_empty());
     }
 
     #[tokio::test]

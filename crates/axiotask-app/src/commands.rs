@@ -446,8 +446,9 @@ pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String>
 
 #[tauri::command]
 pub async fn fresh_sync(state: State<'_, Arc<AppState>>) -> Result<String, String> {
-    // Drop all local data and re-pull from Google
-    state.store.clear_all().await.map_err(|e| e.to_string())?;
+    // Drop synced local data and re-pull from Google. Local-only lists are
+    // preserved — they exist nowhere else and a fresh pull cannot recreate them.
+    state.store.clear_synced().await.map_err(|e| e.to_string())?;
     let outcome = state.run_sync_if_authed().await?;
     Ok(format!(
         "fresh sync: pulled={}, lists and tasks rebuilt from remote",
