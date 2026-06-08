@@ -38,7 +38,7 @@
 - [ ] **Dark/light theme toggle** — currently dark only.
 - [ ] **Window state persistence** — remember size/position across restarts.
 - [ ] **Notification/reminder** — system notification when a task is due.
-- [ ] **Recurring task display** — show recurrence pattern (daily/weekly/monthly) in the widget.
+- [x] **Recurring task display** — show recurrence pattern (daily/weekly/monthly) in the widget. *(Done: full recurrence engine, editor, and badge summary; see "Recurring tasks" in README.)*
 - [ ] **Import/export** — export tasks as JSON/CSV for backup.
 - [ ] **Multi-account** — support multiple Google accounts.
 - [ ] **Offline indicator** — show when the app is offline vs. just not syncing.
