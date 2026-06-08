@@ -196,6 +196,9 @@ scopes = ["https://www.googleapis.com/auth/tasks"]
 push_enabled = false
 # Auto-sync on app startup when authenticated
 auto_sync_on_start = true
+# EXPERIMENTAL: drop the local cache and re-pull everything from Google on the
+# next sync. Disabled by default; behavior may change.
+full_sync_enabled = false
 ```
 
 ## Data Storage

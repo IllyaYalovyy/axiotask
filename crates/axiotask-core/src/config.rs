@@ -36,6 +36,10 @@ pub struct SyncConfig {
     pub push_enabled: bool,
     /// Auto-sync on startup.
     pub auto_sync_on_start: bool,
+    /// **Experimental.** Enable full sync, which drops the local cache and
+    /// re-pulls all tasks and lists from Google on the next sync. Disabled by
+    /// default; behavior may change in a future release.
+    pub full_sync_enabled: bool,
 }
 
 impl Default for GoogleConfig {
@@ -53,6 +57,7 @@ impl Default for SyncConfig {
         Self {
             push_enabled: false,
             auto_sync_on_start: true,
+            full_sync_enabled: false,
         }
     }
 }
@@ -130,6 +135,36 @@ mod tests {
     fn default_sync_config_has_auto_sync_enabled() {
         let cfg = SyncConfig::default();
         assert!(cfg.auto_sync_on_start);
+    }
+
+    #[test]
+    fn default_sync_config_has_full_sync_disabled() {
+        let cfg = SyncConfig::default();
+        assert!(!cfg.full_sync_enabled);
+    }
+
+    #[test]
+    fn load_from_toml_reads_full_sync_enabled() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[sync]
+full_sync_enabled = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = AppConfig::load_from(&path).unwrap();
+        assert!(cfg.sync.full_sync_enabled);
+    }
+
+    #[test]
+    fn default_toml_keeps_full_sync_disabled() {
+        let content = AppConfig::default_toml();
+        let cfg: AppConfig = toml::from_str(content).unwrap();
+        assert!(!cfg.sync.full_sync_enabled);
     }
 
     #[test]
