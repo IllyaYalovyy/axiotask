@@ -1,5 +1,5 @@
 <script>
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onabout, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -138,6 +138,7 @@
         <span class="sign-out" onclick={onlogout}>Sign out</span>
       {/if}
     </div>
+    <button class="about-btn" onclick={onabout} title="About axiotask">About</button>
   </div>
 </aside>
 
@@ -174,6 +175,8 @@
   .sync-text { font-size: 0.7rem; color: #666; }
   .sign-out { font-size: 0.7rem; color: #666; cursor: pointer; margin-left: auto; }
   .sign-out:hover { color: #e74c3c; }
+  .about-btn { background: none; border: none; color: #555; font-size: 0.7rem; cursor: pointer; font-family: inherit; padding: 0.2rem; align-self: center; }
+  .about-btn:hover { color: #7ec8e3; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
   /* Mobile: horizontal compact nav */

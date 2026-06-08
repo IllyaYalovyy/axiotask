@@ -14,6 +14,7 @@
   import TaskDetail from "./TaskDetail.svelte";
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
+  import About from "./About.svelte";
 
   // --- State ---
   let lists = $state([]);
@@ -30,6 +31,7 @@
   let notesTask = $state(null);
   let undoItem = $state(null);
   let showCheatsheet = $state(false);
+  let showAbout = $state(false);
   let newestTaskId = $state(null); // transient: force this task to top of list
   let focusIndex = $state(0);
   let editingId = $state(null);
@@ -610,6 +612,7 @@
 
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
+    if (showAbout) { showAbout = false; e.preventDefault(); return; }
     if (showClearConfirm) { showClearConfirm = false; e.preventDefault(); return; }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
@@ -697,6 +700,7 @@
     oncreateList={createList}
     onrenameList={renameList}
     onlistaction={openListContextMenu}
+    onabout={() => showAbout = true}
     {authenticated}
     {syncStatus}
     {lastSynced}
@@ -765,6 +769,9 @@
 {/if}
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />
+{/if}
+{#if showAbout}
+  <About onclose={() => showAbout = false} />
 {/if}
 {#if contextMenu}
   <ContextMenu items={contextMenu.items} x={contextMenu.x} y={contextMenu.y} onclose={() => contextMenu = null} />
