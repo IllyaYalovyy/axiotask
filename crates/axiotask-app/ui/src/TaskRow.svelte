@@ -203,6 +203,7 @@
       <span class="badge" title="Recurring">🔁</span>
     {/if}
     {#if task.due}
+      <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled">📅</span>
       <span class="due {dueClass(task.due)}">{formatDue(task.due)}</span>
     {:else}
       <span class="no-due">no date</span>
@@ -284,6 +285,7 @@
   .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
 
+  .scheduled-marker { font-size: 0.7rem; cursor: default; flex-shrink: 0; }
   .due { color: #888; }
   .due.overdue { color: #e74c3c; font-weight: 600; }
   .due.due-today { color: #ff9800; }

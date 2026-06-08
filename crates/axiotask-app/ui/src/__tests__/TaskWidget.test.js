@@ -201,6 +201,46 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
     });
   });
 
+  describe("Scheduled marker", () => {
+    function dueOn(offsetDays) {
+      const t = new Date();
+      t.setDate(t.getDate() + offsetDays);
+      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}T00:00:00.000Z`;
+    }
+
+    it("shows a scheduled marker when the task has a due date", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: dueOn(1) }) },
+      });
+      const marker = container.querySelector(".scheduled-marker");
+      expect(marker).toBeInTheDocument();
+      expect(marker).toBeVisible();
+      expect(marker.textContent).toContain("📅");
+    });
+
+    it("does not show a scheduled marker when the task has no due date", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: null }) },
+      });
+      expect(container.querySelector(".scheduled-marker")).not.toBeInTheDocument();
+    });
+
+    it("marks overdue scheduled tasks with the scheduled marker too", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: dueOn(-3) }) },
+      });
+      expect(container.querySelector(".scheduled-marker")).toBeInTheDocument();
+    });
+
+    it("exposes the marker for accessibility via title/aria-label", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: dueOn(1) }) },
+      });
+      const marker = container.querySelector(".scheduled-marker");
+      expect(marker.getAttribute("title") || marker.getAttribute("aria-label")).toBeTruthy();
+    });
+  });
+
   describe("Touch-friendly", () => {
     it("renders action buttons that are accessible for touch", () => {
       const { container } = render(TaskRow, {
