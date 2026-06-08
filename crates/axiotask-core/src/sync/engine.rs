@@ -423,7 +423,7 @@ impl SyncEngine {
         let remote_list_ids: HashSet<String> = lists.iter().map(|l| l.id.clone()).collect();
         for ghost in self.store.clean_list_ids().await?.difference(&remote_list_ids) {
             debug!(id = %ghost, "removing ghost list");
-            self.store.delete_list_hard(ghost).await?;
+            self.store.delete_list_hard_if_clean(ghost).await?;
             out.deleted += 1;
         }
 
@@ -588,7 +588,8 @@ impl SyncEngine {
             local_updated: list.updated.clone(),
             pending_op: None,
         };
-        self.store.upsert_list(&stored).await?;
+        // Race-safe: won't clobber a list a live rename just dirtied.
+        self.store.upsert_remote_list(&stored).await?;
         Ok(())
     }
 }

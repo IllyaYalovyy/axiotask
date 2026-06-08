@@ -167,8 +167,11 @@ would otherwise be clobbered (and its dirty flag cleared) — a lost edit.
 `upsert_remote_task` makes skip-if-dirty atomic with the write
 (`ON CONFLICT DO UPDATE … WHERE sync_state = 'clean'`), and ghost deletion uses
 `delete_task_hard_if_clean`. A concurrently-dirtied row is never overwritten or
-deleted by pull; its edit pushes next run. Covered by
-`upsert_remote_task_does_not_clobber_dirty` / `delete_task_hard_if_clean_spares_dirty`.
+deleted by pull; its edit pushes next run. The list pull path is symmetric
+(`upsert_remote_list` / `delete_list_hard_if_clean`) so a live rename isn't
+clobbered either. Covered by
+`upsert_remote_task_does_not_clobber_dirty` / `delete_task_hard_if_clean_spares_dirty`
+and the list equivalents.
 
 ### H6 — Full fetch every pull *(deliberate: correctness over perf)*
 Every pull fetches all tasks. This is *correct* and also powers ghost

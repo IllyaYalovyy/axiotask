@@ -125,6 +125,43 @@ impl Store {
         Ok(())
     }
 
+    /// Upsert a list pulled from the server without clobbering a locally
+    /// dirty/deleted one (race-safe, mirrors `upsert_remote_task`).
+    pub async fn upsert_remote_list(&self, list: &StoredTaskList) -> Result<(), StoreError> {
+        sqlx::query(
+            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                etag = excluded.etag,
+                updated = excluded.updated,
+                local_updated = excluded.local_updated,
+                sync_state = excluded.sync_state,
+                pending_op = excluded.pending_op
+              WHERE task_lists.sync_state = 'clean'",
+        )
+        .bind(&list.list.id)
+        .bind(&list.list.title)
+        .bind(&list.list.etag)
+        .bind(&list.list.updated)
+        .bind(&list.local_updated)
+        .bind(list.sync_state.as_str())
+        .bind(&list.pending_op)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Hard-delete a list only if still clean (ghost detection must not remove
+    /// a list a live rename/delete just dirtied).
+    pub async fn delete_list_hard_if_clean(&self, id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM task_lists WHERE id = ? AND sync_state = 'clean'")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// All known lists, in arbitrary order.
     pub async fn all_lists(&self) -> Result<Vec<StoredTaskList>, StoreError> {
         let rows = sqlx::query(
@@ -739,6 +776,37 @@ mod tests {
         let all = s.all_lists().await.unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].list.id, "L1");
+    }
+
+    #[tokio::test]
+    async fn upsert_remote_list_does_not_clobber_dirty() {
+        let s = fresh().await;
+        let mut local = list("L1");
+        local.list.title = "My Rename".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        s.upsert_list(&local).await.unwrap();
+
+        let mut remote = list("L1");
+        remote.list.title = "Server Name".into();
+        remote.sync_state = SyncState::Clean;
+        remote.pending_op = None;
+        s.upsert_remote_list(&remote).await.unwrap();
+
+        let l = s.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        assert_eq!(l.list.title, "My Rename", "local rename preserved");
+        assert_eq!(l.sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn delete_list_hard_if_clean_spares_dirty() {
+        let s = fresh().await;
+        let mut l = list("L1");
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        s.upsert_list(&l).await.unwrap();
+        s.delete_list_hard_if_clean("L1").await.unwrap();
+        assert_eq!(s.all_lists().await.unwrap().len(), 1, "dirty list spared");
     }
 
     #[tokio::test]
