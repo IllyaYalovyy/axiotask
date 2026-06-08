@@ -484,7 +484,8 @@ impl SyncEngine {
                 pending_op: None,
                 task,
             };
-            self.store.upsert_task(&stored).await?;
+            // Race-safe: won't clobber a row a live UI edit just dirtied.
+            self.store.upsert_remote_task(&stored).await?;
             out.pulled += 1;
         }
 
@@ -551,7 +552,9 @@ impl SyncEngine {
         let local_clean = self.store.clean_task_ids_for_list(list_id).await?;
         for ghost_id in local_clean.difference(remote_ids) {
             debug!(id = %ghost_id, list_id, "removing ghost row");
-            self.store.delete_task_hard(ghost_id).await?;
+            // Clean-guarded: a live edit that re-dirtied the row cancels the
+            // ghost delete (the edit will push as a create/update next run).
+            self.store.delete_task_hard_if_clean(ghost_id).await?;
             out.deleted += 1;
         }
         Ok(())

@@ -159,6 +159,17 @@ detection for that list, preventing false deletions.
 A mutex serializes runs. Without it, two runs could `drain_dirty` the same rows
 and double-push. Covered by `concurrent_syncs_do_not_double_push`.
 
+### H8 — Pull vs. live edit race *(handled)*
+The sync loop and Tauri command handlers run concurrently on the same runtime
+with no lock between them. Pull snapshots the dirty skip-set, then upserts each
+remote row; a UI edit that dirties a task *between* the snapshot and its upsert
+would otherwise be clobbered (and its dirty flag cleared) — a lost edit.
+`upsert_remote_task` makes skip-if-dirty atomic with the write
+(`ON CONFLICT DO UPDATE … WHERE sync_state = 'clean'`), and ghost deletion uses
+`delete_task_hard_if_clean`. A concurrently-dirtied row is never overwritten or
+deleted by pull; its edit pushes next run. Covered by
+`upsert_remote_task_does_not_clobber_dirty` / `delete_task_hard_if_clean_spares_dirty`.
+
 ### H6 — Full fetch every pull *(deliberate: correctness over perf)*
 Every pull fetches all tasks. This is *correct* and also powers ghost
 detection. `updatedMin` would reduce bandwidth but adds clock-skew and

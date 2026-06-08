@@ -195,6 +195,62 @@ impl Store {
         Ok(())
     }
 
+    /// Upsert a row pulled from the server, but NEVER clobber a row that is
+    /// locally dirty/deleted. Closes the read-then-write race where a live UI
+    /// edit marks a task dirty after pull's skip-set snapshot but before this
+    /// write — the `WHERE sync_state = 'clean'` makes skip-if-dirty atomic with
+    /// the update, so the local edit (and its dirty flag) survive.
+    pub async fn upsert_remote_task(&self, t: &StoredTask) -> Result<(), StoreError> {
+        sqlx::query(
+            r"INSERT INTO tasks
+              (id, list_id, parent_id, position, title, notes, status, due,
+               completed_at, etag, updated, local_updated, sync_state, pending_op)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                list_id = excluded.list_id,
+                parent_id = excluded.parent_id,
+                position = excluded.position,
+                title = excluded.title,
+                notes = excluded.notes,
+                status = excluded.status,
+                due = excluded.due,
+                completed_at = excluded.completed_at,
+                etag = excluded.etag,
+                updated = excluded.updated,
+                local_updated = excluded.local_updated,
+                sync_state = excluded.sync_state,
+                pending_op = excluded.pending_op
+              WHERE tasks.sync_state = 'clean'",
+        )
+        .bind(&t.task.id)
+        .bind(&t.list_id)
+        .bind(&t.task.parent)
+        .bind(&t.task.position)
+        .bind(&t.task.title)
+        .bind(&t.task.notes)
+        .bind(t.task.status.as_api_str())
+        .bind(&t.task.due)
+        .bind(&t.task.completed)
+        .bind(&t.task.etag)
+        .bind(&t.task.updated)
+        .bind(&t.local_updated)
+        .bind(t.sync_state.as_str())
+        .bind(&t.pending_op)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Hard-delete a task only if it is still clean (ghost detection must not
+    /// remove a row a live edit just dirtied).
+    pub async fn delete_task_hard_if_clean(&self, id: &str) -> Result<(), StoreError> {
+        sqlx::query("DELETE FROM tasks WHERE id = ? AND sync_state = 'clean'")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// All tasks in `list_id`, ordered by `(parent_id NULLS FIRST, position)`.
     /// Caller folds into a tree if needed.
     pub async fn list_tasks(&self, list_id: &str) -> Result<Vec<StoredTask>, StoreError> {
@@ -851,6 +907,67 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].task.title, "renamed");
         assert_eq!(rows[0].sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn upsert_remote_task_does_not_clobber_dirty() {
+        // Models the pull-vs-edit race: a row dirtied by a live edit must
+        // survive a concurrent remote upsert.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut local = task("T1", "L1", None, "1");
+        local.task.title = "my edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        s.upsert_task(&local).await.unwrap();
+
+        // Remote pull tries to overwrite with server content.
+        let mut remote = task("T1", "L1", None, "1");
+        remote.task.title = "server version".into();
+        remote.sync_state = SyncState::Clean;
+        remote.pending_op = None;
+        s.upsert_remote_task(&remote).await.unwrap();
+
+        // Local dirty edit preserved.
+        let rows = s.list_tasks("L1").await.unwrap();
+        assert_eq!(rows[0].task.title, "my edit");
+        assert_eq!(rows[0].sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn upsert_remote_task_updates_clean_and_inserts_new() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        // Insert brand-new (no local row).
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Clean;
+        s.upsert_remote_task(&t).await.unwrap();
+        assert_eq!(s.list_tasks("L1").await.unwrap().len(), 1);
+        // Update existing clean row.
+        let mut t2 = task("T1", "L1", None, "1");
+        t2.task.title = "updated".into();
+        t2.sync_state = SyncState::Clean;
+        s.upsert_remote_task(&t2).await.unwrap();
+        assert_eq!(s.list_tasks("L1").await.unwrap()[0].task.title, "updated");
+    }
+
+    #[tokio::test]
+    async fn delete_task_hard_if_clean_spares_dirty() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        s.upsert_task(&t).await.unwrap();
+        s.delete_task_hard_if_clean("T1").await.unwrap();
+        assert_eq!(s.list_tasks("L1").await.unwrap().len(), 1, "dirty row spared");
+
+        // Clean row is removed.
+        let mut c = task("T2", "L1", None, "2");
+        c.sync_state = SyncState::Clean;
+        s.upsert_task(&c).await.unwrap();
+        s.delete_task_hard_if_clean("T2").await.unwrap();
+        assert!(s.list_tasks("L1").await.unwrap().iter().all(|r| r.task.id != "T2"));
     }
 
     #[tokio::test]
