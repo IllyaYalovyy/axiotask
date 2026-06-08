@@ -38,8 +38,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::{Task, TaskList, TaskStatus};
 use crate::recurrence;
-use crate::store::{StoredTask, StoredTaskList};
+use crate::store::{StoredTask, StoredTaskList, SyncState};
 
 /// Current backup schema version. Bump when the shape changes incompatibly;
 /// readers should refuse versions they do not understand.
@@ -203,9 +204,81 @@ impl Backup {
         serde_json::to_string_pretty(self)
     }
 
+    /// Parse a backup document from its JSON text.
+    ///
+    /// The inverse of [`to_json_pretty`](Backup::to_json_pretty). Unknown
+    /// fields are ignored and `#[serde(default)]` lets older documents load, so
+    /// this stays forward- and backward-compatible. Callers should still check
+    /// [`version`](Backup::version) before trusting newer documents.
+    pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Reconstruct store rows (each list paired with its tasks) from a backup.
+    ///
+    /// The exact inverse of [`build`](Backup::build): every domain field and
+    /// all sync metadata are restored verbatim, so a backup round-trips
+    /// losslessly back into the local store. Unknown enum strings degrade
+    /// safely rather than failing the whole restore (`sync_state` → `Clean`,
+    /// `status` → `NeedsAction`). The derived `recurrence` summary is dropped —
+    /// the source of truth is the verbatim `notes` trailer, which is preserved.
+    pub fn into_stored(self) -> Vec<(StoredTaskList, Vec<StoredTask>)> {
+        self.lists.into_iter().map(BackupList::into_stored).collect()
+    }
+
     /// Total number of tasks across all lists (handy for status messages).
     pub fn task_count(&self) -> usize {
         self.lists.iter().map(|l| l.tasks.len()).sum()
+    }
+}
+
+impl BackupList {
+    /// Rebuild a stored list plus its stored tasks. Inverse of the mapping in
+    /// [`Backup::build`].
+    fn into_stored(self) -> (StoredTaskList, Vec<StoredTask>) {
+        let list_id = self.id.clone();
+        let tasks = self
+            .tasks
+            .into_iter()
+            .map(|t| t.into_stored(&list_id))
+            .collect();
+        let stored = StoredTaskList {
+            list: TaskList {
+                id: self.id,
+                title: self.title,
+                etag: self.etag,
+                updated: self.updated,
+            },
+            sync_state: SyncState::parse(&self.sync_state).unwrap_or(SyncState::Clean),
+            local_updated: self.local_updated,
+            pending_op: self.pending_op,
+            local_only: self.local_only,
+        };
+        (stored, tasks)
+    }
+}
+
+impl BackupTask {
+    /// Rebuild a stored task for `list_id`. Inverse of [`from_stored`].
+    fn into_stored(self, list_id: &str) -> StoredTask {
+        StoredTask {
+            task: Task {
+                id: self.id,
+                parent: self.parent,
+                position: self.position,
+                title: self.title,
+                notes: self.notes,
+                status: TaskStatus::parse_api(&self.status).unwrap_or(TaskStatus::NeedsAction),
+                due: self.due,
+                completed: self.completed,
+                etag: self.etag,
+                updated: self.updated,
+            },
+            list_id: list_id.to_string(),
+            sync_state: SyncState::parse(&self.sync_state).unwrap_or(SyncState::Clean),
+            local_updated: self.local_updated,
+            pending_op: self.pending_op,
+        }
     }
 }
 
@@ -398,5 +471,102 @@ mod tests {
         assert_eq!(b.version, 1);
         assert_eq!(b.lists.len(), 1);
         assert_eq!(b.lists[0].id, "L1");
+    }
+
+    // ─── Import / restore (inverse of build) ─────────────────────────────────
+
+    #[test]
+    fn from_json_parses_a_backup_document() {
+        let b = Backup::build(
+            "2026-06-08T00:00:00Z",
+            vec![(list("L1", "Inbox", false), vec![task("T1", "L1", "Buy milk")])],
+        );
+        let json = b.to_json_pretty().unwrap();
+        let parsed = Backup::from_json(&json).expect("parse backup");
+        assert_eq!(parsed, b);
+    }
+
+    #[test]
+    fn from_json_rejects_malformed_input() {
+        assert!(Backup::from_json("not json at all").is_err());
+    }
+
+    #[test]
+    fn into_stored_is_the_inverse_of_build() {
+        // A backup built from store rows must restore to byte-identical rows,
+        // including every sync-metadata field and the verbatim notes trailer.
+        let mut st = task("T1", "L1", "Pay rent");
+        st.task.parent = Some("P0".into());
+        st.task.position = "00000000000099".into();
+        st.task.notes = Some("transfer\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into());
+        st.task.status = TaskStatus::Completed;
+        st.task.due = Some("2026-07-01T00:00:00Z".into());
+        st.task.completed = Some("2026-06-30T12:00:00Z".into());
+        st.sync_state = SyncState::Dirty;
+        st.pending_op = Some("update".into());
+
+        let mut l = list("L1", "Inbox", true);
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+
+        let original_list = l.clone();
+        let original_task = st.clone();
+
+        let restored = Backup::build("now", vec![(l, vec![st])]).into_stored();
+
+        assert_eq!(restored.len(), 1);
+        let (rlist, rtasks) = &restored[0];
+        assert_eq!(*rlist, original_list);
+        assert_eq!(rtasks.len(), 1);
+        assert_eq!(rtasks[0], original_task);
+    }
+
+    #[test]
+    fn into_stored_round_trips_through_json() {
+        let backup = Backup::build(
+            "now",
+            vec![
+                (
+                    list("L1", "Inbox", false),
+                    vec![task("T1", "L1", "a"), task("T2", "L1", "b")],
+                ),
+                (list("L2", "Work", true), vec![]),
+            ],
+        );
+        let json = backup.to_json_pretty().unwrap();
+        let restored = Backup::from_json(&json).unwrap().into_stored();
+
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].0.list.id, "L1");
+        assert_eq!(restored[0].1.len(), 2);
+        // Each restored task is tagged with the list it belongs to.
+        assert_eq!(restored[0].1[0].list_id, "L1");
+        assert_eq!(restored[0].1[1].list_id, "L1");
+        assert_eq!(restored[1].0.list.id, "L2");
+        assert!(restored[1].0.local_only);
+        assert!(restored[1].1.is_empty());
+    }
+
+    #[test]
+    fn into_stored_degrades_unknown_enums_safely() {
+        // A backup from a newer axiotask may carry enum strings this reader
+        // doesn't know. They must degrade to safe defaults, never panic.
+        let json = r#"{
+            "version": 1, "app": "axiotask", "exported_at": "now",
+            "lists": [{
+                "id": "L1", "title": "Inbox", "updated": "u",
+                "local_only": false, "sync_state": "weird", "local_updated": "lu",
+                "tasks": [{
+                    "id": "T1", "position": "p", "title": "t",
+                    "status": "bogus", "updated": "u",
+                    "sync_state": "nonsense", "local_updated": "lu"
+                }]
+            }]
+        }"#;
+        let restored = Backup::from_json(json).unwrap().into_stored();
+        let (rlist, rtasks) = &restored[0];
+        assert_eq!(rlist.sync_state, SyncState::Clean);
+        assert_eq!(rtasks[0].sync_state, SyncState::Clean);
+        assert_eq!(rtasks[0].task.status, TaskStatus::NeedsAction);
     }
 }

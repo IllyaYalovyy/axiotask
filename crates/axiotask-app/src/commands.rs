@@ -576,6 +576,58 @@ pub async fn export_backup(
     })
 }
 
+/// Result of an import/restore, surfaced to the UI for a confirmation toast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    /// Absolute path the backup was read from.
+    pub path: String,
+    /// Number of task lists restored.
+    pub lists: usize,
+    /// Total number of tasks restored.
+    pub tasks: usize,
+}
+
+/// Restore a JSON backup into the local store (inverse of [`export_backup`]).
+///
+/// Reads from `path` when given (non-empty), otherwise from the most recent
+/// file in the default backups directory. The restore is a non-destructive
+/// merge: rows in the backup are upserted by id, but local rows absent from the
+/// backup are left untouched, so an import can never silently lose data.
+///
+/// Backups produced by a newer schema version are refused rather than guessed
+/// at, matching the contract in [`axiotask_core::export`].
+#[tauri::command]
+pub async fn import_backup(
+    state: State<'_, Arc<AppState>>,
+    path: Option<String>,
+) -> Result<ImportResult, String> {
+    let target = match path {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p.trim()),
+        _ => crate::state::latest_backup_path()
+            .ok_or("no backup file found to restore")?,
+    };
+
+    let json = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+    let backup = axiotask_core::export::Backup::from_json(&json)
+        .map_err(|e| format!("invalid backup file: {e}"))?;
+
+    if backup.version > axiotask_core::export::BACKUP_VERSION {
+        return Err(format!(
+            "backup version {} is newer than this app supports ({})",
+            backup.version,
+            axiotask_core::export::BACKUP_VERSION
+        ));
+    }
+
+    let summary = state.restore_backup(backup).await?;
+
+    Ok(ImportResult {
+        path: target.display().to_string(),
+        lists: summary.lists,
+        tasks: summary.tasks,
+    })
+}
+
 async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
     // Search all lists for this task id.
     let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;

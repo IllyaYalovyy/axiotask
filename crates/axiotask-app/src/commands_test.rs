@@ -1051,4 +1051,154 @@ mod tests {
         let json = backup.to_json_pretty().unwrap();
         let _: axiotask_core::export::Backup = serde_json::from_str(&json).unwrap();
     }
+
+    // ─── Import / restore ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn restore_backup_inserts_lists_and_tasks() {
+        let (_client, state) = setup().await;
+        let backup = axiotask_core::export::Backup::build(
+            "2026-06-08T00:00:00Z",
+            vec![
+                (
+                    StoredTaskList {
+                        list: axiotask_core::model::TaskList {
+                            id: "RL1".into(),
+                            title: "Restored".into(),
+                            etag: Some("e".into()),
+                            updated: "2026-01-01T00:00:00Z".into(),
+                        },
+                        sync_state: SyncState::Clean,
+                        local_updated: "2026-01-01T00:00:00Z".into(),
+                        pending_op: None,
+                        local_only: false,
+                    },
+                    vec![StoredTask {
+                        task: axiotask_core::model::Task {
+                            id: "RT1".into(),
+                            parent: None,
+                            position: "00000000000001".into(),
+                            title: "Restored task".into(),
+                            notes: None,
+                            status: TaskStatus::NeedsAction,
+                            due: None,
+                            completed: None,
+                            etag: Some("e".into()),
+                            updated: "2026-01-01T00:00:00Z".into(),
+                        },
+                        list_id: "RL1".into(),
+                        sync_state: SyncState::Clean,
+                        local_updated: "2026-01-01T00:00:00Z".into(),
+                        pending_op: None,
+                    }],
+                ),
+            ],
+        );
+
+        let summary = state.restore_backup(backup).await.unwrap();
+        assert_eq!(summary.lists, 1);
+        assert_eq!(summary.tasks, 1);
+
+        let lists = state.store.all_lists().await.unwrap();
+        assert!(lists.iter().any(|l| l.list.id == "RL1" && l.list.title == "Restored"));
+        let tasks = state.store.list_tasks("RL1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.title, "Restored task");
+    }
+
+    #[tokio::test]
+    async fn restore_backup_round_trips_a_full_export() {
+        // Seed one state, export it, then restore the export into a brand-new
+        // state and prove every row comes back byte-for-byte.
+        let (_client, source) = setup().await;
+        seed_list(&source, "L1", "Inbox").await;
+
+        let original = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "T1".into(),
+                parent: None,
+                position: "00000000000042".into(),
+                title: "Water plants".into(),
+                notes: Some("weekly\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into()),
+                status: TaskStatus::Completed,
+                due: Some("2026-06-10T00:00:00Z".into()),
+                completed: Some("2026-06-09T08:00:00Z".into()),
+                etag: Some("etag-1".into()),
+                updated: "2026-06-08T00:00:00Z".into(),
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-06-08T00:00:00Z".into(),
+            pending_op: Some("update".into()),
+        };
+        source.store.upsert_task(&original).await.unwrap();
+
+        let backup = source.build_backup().await.unwrap();
+        let json = backup.to_json_pretty().unwrap();
+
+        // Fresh destination state, restore from the serialized backup.
+        let (_c2, dest) = setup().await;
+        let parsed = axiotask_core::export::Backup::from_json(&json).unwrap();
+        dest.restore_backup(parsed).await.unwrap();
+
+        let restored = dest.store.list_tasks("L1").await.unwrap();
+        let t = restored.iter().find(|t| t.task.id == "T1").expect("task restored");
+        assert_eq!(*t, original);
+    }
+
+    #[tokio::test]
+    async fn restore_backup_overwrites_existing_rows_without_dropping_others() {
+        // Restore is a non-destructive merge: it upserts everything in the
+        // backup (overwriting matching ids) but leaves untouched rows alone.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task(&state, "T1", "L1", "old title").await;
+        seed_task(&state, "KEEP", "L1", "not in backup").await;
+
+        let backup = axiotask_core::export::Backup::build(
+            "now",
+            vec![(
+                StoredTaskList {
+                    list: axiotask_core::model::TaskList {
+                        id: "L1".into(),
+                        title: "Inbox".into(),
+                        etag: Some("e1".into()),
+                        updated: "2026-01-01T00:00:00Z".into(),
+                    },
+                    sync_state: SyncState::Clean,
+                    local_updated: "2026-01-01T00:00:00Z".into(),
+                    pending_op: None,
+                    local_only: false,
+                },
+                vec![StoredTask {
+                    task: axiotask_core::model::Task {
+                        id: "T1".into(),
+                        parent: None,
+                        position: "00000000000001".into(),
+                        title: "new title".into(),
+                        notes: None,
+                        status: TaskStatus::NeedsAction,
+                        due: None,
+                        completed: None,
+                        etag: Some("e1".into()),
+                        updated: "2026-01-02T00:00:00Z".into(),
+                    },
+                    list_id: "L1".into(),
+                    sync_state: SyncState::Clean,
+                    local_updated: "2026-01-02T00:00:00Z".into(),
+                    pending_op: None,
+                }],
+            )],
+        );
+
+        state.restore_backup(backup).await.unwrap();
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(t1.task.title, "new title", "matching id overwritten");
+        assert!(
+            tasks.iter().any(|t| t.task.id == "KEEP"),
+            "untouched row preserved"
+        );
+    }
 }

@@ -60,9 +60,17 @@ impl TokenStore for FileTokenStore {
     }
 }
 
+/// Outcome of a [`AppState::restore_backup`] call, surfaced to the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreSummary {
+    /// Number of task lists written.
+    pub lists: usize,
+    /// Number of tasks written.
+    pub tasks: usize,
+}
+
 /// Shared application state managed by Tauri.
-pub struct AppState {
-    pub store: Store,
+pub struct AppState {    pub store: Store,
     client: Arc<Mutex<Arc<dyn GoogleTasksClient>>>,
     token_store: Arc<dyn TokenStore>,
     oauth_config: OAuthConfig,
@@ -180,6 +188,33 @@ impl AppState {
             .strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
         Ok(axiotask_core::export::Backup::build(now, pairs))
+    }
+
+    /// Restore a backup into the local store (the inverse of [`build_backup`]).
+    ///
+    /// Non-destructive merge: every list and task in the backup is upserted by
+    /// id, overwriting a matching local row but never deleting rows absent from
+    /// the backup. This honors the vision's "never lose data" promise — an
+    /// import can only add or refresh, never silently drop.
+    ///
+    /// Sync metadata is restored verbatim, so a backup taken while signed in
+    /// comes back exactly as it was. Pure store IO, no network — testable
+    /// without a Tauri runtime. Does not trigger a sync (push stays disabled by
+    /// default; restored rows simply reflect their saved state).
+    pub async fn restore_backup(
+        &self,
+        backup: axiotask_core::export::Backup,
+    ) -> Result<RestoreSummary, String> {
+        let mut summary = RestoreSummary { lists: 0, tasks: 0 };
+        for (list, tasks) in backup.into_stored() {
+            self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+            summary.lists += 1;
+            for task in &tasks {
+                self.store.upsert_task(task).await.map_err(|e| e.to_string())?;
+                summary.tasks += 1;
+            }
+        }
+        Ok(summary)
     }
 
     /// Create a default "My Tasks" list if no lists exist and user is not authenticated.
@@ -516,6 +551,40 @@ pub fn default_backup_path() -> PathBuf {
         .join(format!("axiotask-backup-{stamp}.json"))
 }
 
+/// The most recent backup file in the default backups directory, if any.
+///
+/// Backups are named `axiotask-backup-YYYYMMDD-HHMMSS.json`; the timestamp
+/// makes the file names sort chronologically, so the lexicographically last
+/// matching file is the newest. Used by the keyboard-driven restore so the
+/// user can recover their latest backup without a file dialog.
+pub fn latest_backup_path() -> Option<PathBuf> {
+    let dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("axiotask")
+        .join("backups");
+    latest_backup_in(&dir)
+}
+
+/// Find the newest `axiotask-backup-*.json` in `dir`. Split out from
+/// [`latest_backup_path`] so the selection logic is unit-testable against an
+/// arbitrary directory.
+fn latest_backup_in(dir: &std::path::Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let is_json = p
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+            let named = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("axiotask-backup-"));
+            is_json && named
+        })
+        .max_by(|a, b| a.file_name().cmp(&b.file_name()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,6 +632,34 @@ mod tests {
 
         store.save(&sample_tokens()).unwrap();
         assert_eq!(store.load().unwrap().unwrap(), sample_tokens());
+    }
+
+    // ─── Backup file selection ───────────────────────────────────────────────
+
+    #[test]
+    fn latest_backup_in_picks_newest_by_timestamped_name() {
+        let dir = TempDir::new().unwrap();
+        for name in [
+            "axiotask-backup-20260101-000000.json",
+            "axiotask-backup-20260608-014500.json", // newest
+            "axiotask-backup-20260301-120000.json",
+            "notes.txt",                  // ignored: wrong name
+            "axiotask-backup-old.bak",    // ignored: wrong extension
+        ] {
+            std::fs::write(dir.path().join(name), b"{}").unwrap();
+        }
+        let latest = latest_backup_in(dir.path()).expect("a backup");
+        assert_eq!(
+            latest.file_name().unwrap().to_str().unwrap(),
+            "axiotask-backup-20260608-014500.json"
+        );
+    }
+
+    #[test]
+    fn latest_backup_in_returns_none_when_empty_or_missing() {
+        let dir = TempDir::new().unwrap();
+        assert!(latest_backup_in(dir.path()).is_none());
+        assert!(latest_backup_in(&dir.path().join("does-not-exist")).is_none());
     }
 
     // ─── Background sync trigger timing ──────────────────────────────────────

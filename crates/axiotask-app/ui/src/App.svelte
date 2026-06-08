@@ -410,6 +410,18 @@
     }
   }
 
+  // Restore the most recent JSON backup (inverse of doExport). Non-destructive:
+  // it adds or refreshes rows but never deletes. Reloads the view on success.
+  async function doImport() {
+    const r = await cmd("import_backup");
+    if (r !== null) {
+      await loadAll();
+      const msg = `Restored ${r.tasks} task${r.tasks === 1 ? "" : "s"} in ${r.lists} list${r.lists === 1 ? "" : "s"} ← ${r.path}`;
+      if (infoToast) clearTimeout(infoToast.timer);
+      infoToast = { message: msg, timer: setTimeout(() => { infoToast = null; }, 6000) };
+    }
+  }
+
   async function login() {
     syncStatus = "syncing"; // show loading state
     const result = await cmd("auth_login");
@@ -646,6 +658,12 @@
           await doExport();
         } else {
           e.preventDefault(); if (f) editingId = f.id;
+        }
+        break;
+      case "i": case "I":
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          await doImport();
         }
         break;
       case "m":
