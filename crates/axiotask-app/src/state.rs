@@ -269,6 +269,45 @@ impl AppState {
         self.run_sync().await.map_err(|e| e.to_string())
     }
 
+    /// Create a new task list.
+    ///
+    /// A `local_only` list lives solely in the local cache: it is never pushed
+    /// to, pulled from, or reconciled against Google. It is stored `Clean` with
+    /// no pending op so the sync engine ignores it entirely. A normal list is
+    /// stored as a pending `create` and pushed on the next sync.
+    pub async fn create_list(
+        &self,
+        title: &str,
+        local_only: bool,
+    ) -> Result<axiotask_core::store::StoredTaskList, String> {
+        use axiotask_core::store::SyncState;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (sync_state, pending_op) = if local_only {
+            (SyncState::Clean, None)
+        } else {
+            (SyncState::Dirty, Some("create".to_string()))
+        };
+        let stored = axiotask_core::store::StoredTaskList {
+            list: axiotask_core::model::TaskList {
+                id,
+                title: title.to_string(),
+                etag: None,
+                updated: now.clone(),
+            },
+            sync_state,
+            local_updated: now,
+            pending_op,
+            local_only,
+        };
+        self.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
+        // Local-only lists never sync, so don't bother waking the loop for them.
+        if !local_only {
+            self.schedule_sync();
+        }
+        Ok(stored)
+    }
+
     /// Rename a list. Preserves a pending `create` (rename folds in); otherwise
     /// marks `update` to push via `patch_tasklist`.
     pub async fn rename_list(&self, id: &str, title: &str) -> Result<(), String> {

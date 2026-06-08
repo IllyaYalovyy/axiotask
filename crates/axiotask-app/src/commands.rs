@@ -16,6 +16,9 @@ use axiotask_core::store::{StoredTask, SyncState};
 pub struct TaskListView {
     pub id: String,
     pub title: String,
+    /// Local-only lists never sync to Google. The UI badges them so the user
+    /// knows the list (and its tasks) stay on this device.
+    pub local_only: bool,
 }
 
 /// DTO sent to the frontend for a task.
@@ -54,6 +57,7 @@ pub async fn list_tasklists(state: State<'_, Arc<AppState>>) -> Result<Vec<TaskL
         .map(|l| TaskListView {
             id: l.list.id.clone(),
             title: l.list.title.clone(),
+            local_only: l.local_only,
         })
         .collect())
 }
@@ -62,26 +66,14 @@ pub async fn list_tasklists(state: State<'_, Arc<AppState>>) -> Result<Vec<TaskL
 pub async fn create_list(
     state: State<'_, Arc<AppState>>,
     title: String,
+    local_only: Option<bool>,
 ) -> Result<TaskListView, String> {
-    use axiotask_core::model::TaskList;
-    use axiotask_core::store::StoredTaskList;
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = now_str();
-    let stored = StoredTaskList {
-        list: TaskList {
-            id: id.clone(),
-            title: title.clone(),
-            etag: None,
-            updated: now.clone(),
-        },
-        sync_state: SyncState::Dirty,
-        local_updated: now,
-        pending_op: Some("create".into()),
-        local_only: false,
-    };
-    state.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
-    state.schedule_sync();
-    Ok(TaskListView { id, title })
+    let stored = state.create_list(&title, local_only.unwrap_or(false)).await?;
+    Ok(TaskListView {
+        id: stored.list.id,
+        title: stored.list.title,
+        local_only: stored.local_only,
+    })
 }
 
 #[tauri::command]

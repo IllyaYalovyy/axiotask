@@ -902,4 +902,62 @@ mod tests {
         assert!(tasks[0].task.id.starts_with("remote-"));
         assert_eq!(tasks[0].task.status, TaskStatus::Completed);
     }
+
+    // ─── Local-only list creation ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn create_list_synced_is_dirty_create() {
+        // A normal (synced) list is queued for push as a fresh create.
+        let (_client, state) = setup().await;
+        let created = state.create_list("Work", false).await.unwrap();
+        assert!(!created.local_only);
+        assert_eq!(created.sync_state, SyncState::Dirty);
+        assert_eq!(created.pending_op.as_deref(), Some("create"));
+        assert!(created.list.etag.is_none());
+        let dirty = state.store.drain_dirty_lists().await.unwrap();
+        assert!(
+            dirty.iter().any(|l| l.list.id == created.list.id),
+            "synced list must be queued for push"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_list_local_only_is_clean_and_never_pushed() {
+        // A local-only list lives only in the cache: clean, no pending op,
+        // and excluded from every push path.
+        let (_client, state) = setup().await;
+        let created = state.create_list("Scratch", true).await.unwrap();
+        assert!(created.local_only);
+        assert_eq!(created.sync_state, SyncState::Clean);
+        assert!(created.pending_op.is_none());
+        assert!(created.list.etag.is_none());
+
+        let dirty = state.store.drain_dirty_lists().await.unwrap();
+        assert!(
+            dirty.iter().all(|l| l.list.id != created.list.id),
+            "local-only list must never be pushed"
+        );
+
+        // Persisted and visible like any other list.
+        let all = state.store.all_lists().await.unwrap();
+        let stored = all
+            .iter()
+            .find(|l| l.list.id == created.list.id)
+            .expect("local-only list persisted");
+        assert!(stored.local_only);
+        assert_eq!(stored.list.title, "Scratch");
+    }
+
+    #[tokio::test]
+    async fn create_list_local_only_excluded_from_ghost_detection() {
+        // Ghost detection must never see a local-only list, or it would be
+        // deleted the moment it's absent from the server (which is always).
+        let (_client, state) = setup().await;
+        let created = state.create_list("Scratch", true).await.unwrap();
+        let ghost_eligible = state.store.clean_list_ids().await.unwrap();
+        assert!(
+            !ghost_eligible.contains(&created.list.id),
+            "local-only list must be excluded from ghost detection"
+        );
+    }
 }
