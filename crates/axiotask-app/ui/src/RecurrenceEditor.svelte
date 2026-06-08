@@ -163,6 +163,9 @@
     background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 4px;
     color: #e0e0e0; padding: 0.4rem; font-size: 0.85rem; font-family: inherit; outline: none;
   }
+  .recurrence-editor select { color-scheme: dark; }
+  /* Dark dropdown popup — otherwise options are white-on-white. */
+  .recurrence-editor select option { background: #1a1a2e; color: #e0e0e0; }
   .recurrence-editor select:focus, .recurrence-editor input:focus { border-color: #0f3460; }
   .interval-input { width: 4rem; }
   .unit { font-size: 0.85rem; color: #aaa; }

@@ -175,7 +175,10 @@
   .field input:focus, .field textarea:focus, .field select:focus { border-color: #0f3460; }
   .field input[type="date"] { color-scheme: dark; }
   .field textarea { resize: vertical; min-height: 100px; }
-  .field select { cursor: pointer; }
+  .field select { cursor: pointer; color-scheme: dark; }
+  /* Style the dropdown popup itself — without this the <option> list inherits
+     the OS default (white) background while keeping light text → unreadable. */
+  .field select option { background: #1a1a2e; color: #e0e0e0; }
 
   .quick-dates { display: flex; gap: 0.3rem; margin-top: 0.4rem; flex-wrap: wrap; }
   .quick-dates button {
