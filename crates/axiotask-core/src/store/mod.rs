@@ -49,7 +49,10 @@ pub async fn open_memory() -> Result<SqlitePool, StoreError> {
 
 /// Ordered schema migrations. Index + 1 == the `user_version` after applying.
 /// To evolve the schema, append a new `&str` here — never edit an applied one.
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/v1_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/v1_initial.sql"),
+    include_str!("../../migrations/v2_local_only_lists.sql"),
+];
 
 /// Apply any migrations the database hasn't seen yet, tracked by
 /// `PRAGMA user_version`. Idempotent: re-running is a no-op once current.

@@ -68,6 +68,9 @@ pub struct StoredTaskList {
     pub local_updated: String,
     /// Pending push operation: `"create" | "update" | "delete"` or `None`.
     pub pending_op: Option<String>,
+    /// Local-only list: never pushed to, pulled from, or reconciled against
+    /// Google. Excluded from ghost detection and from all push paths.
+    pub local_only: bool,
 }
 
 /// A pending position/parent move to be pushed via the Tasks move API.
@@ -103,15 +106,16 @@ impl Store {
     /// Replace (or insert) a task-list row.
     pub async fn upsert_list(&self, list: &StoredTaskList) -> Result<(), StoreError> {
         sqlx::query(
-            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op, local_only)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 etag = excluded.etag,
                 updated = excluded.updated,
                 local_updated = excluded.local_updated,
                 sync_state = excluded.sync_state,
-                pending_op = excluded.pending_op",
+                pending_op = excluded.pending_op,
+                local_only = excluded.local_only",
         )
         .bind(&list.list.id)
         .bind(&list.list.title)
@@ -120,6 +124,7 @@ impl Store {
         .bind(&list.local_updated)
         .bind(list.sync_state.as_str())
         .bind(&list.pending_op)
+        .bind(list.local_only)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -165,7 +170,7 @@ impl Store {
     /// All known lists, in arbitrary order.
     pub async fn all_lists(&self) -> Result<Vec<StoredTaskList>, StoreError> {
         let rows = sqlx::query(
-            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op
+            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op, local_only
               FROM task_lists
               WHERE sync_state != 'deleted'",
         )
@@ -186,6 +191,7 @@ impl Store {
                 })?,
                 local_updated: row.try_get("local_updated").map_err(StoreError::from)?,
                 pending_op: row.try_get("pending_op").map_err(StoreError::from)?,
+                local_only: row.try_get("local_only").map_err(StoreError::from)?,
             });
         }
         Ok(out)
@@ -347,20 +353,22 @@ impl Store {
     }
 
     /// All locally-dirty tasks awaiting push, ordered by pending_op priority
-    /// (creates → updates → deletes).
+    /// (creates → updates → deletes). Tasks in local-only lists are excluded:
+    /// their list does not exist on the server, so they are never pushed.
     pub async fn drain_dirty(&self) -> Result<Vec<StoredTask>, StoreError> {
         let rows = sqlx::query(
-            r"SELECT id, list_id, parent_id, position, title, notes, status, due,
-                     completed_at, etag, updated, local_updated, sync_state, pending_op
-              FROM tasks
-              WHERE sync_state = 'dirty' OR sync_state = 'deleted'
-              ORDER BY CASE pending_op
+            r"SELECT t.id, t.list_id, t.parent_id, t.position, t.title, t.notes, t.status, t.due,
+                     t.completed_at, t.etag, t.updated, t.local_updated, t.sync_state, t.pending_op
+              FROM tasks t
+              JOIN task_lists l ON l.id = t.list_id
+              WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') AND l.local_only = 0
+              ORDER BY CASE t.pending_op
                 WHEN 'create' THEN 0
                 WHEN 'update' THEN 1
                 WHEN 'delete' THEN 2
                 ELSE 3 END,
-                (parent_id IS NOT NULL),
-                local_updated ASC",
+                (t.parent_id IS NOT NULL),
+                t.local_updated ASC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -412,12 +420,13 @@ impl Store {
     }
 
     /// All locally-dirty/deleted lists awaiting push, creates before
-    /// updates before deletes.
+    /// updates before deletes. Local-only lists are excluded: they are never
+    /// pushed to the server.
     pub async fn drain_dirty_lists(&self) -> Result<Vec<StoredTaskList>, StoreError> {
         let rows = sqlx::query(
-            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op
+            r"SELECT id, title, etag, updated, local_updated, sync_state, pending_op, local_only
               FROM task_lists
-              WHERE sync_state = 'dirty' OR sync_state = 'deleted'
+              WHERE (sync_state = 'dirty' OR sync_state = 'deleted') AND local_only = 0
               ORDER BY CASE pending_op
                 WHEN 'create' THEN 0 WHEN 'update' THEN 1 WHEN 'delete' THEN 2 ELSE 3 END,
                 local_updated ASC",
@@ -438,6 +447,7 @@ impl Store {
                     .ok_or_else(|| StoreError::Decode(format!("bad sync_state {s}")))?,
                 local_updated: row.try_get("local_updated")?,
                 pending_op: row.try_get("pending_op")?,
+                local_only: row.try_get("local_only")?,
             });
         }
         Ok(out)
@@ -462,12 +472,15 @@ impl Store {
         Ok(())
     }
 
-    /// Ids of all clean lists (for ghost detection).
+    /// Ids of all clean lists eligible for ghost detection. Local-only lists
+    /// are excluded: they are absent from the server by design, so they must
+    /// never be treated as remotely-deleted ghosts.
     pub async fn clean_list_ids(&self) -> Result<std::collections::HashSet<String>, StoreError> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT id FROM task_lists WHERE sync_state = 'clean'")
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM task_lists WHERE sync_state = 'clean' AND local_only = 0",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -745,6 +758,22 @@ mod tests {
             sync_state: SyncState::Clean,
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: None,
+            local_only: false,
+        }
+    }
+
+    fn local_list(id: &str) -> StoredTaskList {
+        StoredTaskList {
+            list: TaskList {
+                id: id.into(),
+                title: "Scratch".into(),
+                etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            sync_state: SyncState::Clean,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
+            local_only: true,
         }
     }
 
@@ -776,6 +805,61 @@ mod tests {
         let all = s.all_lists().await.unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].list.id, "L1");
+    }
+
+    #[tokio::test]
+    async fn local_only_flag_round_trips() {
+        let s = fresh().await;
+        s.upsert_list(&local_list("L1")).await.unwrap();
+        s.upsert_list(&list("L2")).await.unwrap();
+        let all = s.all_lists().await.unwrap();
+        let l1 = all.iter().find(|l| l.list.id == "L1").unwrap();
+        let l2 = all.iter().find(|l| l.list.id == "L2").unwrap();
+        assert!(l1.local_only, "local-only flag persisted");
+        assert!(!l2.local_only, "synced list is not local-only");
+    }
+
+    #[tokio::test]
+    async fn clean_list_ids_excludes_local_only() {
+        let s = fresh().await;
+        s.upsert_list(&local_list("LOCAL")).await.unwrap();
+        s.upsert_list(&list("SYNCED")).await.unwrap();
+        let ids = s.clean_list_ids().await.unwrap();
+        // Ghost detection must never see a local-only list, or it would delete
+        // it the moment it's absent from the server (which is always).
+        assert!(!ids.contains("LOCAL"), "local-only list excluded from ghost set");
+        assert!(ids.contains("SYNCED"));
+    }
+
+    #[tokio::test]
+    async fn drain_dirty_lists_excludes_local_only() {
+        let s = fresh().await;
+        // A local-only list can never be in a push-pending state, but even if
+        // marked dirty it must never be drained for push.
+        let mut l = local_list("LOCAL");
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("create".into());
+        s.upsert_list(&l).await.unwrap();
+        let drained = s.drain_dirty_lists().await.unwrap();
+        assert!(drained.is_empty(), "local-only list never pushed");
+    }
+
+    #[tokio::test]
+    async fn drain_dirty_excludes_tasks_in_local_only_lists() {
+        let s = fresh().await;
+        s.upsert_list(&local_list("LOCAL")).await.unwrap();
+        s.upsert_list(&list("SYNCED")).await.unwrap();
+        let mut local_task = task("LT", "LOCAL", None, "1");
+        local_task.sync_state = SyncState::Dirty;
+        local_task.pending_op = Some("create".into());
+        let mut synced_task = task("ST", "SYNCED", None, "1");
+        synced_task.sync_state = SyncState::Dirty;
+        synced_task.pending_op = Some("create".into());
+        s.upsert_task(&local_task).await.unwrap();
+        s.upsert_task(&synced_task).await.unwrap();
+        let drained = s.drain_dirty().await.unwrap();
+        let ids: Vec<_> = drained.iter().map(|t| t.task.id.clone()).collect();
+        assert_eq!(ids, vec!["ST"], "only the synced list's task is pushed");
     }
 
     #[tokio::test]

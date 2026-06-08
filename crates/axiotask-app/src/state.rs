@@ -183,6 +183,7 @@ impl AppState {
             // Pending create; on first authenticated pull, the engine adopts
             // Google's existing "My Tasks" by title instead of duplicating.
             pending_op: Some("create".into()),
+            local_only: false,
         };
         let _ = self.store.upsert_list(&stored).await;
     }

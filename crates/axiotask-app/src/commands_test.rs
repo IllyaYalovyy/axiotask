@@ -38,6 +38,7 @@ mod tests {
             sync_state: SyncState::Clean,
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: None,
+            local_only: false,
         };
         state.store.upsert_list(&list).await.unwrap();
     }
@@ -695,6 +696,7 @@ mod tests {
             sync_state: SyncState::Dirty,
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: Some("create".into()),
+            local_only: false,
         };
         state.store.upsert_list(&create).await.unwrap();
         state.rename_list("local", "Renamed Draft").await.unwrap();
@@ -746,6 +748,7 @@ mod tests {
             sync_state: SyncState::Dirty,
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: Some("create".into()),
+            local_only: false,
         };
         state.store.upsert_list(&l).await.unwrap();
         state.delete_list("local-list").await.unwrap();

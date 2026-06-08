@@ -587,6 +587,7 @@ impl SyncEngine {
             sync_state: SyncState::Clean,
             local_updated: list.updated.clone(),
             pending_op: None,
+            local_only: false,
         };
         // Race-safe: won't clobber a list a live rename just dirtied.
         self.store.upsert_remote_list(&stored).await?;
@@ -998,6 +999,7 @@ mod tests {
             sync_state: SyncState::Dirty,
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: None,
+            local_only: false,
         }).await.unwrap();
         eng.store.upsert_task(&dirty_task("local-1", "ghost-list", "create")).await.unwrap();
 
@@ -1323,6 +1325,7 @@ mod tests {
             sync_state: if op == "delete" { SyncState::Deleted } else { SyncState::Dirty },
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: Some(op.into()),
+            local_only: false,
         }
     }
 
@@ -1439,5 +1442,106 @@ mod tests {
         assert_eq!(lists[0].list.id, "L1");
         // Cascade removed the ghost list's tasks.
         assert!(eng.store.list_tasks("L2").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ghost_detection_spares_local_only_list() {
+        // A local-only list is absent from the server by design. Ghost
+        // detection must never remove it, even though no remote list matches.
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Synced");
+        eng.run().await.unwrap();
+
+        eng.store
+            .upsert_list(&StoredTaskList {
+                list: TaskList {
+                    id: "local-1".into(),
+                    title: "Scratch".into(),
+                    etag: None,
+                    updated: "2026-01-01T00:00:00Z".into(),
+                },
+                sync_state: SyncState::Clean,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: None,
+                local_only: true,
+            })
+            .await
+            .unwrap();
+        eng.store
+            .upsert_task(&StoredTask {
+                task: crate::model::Task {
+                    id: "local-task".into(),
+                    parent: None,
+                    position: "1".into(),
+                    title: "scratch task".into(),
+                    notes: None,
+                    status: TaskStatus::NeedsAction,
+                    due: None,
+                    completed: None,
+                    etag: None,
+                    updated: "2026-01-01T00:00:00Z".into(),
+                },
+                list_id: "local-1".into(),
+                sync_state: SyncState::Clean,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: None,
+            })
+            .await
+            .unwrap();
+
+        eng.run().await.unwrap();
+
+        let lists = eng.store.all_lists().await.unwrap();
+        assert!(
+            lists.iter().any(|l| l.list.id == "local-1"),
+            "local-only list survives ghost detection"
+        );
+        assert_eq!(
+            eng.store.list_tasks("local-1").await.unwrap().len(),
+            1,
+            "its tasks survive too"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_skips_local_only_list_and_its_tasks() {
+        // With push enabled, neither a local-only list nor its tasks may be
+        // sent to the server.
+        let (client, eng) = engine_with_push().await;
+        eng.store
+            .upsert_list(&StoredTaskList {
+                list: TaskList {
+                    id: "local-1".into(),
+                    title: "Scratch".into(),
+                    etag: None,
+                    updated: "2026-01-01T00:00:00Z".into(),
+                },
+                sync_state: SyncState::Clean,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: None,
+                local_only: true,
+            })
+            .await
+            .unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-task", "local-1", "create"))
+            .await
+            .unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "nothing from a local-only list is pushed");
+        // The list never appears on the server.
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.title != "Scratch")
+        );
+        // The task stays local and dirty (still awaiting nothing — it's local-only).
+        let tasks = eng.store.list_tasks("local-1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.id, "local-task");
     }
 }

@@ -77,6 +77,7 @@ pub async fn create_list(
         sync_state: SyncState::Dirty,
         local_updated: now,
         pending_op: Some("create".into()),
+        local_only: false,
     };
     state.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
     state.schedule_sync();

@@ -1,0 +1,12 @@
+-- Schema v2. Applied when PRAGMA user_version < 2.
+--
+-- Local-only task lists: lists that live exclusively on this device and are
+-- never pushed to, pulled from, or reconciled against Google. Useful for
+-- private/scratch lists the user does not want synced.
+--
+-- A local-only list is stored exactly like a synced list except `local_only`
+-- is 1. The sync engine must:
+--   * never push it (or its tasks) to Google, and
+--   * never delete it via ghost detection (it is absent from the server by
+--     design, not because it was deleted remotely).
+ALTER TABLE task_lists ADD COLUMN local_only INTEGER NOT NULL DEFAULT 0;
