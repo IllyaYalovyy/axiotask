@@ -841,7 +841,7 @@
   :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; -webkit-tap-highlight-color: transparent; }
   :global(*, *::before, *::after) { box-sizing: border-box; }
   .app { display: flex; height: 100vh; height: 100dvh; }
-  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid #2a2a4a; gap: 0.5rem; flex-wrap: wrap; }
   .new-task-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: #1a2a4a; }
