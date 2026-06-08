@@ -607,7 +607,6 @@ mod tests {
     use crate::api::InMemoryClient;
     use crate::model::TaskStatus;
     use crate::store::open_memory;
-    use sqlx::Row as _;
 
     async fn engine() -> (Arc<InMemoryClient>, SyncEngine) {
         let client = Arc::new(InMemoryClient::new());
@@ -692,7 +691,7 @@ mod tests {
         // In-flight marker persisted before the (crashed) finish.
         eng.store.record_inflight_create("local-1", "L1").await.unwrap();
 
-        let out = eng.run().await.unwrap();
+        let _out = eng.run().await.unwrap();
 
         // No re-insert: InsertTask not called this run.
         assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0);
@@ -1331,7 +1330,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_list_create_remaps_and_tasks_follow() {
-        let (client, eng) = engine_with_push().await;
+        let (_client, eng) = engine_with_push().await;
         // Local list create + a task in it.
         eng.store.upsert_list(&dirty_list("local-list", "Work", "create")).await.unwrap();
         let mut t = dirty_task("local-task", "local-list", "create");

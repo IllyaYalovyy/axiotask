@@ -184,10 +184,10 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(
             &path,
-            r#"
+            "
 [sync]
 full_sync_enabled = true
-"#,
+",
         )
         .unwrap();
 

@@ -347,12 +347,12 @@ mod tests {
         );
         assert_eq!(b.lists.len(), 2);
         assert_eq!(b.lists[0].id, "L1");
-        assert_eq!(b.lists[0].local_only, false);
+        assert!(!b.lists[0].local_only);
         assert_eq!(b.lists[0].tasks.len(), 2);
         assert_eq!(b.lists[0].tasks[0].title, "first");
         assert_eq!(b.lists[0].tasks[1].title, "second");
         assert_eq!(b.lists[1].id, "L2");
-        assert_eq!(b.lists[1].local_only, true);
+        assert!(b.lists[1].local_only);
         assert!(b.lists[1].tasks.is_empty());
         assert_eq!(b.task_count(), 2);
     }

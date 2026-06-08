@@ -208,9 +208,9 @@ mod tests {
         let mut tasks = state.store.list_tasks("L1").await.unwrap();
         let mut t = tasks.remove(0);
         // Simulate set_due with Tomorrow
-        let today = jiff::civil::Date::from(jiff::Zoned::now().date());
+        let today = jiff::Zoned::now().date();
         let new_due = axiotask_core::dates::apply_date_move(today, axiotask_core::dates::DateMove::Tomorrow);
-        t.task.due = new_due.map(|d| format!("{}T00:00:00.000Z", d));
+        t.task.due = new_due.map(|d| format!("{d}T00:00:00.000Z"));
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("update".into());
         state.store.upsert_task(&t).await.unwrap();
