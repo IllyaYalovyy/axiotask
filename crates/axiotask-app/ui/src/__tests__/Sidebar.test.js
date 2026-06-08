@@ -90,7 +90,7 @@ describe("Sidebar", () => {
       const input = screen.getByPlaceholderText("List name...");
       await fireEvent.input(input, { target: { value: "Shopping" } });
       await fireEvent.keyDown(input, { key: "Enter" });
-      expect(oncreateList).toHaveBeenCalledWith("Shopping");
+      expect(oncreateList).toHaveBeenCalledWith("Shopping", false);
     });
 
     it("does not call oncreateList if Escape pressed", async () => {
@@ -100,6 +100,36 @@ describe("Sidebar", () => {
       const input = screen.getByPlaceholderText("List name...");
       await fireEvent.keyDown(input, { key: "Escape" });
       expect(oncreateList).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Local-only lists", () => {
+    it("renders the local-only new-list button", () => {
+      renderSidebar();
+      expect(screen.getByTitle("New local-only list")).toBeInTheDocument();
+    });
+
+    it("creates a local-only list with the local-only flag", async () => {
+      const oncreateList = vi.fn();
+      renderSidebar({ oncreateList });
+      await fireEvent.click(screen.getByTitle("New local-only list"));
+      const input = screen.getByPlaceholderText("Local list name...");
+      await fireEvent.input(input, { target: { value: "Scratch" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(oncreateList).toHaveBeenCalledWith("Scratch", true);
+    });
+
+    it("badges lists that are local-only", () => {
+      renderSidebar({
+        lists: [
+          { id: "L1", title: "Work", local_only: false },
+          { id: "L2", title: "Scratch", local_only: true },
+        ],
+      });
+      const scratch = screen.getByRole("button", { name: /Scratch/i });
+      expect(scratch.querySelector(".local-badge")).not.toBeNull();
+      const work = screen.getByRole("button", { name: /Work/i });
+      expect(work.querySelector(".local-badge")).toBeNull();
     });
   });
 

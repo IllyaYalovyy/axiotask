@@ -74,7 +74,7 @@ describe("GH#14: List Management", () => {
       const input = screen.getByPlaceholderText("List name...");
       await fireEvent.input(input, { target: { value: "  Shopping  " } });
       await fireEvent.keyDown(input, { key: "Enter" });
-      expect(oncreateList).toHaveBeenCalledWith("Shopping");
+      expect(oncreateList).toHaveBeenCalledWith("Shopping", false);
     });
 
     it("does not call oncreateList when input is empty", async () => {
@@ -157,7 +157,7 @@ describe("GH#14: List Management", () => {
       const input = screen.getByPlaceholderText("List name...");
       await fireEvent.input(input, { target: { value: "Shopping" } });
       await fireEvent.keyDown(input, { key: "Enter" });
-      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_list", { title: "Shopping" }));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_list", { title: "Shopping", localOnly: false }));
     });
   });
 

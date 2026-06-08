@@ -417,9 +417,9 @@
     lastSynced = null;
   }
 
-  async function createList(title) {
+  async function createList(title, localOnly = false) {
     if (!title?.trim()) return;
-    await cmd("create_list", { title: title.trim() });
+    await cmd("create_list", { title: title.trim(), localOnly });
     await loadAll();
   }
 

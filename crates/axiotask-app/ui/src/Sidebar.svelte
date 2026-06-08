@@ -3,6 +3,7 @@
 
   let newListMode = $state(false);
   let newListValue = $state("");
+  let newListLocalOnly = $state(false);
   let editingListId = $state(null);
   let editingListValue = $state("");
   let newListInput = $state(null);
@@ -27,21 +28,24 @@
     return `${Math.floor(secs / 3600)}h ago`;
   }
 
-  function handleNewList() {
+  function handleNewList(localOnly = false) {
     newListMode = true;
     newListValue = "";
+    newListLocalOnly = localOnly;
     setTimeout(() => newListInput?.focus(), 0);
   }
 
   function submitNewList() {
-    if (newListValue.trim()) oncreateList(newListValue.trim());
+    if (newListValue.trim()) oncreateList(newListValue.trim(), newListLocalOnly);
     newListMode = false;
     newListValue = "";
+    newListLocalOnly = false;
   }
 
   function cancelNewList() {
     newListMode = false;
     newListValue = "";
+    newListLocalOnly = false;
   }
 
   function submitRename() {
@@ -71,7 +75,10 @@
 
   <div class="section-header">
     <h2>Lists</h2>
-    <button class="icon-btn" onclick={handleNewList} title="New list">+</button>
+    <div class="list-actions">
+      <button class="icon-btn" onclick={() => handleNewList(false)} title="New list">+</button>
+      <button class="icon-btn" onclick={() => handleNewList(true)} title="New local-only list">+◍</button>
+    </div>
   </div>
   <nav class="lists">
     {#each lists as list}
@@ -91,6 +98,7 @@
           oncontextmenu={(e) => { e.preventDefault(); onlistaction?.(list, e.clientX, e.clientY); }}
         >
           {list.title}
+          {#if list.local_only}<span class="local-badge" title="Local only — not synced to Google">local</span>{/if}
           {#if counts[list.id]}<span class="count">{counts[list.id]}</span>{/if}
         </button>
       {/if}
@@ -100,7 +108,7 @@
         bind:this={newListInput}
         bind:value={newListValue}
         class="inline-input"
-        placeholder="List name..."
+        placeholder={newListLocalOnly ? "Local list name..." : "List name..."}
         onkeydown={(e) => { if (e.key === "Enter") submitNewList(); else if (e.key === "Escape") cancelNewList(); }}
         onblur={submitNewList}
       />
@@ -157,8 +165,10 @@
   .count { font-size: 0.7rem; color: #555; background: #2a2a4a; padding: 0.1rem 0.35rem; border-radius: 8px; margin-left: auto; }
   .section-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem 0.25rem; }
   .section-header h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin: 0; }
-  .icon-btn { background: none; border: 1px solid #3a3a5a; color: #888; width: 20px; height: 20px; border-radius: 3px; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
+  .list-actions { display: flex; gap: 4px; }
+  .icon-btn { background: none; border: 1px solid #3a3a5a; color: #888; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 3px; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
   .icon-btn:hover { background: #0f3460; color: #fff; border-color: #0f3460; }
+  .local-badge { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: #7ec8e3; background: #1a2a4a; border: 1px solid #2a4a6a; padding: 0.05rem 0.3rem; border-radius: 8px; margin-left: 0.35rem; }
   .lists { padding: 0 0.5rem; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .no-lists { color: #444; font-size: 0.8rem; padding: 0.4rem 0.6rem; }
   .inline-input { width: 100%; padding: 0.35rem 0.6rem; background: #1a2a4a; border: 1px solid #3a4a6a; border-radius: 4px; color: #e0e0e0; font-size: 0.85rem; outline: none; box-sizing: border-box; }
