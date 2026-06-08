@@ -8,6 +8,7 @@ use tauri::State;
 use crate::state::AppState;
 use axiotask_core::dates::{DateMove, apply_date_move};
 use axiotask_core::model::{TaskStatus};
+use axiotask_core::recurrence;
 use axiotask_core::store::{StoredTask, SyncState};
 
 /// DTO sent to the frontend for a task list.
@@ -177,6 +178,7 @@ pub async fn toggle_complete(
     id: String,
 ) -> Result<(), String> {
     let mut t = find_task(&state, &id).await?;
+    let was_open = t.task.status == TaskStatus::NeedsAction;
     t.task.status = match t.task.status {
         TaskStatus::NeedsAction => TaskStatus::Completed,
         TaskStatus::Completed => TaskStatus::NeedsAction,
@@ -189,9 +191,61 @@ pub async fn toggle_complete(
     t.sync_state = SyncState::Dirty;
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
+
+    // When a recurring task is completed, spawn its next instance (Google's own
+    // repeating-task behavior). The rule lives in the notes trailer.
+    let spawn = if was_open && t.task.status == TaskStatus::Completed {
+        plan_next_instance(&t)
+    } else {
+        None
+    };
+
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+
+    if let Some(next) = spawn {
+        state.store.upsert_task(&next).await.map_err(|e| e.to_string())?;
+    }
+
     state.schedule_sync();
     Ok(())
+}
+
+/// Build the follow-up instance for a just-completed recurring task, or `None`
+/// if the task does not recur or the series has ended.
+fn plan_next_instance(completed: &StoredTask) -> Option<StoredTask> {
+    let notes = completed.task.notes.as_deref().unwrap_or("");
+    let current_due = completed
+        .task
+        .due
+        .as_deref()
+        .and_then(|d| d.get(..10))
+        .and_then(|d| d.parse::<jiff::civil::Date>().ok());
+    let today = jiff::Zoned::now().date();
+
+    let (next_due, next_notes) = recurrence::plan_completion(current_due, notes, today)?;
+    let now = now_str();
+    Some(StoredTask {
+        task: axiotask_core::model::Task {
+            id: uuid::Uuid::new_v4().to_string(),
+            parent: completed.task.parent.clone(),
+            position: completed.task.position.clone(),
+            title: completed.task.title.clone(),
+            notes: if next_notes.is_empty() {
+                None
+            } else {
+                Some(next_notes)
+            },
+            status: TaskStatus::NeedsAction,
+            due: Some(format!("{next_due}T00:00:00.000Z")),
+            completed: None,
+            etag: None,
+            updated: now.clone(),
+        },
+        list_id: completed.list_id.clone(),
+        sync_state: SyncState::Dirty,
+        local_updated: now,
+        pending_op: Some("create".into()),
+    })
 }
 
 /// Token returned by delete_task to enable undo.

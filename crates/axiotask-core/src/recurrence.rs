@@ -311,6 +311,28 @@ pub fn embed_in_notes(notes: &str, rule: Option<&Recurrence>) -> String {
     }
 }
 
+/// Decide whether completing a task should spawn a follow-up instance.
+///
+/// `current_due` is the completed task's due date (`None` if it had none) and
+/// `notes` is its raw notes (possibly carrying a `[[recur:...]]` trailer).
+/// `today` anchors a series that has no due date.
+///
+/// Returns `None` when the task does not recur or the series has ended.
+/// Otherwise returns the next instance's due date and its notes (with the
+/// carried-forward rule re-embedded, `COUNT` decremented where applicable).
+pub fn plan_completion(
+    current_due: Option<Date>,
+    notes: &str,
+    today: Date,
+) -> Option<(Date, String)> {
+    let (visible, rule) = extract_from_notes(notes);
+    let rule = rule?;
+    let anchor = current_due.unwrap_or(today);
+    let (next_due, carried) = rule.plan_next(anchor)?;
+    let next_notes = embed_in_notes(&visible, Some(&carried));
+    Some((next_due, next_notes))
+}
+
 // --- weekday <-> RRULE token mapping ----------------------------------------
 
 fn weekday_rrule(d: Weekday) -> &'static str {
@@ -682,5 +704,44 @@ mod tests {
         let r = Recurrence::every(Frequency::Daily, 0);
         assert_eq!(r.interval, 1);
         assert_eq!(r.raw_next(date(2026, 6, 8)), date(2026, 6, 9));
+    }
+
+    #[test]
+    fn plan_completion_none_for_non_recurring() {
+        assert_eq!(
+            plan_completion(Some(date(2026, 6, 8)), "plain notes", date(2026, 6, 8)),
+            None
+        );
+    }
+
+    #[test]
+    fn plan_completion_advances_from_due_date() {
+        let notes = "Pay rent\n[[recur:FREQ=MONTHLY]]";
+        let (next, next_notes) =
+            plan_completion(Some(date(2026, 6, 1)), notes, date(2026, 6, 20)).unwrap();
+        assert_eq!(next, date(2026, 7, 1));
+        assert_eq!(next_notes, "Pay rent\n[[recur:FREQ=MONTHLY]]");
+    }
+
+    #[test]
+    fn plan_completion_anchors_on_today_without_due() {
+        let notes = "[[recur:FREQ=DAILY]]";
+        let (next, _) = plan_completion(None, notes, date(2026, 6, 8)).unwrap();
+        assert_eq!(next, date(2026, 6, 9));
+    }
+
+    #[test]
+    fn plan_completion_decrements_count_in_notes() {
+        let notes = "Take pills\n[[recur:FREQ=DAILY;COUNT=3]]";
+        let (next, next_notes) =
+            plan_completion(Some(date(2026, 6, 8)), notes, date(2026, 6, 8)).unwrap();
+        assert_eq!(next, date(2026, 6, 9));
+        assert_eq!(next_notes, "Take pills\n[[recur:FREQ=DAILY;COUNT=2]]");
+    }
+
+    #[test]
+    fn plan_completion_stops_at_series_end() {
+        let notes = "[[recur:FREQ=DAILY;COUNT=1]]";
+        assert_eq!(plan_completion(Some(date(2026, 6, 8)), notes, date(2026, 6, 8)), None);
     }
 }
