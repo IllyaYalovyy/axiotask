@@ -131,4 +131,40 @@ mod tests {
         .unwrap();
         assert_eq!(row.0, 0);
     }
+
+    #[tokio::test]
+    async fn migrate_resets_legacy_pre_versioning_db() {
+        // Simulate a dev DB created by the old unversioned schema: tables exist
+        // and PRAGMA user_version is still 0. migrate() must reset to v1 cleanly
+        // (the bug: bare CREATE TABLE errored with "table already exists").
+        let opts = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        // Legacy schema fragment (note: no pending_op on task_lists, has id_remap).
+        sqlx::query(
+            "CREATE TABLE task_lists (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+                 etag TEXT, updated TEXT NOT NULL, local_updated TEXT NOT NULL,
+                 sync_state TEXT NOT NULL, deleted_at TEXT);
+             CREATE TABLE id_remap (local_id TEXT PRIMARY KEY, remote_id TEXT);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // user_version defaults to 0 — the legacy state.
+
+        migrate(&pool).await.expect("legacy DB resets cleanly");
+
+        // Now at the latest version with the new schema.
+        let ver: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await.unwrap();
+        assert_eq!(ver, MIGRATIONS.len() as i64);
+        let store = Store::new(pool);
+        // Exercising a query that references pending_op proves the new schema.
+        assert!(store.all_lists().await.unwrap().is_empty());
+        assert!(store.drain_dirty_lists().await.unwrap().is_empty());
+    }
 }

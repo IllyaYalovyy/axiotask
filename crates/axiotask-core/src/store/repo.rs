@@ -134,8 +134,8 @@ impl Store {
     /// dirty/deleted one (race-safe, mirrors `upsert_remote_task`).
     pub async fn upsert_remote_list(&self, list: &StoredTaskList) -> Result<(), StoreError> {
         sqlx::query(
-            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+            r"INSERT INTO task_lists (id, title, etag, updated, local_updated, sync_state, pending_op, local_only)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 etag = excluded.etag,
@@ -152,6 +152,7 @@ impl Store {
         .bind(&list.local_updated)
         .bind(list.sync_state.as_str())
         .bind(&list.pending_op)
+        .bind(list.local_only)
         .execute(&self.pool)
         .await?;
         Ok(())

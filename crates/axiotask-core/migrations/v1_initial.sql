@@ -1,6 +1,19 @@
 -- Schema v1. Applied when PRAGMA user_version < 1.
 -- See designs/RFC-003-local-sqlite-store.md and RFC-004-sync-engine.md.
 --
+-- v1 is the clean pre-1.0 baseline. It first drops any tables left by the
+-- earlier unversioned `CREATE TABLE IF NOT EXISTS` schema so a dev database
+-- created before migration versioning is reset to this schema. There is no
+-- pre-1.0 data to preserve. user_version gates this to run exactly once;
+-- it is a no-op on a fresh database. Future migrations (v2+) MUST NOT drop —
+-- they evolve the schema in place.
+DROP TABLE IF EXISTS inflight_creates;
+DROP TABLE IF EXISTS pending_moves;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS task_lists;
+DROP TABLE IF EXISTS id_remap;
+DROP TABLE IF EXISTS sync_log;
+--
 -- Design notes:
 --  * The local store is a CACHE of Google Tasks plus per-row sync metadata.
 --  * Domain columns mirror the Google Tasks API; sync columns drive the
