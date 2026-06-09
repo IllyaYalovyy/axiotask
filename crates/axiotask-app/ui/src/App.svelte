@@ -906,6 +906,8 @@
     onlogout={logout}
     onsync={syncFromProperties}
     onfreshsync={freshSyncFromProperties}
+    onexport={doExport}
+    onimport={doImport}
   />
 {/if}
 {#if contextMenu}

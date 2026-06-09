@@ -43,6 +43,8 @@ function mockBackend(lists = [{ id: "L1", title: "Work" }]) {
       case "set_auto_sync":
         settings.auto_sync_on_start = args.enabled;
         return structuredClone(settings);
+      case "export_backup": return { path: "/tmp/b.json", lists: 1, tasks: 2, bytes: 100 };
+      case "import_backup": return { path: "/tmp/b.json", lists: 1, tasks: 2 };
       default: return null;
     }
   });
@@ -172,6 +174,28 @@ describe("Properties dialog", () => {
     expect(dialog).toHaveTextContent("dev");
     await fireEvent.click(screen.getByRole("tab", { name: /about/i }));
     expect(dialog).toHaveTextContent("dev");
+  });
+
+  it("exposes Export and Restore backup buttons in the Sync tab", async () => {
+    await openProperties();
+    expect(screen.getByRole("button", { name: /export backup/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /restore latest/i })).toBeInTheDocument();
+  });
+
+  it("Export backup invokes export_backup", async () => {
+    await openProperties();
+    await fireEvent.click(screen.getByRole("button", { name: /export backup/i }));
+    await waitFor(() =>
+      expect(invoke.mock.calls.some((c) => c[0] === "export_backup")).toBe(true),
+    );
+  });
+
+  it("Restore latest invokes import_backup", async () => {
+    await openProperties();
+    await fireEvent.click(screen.getByRole("button", { name: /restore latest/i }));
+    await waitFor(() =>
+      expect(invoke.mock.calls.some((c) => c[0] === "import_backup")).toBe(true),
+    );
   });
 
   it("closes on Escape", async () => {

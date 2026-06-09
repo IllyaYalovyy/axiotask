@@ -12,6 +12,8 @@
     onlogout,
     onsync,
     onfreshsync,
+    onexport,
+    onimport,
   } = $props();
 
   let section = $state("sync");
@@ -136,6 +138,16 @@
           {#if !settings.authenticated}
             <p class="hint">Sign in on the Account tab to enable syncing.</p>
           {/if}
+
+          <h3>Backup</h3>
+          <p class="hint" style="margin-top:0">
+            Save or restore a complete JSON snapshot of every list and task.
+            Restore is non-destructive — it adds or refreshes, never deletes.
+          </p>
+          <div class="actions">
+            <button onclick={onexport} disabled={busy}>⭳ Export backup…</button>
+            <button onclick={onimport} disabled={busy}>⭱ Restore latest…</button>
+          </div>
 
         {:else if section === "account"}
           <h3>Google account</h3>
