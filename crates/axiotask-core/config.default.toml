@@ -13,6 +13,3 @@ scopes = ["https://www.googleapis.com/auth/tasks"]
 push_enabled = false
 # Sync automatically on app startup
 auto_sync_on_start = true
-# EXPERIMENTAL: drop the local cache and re-pull all tasks and lists from
-# Google on the next sync. Disabled by default; behavior may change.
-full_sync_enabled = false

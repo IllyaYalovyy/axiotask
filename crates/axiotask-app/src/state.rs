@@ -583,15 +583,11 @@ impl AppState {
     }
 
     /// Write the current in-memory sync settings to the config file, preserving
-    /// the rest of the file (credentials, comments, and `full_sync_enabled`,
-    /// which is read fresh from disk so an experimental opt-in isn't clobbered).
+    /// the rest of the file (credentials and comments).
     fn persist_sync_settings(&self) -> Result<(), String> {
-        let on_disk = axiotask_core::config::AppConfig::load_from(&self.config_path)
-            .unwrap_or_default();
         let sync = axiotask_core::config::SyncConfig {
             push_enabled: self.push_enabled.load(Ordering::Relaxed),
             auto_sync_on_start: self.auto_sync_on_start.load(Ordering::Relaxed),
-            full_sync_enabled: on_disk.sync.full_sync_enabled,
         };
         axiotask_core::config::AppConfig::save_sync_to(&self.config_path, &sync)
             .map_err(|e| format!("failed to save config: {e}"))

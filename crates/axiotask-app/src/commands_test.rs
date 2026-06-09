@@ -1014,7 +1014,7 @@ mod tests {
                 id: "T1".into(),
                 parent: None,
                 position: "00000000000042".into(),
-                title: "Recurring chore".into(),
+                title: "Garden chore".into(),
                 notes: Some("Water the plants".into()),
                 status: TaskStatus::Completed,
                 due: Some("2026-06-10T00:00:00Z".into()),

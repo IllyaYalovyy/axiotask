@@ -3,7 +3,6 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
   import Sidebar from "./Sidebar.svelte";
-  import QuickAdd from "./QuickAdd.svelte";
   import TodayView from "./TodayView.svelte";
   import ListView from "./ListView.svelte";
   import NotesPanel from "./NotesPanel.svelte";
