@@ -553,6 +553,9 @@ pub struct SyncStatusView {
 pub struct AppSettings {
     /// App version (from Cargo).
     pub version: String,
+    /// Active instance prefix (`AXIOTASK_PREFIX`), or null for the default
+    /// (production) instance. Shown so the user can tell instances apart.
+    pub instance: Option<String>,
     /// Read-write sync (push local changes) vs. read-only (pull only).
     pub push_enabled: bool,
     /// Auto-sync on startup.
@@ -576,6 +579,7 @@ async fn build_settings(state: &AppState) -> Result<AppSettings, String> {
     let status = state.sync_status().await;
     Ok(AppSettings {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        instance: axiotask_core::config::instance_prefix(),
         push_enabled: state.is_push_enabled(),
         auto_sync_on_start: state.auto_sync_on_start(),
         authenticated: state.is_authenticated(),

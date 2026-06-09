@@ -232,6 +232,36 @@ full_sync_enabled = false
 - **Auth tokens:** OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service) or fallback to `~/.config/axiotask/tokens.json`
 - **Config:** `~/.config/axiotask/config.toml`
 
+## Multiple isolated instances
+
+You can run a separate, fully isolated instance alongside your normal one — for
+example a `dev` instance to test against throwaway data while your real account
+keeps running. Set `AXIOTASK_PREFIX` to a short name when launching:
+
+```bash
+AXIOTASK_PREFIX=dev axiotask
+```
+
+That instance namespaces **everything** under `axiotask-<prefix>` instead of
+`axiotask`:
+
+| Resource | Default | `AXIOTASK_PREFIX=dev` |
+|----------|---------|------------------------|
+| Config | `~/.config/axiotask/config.toml` | `~/.config/axiotask-dev/config.toml` |
+| Database | `~/.local/share/axiotask/axiotask.db` | `~/.local/share/axiotask-dev/axiotask.db` |
+| Auth tokens | `~/.local/share/axiotask/tokens.json` | `~/.local/share/axiotask-dev/tokens.json` |
+| Backups | `~/.local/share/axiotask/backups/` | `~/.local/share/axiotask-dev/backups/` |
+| UI state (localStorage) | `axiotask:*` | `axiotask:dev:*` |
+
+The two instances share no config, data, credentials, or UI preferences, so a
+dev instance can sign into a different Google account and never touch your
+production tasks. The window title shows the instance name (`axiotask (dev)`),
+and it's listed under **Properties → About**.
+
+The prefix must be a short, filesystem-safe name (letters, digits, `-`, `_`).
+An invalid value makes the app refuse to start rather than silently fall back
+to the production directories.
+
 ## License
 
 Apache-2.0

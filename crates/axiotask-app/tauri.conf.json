@@ -11,15 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "axiotask",
-        "width": 1000,
-        "height": 700,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ]
+    "windows": []
   },
   "bundle": {
     "active": false,

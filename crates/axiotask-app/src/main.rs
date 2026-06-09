@@ -14,7 +14,7 @@ mod commands_test;
 use std::sync::Arc;
 
 use state::{AppState, default_db_path};
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     tracing_subscriber::fmt()
@@ -24,8 +24,28 @@ fn main() {
         )
         .init();
 
+    // Resolve the instance once, up front. This validates AXIOTASK_PREFIX (it
+    // panics here with a clear message if malformed, before any data dir is
+    // touched) and lets us label the window and the frontend storage.
+    let instance = axiotask_core::config::instance_prefix();
+    if let Some(p) = &instance {
+        tracing::info!("starting isolated instance '{p}' (axiotask-{p})");
+    } else {
+        tracing::info!("starting default instance");
+    }
+    let window_title = match &instance {
+        Some(p) => format!("axiotask ({p})"),
+        None => "axiotask".to_string(),
+    };
+    // Injected before any page script so the frontend can namespace its
+    // localStorage per instance. JSON-encoded so it is always safely quoted.
+    let init_script = format!(
+        "window.__AXIOTASK_PREFIX__ = {};",
+        serde_json::to_string(&instance).unwrap_or_else(|_| "null".into())
+    );
+
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             let db_path = default_db_path();
             if let Some(parent) = db_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -39,6 +59,16 @@ fn main() {
             });
             let state = Arc::new(app_state);
             app.manage(state.clone());
+
+            // Build the main window in code (rather than tauri.conf.json) so the
+            // title reflects the instance and the prefix is injected before the
+            // frontend runs.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title(&window_title)
+                .inner_size(1000.0, 700.0)
+                .resizable(true)
+                .initialization_script(&init_script)
+                .build()?;
 
             // Auto-sync once on startup if authenticated and enabled in config
             let sync_state = state.clone();

@@ -660,24 +660,28 @@ fn build_http_client(
     HttpClient::new(authed)
 }
 
-/// Default database path: `$XDG_DATA_HOME/axiotask/axiotask.sqlite`
+/// Default database path: `$XDG_DATA_HOME/<app-dir>/axiotask.sqlite`, where
+/// `<app-dir>` is instance-aware (`axiotask` or `axiotask-<prefix>`). The auth
+/// `tokens.json` lives beside it, so isolating this directory isolates the
+/// session too.
 pub fn default_db_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    data.join("axiotask").join("axiotask.sqlite")
+    data.join(axiotask_core::config::app_dir_name())
+        .join("axiotask.sqlite")
 }
 
-/// Default backup path: a timestamped JSON file under
-/// `$XDG_DATA_HOME/axiotask/backups/`. Timestamping keeps successive backups
-/// from clobbering each other.
+/// Default backup path: a timestamped JSON file under the instance's
+/// `<app-dir>/backups/` directory. Timestamping keeps successive backups from
+/// clobbering each other.
 pub fn default_backup_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
-    data.join("axiotask")
+    data.join(axiotask_core::config::app_dir_name())
         .join("backups")
         .join(format!("axiotask-backup-{stamp}.json"))
 }
 
-/// The most recent backup file in the default backups directory, if any.
+/// The most recent backup file in the instance's backups directory, if any.
 ///
 /// Backups are named `axiotask-backup-YYYYMMDD-HHMMSS.json`; the timestamp
 /// makes the file names sort chronologically, so the lexicographically last
@@ -686,7 +690,7 @@ pub fn default_backup_path() -> PathBuf {
 pub fn latest_backup_path() -> Option<PathBuf> {
     let dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("axiotask")
+        .join(axiotask_core::config::app_dir_name())
         .join("backups");
     latest_backup_in(&dir)
 }

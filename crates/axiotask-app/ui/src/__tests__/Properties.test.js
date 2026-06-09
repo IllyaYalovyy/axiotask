@@ -6,6 +6,7 @@ import pkg from "../../package.json";
 
 const baseSettings = {
   version: pkg.version,
+  instance: null,
   push_enabled: false,
   auto_sync_on_start: true,
   authenticated: true,
@@ -148,6 +149,29 @@ describe("Properties dialog", () => {
     expect(dialog).toHaveTextContent(`v${pkg.version}`);
     const link = screen.getByRole("link", { name: /github\.com\/yalovoy\/axiotask/i });
     expect(link).toHaveAttribute("href", "https://github.com/yalovoy/axiotask");
+  });
+
+  it("About tab labels the default instance", async () => {
+    await openProperties();
+    await fireEvent.click(screen.getByRole("tab", { name: /about/i }));
+    expect(screen.getByRole("dialog", { name: /properties/i })).toHaveTextContent(
+      /default \(production\)/i,
+    );
+  });
+
+  it("shows the instance name when an isolated instance is active", async () => {
+    mockBackend();
+    settings.instance = "dev";
+    render(App);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /properties/i })).toBeInTheDocument(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+    const dialog = await screen.findByRole("dialog", { name: /properties/i });
+    // Badge in the header.
+    expect(dialog).toHaveTextContent("dev");
+    await fireEvent.click(screen.getByRole("tab", { name: /about/i }));
+    expect(dialog).toHaveTextContent("dev");
   });
 
   it("closes on Escape", async () => {

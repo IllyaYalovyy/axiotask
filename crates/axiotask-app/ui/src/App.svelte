@@ -15,6 +15,7 @@
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
   import Properties from "./Properties.svelte";
+  import { storageKey } from "./storage.js";
 
   // --- State ---
   let lists = $state([]);
@@ -25,7 +26,7 @@
   let authenticated = $state(false);
   let syncStatus = $state("idle");
   let lastSynced = $state(null);
-  let showCompleted = $state(localStorage.getItem("axiotask:showCompleted") === "true");
+  let showCompleted = $state(localStorage.getItem(storageKey("showCompleted")) === "true");
   let completedBottom = $state(true);
   let sortMode = $state("manual"); // per-view, restored from localStorage
   let notesTask = $state(null);
@@ -91,7 +92,7 @@
   // --- Window geometry persistence ---
   $effect(() => {
     // Restore window geometry on mount
-    const geo = JSON.parse(localStorage.getItem("axiotask:windowGeometry") || "null");
+    const geo = JSON.parse(localStorage.getItem(storageKey("windowGeometry")) || "null");
     if (geo) {
       try {
         getCurrentWindow().setSize(new LogicalSize(geo.width, geo.height));
@@ -105,7 +106,7 @@
       getCurrentWindow().outerSize(),
       getCurrentWindow().outerPosition(),
     ]).then(([size, pos]) => {
-      localStorage.setItem("axiotask:windowGeometry", JSON.stringify({
+      localStorage.setItem(storageKey("windowGeometry"), JSON.stringify({
         width: size.width, height: size.height, x: pos.x, y: pos.y,
       }));
     }).catch(() => {});
@@ -113,11 +114,11 @@
 
   // Restore view from localStorage
   $effect(() => {
-    const saved = localStorage.getItem("axiotask:view");
+    const saved = localStorage.getItem(storageKey("view"));
     if (saved) selectedView = saved;
   });
   $effect(() => {
-    if (selectedView) localStorage.setItem("axiotask:view", selectedView);
+    if (selectedView) localStorage.setItem(storageKey("view"), selectedView);
     try { 
       const titles = { focus: "Focus", upcoming: "Upcoming", missed: "Missed", unscheduled: "Unscheduled", all: "All Tasks" };
       const title = titles[selectedView] || lists.find(l => l.id === selectedView)?.title || "axiotask";
@@ -127,9 +128,9 @@
 
   // --- Derived views ---
   // --- Preferences ---
-  let excludedLists = $state(JSON.parse(localStorage.getItem("axiotask:excludedLists") || "[]"));
-  $effect(() => { localStorage.setItem("axiotask:excludedLists", JSON.stringify(excludedLists)); });
-  $effect(() => { localStorage.setItem("axiotask:showCompleted", String(showCompleted)); });
+  let excludedLists = $state(JSON.parse(localStorage.getItem(storageKey("excludedLists")) || "[]"));
+  $effect(() => { localStorage.setItem(storageKey("excludedLists"), JSON.stringify(excludedLists)); });
+  $effect(() => { localStorage.setItem(storageKey("showCompleted"), String(showCompleted)); });
 
   function isExcluded(listId) { return excludedLists.includes(listId); }
   function toggleExclude(listId) {
@@ -229,13 +230,13 @@
 
   // Restore sort mode per view
   $effect(() => {
-    const saved = localStorage.getItem(`axiotask:sort:${selectedView}`);
+    const saved = localStorage.getItem(storageKey(`sort:${selectedView}`));
     sortMode = saved || "manual";
     newestTaskId = null; // clear pinned new-task on view switch
   });
   // Persist sort mode
   $effect(() => {
-    if (selectedView) localStorage.setItem(`axiotask:sort:${selectedView}`, sortMode);
+    if (selectedView) localStorage.setItem(storageKey(`sort:${selectedView}`), sortMode);
   });
 
   let flatTasks = $derived(buildFlatTree(applySortAndOrder(visibleTasks())));

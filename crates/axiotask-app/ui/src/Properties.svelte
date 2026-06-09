@@ -60,7 +60,7 @@
 >
   <div class="card" role="document" onclick={(e) => e.stopPropagation()}>
     <header class="head">
-      <h2>⚙ Properties</h2>
+      <h2>⚙ Properties{#if settings.instance}<span class="instance-badge">{settings.instance}</span>{/if}</h2>
       <button class="x" onclick={onclose} aria-label="Close">×</button>
     </header>
 
@@ -184,6 +184,8 @@
             <dl class="meta">
               <dt>Version</dt>
               <dd class="version">v{pkg.version}</dd>
+              <dt>Instance</dt>
+              <dd>{settings.instance ? settings.instance : "default (production)"}</dd>
               <dt>Repository</dt>
               <dd><a href={repository} target="_blank" rel="noreferrer noopener">{repoLabel}</a></dd>
               <dt>Database</dt>
@@ -214,6 +216,11 @@
     padding: 1rem 1.25rem; border-bottom: 1px solid #2a2a4a;
   }
   .head h2 { margin: 0; font-size: 1.05rem; color: #7ec8e3; }
+  .instance-badge {
+    margin-left: 0.5rem; font-size: 0.65rem; font-weight: 600; vertical-align: middle;
+    text-transform: uppercase; letter-spacing: 0.04em; color: #ffb74d;
+    background: #3a2a14; border: 1px solid #5a4424; padding: 0.1rem 0.4rem; border-radius: 8px;
+  }
   .x {
     background: none; border: none; color: #888; font-size: 1.4rem; line-height: 1;
     cursor: pointer; padding: 0 0.25rem;

@@ -6,6 +6,69 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Base application name, used for the per-user config/data directories.
+pub const APP_NAME: &str = "axiotask";
+
+/// Environment variable that selects an isolated instance. When set to a
+/// non-empty value (e.g. `AXIOTASK_PREFIX=dev`), every per-user location —
+/// config, database, auth tokens, and backups — is namespaced under
+/// `axiotask-<prefix>` instead of `axiotask`, so a development or test instance
+/// runs fully isolated from the production instance on the same machine.
+pub const INSTANCE_ENV: &str = "AXIOTASK_PREFIX";
+
+/// Validate an instance prefix. Allowed: ASCII letters, digits, `-` and `_`,
+/// up to 64 chars. This both keeps directory names tidy and prevents path
+/// traversal (no `/`, `\`, `.`), so the prefix can be trusted in a path.
+fn sanitize_prefix(raw: &str) -> Result<String, String> {
+    if raw.is_empty() {
+        return Err("must not be empty".into());
+    }
+    if raw.len() > 64 {
+        return Err("must be at most 64 characters".into());
+    }
+    if !raw
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "{raw:?} contains invalid characters (allowed: letters, digits, '-', '_')"
+        ));
+    }
+    Ok(raw.to_string())
+}
+
+/// The active instance prefix from [`INSTANCE_ENV`], or `None` for the default
+/// (production) instance.
+///
+/// If the variable is set but invalid this **panics** rather than returning
+/// `None`: silently falling back to the default would point an instance the
+/// user intended to isolate at the production config and data, which is exactly
+/// the accident this feature exists to prevent.
+pub fn instance_prefix() -> Option<String> {
+    match std::env::var(INSTANCE_ENV) {
+        Ok(raw) if raw.trim().is_empty() => None,
+        Ok(raw) => Some(
+            sanitize_prefix(raw.trim())
+                .unwrap_or_else(|e| panic!("invalid {INSTANCE_ENV}: {e}")),
+        ),
+        Err(_) => None,
+    }
+}
+
+/// Directory name for the active instance: `axiotask`, or `axiotask-<prefix>`
+/// when [`INSTANCE_ENV`] selects an isolated instance.
+pub fn app_dir_name() -> String {
+    app_dir_name_for(instance_prefix().as_deref())
+}
+
+/// Pure helper behind [`app_dir_name`] — testable without the environment.
+fn app_dir_name_for(prefix: Option<&str>) -> String {
+    match prefix {
+        Some(p) => format!("{APP_NAME}-{p}"),
+        None => APP_NAME.to_string(),
+    }
+}
+
 /// Top-level application configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -75,11 +138,11 @@ impl AppConfig {
         toml::from_str(&content).ok()
     }
 
-    /// Default config file path.
+    /// Default config file path (instance-aware via [`INSTANCE_ENV`]).
     pub fn default_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("axiotask")
+            .join(app_dir_name())
             .join("config.toml")
     }
 
@@ -146,6 +209,32 @@ impl AppConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn app_dir_name_default_and_prefixed() {
+        assert_eq!(app_dir_name_for(None), "axiotask");
+        assert_eq!(app_dir_name_for(Some("dev")), "axiotask-dev");
+        assert_eq!(app_dir_name_for(Some("qa_2")), "axiotask-qa_2");
+    }
+
+    #[test]
+    fn sanitize_prefix_accepts_safe_names() {
+        assert_eq!(sanitize_prefix("dev").unwrap(), "dev");
+        assert_eq!(sanitize_prefix("Test-1_b").unwrap(), "Test-1_b");
+    }
+
+    #[test]
+    fn sanitize_prefix_rejects_unsafe_names() {
+        // Empty, path separators, traversal, spaces, and over-length all fail —
+        // a malformed prefix must never resolve to a usable directory name.
+        assert!(sanitize_prefix("").is_err());
+        assert!(sanitize_prefix("../prod").is_err());
+        assert!(sanitize_prefix("a/b").is_err());
+        assert!(sanitize_prefix("a\\b").is_err());
+        assert!(sanitize_prefix("with space").is_err());
+        assert!(sanitize_prefix("dot.dot").is_err());
+        assert!(sanitize_prefix(&"x".repeat(65)).is_err());
+    }
 
     #[test]
     fn default_google_config_has_empty_credentials() {
