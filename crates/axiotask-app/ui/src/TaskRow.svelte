@@ -175,6 +175,9 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="title" ondblclick={handleTitleDblClick}>{task.title || "Untitled"}</span>
+      {#if recurrence}
+        <span class="recur-indicator" title="Repeats: {recurrenceLabel}" aria-label="Repeats: {recurrenceLabel}">🔁</span>
+      {/if}
     {/if}
 
     <!-- Quick actions (hover) -->
@@ -248,6 +251,7 @@
 
   .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; cursor: text; }
   .title:hover { text-decoration: underline; text-decoration-color: #3a3a5a; }
+  .recur-indicator { flex-shrink: 0; font-size: 0.8rem; color: #b08fe0; cursor: default; }
 
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
   .task-widget:hover .actions, .task-widget.focused .actions { display: flex; }

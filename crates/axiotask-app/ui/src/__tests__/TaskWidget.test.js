@@ -130,6 +130,27 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(container.querySelector(".meta-row").textContent).not.toContain("🔁");
     });
 
+    it("shows an at-a-glance recurrence icon on the main row for repeating tasks", () => {
+      const { container } = render(TaskRow, {
+        props: {
+          ...defaultProps,
+          task: makeTask({ title: "Daily standup", notes: "[[recur:FREQ=DAILY]]" }),
+        },
+      });
+      const icon = container.querySelector(".main-row .recur-indicator");
+      expect(icon).toBeTruthy();
+      expect(icon.textContent).toContain("🔁");
+      // Tooltip/aria carry the human-readable schedule.
+      expect(icon.getAttribute("title")).toMatch(/daily/i);
+    });
+
+    it("does not show the main-row recurrence icon for a plain task", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ title: "One-off task" }) },
+      });
+      expect(container.querySelector(".main-row .recur-indicator")).toBeNull();
+    });
+
     it("shows relative due date", () => {
       // Build tomorrow's *local* date (date-only dues are interpreted locally;
       // toISOString() would roll the date forward near the UTC day boundary).
