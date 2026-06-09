@@ -132,6 +132,31 @@
   $effect(() => { localStorage.setItem(storageKey("excludedLists"), JSON.stringify(excludedLists)); });
   $effect(() => { localStorage.setItem(storageKey("showCompleted"), String(showCompleted)); });
 
+  // Custom sidebar order for lists. Google Tasks has no list-ordering concept,
+  // so this is a local preference (a saved array of list ids). Lists not in the
+  // saved order — e.g. freshly created or pulled — keep their backend order and
+  // appear after the ordered ones.
+  let listOrder = $state(JSON.parse(localStorage.getItem(storageKey("listOrder")) || "[]"));
+  $effect(() => { localStorage.setItem(storageKey("listOrder"), JSON.stringify(listOrder)); });
+
+  function sortListsByOrder(items, order) {
+    if (!order.length) return items;
+    const pos = new Map(order.map((id, i) => [id, i]));
+    // JS Array.sort is stable, so unknown lists (rank Infinity) keep their
+    // existing relative order at the end.
+    return [...items].sort(
+      (a, b) => (pos.get(a.id) ?? Infinity) - (pos.get(b.id) ?? Infinity),
+    );
+  }
+
+  // Lists in the user's custom sidebar order.
+  let orderedLists = $derived(sortListsByOrder(lists, listOrder));
+
+  // Persist a new full ordering emitted by the sidebar after a drag.
+  function reorderLists(orderedIds) {
+    listOrder = orderedIds;
+  }
+
   function isExcluded(listId) { return excludedLists.includes(listId); }
   function toggleExclude(listId) {
     if (isExcluded(listId)) excludedLists = excludedLists.filter(id => id !== listId);
@@ -787,7 +812,7 @@
 
 <main class="app">
   <Sidebar
-    {lists}
+    lists={orderedLists}
     {selectedView}
     onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; }}
     onlogin={login}
@@ -797,6 +822,7 @@
     oncreateList={createList}
     onrenameList={renameList}
     onlistaction={openListContextMenu}
+    onreorderlists={reorderLists}
     onproperties={openProperties}
     {authenticated}
     {syncStatus}

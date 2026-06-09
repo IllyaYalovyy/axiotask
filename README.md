@@ -11,6 +11,7 @@ Built with [Tauri 2](https://tauri.app/) (Rust backend) and [Svelte 5](https://s
 - **Smart views** — Focus (this week), Upcoming, Missed, Unscheduled
 - **One-click reschedule** — tomorrow, next week, next month buttons on every task
 - **Flat task list** — subtasks shown in detail panel, not cluttering the main view
+- **Reorderable lists** — drag lists in the sidebar into your own order (saved per instance)
 - **Cross-platform** — Linux, macOS, Windows from a single codebase
 
 ## Recurring tasks
