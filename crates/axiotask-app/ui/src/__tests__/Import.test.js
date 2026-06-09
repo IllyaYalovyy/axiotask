@@ -1,41 +1,47 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
 
 /**
  * Import / restore feature.
  *
- * Ctrl+I restores the most recent JSON backup via the `import_backup` command
- * and surfaces a confirmation toast with the counts and the file restored from.
- * Mirrors the export (Ctrl+E) flow.
+ * The "Restore latest" button in Properties → Sync restores the most recent
+ * JSON backup via the `import_backup` command and surfaces a confirmation toast
+ * with the counts and the file restored from.
  */
+
+function settings() {
+  return {
+    version: "0.1.0",
+    instance: null,
+    push_enabled: false,
+    auto_sync_on_start: true,
+    authenticated: false,
+    scopes: ["https://www.googleapis.com/auth/tasks"],
+    db_path: "/db",
+    config_path: "/cfg",
+    pending_pushes: 0,
+    sync: {
+      last_synced: null,
+      last_pulled: 0,
+      last_pushed: 0,
+      last_conflicts: 0,
+      last_deleted: 0,
+      total_syncs: 0,
+      last_error: null,
+    },
+  };
+}
 
 function mockBackend({ importResult, importError = false } = {}) {
   const lists = [{ id: "L1", title: "Inbox" }];
-  const tasks = {
-    L1: [
-      {
-        id: "T1",
-        parent_id: null,
-        title: "Buy milk",
-        notes: null,
-        status: "needsAction",
-        due: null,
-        position: "00000000000001",
-        sync_state: "clean",
-      },
-    ],
-  };
-
   invoke.mockImplementation(async (cmd, args) => {
     switch (cmd) {
-      case "auth_status":
-        return false;
-      case "list_tasklists":
-        return lists;
-      case "list_tasks":
-        return tasks[args?.listId] || [];
+      case "auth_status": return false;
+      case "list_tasklists": return lists;
+      case "list_tasks": return [];
+      case "get_settings": return settings();
       case "import_backup":
         if (importError) throw new Error("file not found");
         return (
@@ -45,10 +51,17 @@ function mockBackend({ importResult, importError = false } = {}) {
             tasks: 7,
           }
         );
-      default:
-        return null;
+      default: return null;
     }
   });
+}
+
+async function clickRestore() {
+  render(App);
+  await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
+  await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+  await screen.findByRole("dialog", { name: /properties/i });
+  await fireEvent.click(screen.getByRole("button", { name: /restore latest/i }));
 }
 
 describe("Import / restore", () => {
@@ -57,80 +70,39 @@ describe("Import / restore", () => {
     invoke.mockReset();
   });
 
-  it("invokes import_backup on Ctrl+I", async () => {
+  it("invokes import_backup from the Properties button", async () => {
     mockBackend();
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    await fireEvent.keyDown(window, { key: "i", ctrlKey: true });
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("import_backup", expect.anything());
-    });
+    await clickRestore();
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("import_backup", expect.anything()),
+    );
   });
 
   it("shows a confirmation toast with counts and path after restore", async () => {
     mockBackend();
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    await fireEvent.keyDown(window, { key: "i", ctrlKey: true });
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Restored 7 tasks in 2 lists/),
-      ).toBeInTheDocument();
-    });
+    await clickRestore();
+    await waitFor(() =>
+      expect(screen.getByText(/Restored 7 tasks in 2 lists/)).toBeInTheDocument(),
+    );
     expect(
       screen.getByText(/axiotask-backup-20260608-014500\.json/),
     ).toBeInTheDocument();
   });
 
-  it("does not import on plain 'i'", async () => {
-    mockBackend();
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    await fireEvent.keyDown(window, { key: "i" });
-
-    expect(invoke).not.toHaveBeenCalledWith("import_backup", expect.anything());
-  });
-
-  it("supports the Cmd+I shortcut on macOS", async () => {
-    mockBackend();
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    await fireEvent.keyDown(window, { key: "i", metaKey: true });
-
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("import_backup", expect.anything());
-    });
-  });
-
   it("surfaces an error toast when the import command fails", async () => {
     mockBackend({ importError: true });
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    await fireEvent.keyDown(window, { key: "i", ctrlKey: true });
-
-    await waitFor(() => {
-      expect(screen.getByText(/Failed: import_backup/)).toBeInTheDocument();
-    });
+    await clickRestore();
+    await waitFor(() =>
+      expect(screen.getByText(/Failed: import_backup/)).toBeInTheDocument(),
+    );
   });
 
   it("reloads tasks after a successful restore", async () => {
     mockBackend();
-    render(App);
-    await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
-
-    invoke.mockClear();
-    await fireEvent.keyDown(window, { key: "i", ctrlKey: true });
-
+    await clickRestore();
     // After restoring, the view refreshes so the imported tasks appear.
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("list_tasklists", expect.anything());
-    });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("list_tasklists", expect.anything()),
+    );
   });
 });

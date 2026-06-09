@@ -734,18 +734,7 @@
       case ",": e.preventDefault(); await openProperties(); break;
       case "/": e.preventDefault(); showSearch = true; break;
       case "e": case "E":
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          await doExport();
-        } else {
-          e.preventDefault(); if (f) editingId = f.id;
-        }
-        break;
-      case "i": case "I":
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          await doImport();
-        }
+        e.preventDefault(); if (f) editingId = f.id;
         break;
       case "m":
         if (e.ctrlKey || e.metaKey) {
