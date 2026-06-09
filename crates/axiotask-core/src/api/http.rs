@@ -115,6 +115,8 @@ struct TaskWire {
     position: Option<String>,
     etag: Option<String>,
     updated: Option<String>,
+    #[serde(rename = "webViewLink")]
+    web_view_link: Option<String>,
 }
 
 impl TryFrom<TaskWire> for Task {
@@ -136,6 +138,7 @@ impl TryFrom<TaskWire> for Task {
             completed: w.completed,
             etag: w.etag,
             updated: w.updated.unwrap_or_default(),
+            web_view_link: w.web_view_link,
         })
     }
 }

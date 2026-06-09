@@ -56,6 +56,7 @@ mod tests {
                 completed: None,
                 etag: Some("e1".into()),
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: list_id.into(),
             sync_state: SyncState::Clean,
@@ -98,6 +99,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: now.clone(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -184,6 +186,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -299,6 +302,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-05-23T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -350,6 +354,7 @@ mod tests {
                 completed: None,
                 etag: Some("e1".into()),
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Clean,
@@ -454,6 +459,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: list_id.clone(),
             sync_state: SyncState::Dirty,
@@ -536,6 +542,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -629,6 +636,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -831,6 +839,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: "2026-06-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -880,6 +889,7 @@ mod tests {
                 title: "offline task".into(), notes: None,
                 status: TaskStatus::NeedsAction, due: None, completed: None,
                 etag: None, updated: "2026-06-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -1005,14 +1015,13 @@ mod tests {
                 parent: None,
                 position: "00000000000042".into(),
                 title: "Recurring chore".into(),
-                notes: Some(
-                    "Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into(),
-                ),
+                notes: Some("Water the plants".into()),
                 status: TaskStatus::Completed,
                 due: Some("2026-06-10T00:00:00Z".into()),
                 completed: Some("2026-06-09T08:00:00Z".into()),
                 etag: Some("etag-1".into()),
                 updated: now.clone(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -1037,15 +1046,8 @@ mod tests {
         assert_eq!(task.etag.as_deref(), Some("etag-1"));
         assert_eq!(task.sync_state, "dirty");
         assert_eq!(task.pending_op.as_deref(), Some("update"));
-        // Notes (including the recurrence trailer) survive verbatim.
-        assert_eq!(
-            task.notes.as_deref(),
-            Some("Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]")
-        );
-        // Derived recurrence is surfaced for human readers.
-        let rec = task.recurrence.as_ref().expect("recurrence derived");
-        assert!(rec.rrule.contains("FREQ=WEEKLY"));
-        assert!(!rec.summary.is_empty());
+        // Notes survive verbatim.
+        assert_eq!(task.notes.as_deref(), Some("Water the plants"));
 
         // Whole snapshot serializes to valid, re-parseable JSON.
         let json = backup.to_json_pretty().unwrap();
@@ -1085,6 +1087,7 @@ mod tests {
                             completed: None,
                             etag: Some("e".into()),
                             updated: "2026-01-01T00:00:00Z".into(),
+                            web_view_link: None,
                         },
                         list_id: "RL1".into(),
                         sync_state: SyncState::Clean,
@@ -1119,12 +1122,13 @@ mod tests {
                 parent: None,
                 position: "00000000000042".into(),
                 title: "Water plants".into(),
-                notes: Some("weekly\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into()),
+                notes: Some("weekly watering".into()),
                 status: TaskStatus::Completed,
                 due: Some("2026-06-10T00:00:00Z".into()),
                 completed: Some("2026-06-09T08:00:00Z".into()),
                 etag: Some("etag-1".into()),
                 updated: "2026-06-08T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -1182,6 +1186,7 @@ mod tests {
                         completed: None,
                         etag: Some("e1".into()),
                         updated: "2026-01-02T00:00:00Z".into(),
+                        web_view_link: None,
                     },
                     list_id: "L1".into(),
                     sync_state: SyncState::Clean,
@@ -1272,6 +1277,7 @@ mod tests {
                 completed: None,
                 etag: None,
                 updated: now.clone(),
+                web_view_link: None,
             },
             list_id: "L1".into(),
             sync_state: SyncState::Dirty,
@@ -1280,5 +1286,25 @@ mod tests {
         };
         state.store.upsert_task(&t).await.unwrap();
         assert_eq!(state.pending_push_count().await.unwrap(), baseline + 1);
+    }
+
+    #[tokio::test]
+    async fn pull_populates_web_view_link_through_to_task_view() {
+        // A task pulled from Google carries its webViewLink; it must survive
+        // into the store and the TaskView the frontend reads.
+        let (client, state) = setup().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "remote-1", "Monthly update", "1");
+        state.run_sync().await.unwrap();
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let t = tasks.iter().find(|t| t.task.id == "remote-1").expect("pulled task");
+        assert!(
+            t.task.web_view_link.as_deref().unwrap_or("").contains("tasks.google.com"),
+            "stored task keeps the Google web link"
+        );
+
+        let view = crate::commands::TaskView::from(t);
+        assert!(view.web_view_link.is_some(), "TaskView exposes the link to the UI");
     }
 }

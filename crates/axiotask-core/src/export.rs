@@ -25,21 +25,16 @@
 //!
 //! # Coverage (no missing data)
 //!
-//! Google's Tasks REST API has no recurrence field — axiotask stores repeat
-//! rules inside the task `notes` as an RFC 5545 trailer (see
-//! [`crate::recurrence`]). The backup keeps `notes` **verbatim** (trailer
-//! included), so recurrence round-trips with zero loss. As a readability bonus
-//! a derived [`BackupRecurrence`] (RRULE + human summary) is added alongside;
-//! it is purely additive — `notes` remains the source of truth.
+//! The backup keeps every task field — including `notes` — **verbatim**, so a
+//! restore reproduces the local store exactly.
 //!
 //! This module is pure (no IO) and fully unit tested, matching the
-//! `recurrence.rs` / `dates.rs` convention. Callers own reading from the store
+//! `dates.rs` convention. Callers own reading from the store
 //! and writing the resulting string to disk.
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Task, TaskList, TaskStatus};
-use crate::recurrence;
 use crate::store::{StoredTask, StoredTaskList, SyncState};
 
 /// Current backup schema version. Bump when the shape changes incompatibly;
@@ -99,7 +94,7 @@ pub struct BackupTask {
     pub position: String,
     /// Display title.
     pub title: String,
-    /// Free-form notes, **verbatim** (recurrence trailer included if present).
+    /// Free-form notes, **verbatim**.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     /// Completion status: `needsAction` | `completed`.
@@ -122,33 +117,10 @@ pub struct BackupTask {
     /// Pending push operation when dirty: `create` | `update` | `delete`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_op: Option<String>,
-    /// Derived, human-readable recurrence info. Additive only — the source of
-    /// truth is the trailer embedded in `notes`. `None` when the task does not
-    /// repeat.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recurrence: Option<BackupRecurrence>,
-}
-
-/// Human-readable recurrence summary derived from a task's `notes` trailer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BackupRecurrence {
-    /// RFC 5545 `RRULE` value (without the `RRULE:` prefix).
-    pub rrule: String,
-    /// Plain-English description, e.g. "Every 2 weeks on Mon, Wed".
-    pub summary: String,
 }
 
 impl BackupTask {
     fn from_stored(st: &StoredTask) -> Self {
-        let recurrence = st
-            .task
-            .notes
-            .as_deref()
-            .and_then(|n| recurrence::extract_from_notes(n).1)
-            .map(|r| BackupRecurrence {
-                rrule: r.to_rrule(),
-                summary: r.summary(),
-            });
         Self {
             id: st.task.id.clone(),
             parent: st.task.parent.clone(),
@@ -163,7 +135,6 @@ impl BackupTask {
             sync_state: st.sync_state.as_str().to_string(),
             local_updated: st.local_updated.clone(),
             pending_op: st.pending_op.clone(),
-            recurrence,
         }
     }
 }
@@ -220,8 +191,7 @@ impl Backup {
     /// all sync metadata are restored verbatim, so a backup round-trips
     /// losslessly back into the local store. Unknown enum strings degrade
     /// safely rather than failing the whole restore (`sync_state` → `Clean`,
-    /// `status` → `NeedsAction`). The derived `recurrence` summary is dropped —
-    /// the source of truth is the verbatim `notes` trailer, which is preserved.
+    /// `status` → `NeedsAction`).
     pub fn into_stored(self) -> Vec<(StoredTaskList, Vec<StoredTask>)> {
         self.lists.into_iter().map(BackupList::into_stored).collect()
     }
@@ -273,6 +243,7 @@ impl BackupTask {
                 completed: self.completed,
                 etag: self.etag,
                 updated: self.updated,
+                web_view_link: None,
             },
             list_id: list_id.to_string(),
             sync_state: SyncState::parse(&self.sync_state).unwrap_or(SyncState::Clean),
@@ -316,6 +287,7 @@ mod tests {
                 completed: None,
                 etag: Some("etag-t".into()),
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: list_id.into(),
             sync_state: SyncState::Clean,
@@ -387,7 +359,6 @@ mod tests {
         assert_eq!(t.sync_state, "dirty");
         assert_eq!(t.local_updated, "2026-06-30T12:05:00Z");
         assert_eq!(t.pending_op.as_deref(), Some("update"));
-        assert!(t.recurrence.is_none());
     }
 
     #[test]
@@ -406,25 +377,16 @@ mod tests {
     }
 
     #[test]
-    fn recurring_task_keeps_notes_verbatim_and_adds_derived_summary() {
+    fn task_notes_are_kept_verbatim() {
         let mut st = task("T1", "L1", "Water plants");
-        // notes carry the recurrence trailer; it must survive verbatim.
-        st.task.notes =
-            Some("Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into());
+        st.task.notes = Some("Water the plants\nremember the fertilizer".into());
 
         let b = Backup::build("now", vec![(list("L1", "Inbox", false), vec![st])]);
         let t = &b.lists[0].tasks[0];
-        // Source of truth preserved exactly (no stripping of the trailer).
         assert_eq!(
             t.notes.as_deref(),
-            Some("Water the plants\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]")
+            Some("Water the plants\nremember the fertilizer")
         );
-        // Derived, additive recurrence info present and parseable.
-        let rec = t.recurrence.as_ref().expect("recurrence derived");
-        assert!(rec.rrule.contains("FREQ=WEEKLY"));
-        assert!(rec.rrule.contains("INTERVAL=2"));
-        assert!(rec.rrule.contains("BYDAY=MO,WE"));
-        assert!(!rec.summary.is_empty());
     }
 
     #[test]
@@ -498,7 +460,7 @@ mod tests {
         let mut st = task("T1", "L1", "Pay rent");
         st.task.parent = Some("P0".into());
         st.task.position = "00000000000099".into();
-        st.task.notes = Some("transfer\n[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE]]".into());
+        st.task.notes = Some("transfer\nremember the paperwork".into());
         st.task.status = TaskStatus::Completed;
         st.task.due = Some("2026-07-01T00:00:00Z".into());
         st.task.completed = Some("2026-06-30T12:00:00Z".into());

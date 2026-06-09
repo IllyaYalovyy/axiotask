@@ -1,6 +1,5 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { extractFromNotes, summarize } from "./recurrence.js";
   let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
@@ -79,14 +78,9 @@
     const re = /https?:\/\/[^\s)>\]]+/g;
     return text.match(re) || [];
   }
-  // Recurrence: the rule is carried in the notes trailer ([[recur:RRULE]]).
-  let parsedNotes = $derived(extractFromNotes(task.notes || ""));
-  let recurrence = $derived(parsedNotes.rule);
-  let recurrenceLabel = $derived(recurrence ? summarize(recurrence) : "");
-
-  // URLs and the notes badge use the visible notes, not the rule trailer.
-  let urls = $derived([...extractUrls(task.title), ...extractUrls(parsedNotes.visible)]);
-  let hasVisibleNotes = $derived(parsedNotes.visible.length > 0);
+  // URLs and the notes badge use the task's notes directly.
+  let urls = $derived([...extractUrls(task.title), ...extractUrls(task.notes || "")]);
+  let hasVisibleNotes = $derived((task.notes || "").length > 0);
 
   function parseLocalDate(due) {
     // Due dates are date-only. Parse YYYY-MM-DD portion to avoid timezone shift.
@@ -175,9 +169,6 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="title" ondblclick={handleTitleDblClick}>{task.title || "Untitled"}</span>
-      {#if recurrence}
-        <span class="recur-indicator" title="Repeats: {recurrenceLabel}" aria-label="Repeats: {recurrenceLabel}">🔁</span>
-      {/if}
     {/if}
 
     <!-- Quick actions (hover) -->
@@ -206,9 +197,6 @@
     {/if}
     {#if urls.length > 0}
       <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]}>🔗{urls.length > 1 ? ` ${urls.length}` : ""}</a>
-    {/if}
-    {#if recurrence}
-      <span class="badge recur-badge" title={recurrenceLabel} aria-label="Recurring: {recurrenceLabel}">🔁 {recurrenceLabel}</span>
     {/if}
     {#if task.due}
       <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled">📅</span>
@@ -251,7 +239,6 @@
 
   .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; cursor: text; }
   .title:hover { text-decoration: underline; text-decoration-color: #3a3a5a; }
-  .recur-indicator { flex-shrink: 0; font-size: 0.8rem; color: #b08fe0; cursor: default; }
 
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
   .task-widget:hover .actions, .task-widget.focused .actions { display: flex; }
@@ -291,7 +278,6 @@
   .progress-text { color: #aaa; }
 
   .badge { font-size: 0.7rem; cursor: default; }
-  .recur-badge { color: #b08fe0; white-space: nowrap; }
   .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
 

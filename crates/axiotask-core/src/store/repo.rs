@@ -203,8 +203,8 @@ impl Store {
         sqlx::query(
             r"INSERT INTO tasks
               (id, list_id, parent_id, position, title, notes, status, due,
-               completed_at, etag, updated, local_updated, sync_state, pending_op)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               completed_at, etag, updated, local_updated, sync_state, pending_op, web_view_link)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 list_id = excluded.list_id,
                 parent_id = excluded.parent_id,
@@ -218,7 +218,8 @@ impl Store {
                 updated = excluded.updated,
                 local_updated = excluded.local_updated,
                 sync_state = excluded.sync_state,
-                pending_op = excluded.pending_op",
+                pending_op = excluded.pending_op,
+                web_view_link = excluded.web_view_link",
         )
         .bind(&t.task.id)
         .bind(&t.list_id)
@@ -234,6 +235,7 @@ impl Store {
         .bind(&t.local_updated)
         .bind(t.sync_state.as_str())
         .bind(&t.pending_op)
+        .bind(&t.task.web_view_link)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -248,8 +250,8 @@ impl Store {
         sqlx::query(
             r"INSERT INTO tasks
               (id, list_id, parent_id, position, title, notes, status, due,
-               completed_at, etag, updated, local_updated, sync_state, pending_op)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               completed_at, etag, updated, local_updated, sync_state, pending_op, web_view_link)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 list_id = excluded.list_id,
                 parent_id = excluded.parent_id,
@@ -263,7 +265,8 @@ impl Store {
                 updated = excluded.updated,
                 local_updated = excluded.local_updated,
                 sync_state = excluded.sync_state,
-                pending_op = excluded.pending_op
+                pending_op = excluded.pending_op,
+                web_view_link = excluded.web_view_link
               WHERE tasks.sync_state = 'clean'",
         )
         .bind(&t.task.id)
@@ -280,6 +283,7 @@ impl Store {
         .bind(&t.local_updated)
         .bind(t.sync_state.as_str())
         .bind(&t.pending_op)
+        .bind(&t.task.web_view_link)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -300,7 +304,7 @@ impl Store {
     pub async fn list_tasks(&self, list_id: &str) -> Result<Vec<StoredTask>, StoreError> {
         let rows = sqlx::query(
             r"SELECT id, list_id, parent_id, position, title, notes, status, due,
-                     completed_at, etag, updated, local_updated, sync_state, pending_op
+                     completed_at, etag, updated, local_updated, sync_state, pending_op, web_view_link
               FROM tasks
               WHERE list_id = ? AND sync_state != 'deleted'
               ORDER BY (parent_id IS NOT NULL), parent_id, position",
@@ -320,7 +324,7 @@ impl Store {
     pub async fn find_task_any(&self, id: &str) -> Result<Option<StoredTask>, StoreError> {
         let row = sqlx::query(
             r"SELECT id, list_id, parent_id, position, title, notes, status, due,
-                     completed_at, etag, updated, local_updated, sync_state, pending_op
+                     completed_at, etag, updated, local_updated, sync_state, pending_op, web_view_link
               FROM tasks WHERE id = ?",
         )
         .bind(id)
@@ -359,7 +363,7 @@ impl Store {
     pub async fn drain_dirty(&self) -> Result<Vec<StoredTask>, StoreError> {
         let rows = sqlx::query(
             r"SELECT t.id, t.list_id, t.parent_id, t.position, t.title, t.notes, t.status, t.due,
-                     t.completed_at, t.etag, t.updated, t.local_updated, t.sync_state, t.pending_op
+                     t.completed_at, t.etag, t.updated, t.local_updated, t.sync_state, t.pending_op, t.web_view_link
               FROM tasks t
               JOIN task_lists l ON l.id = t.list_id
               WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') AND l.local_only = 0
@@ -766,6 +770,7 @@ fn stored_task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredTask, Sto
             completed: row.try_get("completed_at").map_err(StoreError::from)?,
             etag: row.try_get("etag").map_err(StoreError::from)?,
             updated: row.try_get("updated").map_err(StoreError::from)?,
+            web_view_link: row.try_get("web_view_link").map_err(StoreError::from)?,
         },
         list_id: row.try_get("list_id").map_err(StoreError::from)?,
         sync_state,
@@ -828,6 +833,7 @@ mod tests {
                 completed: None,
                 etag: Some("e1".into()),
                 updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
             },
             list_id: list_id.into(),
             sync_state: SyncState::Clean,
@@ -1126,6 +1132,26 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].task.title, "renamed");
         assert_eq!(rows[0].sync_state, SyncState::Dirty);
+    }
+
+    #[tokio::test]
+    async fn web_view_link_round_trips() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.task.web_view_link = Some("https://tasks.google.com/task/abc123".into());
+        s.upsert_task(&t).await.unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        assert_eq!(
+            rows[0].task.web_view_link.as_deref(),
+            Some("https://tasks.google.com/task/abc123")
+        );
+        // find_task_any sees it too.
+        let found = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(
+            found.task.web_view_link.as_deref(),
+            Some("https://tasks.google.com/task/abc123")
+        );
     }
 
     #[tokio::test]

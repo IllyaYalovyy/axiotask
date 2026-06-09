@@ -135,6 +135,7 @@ impl InMemoryClient {
             completed: None,
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
+            web_view_link: Some(format!("https://tasks.google.com/task/{id}")),
         };
         s.tasks.push((list_id.into(), task.clone()));
         task
@@ -251,6 +252,7 @@ impl GoogleTasksClient for InMemoryClient {
         let etag = s.fresh_etag();
         let position = format!("{:020}", s.tasks.len() + 1);
         let id = format!("remote-{}", s.etag_counter);
+        let web_view_link = Some(format!("https://tasks.google.com/task/{id}"));
         let task = Task {
             id,
             parent: new.parent,
@@ -262,6 +264,7 @@ impl GoogleTasksClient for InMemoryClient {
             completed: None,
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
+            web_view_link,
         };
         s.tasks.push((list_id.into(), task.clone()));
         let _ = new.previous;

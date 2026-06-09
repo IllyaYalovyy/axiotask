@@ -16,28 +16,15 @@ Built with [Tauri 2](https://tauri.app/) (Rust backend) and [Svelte 5](https://s
 
 ## Recurring tasks
 
-Google's Tasks REST API exposes **no** recurrence field — it can only read and
-write a task's `due` date, not a repeat rule. axiotask therefore implements
-recurrence on the client and persists the rule inside the (synced) `notes`
-field as a compact RFC 5545 trailer, e.g.:
+Google's Tasks REST API exposes **no** recurrence field — `tasks.get`/`tasks.list`
+never return a repeat rule, even for tasks that repeat, and there is no way to
+read or set recurrence through the public API (tracked upstream at
+[issuetracker.google.com/166896024](https://issuetracker.google.com/issues/166896024)).
 
-```
-Water the plants
-[[recur:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR]]
-```
-
-Because `notes` is synced by Google, the rule round-trips across devices through
-Google's own storage. The Repeat editor in the task detail panel configures:
-
-- **Frequency** — daily, weekly, monthly, or yearly
-- **Interval** — every N days/weeks/months/years
-- **Weekdays** — for weekly rules (e.g. Mon/Wed/Fri)
-- **End** — never, on a specific date, or after N occurrences
-
-Completing a repeating task keeps the completed instance and automatically
-creates the next one with the next due date (month-end and leap-day safe),
-mirroring Google Tasks' own behavior. The trailer is hidden from the notes
-textarea and rendered as a human-readable badge on each task row.
+axiotask therefore does not implement its own recurrence. Instead, every task
+links straight to its page in the Google Tasks web app (the **Open in Google
+Tasks** button in the detail panel), where you can set or change a repeat rule.
+Recurrence stays owned by Google, the single source of truth.
 
 ## Prerequisites
 

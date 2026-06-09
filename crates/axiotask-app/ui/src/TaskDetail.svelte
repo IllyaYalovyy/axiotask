@@ -1,14 +1,11 @@
 <script>
-  import RecurrenceEditor from "./RecurrenceEditor.svelte";
-  import { extractFromNotes, embedInNotes, summarize } from "./recurrence.js";
-
+  import { invoke } from "@tauri-apps/api/core";
   let { task, parentTask, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
   let due = $state("");
   let selectedList = $state("");
-  let recurrence = $state(null);
 
   let prevTaskId = $state(null);
 
@@ -17,17 +14,15 @@
     if (task && prevTaskId && prevTaskId !== task.id) {
       // Save the previous task's edits before resetting
       const dueVal = due ? `${due}T00:00:00.000Z` : null;
-      onsave(prevTaskId, { title, notes: embedInNotes(notes, recurrence), due: dueVal });
+      onsave(prevTaskId, { title, notes, due: dueVal });
     }
   });
 
   // Reset when task changes
   $effect(() => {
     if (task) {
-      const { visible, rule } = extractFromNotes(task.notes || "");
       title = task.title || "";
-      notes = visible;
-      recurrence = rule;
+      notes = task.notes || "";
       due = task.due ? task.due.slice(0, 10) : "";
       selectedList = task.listId || "";
       prevTaskId = task.id;
@@ -36,7 +31,7 @@
 
   function save() {
     const dueVal = due ? `${due}T00:00:00.000Z` : null;
-    onsave(task.id, { title, notes: embedInNotes(notes, recurrence), due: dueVal });
+    onsave(task.id, { title, notes, due: dueVal });
     if (selectedList !== task.listId) onmovelist(task.id, selectedList);
   }
 
@@ -81,6 +76,16 @@
     <input id="detail-title" type="text" bind:value={title} placeholder="Task title" />
   </div>
 
+  {#if task.web_view_link}
+    <button
+      class="open-google"
+      onclick={() => invoke("open_url", { url: task.web_view_link })}
+      title="Open this task in the Google Tasks web app (to set a repeat, etc.)"
+    >
+      ↗ Open in Google Tasks
+    </button>
+  {/if}
+
   <div class="field">
     <label for="detail-due">Due date</label>
     <input id="detail-due" type="date" bind:value={due} />
@@ -105,11 +110,6 @@
   <div class="field">
     <label for="detail-notes">Notes</label>
     <textarea id="detail-notes" bind:value={notes} placeholder="Add notes..." rows="6"></textarea>
-  </div>
-
-  <div class="field">
-    <span class="field-label">Repeat</span>
-    <RecurrenceEditor rule={recurrence} onchange={(r) => recurrence = r} />
   </div>
 
   {#if !parentTask}
@@ -157,6 +157,13 @@
   .breadcrumb:hover { background: #0f3460; }
   .panel-actions { display: flex; gap: 0.4rem; }
   .save-btn { background: #0f3460; color: #7ec8e3; border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+  .open-google {
+    display: block; width: 100%; box-sizing: border-box; margin: 0 0 1rem;
+    background: none; border: 1px solid #3a4a6a; color: #7ec8e3;
+    padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer;
+    font-size: 0.8rem; font-family: inherit; text-align: center;
+  }
+  .open-google:hover { background: #1a2a4a; border-color: #7ec8e3; }
   .save-btn:hover { background: #1a4a7a; }
   .close-btn { background: none; border: none; color: #666; cursor: pointer; font-size: 1.1rem; }
   .close-btn:hover { color: #e0e0e0; }

@@ -52,6 +52,7 @@ pub async fn open_memory() -> Result<SqlitePool, StoreError> {
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/v1_initial.sql"),
     include_str!("../../migrations/v2_local_only_lists.sql"),
+    include_str!("../../migrations/v3_web_view_link.sql"),
 ];
 
 /// Apply any migrations the database hasn't seen yet, tracked by

@@ -47,6 +47,10 @@ pub struct Task {
     pub etag: Option<String>,
     /// Server-side `updated` timestamp.
     pub updated: String,
+    /// Absolute link to the task in the Google Tasks web UI (output-only from
+    /// Google; `None` for tasks not yet synced). Powers "Open in Google Tasks".
+    #[serde(rename = "webViewLink", default, skip_serializing_if = "Option::is_none")]
+    pub web_view_link: Option<String>,
 }
 
 /// Completion status for a task.
@@ -175,6 +179,7 @@ mod tests {
             completed: None,
             etag: None,
             updated: "2026-05-23T00:00:00Z".into(),
+            web_view_link: None,
         };
         let json = serde_json::to_string(&t).unwrap();
         assert!(json.contains("\"status\":\"needsAction\""), "got: {json}");
@@ -182,5 +187,25 @@ mod tests {
             !json.contains("\"parent\""),
             "parent should be skipped when None"
         );
+    }
+
+    #[test]
+    fn task_deserializes_web_view_link_from_google_field() {
+        // Google returns the camelCase `webViewLink`; it maps to web_view_link.
+        let json = r#"{
+            "id": "abc",
+            "title": "Monthly update",
+            "status": "needsAction",
+            "position": "0001",
+            "updated": "2026-05-31T00:00:00Z",
+            "webViewLink": "https://tasks.google.com/task/xyz"
+        }"#;
+        let t: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(t.web_view_link.as_deref(), Some("https://tasks.google.com/task/xyz"));
+
+        // Absent field → None (tasks not yet synced).
+        let j2 = r#"{"id":"a","title":"t","status":"needsAction","position":"1","updated":"x"}"#;
+        let t2: Task = serde_json::from_str(j2).unwrap();
+        assert!(t2.web_view_link.is_none());
     }
 }
