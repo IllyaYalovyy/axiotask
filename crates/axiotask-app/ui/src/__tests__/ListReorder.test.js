@@ -42,6 +42,16 @@ function listButton(title) {
   );
 }
 
+// The whole row (drag/drop target) for a given list title.
+function listRow(title) {
+  return listButton(title)?.closest(".list-row");
+}
+
+// The dedicated drag handle within a list's row.
+function dragHandle(title) {
+  return listRow(title)?.querySelector(".list-drag-handle");
+}
+
 describe("Sidebar: reorder lists", () => {
   beforeEach(() => { localStorage.clear(); invoke.mockReset(); });
 
@@ -56,12 +66,19 @@ describe("Sidebar: reorder lists", () => {
     expect(listButtonTitles()).toEqual(["Errands", "Work", "Home"]);
   });
 
-  it("dragging a list onto another reorders and persists", async () => {
+  it("each list has a dedicated drag handle", async () => {
     await renderApp();
-    const dragged = listButton("Errands");
-    const target = listButton("Work");
+    expect(dragHandle("Work")).toBeTruthy();
+    expect(dragHandle("Home")).toBeTruthy();
+    expect(dragHandle("Errands")).toBeTruthy();
+  });
 
-    await fireEvent.dragStart(dragged, dt);
+  it("dragging by the handle onto another row reorders and persists", async () => {
+    await renderApp();
+    const handle = dragHandle("Errands");
+    const target = listRow("Work");
+
+    await fireEvent.dragStart(handle, dt);
     await fireEvent.dragOver(target, dt);
     await fireEvent.drop(target, dt);
 
@@ -69,6 +86,15 @@ describe("Sidebar: reorder lists", () => {
     await waitFor(() => expect(listButtonTitles()).toEqual(["Errands", "Work", "Home"]));
     // Persisted for next launch.
     expect(JSON.parse(localStorage.getItem("axiotask:listOrder"))).toEqual(["L3", "L1", "L2"]);
+  });
+
+  it("clicking a list (not the handle) still selects it", async () => {
+    await renderApp();
+    await fireEvent.click(listButton("Home"));
+    // Selecting a list sets it as the active view → its tasks load.
+    await waitFor(() =>
+      expect(invoke.mock.calls.some((c) => c[0] === "list_tasks")).toBe(true),
+    );
   });
 
   it("a new list (absent from saved order) appears at the end", async () => {

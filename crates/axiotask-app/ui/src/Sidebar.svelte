@@ -13,7 +13,12 @@
   let draggingListId = $state(null);
   let dropTargetId = $state(null);
 
-  function handleListDragStart(id) { draggingListId = id; }
+  function handleListDragStart(e, id) {
+    // WebKit only initiates a drag when data is set in dragstart.
+    e.dataTransfer?.setData("text/plain", id);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    draggingListId = id;
+  }
   function handleListDragEnd() { draggingListId = null; dropTargetId = null; }
   function handleListDragOver(e, id) {
     if (!draggingListId) return;
@@ -119,22 +124,34 @@
         {#if dropTargetId === list.id && draggingListId && draggingListId !== list.id}
           <div class="list-drop-indicator"></div>
         {/if}
-        <button
-          class:active={selectedView === list.id}
-          class:excluded={excludedLists.includes(list.id)}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="list-row"
           class:dragging={draggingListId === list.id}
-          draggable="true"
-          ondragstart={() => handleListDragStart(list.id)}
           ondragover={(e) => handleListDragOver(e, list.id)}
-          ondragend={handleListDragEnd}
           ondrop={() => handleListDrop(list.id)}
-          onclick={() => onselect(list.id)}
-          oncontextmenu={(e) => { e.preventDefault(); onlistaction?.(list, e.clientX, e.clientY); }}
         >
-          {list.title}
-          {#if list.local_only}<span class="local-badge" title="Local only — not synced to Google">local</span>{/if}
-          {#if counts[list.id]}<span class="count">{counts[list.id]}</span>{/if}
-        </button>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span
+            class="list-drag-handle"
+            draggable="true"
+            ondragstart={(e) => handleListDragStart(e, list.id)}
+            ondragend={handleListDragEnd}
+            title="Drag to reorder"
+            aria-label="Drag to reorder {list.title}"
+          >⠿</span>
+          <button
+            class="list-btn"
+            class:active={selectedView === list.id}
+            class:excluded={excludedLists.includes(list.id)}
+            onclick={() => onselect(list.id)}
+            oncontextmenu={(e) => { e.preventDefault(); onlistaction?.(list, e.clientX, e.clientY); }}
+          >
+            {list.title}
+            {#if list.local_only}<span class="local-badge" title="Local only — not synced to Google">local</span>{/if}
+            {#if counts[list.id]}<span class="count">{counts[list.id]}</span>{/if}
+          </button>
+        </div>
       {/if}
     {/each}
     {#if newListMode}
@@ -204,8 +221,16 @@
   .icon-btn:hover { background: #0f3460; color: #fff; border-color: #0f3460; }
   .local-badge { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: #7ec8e3; background: #1a2a4a; border: 1px solid #2a4a6a; padding: 0.05rem 0.3rem; border-radius: 8px; margin-left: 0.35rem; }
   .lists { padding: 0 0.5rem; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .lists button { cursor: grab; }
-  .lists button.dragging { opacity: 0.4; }
+  .list-row { display: flex; align-items: center; }
+  .list-row.dragging { opacity: 0.4; }
+  .list-row .list-btn { flex: 1; width: auto; min-width: 0; }
+  .list-drag-handle {
+    flex-shrink: 0; cursor: grab; color: #3a3a5a; font-size: 0.85rem;
+    padding: 0 0.25rem; user-select: none; opacity: 0; transition: opacity 0.1s;
+  }
+  .list-row:hover .list-drag-handle { opacity: 1; color: #667; }
+  .list-drag-handle:hover { color: #7ec8e3; }
+  .list-drag-handle:active { cursor: grabbing; }
   .list-drop-indicator { height: 2px; background: #7ec8e3; margin: 0 0.4rem; border-radius: 1px; }
   .no-lists { color: #444; font-size: 0.8rem; padding: 0.4rem 0.6rem; }
   .inline-input { width: 100%; padding: 0.35rem 0.6rem; background: #1a2a4a; border: 1px solid #3a4a6a; border-radius: 4px; color: #e0e0e0; font-size: 0.85rem; outline: none; box-sizing: border-box; }
