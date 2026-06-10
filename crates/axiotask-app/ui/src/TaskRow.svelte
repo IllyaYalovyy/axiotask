@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  let { task, focused, editing, completing = false, onrename, oncanceledit, onclick, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
   let touchDragging = $state(false);
@@ -48,6 +48,7 @@
 
   function handleRowClick(e) {
     if (e.target.closest(".checkbox, .edit-input, .actions")) return;
+    if (e.ctrlKey || e.metaKey) { onselect?.(task.id); return; }
     onclick?.(task.id);
   }
 
@@ -119,6 +120,7 @@
   class:focused
   class:completing
   class:completed={task.status === "completed"}
+  class:selected
   class:touch-dragging={touchDragging}
   class:dragging={isDragging}
   style="padding-left: {task.depth * 1.5 + 0.5}rem"
@@ -217,6 +219,8 @@
   }
   .task-widget:hover { background: #1a2a4a; }
   .task-widget.focused { background: #0f3460; }
+  .task-widget.selected { box-shadow: inset 3px 0 0 #7ec8e3; background: #14253f; }
+  .task-widget.selected.focused { background: #0f3460; }
   .task-widget.completing { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completing .title { text-decoration: line-through; }
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }

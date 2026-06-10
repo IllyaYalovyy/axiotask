@@ -38,6 +38,7 @@ export const SHORTCUT_CATEGORIES = [
       { keys: ["d"], description: "Delete task" },
       { keys: ["s"], description: "Add subtask" },
       { keys: ["n"], description: "Open notes" },
+      { keys: ["x"], description: "Select for bulk actions" },
     ],
   },
   {

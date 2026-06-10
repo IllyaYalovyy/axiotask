@@ -47,6 +47,8 @@
   let completingIds = $state(new Set());
   let showClearConfirm = $state(false);
   let bulkAdd = $state(null); // { text } when the bulk-add dialog is open
+  let selectedIds = $state(new Set()); // multi-select for bulk operations
+  let bulkMovePicker = $state(false); // bulk "move to list" picker open
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -698,6 +700,45 @@
     }
   }
 
+  // --- Multi-select bulk operations ---
+  function toggleSelect(id) {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selectedIds = next;
+  }
+  function clearSelection() { selectedIds = new Set(); }
+
+  function bulkToast(n, verb) {
+    if (n <= 0) return;
+    if (infoToast) clearTimeout(infoToast.timer);
+    infoToast = { message: `${n} task${n === 1 ? "" : "s"} ${verb}`, timer: setTimeout(() => { infoToast = null; }, 4000) };
+  }
+
+  async function bulkComplete() {
+    const ids = [...selectedIds];
+    for (const id of ids) {
+      const t = allTasks.find(x => x.id === id);
+      if (t && t.status !== "completed") await cmd("toggle_complete", { id });
+    }
+    clearSelection(); await loadAll(); bulkToast(ids.length, "completed");
+  }
+  async function bulkDelete() {
+    const ids = [...selectedIds];
+    for (const id of ids) await cmd("delete_task", { id });
+    clearSelection(); await loadAll(); bulkToast(ids.length, "deleted");
+  }
+  async function bulkSetDue(mv) {
+    const ids = [...selectedIds];
+    for (const id of ids) await cmd("set_due", { id, mv });
+    clearSelection(); await loadAll();
+    bulkToast(ids.length, mv === "Clear" ? "cleared" : "rescheduled");
+  }
+  async function bulkMove(listId) {
+    const ids = [...selectedIds];
+    for (const id of ids) await cmd("move_to_list", { id, targetListId: listId });
+    bulkMovePicker = false; clearSelection(); await loadAll(); bulkToast(ids.length, "moved");
+  }
+
   // List context menu
   function openListContextMenu(list, x, y) {
     const isExcl = excludedLists.includes(list.id);
@@ -768,6 +809,8 @@
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
     if (detailTask && e.key === "Escape") { detailTask = null; e.preventDefault(); return; }
     if (notesTask || detailTask) return;
+    // With an active selection, Esc clears it (when no panel intercepted above).
+    if (selectedIds.size > 0 && e.key === "Escape") { clearSelection(); e.preventDefault(); return; }
 
     const f = focused();
     const len = flatTasks.length;
@@ -776,15 +819,19 @@
       case "?": e.preventDefault(); showCheatsheet = true; break;
       case ",": e.preventDefault(); await openProperties(); break;
       case "/": e.preventDefault(); showSearch = true; break;
+      case "x": case "X": e.preventDefault(); if (f) toggleSelect(f.id); break;
       case "e": case "E":
         e.preventDefault(); if (f) editingId = f.id;
         break;
       case "m":
         if (e.ctrlKey || e.metaKey) {
           e.preventDefault();
-          if (f) movePickerTask = f;
+          if (selectedIds.size > 0) bulkMovePicker = true;
+          else if (f) movePickerTask = f;
         } else {
-          e.preventDefault(); if (f) await setDue(f.id, "NextMonth");
+          e.preventDefault();
+          if (selectedIds.size > 0) await bulkSetDue("NextMonth");
+          else if (f) await setDue(f.id, "NextMonth");
         }
         break;
       case "j": case "ArrowDown":
@@ -797,7 +844,7 @@
         if (e.altKey && f && sortMode === "manual") { await reorderTask(f.id, "up"); if (focusIndex > 0) focusIndex--; }
         else if (len > 0) focusIndex = Math.max(focusIndex - 1, 0);
         break;
-      case " ": e.preventDefault(); if (f) await toggleComplete(f.id); break;
+      case " ": e.preventDefault(); if (selectedIds.size > 0) await bulkComplete(); else if (f) await toggleComplete(f.id); break;
       case "h": case "ArrowLeft":
         e.preventDefault();
         if (f?.hasChildren && !collapsed.has(f.id)) {
@@ -824,11 +871,11 @@
         break;
       case "n": e.preventDefault(); await newTask(); break;
       case "s": e.preventDefault(); if (f) await addSubtask(f.id); break;
-      case "d": e.preventDefault(); if (f) await deleteTask(f.id); break;
-      case "o": e.preventDefault(); if (f) await setDue(f.id, "Today"); break;
-      case "t": e.preventDefault(); if (f) await setDue(f.id, "Tomorrow"); break;
-      case "w": e.preventDefault(); if (f) await setDue(f.id, "NextWeek"); break;
-      case "r": e.preventDefault(); if (f) await setDue(f.id, "Clear"); break;
+      case "d": e.preventDefault(); if (selectedIds.size > 0) await bulkDelete(); else if (f) await deleteTask(f.id); break;
+      case "o": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Today"); else if (f) await setDue(f.id, "Today"); break;
+      case "t": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Tomorrow"); else if (f) await setDue(f.id, "Tomorrow"); break;
+      case "w": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("NextWeek"); else if (f) await setDue(f.id, "NextWeek"); break;
+      case "r": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Clear"); else if (f) await setDue(f.id, "Clear"); break;
       case "Tab":
         e.preventDefault();
         if (!f) break;
@@ -845,7 +892,7 @@
   <Sidebar
     lists={orderedLists}
     {selectedView}
-    onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; }}
+    onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; clearSelection(); }}
     onlogin={login}
     onlogout={logout}
     onsync={doSync}
@@ -877,20 +924,33 @@
         <span class="sort-notice">⚠ Reorder disabled</span>
       {/if}
     </div>
+    {#if selectedIds.size > 0}
+      <div class="bulk-bar" role="toolbar" aria-label="Bulk actions">
+        <span class="bulk-count">{selectedIds.size} selected</span>
+        <button onclick={bulkComplete}>✓ Complete</button>
+        <button onclick={() => bulkSetDue("Today")}>Today</button>
+        <button onclick={() => bulkSetDue("Tomorrow")}>Tomorrow</button>
+        <button onclick={() => bulkSetDue("NextWeek")}>Next week</button>
+        <button onclick={() => bulkSetDue("Clear")}>Clear date</button>
+        <button onclick={() => bulkMovePicker = true}>↗ Move</button>
+        <button class="bulk-delete" onclick={bulkDelete}>🗑 Delete</button>
+        <button class="bulk-clear" onclick={clearSelection} title="Clear selection (Esc)">✕</button>
+      </div>
+    {/if}
     {#if loading}
       <p class="status">Loading...</p>
     {:else if error}
       <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   {#if detailTask}
@@ -960,6 +1020,9 @@
 {#if movePickerTask}
   <MoveToListPicker {lists} currentListId={movePickerTask.listId} onselect={handleMovePickerSelect} onclose={() => movePickerTask = null} />
 {/if}
+{#if bulkMovePicker}
+  <MoveToListPicker {lists} currentListId={null} onselect={(list) => bulkMove(list.id)} onclose={() => bulkMovePicker = false} />
+{/if}
 {#if showClearConfirm}
   <div class="confirm-overlay" role="dialog" aria-modal="true">
     <div class="confirm-dialog">
@@ -986,6 +1049,19 @@
   .clear-btn { background: none; border: 1px solid #3a3a5a; color: #888; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }
   .clear-btn:hover { background: #2a2a4a; color: #e74c3c; }
   .sort-notice { font-size: 0.7rem; color: #ff9800; margin-left: 0.5rem; }
+  .bulk-bar {
+    display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+    padding: 0.4rem 1rem; background: #14253f; border-bottom: 1px solid #2a4a6a;
+  }
+  .bulk-count { font-size: 0.8rem; color: #7ec8e3; font-weight: 600; margin-right: 0.3rem; }
+  .bulk-bar button {
+    background: #2a2a4a; border: none; color: #ccc; padding: 0.25rem 0.6rem;
+    border-radius: 4px; cursor: pointer; font-size: 0.78rem; font-family: inherit;
+  }
+  .bulk-bar button:hover { background: #3a3a5a; }
+  .bulk-bar .bulk-delete:hover { background: #3a1a1a; color: #e74c3c; }
+  .bulk-bar .bulk-clear { margin-left: auto; background: none; color: #888; }
+  .bulk-bar .bulk-clear:hover { color: #e0e0e0; background: none; }
   .status { color: #888; text-align: center; margin-top: 4rem; }
   .status.error { color: #e74c3c; }
 
