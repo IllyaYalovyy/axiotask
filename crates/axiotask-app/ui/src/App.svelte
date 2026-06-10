@@ -636,6 +636,10 @@
         { id: "details", icon: "ℹ️", label: "Details", shortcut: "Enter", action: () => {
           detailTask = allTasks.find(t => t.id === task.id) || task;
         }},
+        ...(task.web_view_link ? [{
+          id: "open-google", icon: "↗", label: "Open in Google Tasks",
+          action: () => cmd("open_url", { url: task.web_view_link }),
+        }] : []),
         "separator",
         { id: "delete", icon: "🗑️", label: "Delete", shortcut: "d", action: () => deleteTask(task.id) },
       ]

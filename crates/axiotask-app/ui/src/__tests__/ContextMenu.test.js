@@ -49,6 +49,7 @@ function task(id, title, opts = {}) {
     id, parent_id: opts.parent || null, title, notes: opts.notes || null,
     status: opts.status || "needsAction", due: opts.due || null,
     position: opts.pos || "00001", sync_state: "clean", listId: opts.listId || "L1", listTitle: opts.listTitle || "Work",
+    web_view_link: opts.web_view_link || null,
   };
 }
 
@@ -241,6 +242,26 @@ describe("GH#19: Custom context menu", () => {
       await openContextMenu(container);
       await fireEvent.click(screen.getByText("Details"));
       await waitFor(() => expect(container.querySelector(".context-menu")).not.toBeInTheDocument());
+    });
+  });
+
+  describe("Open in Google Tasks", () => {
+    it("shows the item and opens the link when the task has a webViewLink", async () => {
+      mockBackend([task("t1", "Recurring task", { web_view_link: "https://tasks.google.com/task/abc" })]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Recurring task")).toBeInTheDocument());
+      await openContextMenu(container);
+      const item = screen.getByText("Open in Google Tasks");
+      await fireEvent.click(item);
+      expect(invoke).toHaveBeenCalledWith("open_url", { url: "https://tasks.google.com/task/abc" });
+    });
+
+    it("hides the item for a task with no webViewLink (e.g. not yet synced)", async () => {
+      mockBackend([task("t1", "Local task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Local task")).toBeInTheDocument());
+      await openContextMenu(container);
+      expect(screen.queryByText("Open in Google Tasks")).not.toBeInTheDocument();
     });
   });
 
