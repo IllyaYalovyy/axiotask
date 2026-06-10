@@ -30,20 +30,21 @@ export const SHORTCUT_CATEGORIES = [
     ],
   },
   {
-    name: "Actions",
+    name: "Tasks",
     shortcuts: [
-      { keys: ["Enter"], description: "New task" },
+      { keys: ["n"], description: "New task" },
+      { keys: ["Enter"], description: "Open / close detail panel" },
       { keys: ["e"], description: "Edit title" },
       { keys: ["Space"], description: "Toggle complete" },
-      { keys: ["d"], description: "Delete task" },
       { keys: ["s"], description: "Add subtask" },
-      { keys: ["n"], description: "Open notes" },
-      { keys: ["x"], description: "Select for bulk actions" },
+      { keys: ["d"], description: "Delete" },
+      { keys: ["x"], description: "Select / deselect (bulk)" },
     ],
   },
   {
     name: "Due dates",
     shortcuts: [
+      { keys: ["o"], description: "Today" },
       { keys: ["t"], description: "Tomorrow" },
       { keys: ["w"], description: "Next week" },
       { keys: ["m"], description: "Next month" },
@@ -51,20 +52,22 @@ export const SHORTCUT_CATEGORIES = [
     ],
   },
   {
-    name: "Organization",
+    name: "Organize",
     shortcuts: [
       { keys: ["Tab"], description: "Indent (make subtask)" },
       { keys: ["Shift+Tab"], description: "Outdent" },
       { keys: ["Alt+↑"], description: "Move up" },
       { keys: ["Alt+↓"], description: "Move down" },
+      { keys: ["Ctrl+M"], description: "Move to list" },
     ],
   },
   {
-    name: "Other",
+    name: "App",
     shortcuts: [
+      { keys: ["/"], description: "Search" },
       { keys: [","], description: "Open Properties" },
       { keys: ["?"], description: "This cheatsheet" },
-      { keys: ["Esc"], description: "Close panel / cancel" },
+      { keys: ["Esc"], description: "Close / clear selection" },
     ],
   },
 ];

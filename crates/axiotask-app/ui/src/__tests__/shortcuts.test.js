@@ -34,10 +34,10 @@ describe("shortcuts registry", () => {
   it("covers the documented categories", () => {
     const names = SHORTCUT_CATEGORIES.map((c) => c.name);
     expect(names).toContain("Navigation");
-    expect(names).toContain("Actions");
+    expect(names).toContain("Tasks");
     expect(names).toContain("Due dates");
-    expect(names).toContain("Organization");
-    expect(names).toContain("Other");
+    expect(names).toContain("Organize");
+    expect(names).toContain("App");
   });
 
   it("includes core bindings", () => {

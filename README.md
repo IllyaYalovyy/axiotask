@@ -6,13 +6,34 @@ Built with [Tauri 2](https://tauri.app/) (Rust backend) and [Svelte 5](https://s
 
 ## Features
 
-- **Keyboard-first** — every action reachable without a mouse (j/k navigate, Enter edits, d deletes, t/w/m/r reschedule)
-- **Offline-first** — tasks cached locally in SQLite, sync in background
-- **Smart views** — Focus (this week), Upcoming, Missed, Unscheduled
-- **One-click reschedule** — tomorrow, next week, next month buttons on every task
-- **Flat task list** — subtasks shown in detail panel, not cluttering the main view
+- **Keyboard-first** — navigate, create, edit, complete, reschedule, and reorder without ever touching the mouse
+- **Offline-first** — tasks are cached locally in SQLite; the app is instant and works with no connection, syncing in the background
+- **Smart views** — Focus (due this week), Upcoming, Missed, and Unscheduled, plus All Tasks and a view per list
+- **Quick reschedule** — one keystroke or click moves a task to today, tomorrow, next week, or next month, or clears its date
+- **Subtasks** — nest tasks, indent/outdent, and see completion progress on the parent
+- **Bulk insert** — paste multi-line text to create many tasks at once (one task per line, or first line as the title with the rest as notes)
+- **Bulk operations** — multi-select tasks and complete, reschedule, move, or delete them together
 - **Reorderable lists** — drag lists in the sidebar into your own order (saved per instance)
-- **Cross-platform** — Linux, macOS, Windows from a single codebase
+- **Sort & filter** — per-view sort (manual, due date, alphabetical, recently created) and an optional show-completed toggle
+- **Search** — fuzzy search across every task
+- **Backup & restore** — one click to export everything to JSON, or restore the latest backup (non-destructive)
+- **Multiple isolated instances** — run a throwaway dev/test instance beside your real one (see below)
+- **Read-only by default** — pushing local changes to Google is off until you turn it on, so you can try it safely
+- **Cross-platform** — Linux, macOS, and Windows from a single codebase
+
+## Using axiotask
+
+**First run.** Launch the app and click **Sign in with Google** in the sidebar (or work entirely offline). Your tasks appear in the sidebar; pick a smart view or a list. Pushing changes back to Google is **off by default** — enable it in **Properties → Sync → Read-write sync** once you're comfortable.
+
+**Create tasks.** Click **+ New task** or press `n`. To add many at once, copy multi-line text and paste it (`Ctrl+V`) into the task area — a dialog lets you choose *one task per line* or *first line as the title, the rest as notes*.
+
+**Organize.** Drag a task's handle (or `Alt+↑`/`Alt+↓`) to reorder, `Tab`/`Shift+Tab` to indent/outdent into subtasks, and drag the ⠿ handle on a list to reorder your lists. Right-click a task for more actions.
+
+**Reschedule.** With a task focused, press `o`/`t`/`w`/`m` for today/tomorrow/next week/next month, or `r` to clear the date. The same buttons appear on each row.
+
+**Work in bulk.** Press `x` (or `Ctrl`/`Cmd`-click) to select tasks. A bulk bar appears — Complete, reschedule, Move, or Delete them all at once. With a selection active, the normal keys (`Space`, `d`, `o`/`t`/`w`/`m`, `r`, `Ctrl+M`) act on the whole selection. `Esc` clears it.
+
+**Settings & backup.** Press `,` or click the ⚙ **Properties** button for sync mode, account, sync status, the keyboard cheatsheet, the app version, and **Export / Restore backup**.
 
 ## Recurring tasks
 
@@ -122,6 +143,17 @@ cargo tauri build
 
 The binary is output to `target/release/axiotask`.
 
+### Install
+
+Copy the release binary somewhere on your `PATH`, then run it by name:
+
+```bash
+install -Dm755 target/release/axiotask ~/.local/bin/axiotask
+axiotask
+```
+
+(Use any directory on your `PATH`; `~/.local/bin` is a common choice on Linux/macOS.)
+
 ### Backend only (no UI)
 
 ```bash
@@ -178,21 +210,28 @@ axiotask/
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Move focus down / up |
-| `Enter` | Open task detail panel |
-| `e` | Inline edit task title |
-| `n` | Quick-add new task |
-| `d` | Delete task |
+| `j` / `k` (or `↓` / `↑`) | Move focus down / up |
+| `h` / `l` (or `←` / `→`) | Collapse (or go to parent) / expand |
+| `n` | New task |
+| `Enter` | Open / close the task detail panel |
+| `e` | Edit task title inline |
 | `Space` | Toggle complete |
-| `t` | Due tomorrow |
-| `w` | Due next week |
-| `m` | Due next month |
+| `s` | Add subtask |
+| `d` | Delete task |
+| `o` / `t` / `w` / `m` | Due today / tomorrow / next week / next month |
 | `r` | Remove due date |
-| `Ctrl+M` | Move to list picker |
-| `/` | Focus quick-add |
-| `?` | Show keyboard cheatsheet |
-| `Escape` | Close panel / cancel |
-| `Alt+↑/↓` | Reorder task |
+| `Tab` / `Shift+Tab` | Indent / outdent (make subtask / promote) |
+| `Alt+↑` / `Alt+↓` | Move task up / down (manual sort) |
+| `Ctrl+M` | Move task to another list |
+| `x` | Select / deselect for bulk actions |
+| `/` | Search all tasks |
+| `,` | Open Properties (settings) |
+| `?` | Show this cheatsheet |
+| `Esc` | Close panel / clear selection |
+
+> **Bulk:** with one or more tasks selected (via `x` or `Ctrl`/`Cmd`-click), `Space`, `d`, `o`/`t`/`w`/`m`, `r`, and `Ctrl+M` act on the **entire selection** instead of the focused task.
+
+The full, always-current list is in the app — press `?`.
 
 ## Configuration
 
@@ -213,9 +252,12 @@ auto_sync_on_start = true
 
 ## Data Storage
 
-- **Database:** `~/.local/share/axiotask/axiotask.db` (SQLite)
-- **Auth tokens:** OS keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service) or fallback to `~/.config/axiotask/tokens.json`
+- **Database:** `~/.local/share/axiotask/axiotask.sqlite` (SQLite)
+- **Auth tokens:** `~/.local/share/axiotask/tokens.json` (beside the database)
 - **Config:** `~/.config/axiotask/config.toml`
+- **Backups:** `~/.local/share/axiotask/backups/` (timestamped JSON)
+
+These paths are per-instance — see [Multiple isolated instances](#multiple-isolated-instances).
 
 ## Multiple isolated instances
 
@@ -233,7 +275,7 @@ That instance namespaces **everything** under `axiotask-<prefix>` instead of
 | Resource | Default | `AXIOTASK_PREFIX=dev` |
 |----------|---------|------------------------|
 | Config | `~/.config/axiotask/config.toml` | `~/.config/axiotask-dev/config.toml` |
-| Database | `~/.local/share/axiotask/axiotask.db` | `~/.local/share/axiotask-dev/axiotask.db` |
+| Database | `~/.local/share/axiotask/axiotask.sqlite` | `~/.local/share/axiotask-dev/axiotask.sqlite` |
 | Auth tokens | `~/.local/share/axiotask/tokens.json` | `~/.local/share/axiotask-dev/tokens.json` |
 | Backups | `~/.local/share/axiotask/backups/` | `~/.local/share/axiotask-dev/backups/` |
 | UI state (localStorage) | `axiotask:*` | `axiotask:dev:*` |

@@ -60,9 +60,9 @@ describe("Keyboard Cheatsheet", () => {
       expect(screen.getByText("Navigation")).toBeInTheDocument();
     });
 
-    it("shows Actions category", async () => {
+    it("shows Tasks category", async () => {
       await openCheatsheet();
-      expect(screen.getByText("Actions")).toBeInTheDocument();
+      expect(screen.getByText("Tasks")).toBeInTheDocument();
     });
 
     it("shows Due dates category", async () => {
@@ -70,14 +70,14 @@ describe("Keyboard Cheatsheet", () => {
       expect(screen.getByText("Due dates")).toBeInTheDocument();
     });
 
-    it("shows Organization category", async () => {
+    it("shows Organize category", async () => {
       await openCheatsheet();
-      expect(screen.getByText("Organization")).toBeInTheDocument();
+      expect(screen.getByText("Organize")).toBeInTheDocument();
     });
 
-    it("shows Other category", async () => {
+    it("shows App category", async () => {
       await openCheatsheet();
-      expect(screen.getByText("Other")).toBeInTheDocument();
+      expect(screen.getByText("App")).toBeInTheDocument();
     });
   });
 
@@ -126,7 +126,7 @@ describe("Keyboard Cheatsheet", () => {
       await openCheatsheet();
       expect(screen.getByText("New task")).toBeInTheDocument();
       expect(screen.getByText("Toggle complete")).toBeInTheDocument();
-      expect(screen.getByText("Delete task")).toBeInTheDocument();
+      expect(screen.getByText("Delete")).toBeInTheDocument();
     });
 
     it("shows date shortcuts", async () => {
