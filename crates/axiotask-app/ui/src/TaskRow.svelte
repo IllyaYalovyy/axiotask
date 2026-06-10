@@ -186,12 +186,6 @@
 
   <!-- Line 2: Metadata (shown when focused or hovered) -->
   <div class="meta-row">
-    {#if subtaskProgress}
-      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks">
-        <span class="progress-bar"><span class="progress-fill" style="width: {(subtaskProgress.done / subtaskProgress.total) * 100}%"></span></span>
-        <span class="progress-text">{subtaskProgress.done}/{subtaskProgress.total}</span>
-      </span>
-    {/if}
     {#if hasVisibleNotes}
       <span class="badge" title="Has notes">📝</span>
     {/if}
@@ -203,6 +197,12 @@
       <span class="due {dueClass(task.due)}">{formatDue(task.due)}</span>
     {:else}
       <span class="no-due">no date</span>
+    {/if}
+    {#if subtaskProgress}
+      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks">
+        <span class="progress-bar"><span class="progress-fill" style="width: {(subtaskProgress.done / subtaskProgress.total) * 100}%"></span></span>
+        <span class="progress-text">{subtaskProgress.done}/{subtaskProgress.total}</span>
+      </span>
     {/if}
     {#if showList && task.listTitle}
       <span class="list-tag">{task.listTitle}</span>
