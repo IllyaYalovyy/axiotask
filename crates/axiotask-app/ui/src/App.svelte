@@ -14,6 +14,7 @@
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
   import Properties from "./Properties.svelte";
+  import BulkAdd from "./BulkAdd.svelte";
   import { storageKey } from "./storage.js";
 
   // --- State ---
@@ -45,6 +46,7 @@
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
   let showClearConfirm = $state(false);
+  let bulkAdd = $state(null); // { text } when the bulk-add dialog is open
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -638,27 +640,62 @@
     };
   }
 
-  // Ctrl+V paste to create
+  // Ctrl+V paste to create. A single line creates one task immediately; pasting
+  // multiple lines opens the bulk-add dialog so the user picks how to split it.
   async function handlePaste(e) {
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     const text = e.clipboardData?.getData("text/plain")?.trim();
     if (!text) return;
     e.preventDefault();
 
-    const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
-    const targetList = !isSmartView ? selectedView : lists[0]?.id;
+    const targetList = bulkTargetList();
     if (!targetList) return;
 
     const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-    for (const line of lines) {
-      const isLong = line.length > 500;
-      const title = isLong ? line.slice(0, 500) : line;
-      const task = await cmd("create_task", { listId: targetList, parentId: null, title });
-      if (isLong && task) await cmd("set_notes", { id: task.id, notes: line });
+    if (lines.length > 1) {
+      bulkAdd = { text };
+      return;
     }
+    // Single line → one task, no dialog.
+    await cmd("create_task", { listId: targetList, parentId: null, title: lines[0] });
     await loadAll();
     selectedView = targetList;
-    undoItem = { id: null, title: `${lines.length} task${lines.length > 1 ? "s" : ""} from clipboard`, listId: targetList, timer: setTimeout(() => { undoItem = null; }, 5000) };
+  }
+
+  // List a fresh bulk insert should target: the current list, or the first list
+  // when a smart view is active.
+  function bulkTargetList() {
+    const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
+    return !isSmartView ? selectedView : (orderedLists[0]?.id ?? null);
+  }
+
+  // Create many tasks at once from the bulk-add dialog.
+  async function bulkCreate({ text, mode, listId }) {
+    let created = 0;
+    if (mode === "titleNotes") {
+      const all = text.split("\n");
+      const title = (all[0] || "").trim();
+      const notes = all.slice(1).join("\n").trim();
+      if (title) {
+        const task = await cmd("create_task", { listId, parentId: null, title });
+        if (task && notes) await cmd("set_notes", { id: task.id, notes });
+        created = 1;
+      }
+    } else {
+      const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+      for (const line of lines) {
+        await cmd("create_task", { listId, parentId: null, title: line });
+        created++;
+      }
+    }
+    bulkAdd = null;
+    await loadAll();
+    selectedView = listId;
+    if (created > 0) {
+      if (infoToast) clearTimeout(infoToast.timer);
+      const msg = `Added ${created} task${created === 1 ? "" : "s"}`;
+      infoToast = { message: msg, timer: setTimeout(() => { infoToast = null; }, 5000) };
+    }
   }
 
   // List context menu
@@ -720,6 +757,12 @@
       return;
     }
     if (showClearConfirm) { showClearConfirm = false; e.preventDefault(); return; }
+    if (bulkAdd) {
+      // The dialog (a textarea) handles its own keys; Esc closes it. Don't let
+      // task shortcuts fire underneath.
+      if (e.key === "Escape") { bulkAdd = null; e.preventDefault(); }
+      return;
+    }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
@@ -897,6 +940,15 @@
     onfreshsync={freshSyncFromProperties}
     onexport={doExport}
     onimport={doImport}
+  />
+{/if}
+{#if bulkAdd}
+  <BulkAdd
+    initialText={bulkAdd.text}
+    lists={orderedLists}
+    defaultListId={bulkTargetList()}
+    onsubmit={bulkCreate}
+    onclose={() => bulkAdd = null}
   />
 {/if}
 {#if contextMenu}
