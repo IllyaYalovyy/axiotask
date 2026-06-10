@@ -62,3 +62,37 @@ describe("Open in Google Tasks link", () => {
     expect(invoke).toHaveBeenCalledWith("open_url", { url: "https://tasks.google.com/task/xyz" });
   });
 });
+
+describe("Clickable links in the detail panel", () => {
+  beforeEach(() => invoke.mockReset());
+
+  it("shows a clickable chip for a URL in the notes", async () => {
+    invoke.mockResolvedValue(null);
+    render(TaskDetail, {
+      props: props(baseTask({ notes: "see https://example.com/doc for details" })),
+    });
+    const link = screen.getByRole("button", { name: /example\.com\/doc/i });
+    await fireEvent.click(link);
+    expect(invoke).toHaveBeenCalledWith("open_url", { url: "https://example.com/doc" });
+  });
+
+  it("detects a URL in the title too", () => {
+    render(TaskDetail, {
+      props: props(baseTask({ title: "Read https://rust-lang.org" })),
+    });
+    expect(screen.getByRole("button", { name: /rust-lang\.org/i })).toBeInTheDocument();
+  });
+
+  it("lists multiple distinct links", () => {
+    render(TaskDetail, {
+      props: props(baseTask({ title: "https://a.com", notes: "https://b.com and https://a.com" })),
+    });
+    expect(screen.getByRole("button", { name: /a\.com/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /b\.com/i })).toBeInTheDocument();
+  });
+
+  it("shows no Links section when there are no URLs", () => {
+    render(TaskDetail, { props: props(baseTask({ title: "plain task", notes: "no urls here" })) });
+    expect(screen.queryByText("Links")).not.toBeInTheDocument();
+  });
+});

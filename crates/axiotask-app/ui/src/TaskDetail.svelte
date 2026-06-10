@@ -9,6 +9,12 @@
 
   let prevTaskId = $state(null);
 
+  // Clickable links found in the title or notes (deduped, live as you type).
+  function extractUrls(text) {
+    return text ? (text.match(/https?:\/\/[^\s)>\]]+/g) || []) : [];
+  }
+  let detectedLinks = $derived([...new Set([...extractUrls(title), ...extractUrls(notes)])]);
+
   // Auto-save when switching to a different task (prop change from parent)
   $effect.pre(() => {
     if (task && prevTaskId && prevTaskId !== task.id) {
@@ -112,6 +118,17 @@
     <textarea id="detail-notes" bind:value={notes} placeholder="Add notes..." rows="6"></textarea>
   </div>
 
+  {#if detectedLinks.length > 0}
+    <div class="field">
+      <span class="field-label">Links</span>
+      <div class="links">
+        {#each detectedLinks as url}
+          <button class="link-chip" title={url} onclick={() => invoke("open_url", { url })}>🔗 {url}</button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if !parentTask}
     <div class="field">
       <div class="field-header">
@@ -171,6 +188,14 @@
   .field { margin-bottom: 1rem; }
   .field label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
   .field-label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
+  .links { display: flex; flex-direction: column; gap: 0.25rem; }
+  .link-chip {
+    display: block; width: 100%; box-sizing: border-box; text-align: left;
+    background: #16213e; border: 1px solid #2a2a4a; border-radius: 4px;
+    color: #7ec8e3; padding: 0.35rem 0.5rem; cursor: pointer; font-size: 0.78rem;
+    font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .link-chip:hover { background: #1a2a4a; border-color: #7ec8e3; }
   .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
   .add-subtask-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
   .add-subtask-btn:hover { background: #1a2a4a; }

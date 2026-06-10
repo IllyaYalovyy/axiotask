@@ -527,6 +527,11 @@ impl SyncEngine {
     async fn build_etag_map(&self, list_id: &str) -> HashMap<String, Option<String>> {
         self.store.list_tasks(list_id).await.unwrap_or_default()
             .into_iter()
+            // Only treat a row as a skip candidate once its webViewLink is
+            // stored. Rows saved before that column existed (web_view_link
+            // NULL) are therefore re-pulled once, backfilling the link without
+            // needing a full fresh sync.
+            .filter(|t| t.task.web_view_link.is_some())
             .map(|t| (t.task.id, t.task.etag))
             .collect()
     }
@@ -1039,6 +1044,29 @@ mod tests {
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 2);
         assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn pull_backfills_missing_web_view_link_without_etag_change() {
+        // A task stored before web_view_link existed (NULL) must be re-pulled
+        // and backfilled on the next sync, even though its etag is unchanged.
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+        eng.run().await.unwrap();
+
+        // Simulate the pre-migration state: clear the stored link, keep etag.
+        let mut row = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        assert!(row.task.web_view_link.is_some(), "first pull stored the link");
+        let etag_before = row.task.etag.clone();
+        row.task.web_view_link = None;
+        eng.store.upsert_task(&row).await.unwrap();
+
+        // A normal sync (no server change) must re-populate the link.
+        eng.run().await.unwrap();
+        let healed = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        assert!(healed.task.web_view_link.is_some(), "link backfilled on next pull");
+        assert_eq!(healed.task.etag, etag_before, "etag unchanged");
     }
 
     #[tokio::test]
