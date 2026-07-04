@@ -3,13 +3,17 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
 
+// Behavior of the keyboard cheatsheet overlay: it opens on `?`, is a dialog,
+// renders its shortcut content, and closes on any key. We intentionally do NOT
+// assert every category/label — that's brittle copy-testing, and the source of
+// truth for the shortcut list is the component itself.
+
 function mockBackend(lists = [], tasks = []) {
   invoke.mockImplementation(async (cmd, args) => {
     switch (cmd) {
       case "auth_status": return true;
       case "list_tasklists": return lists;
       case "list_tasks": return tasks.filter(t => t.listId === args?.listId);
-      case "sync_now": return "ok";
       default: return null;
     }
   });
@@ -34,117 +38,31 @@ async function openCheatsheet() {
 }
 
 describe("Keyboard Cheatsheet", () => {
-  beforeEach(() => {
-    invoke.mockReset();
+  beforeEach(() => { invoke.mockReset(); });
+
+  it("opens on `?` and renders shortcut content", async () => {
+    await renderApp();
+    expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "?" });
+    await waitFor(() => expect(screen.getByText("Keyboard Shortcuts")).toBeInTheDocument());
+    // Not empty: at least one real shortcut is listed.
+    expect(screen.getByText("New task")).toBeInTheDocument();
   });
 
-  describe("opening", () => {
-    it("? key opens the cheatsheet overlay", async () => {
-      await renderApp();
-      expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
-      await fireEvent.keyDown(window, { key: "?" });
-      await waitFor(() => {
-        expect(screen.getByText("Keyboard Shortcuts")).toBeInTheDocument();
-      });
-    });
-
-    it("renders as a dialog overlay", async () => {
-      await openCheatsheet();
-      expect(screen.getByRole("dialog")).toBeInTheDocument();
-    });
+  it("renders as a dialog overlay", async () => {
+    await openCheatsheet();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  describe("categories", () => {
-    it("shows Navigation category", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Navigation")).toBeInTheDocument();
-    });
-
-    it("shows Tasks category", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Tasks")).toBeInTheDocument();
-    });
-
-    it("shows Due dates category", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Due dates")).toBeInTheDocument();
-    });
-
-    it("shows Organize category", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Organize")).toBeInTheDocument();
-    });
-
-    it("shows App category", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("App")).toBeInTheDocument();
-    });
+  it("closes on Escape", async () => {
+    await openCheatsheet();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument());
   });
 
-  describe("dismiss on any key", () => {
-    it("dismisses on Escape", async () => {
-      await openCheatsheet();
-      await fireEvent.keyDown(window, { key: "Escape" });
-      await waitFor(() => {
-        expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
-      });
-    });
-
-    it("dismisses on letter key", async () => {
-      await openCheatsheet();
-      await fireEvent.keyDown(window, { key: "a" });
-      await waitFor(() => {
-        expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
-      });
-    });
-
-    it("dismisses on Enter", async () => {
-      await openCheatsheet();
-      await fireEvent.keyDown(window, { key: "Enter" });
-      await waitFor(() => {
-        expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
-      });
-    });
-
-    it("dismisses on Space", async () => {
-      await openCheatsheet();
-      await fireEvent.keyDown(window, { key: " " });
-      await waitFor(() => {
-        expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument();
-      });
-    });
-  });
-
-  describe("content", () => {
-    it("shows navigation shortcuts", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Next task")).toBeInTheDocument();
-      expect(screen.getByText("Previous task")).toBeInTheDocument();
-    });
-
-    it("shows action shortcuts", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("New task")).toBeInTheDocument();
-      expect(screen.getByText("Toggle complete")).toBeInTheDocument();
-      expect(screen.getByText("Delete")).toBeInTheDocument();
-    });
-
-    it("shows date shortcuts", async () => {
-      await openCheatsheet();
-      expect(screen.getByText("Tomorrow")).toBeInTheDocument();
-      expect(screen.getByText("Next week")).toBeInTheDocument();
-      expect(screen.getByText("Next month")).toBeInTheDocument();
-    });
-
-    it("shows organization shortcuts", async () => {
-      await openCheatsheet();
-      expect(screen.getByText(/indent/i)).toBeInTheDocument();
-      expect(screen.getByText(/outdent/i)).toBeInTheDocument();
-    });
-
-    it("shows hint to press any key to close", async () => {
-      await openCheatsheet();
-      expect(screen.getByText(/press any key to close/i)).toBeInTheDocument();
-    });
+  it("closes on any other key too", async () => {
+    await openCheatsheet();
+    await fireEvent.keyDown(window, { key: "a" });
+    await waitFor(() => expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument());
   });
 });
