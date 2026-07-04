@@ -5,6 +5,7 @@ import { vi } from "vitest";
 // Each test can override these via mockInvoke()
 
 const handlers = {};
+const eventListeners = {};
 
 export function mockInvoke(cmd, handler) {
   handlers[cmd] = handler;
@@ -12,7 +13,23 @@ export function mockInvoke(cmd, handler) {
 
 export function resetMocks() {
   Object.keys(handlers).forEach((k) => delete handlers[k]);
+  Object.keys(eventListeners).forEach((k) => delete eventListeners[k]);
 }
+
+/// Deliver a Tauri event to any App listeners registered via `listen(name, …)`.
+export function emitMockEvent(name, payload) {
+  (eventListeners[name] || []).forEach((cb) => cb({ event: name, id: 0, payload }));
+}
+
+// Mock @tauri-apps/api/event — capture listeners so tests can emit events.
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name, cb) => {
+    (eventListeners[name] ||= []).push(cb);
+    return () => {
+      eventListeners[name] = (eventListeners[name] || []).filter((f) => f !== cb);
+    };
+  }),
+}));
 
 // Mock @tauri-apps/api/core
 vi.mock("@tauri-apps/api/core", () => ({

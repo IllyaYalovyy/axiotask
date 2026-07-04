@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
   import Sidebar from "./Sidebar.svelte";
@@ -26,6 +27,7 @@
   let authenticated = $state(false);
   let syncStatus = $state("idle");
   let lastSynced = $state(null);
+  let lastSyncError = $state(null); // most recent background-sync error message
   let showCompleted = $state(localStorage.getItem(storageKey("showCompleted")) === "true");
   let completedBottom = $state(true);
   let sortMode = $state("manual"); // per-view, restored from localStorage
@@ -91,6 +93,31 @@
   }
 
   $effect(() => { init(); });
+
+  // Reflect background syncs, not just manual "Sync now": the backend emits a
+  // `sync-updated` event after every run. Surface failures and refresh data so
+  // pulled/pushed changes appear without the user doing anything.
+  $effect(() => {
+    let unlisten;
+    listen("sync-updated", (e) => {
+      const s = e.payload || {};
+      if (s.last_error) {
+        syncStatus = "error";
+        // The loop retries periodically; only toast a new/changed error so a
+        // persistent failure (e.g. offline) doesn't spam every 60s.
+        if (s.last_error !== lastSyncError) {
+          lastSyncError = s.last_error;
+          errorToast = { message: `Sync failed: ${s.last_error}`, timer: setTimeout(() => (errorToast = null), 6000) };
+        }
+      } else {
+        lastSyncError = null;
+        syncStatus = "idle";
+        if (s.last_synced) lastSynced = new Date(s.last_synced);
+      }
+      loadAll();
+    }).then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
+  });
 
   // --- Window geometry persistence ---
   // NOTE: programmatically restoring the saved window geometry via
