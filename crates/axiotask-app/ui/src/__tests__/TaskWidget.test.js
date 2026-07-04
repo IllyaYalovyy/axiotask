@@ -248,4 +248,19 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       });
     });
   });
+
+  // #4 step 3: a per-row indicator so the user can see which changes haven't
+  // reached Google yet (sync_state === "dirty").
+  describe("Pending-sync indicator", () => {
+    it("shows a pending-sync marker for a dirty (unsynced) task", () => {
+      const { container } = render(TaskRow, { props: { ...defaultProps, task: makeTask({ sync_state: "dirty" }) } });
+      expect(container.querySelector(".sync-pending")).toBeInTheDocument();
+      expect(screen.getByLabelText("Pending sync")).toBeInTheDocument();
+    });
+
+    it("shows no pending marker for a clean (synced) task", () => {
+      const { container } = render(TaskRow, { props: { ...defaultProps, task: makeTask({ sync_state: "clean" }) } });
+      expect(container.querySelector(".sync-pending")).not.toBeInTheDocument();
+    });
+  });
 });

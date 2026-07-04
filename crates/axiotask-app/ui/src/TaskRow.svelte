@@ -173,6 +173,10 @@
       <span class="title" ondblclick={handleTitleDblClick}>{task.title || "Untitled"}</span>
     {/if}
 
+    {#if task.sync_state === "dirty"}
+      <span class="sync-pending" title="Not synced to Google yet" aria-label="Pending sync">●</span>
+    {/if}
+
     <!-- Quick actions (hover) -->
     <span class="actions">
       <button onclick={(e) => { e.stopPropagation(); onaddsubtask?.(task.id); }} title="Add subtask">+</button>
@@ -284,6 +288,9 @@
   .badge { font-size: 0.7rem; cursor: default; }
   .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
+
+  /* Pending-sync dot: a local change not yet pushed to Google. */
+  .sync-pending { color: #d9a441; font-size: 0.5rem; line-height: 1; flex-shrink: 0; cursor: default; }
 
   .scheduled-marker { font-size: 0.7rem; cursor: default; flex-shrink: 0; }
   .due { color: #888; }
