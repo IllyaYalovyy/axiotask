@@ -113,6 +113,12 @@
         lastSyncError = null;
         syncStatus = "idle";
         if (s.last_synced) lastSynced = new Date(s.last_synced);
+        // A conflict kept the user's edit as a "(conflicted copy)" — explain the
+        // duplicate that just appeared, so it isn't a mystery.
+        if (s.last_conflicts > 0) {
+          const n = s.last_conflicts;
+          infoToast = { message: `${n} sync conflict${n > 1 ? "s" : ""} — your version was kept as a "(conflicted copy)".`, timer: setTimeout(() => (infoToast = null), 8000) };
+        }
       }
       loadAll();
     }).then((fn) => { unlisten = fn; });

@@ -41,6 +41,17 @@ describe("Background sync observability (sync-updated event)", () => {
     expect(screen.getAllByText(/Sync failed/)).toHaveLength(1);
   });
 
+  it("explains a conflicted copy when a sync reports conflicts", async () => {
+    render(App);
+    await waitFor(() => expect(screen.getByText("My Tasks")).toBeInTheDocument());
+
+    emitMockEvent("sync-updated", { last_error: null, last_synced: "2026-07-04T10:00:00Z", last_conflicts: 1 });
+
+    await waitFor(() =>
+      expect(screen.getByText(/conflicted copy/)).toBeInTheDocument(),
+    );
+  });
+
   it("refreshes data when a background sync succeeds", async () => {
     render(App);
     await waitFor(() => expect(screen.getByText("My Tasks")).toBeInTheDocument());
