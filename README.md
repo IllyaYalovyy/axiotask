@@ -149,9 +149,19 @@ The binary is output to `target/release/axiotask`.
 > just shows *"Could not connect to localhost: Connection refused"*. Plain `cargo build`
 > is only useful together with `cargo tauri dev` (or the Vite server running separately).
 
-### Install
+### Install (Linux, current user)
 
-Copy the release binary somewhere on your `PATH`, then run it by name:
+The easiest way — build the production binary and install it (binary on your
+`PATH`, plus an app-menu launcher and icon):
+
+```bash
+./install.sh
+```
+
+Then run `axiotask` from a terminal or launch it from your application menu.
+To remove it: `./install.sh uninstall` (leaves your data untouched).
+
+Or do it manually:
 
 ```bash
 install -Dm755 target/release/axiotask ~/.local/bin/axiotask
