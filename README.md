@@ -143,6 +143,12 @@ cargo tauri build
 
 The binary is output to `target/release/axiotask`.
 
+> **Use `cargo tauri build`, not `cargo build --release`.** Only `cargo tauri build`
+> embeds the frontend into the binary. A plain `cargo build` produces a **dev-mode**
+> binary hardwired to the Vite dev server (`http://localhost:1420`); run on its own it
+> just shows *"Could not connect to localhost: Connection refused"*. Plain `cargo build`
+> is only useful together with `cargo tauri dev` (or the Vite server running separately).
+
 ### Install
 
 Copy the release binary somewhere on your `PATH`, then run it by name:
@@ -154,12 +160,17 @@ axiotask
 
 (Use any directory on your `PATH`; `~/.local/bin` is a common choice on Linux/macOS.)
 
-### Backend only (no UI)
+### Compile the core library only
+
+To type-check / build just the Rust core (no app binary, no frontend):
 
 ```bash
-cargo build          # debug
-cargo build --release  # optimized
+cargo build -p axiotask-core            # debug
+cargo build -p axiotask-core --release  # optimized
 ```
+
+(Plain `cargo build` at the workspace root compiles the app binary too, but in
+dev mode — see the note under **Production build** above.)
 
 ## Running Tests
 
