@@ -94,16 +94,27 @@ describe("Properties dialog", () => {
     expect(toggle).not.toBeChecked();
   });
 
-  it("toggling read-write sync invokes set_push_enabled", async () => {
+  it("enabling read-write sync requires confirmation before pushing", async () => {
     await openProperties();
     const toggle = screen.getByRole("checkbox", { name: /read-write sync/i });
     await fireEvent.click(toggle);
+    // No push yet — a confirmation must appear first.
+    expect(invoke.mock.calls.find((c) => c[0] === "set_push_enabled")).toBeFalsy();
+    await fireEvent.click(await screen.findByText(/Enable push/i));
     await waitFor(() => {
       const call = invoke.mock.calls.find((c) => c[0] === "set_push_enabled");
       expect(call).toBeTruthy();
       expect(call[1]).toEqual({ enabled: true });
     });
-    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("canceling the confirmation leaves sync read-only", async () => {
+    await openProperties();
+    const toggle = screen.getByRole("checkbox", { name: /read-write sync/i });
+    await fireEvent.click(toggle);
+    await fireEvent.click(await screen.findByText(/Cancel/i));
+    expect(invoke.mock.calls.find((c) => c[0] === "set_push_enabled")).toBeFalsy();
+    expect(toggle).not.toBeChecked();
   });
 
   it("shows sync status stats", async () => {

@@ -17,6 +17,23 @@
   } = $props();
 
   let section = $state("sync");
+  let confirmingPush = $state(false);
+
+  // Turning read-write sync ON is a meaningful action — local edits start going
+  // to the user's Google account — so confirm it first. Turning it OFF is safe
+  // and needs no confirmation.
+  function handlePushToggle(el) {
+    if (el.checked && !settings.push_enabled) {
+      el.checked = false; // revert until the user confirms
+      confirmingPush = true;
+    } else {
+      onsetpush(el.checked);
+    }
+  }
+  function confirmEnablePush() {
+    confirmingPush = false;
+    onsetpush(true);
+  }
 
   const SECTIONS = [
     { id: "sync", label: "Sync", icon: "↻" },
@@ -89,7 +106,7 @@
               type="checkbox"
               checked={settings.push_enabled}
               disabled={busy}
-              onchange={(e) => onsetpush(e.currentTarget.checked)}
+              onchange={(e) => handlePushToggle(e.currentTarget)}
             />
             <span>
               <strong>Read-write sync</strong>
@@ -100,6 +117,15 @@
               </small>
             </span>
           </label>
+          {#if confirmingPush}
+            <div class="confirm-push" role="alertdialog" aria-label="Enable read-write sync">
+              <p>Push your local changes to Google Tasks? Edits on this device will start syncing to your account.</p>
+              <div class="confirm-actions">
+                <button class="confirm-enable" onclick={confirmEnablePush}>Enable push</button>
+                <button class="confirm-cancel" onclick={() => (confirmingPush = false)}>Cancel</button>
+              </div>
+            </div>
+          {/if}
           <label class="switch">
             <input
               type="checkbox"
@@ -269,6 +295,21 @@
   .switch span { display: flex; flex-direction: column; gap: 0.15rem; }
   .switch strong { color: #e0e0e0; font-size: 0.88rem; font-weight: 600; }
   .switch small { color: #888; font-size: 0.78rem; line-height: 1.3; }
+
+  .confirm-push {
+    margin: 0.5rem 0 0.25rem; padding: 0.6rem 0.75rem;
+    background: #2a2416; border: 1px solid #6b5a1e; border-radius: 6px;
+  }
+  .confirm-push p { margin: 0 0 0.5rem; color: #e0d6a8; font-size: 0.82rem; line-height: 1.35; }
+  .confirm-actions { display: flex; gap: 0.5rem; }
+  .confirm-actions button {
+    border: none; border-radius: 4px; padding: 0.35rem 0.7rem;
+    font-size: 0.8rem; cursor: pointer; font-family: inherit;
+  }
+  .confirm-enable { background: #d9a441; color: #1a1a2e; font-weight: 600; }
+  .confirm-enable:hover { background: #e6b34f; }
+  .confirm-cancel { background: #2a2a4a; color: #ccc; }
+  .confirm-cancel:hover { background: #0f3460; }
 
   .stats { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
   .stats dt { color: #667; font-size: 0.8rem; }
