@@ -90,6 +90,24 @@ pub struct SyncStatus {
     pub last_error: Option<String>,
 }
 
+/// Notified after every sync run so the UI can react to background syncs, not
+/// just manual "Sync now" clicks. The background loop otherwise updates status
+/// silently and the UI goes stale. Abstracted behind a trait so sync
+/// observability is unit-testable without a Tauri runtime (production wires a
+/// Tauri event emitter; tests inject a recording spy).
+pub trait SyncNotifier: Send + Sync {
+    /// Called once after each sync run, with the resulting status snapshot
+    /// (success updates counts/`last_synced`; failure sets `last_error`).
+    fn notify_sync(&self, status: &SyncStatus);
+}
+
+/// Default notifier: does nothing. Used in tests and before the Tauri emitter
+/// is wired at startup.
+struct NoopSyncNotifier;
+impl SyncNotifier for NoopSyncNotifier {
+    fn notify_sync(&self, _status: &SyncStatus) {}
+}
+
 /// Shared application state managed by Tauri.
 pub struct AppState {
     pub store: Store,
@@ -112,6 +130,9 @@ pub struct AppState {
     db_path: PathBuf,
     /// Last sync outcome and running stats.
     sync_status: Mutex<SyncStatus>,
+    /// Notified after each sync run (Tauri event emitter in production, no-op in
+    /// tests until a spy is installed). Set once at startup.
+    sync_notifier: std::sync::RwLock<Arc<dyn SyncNotifier>>,
 }
 
 impl AppState {
@@ -159,9 +180,16 @@ impl AppState {
             config_path: axiotask_core::config::AppConfig::default_path(),
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
+            sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
         };
         state.ensure_default_list().await;
         Ok(state)
+    }
+
+    /// Install the notifier called after each sync run. Called once at startup
+    /// (main.rs) to wire the Tauri event emitter; tests use it to inject a spy.
+    pub fn set_sync_notifier(&self, notifier: Arc<dyn SyncNotifier>) {
+        *self.sync_notifier.write().unwrap() = notifier;
     }
 
     /// Build state with an in-memory database (for tests).
@@ -203,6 +231,7 @@ impl AppState {
                 .join(format!("axiotask-test-{}.toml", uuid::Uuid::new_v4())),
             db_path: PathBuf::from(":memory:"),
             sync_status: Mutex::new(SyncStatus::default()),
+            sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -357,8 +386,8 @@ impl AppState {
         let client = self.client.lock().await.clone();
         let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled);
         let result = engine.run().await;
-        // Record status/stats for the Properties dialog.
-        {
+        // Record status/stats and notify the UI of the outcome.
+        let snapshot = {
             let mut status = self.sync_status.lock().await;
             match &result {
                 Ok(o) => {
@@ -381,7 +410,12 @@ impl AppState {
                     status.last_error = Some(e.to_string());
                 }
             }
-        }
+            status.clone()
+        };
+        // Background syncs are otherwise invisible to the UI; tell it what
+        // happened so it can refresh and surface any error.
+        let notifier = self.sync_notifier.read().unwrap().clone();
+        notifier.notify_sync(&snapshot);
         result
     }
 

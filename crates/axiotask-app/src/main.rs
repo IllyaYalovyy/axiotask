@@ -16,6 +16,22 @@ use std::sync::Arc;
 use state::{AppState, default_db_path};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+/// Emits a `sync-updated` Tauri event after every sync run so the frontend can
+/// reflect background syncs — not just manual "Sync now" — including failures.
+struct TauriSyncNotifier {
+    app: tauri::AppHandle,
+}
+
+impl state::SyncNotifier for TauriSyncNotifier {
+    fn notify_sync(&self, status: &state::SyncStatus) {
+        use tauri::Emitter;
+        let view = commands::SyncStatusView::from(status);
+        if let Err(e) = self.app.emit("sync-updated", view) {
+            tracing::warn!("failed to emit sync-updated event: {e}");
+        }
+    }
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -59,6 +75,11 @@ fn main() {
             });
             let state = Arc::new(app_state);
             app.manage(state.clone());
+
+            // Wire the Tauri event emitter so background syncs surface in the UI.
+            state.set_sync_notifier(Arc::new(TauriSyncNotifier {
+                app: app.handle().clone(),
+            }));
 
             // Build the main window in code (rather than tauri.conf.json) so the
             // title reflects the instance and the prefix is injected before the

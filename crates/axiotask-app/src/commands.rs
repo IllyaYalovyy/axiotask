@@ -500,6 +500,20 @@ pub struct SyncStatusView {
     pub last_error: Option<String>,
 }
 
+impl From<&crate::state::SyncStatus> for SyncStatusView {
+    fn from(s: &crate::state::SyncStatus) -> Self {
+        Self {
+            last_synced: s.last_synced.clone(),
+            last_pulled: s.last_pulled,
+            last_pushed: s.last_pushed,
+            last_conflicts: s.last_conflicts,
+            last_deleted: s.last_deleted,
+            total_syncs: s.total_syncs,
+            last_error: s.last_error.clone(),
+        }
+    }
+}
+
 /// Everything the Properties dialog needs in a single round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -539,15 +553,7 @@ async fn build_settings(state: &AppState) -> Result<AppSettings, String> {
         db_path: state.db_path().display().to_string(),
         config_path: state.config_path().display().to_string(),
         pending_pushes: state.pending_push_count().await?,
-        sync: SyncStatusView {
-            last_synced: status.last_synced,
-            last_pulled: status.last_pulled,
-            last_pushed: status.last_pushed,
-            last_conflicts: status.last_conflicts,
-            last_deleted: status.last_deleted,
-            total_syncs: status.total_syncs,
-            last_error: status.last_error,
-        },
+        sync: SyncStatusView::from(&status),
     })
 }
 

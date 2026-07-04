@@ -1307,4 +1307,54 @@ mod tests {
         let view = crate::commands::TaskView::from(t);
         assert!(view.web_view_link.is_some(), "TaskView exposes the link to the UI");
     }
+
+    // ---- Sync observability (#4, step 1) ----
+    //
+    // The background sync loop updates status silently; the UI must be notified
+    // after each run so it reflects background syncs, not just manual ones.
+
+    /// Records every sync-status snapshot pushed to the notifier.
+    #[derive(Default)]
+    struct RecordingNotifier {
+        calls: std::sync::Mutex<Vec<crate::state::SyncStatus>>,
+    }
+    impl crate::state::SyncNotifier for RecordingNotifier {
+        fn notify_sync(&self, status: &crate::state::SyncStatus) {
+            self.calls.lock().unwrap().push(status.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_notifies_observer_on_success() {
+        let (_client, state) = setup().await;
+        let spy = Arc::new(RecordingNotifier::default());
+        state.set_sync_notifier(spy.clone());
+
+        state.run_sync().await.expect("sync ok");
+
+        let calls = spy.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "exactly one notification per sync run");
+        assert!(calls[0].last_error.is_none(), "success clears last_error");
+        assert!(calls[0].last_synced.is_some(), "success records last_synced");
+        assert_eq!(calls[0].total_syncs, 1);
+    }
+
+    #[tokio::test]
+    async fn sync_notifies_observer_on_failure() {
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+        let (client, state) = setup().await;
+        let spy = Arc::new(RecordingNotifier::default());
+        state.set_sync_notifier(spy.clone());
+
+        // A non-transient error on the first pull call fails the whole run.
+        client.fail_next(Method::ListTaskLists, || ApiError::Unauthorized);
+
+        let res = state.run_sync().await;
+        assert!(res.is_err(), "sync run should fail");
+
+        let calls = spy.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "failure still notifies the observer");
+        assert!(calls[0].last_error.is_some(), "failure surfaces last_error");
+    }
 }
