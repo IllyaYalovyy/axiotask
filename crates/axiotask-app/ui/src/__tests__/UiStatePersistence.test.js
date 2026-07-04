@@ -106,7 +106,11 @@ describe("UI State Persistence: window size and position", () => {
     });
   });
 
-  it("restores window geometry from localStorage on mount", async () => {
+  it("does NOT resize/move the window on mount, even with a saved geometry", async () => {
+    // Programmatic geometry restore is intentionally disabled: driving the
+    // window through setSize/setPosition as the webview starts up wedged
+    // WebKitGTK's IPC and left the app stuck forever on "Loading...". The saved
+    // geometry must be ignored on startup and the app must still render.
     localStorage.setItem("axiotask:view", "L1");
     localStorage.setItem("axiotask:windowGeometry", JSON.stringify({ width: 800, height: 600, x: 200, y: 150 }));
     mockBackend([task("t1", "Task")]);
@@ -119,7 +123,7 @@ describe("UI State Persistence: window size and position", () => {
     render(App);
     await waitFor(() => expect(screen.getByText("Task")).toBeInTheDocument());
 
-    expect(win.setSize).toHaveBeenCalled();
-    expect(win.setPosition).toHaveBeenCalled();
+    expect(win.setSize).not.toHaveBeenCalled();
+    expect(win.setPosition).not.toHaveBeenCalled();
   });
 });

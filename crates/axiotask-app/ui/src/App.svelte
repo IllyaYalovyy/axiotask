@@ -93,16 +93,14 @@
   $effect(() => { init(); });
 
   // --- Window geometry persistence ---
-  $effect(() => {
-    // Restore window geometry on mount
-    const geo = JSON.parse(localStorage.getItem(storageKey("windowGeometry")) || "null");
-    if (geo) {
-      try {
-        getCurrentWindow().setSize(new LogicalSize(geo.width, geo.height));
-        getCurrentWindow().setPosition(new LogicalPosition(geo.x, geo.y));
-      } catch {}
-    }
-  });
+  // NOTE: programmatically restoring the saved window geometry via
+  // setSize/setPosition is intentionally disabled. On WebKitGTK (Linux) driving
+  // the webview through a size/position change at startup wedges its IPC/repaint
+  // path on some GPU/compositor setups. Leaving the window at its builder size
+  // avoids that. Kept as a stub so callers/imports stay valid.
+  function restoreWindowGeometry() {
+    /* disabled — see note above */
+  }
 
   function saveWindowGeometry() {
     Promise.all([
