@@ -179,7 +179,7 @@ describe("GH#12: Delete task with undo", () => {
       await waitFor(() => expect(screen.getByText("Dismiss me")).toBeInTheDocument());
       await fireEvent.keyDown(window, { key: "d" });
       await waitFor(() => expect(screen.getByText(/Deleted "Dismiss me"/)).toBeInTheDocument());
-      await fireEvent.click(screen.getByText("✕"));
+      await fireEvent.click(screen.getByLabelText("Dismiss"));
       await waitFor(() => expect(screen.queryByText(/Deleted "Dismiss me"/)).not.toBeInTheDocument());
     });
   });

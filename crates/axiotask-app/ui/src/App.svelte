@@ -79,6 +79,29 @@
     loading = false;
   }
 
+  // Refetch only the given list(s) and splice their tasks back into allTasks,
+  // preserving the same grouped order loadAll() produces. This replaces the old
+  // "reload every task from every list after every mutation" (O(n·lists)) with
+  // O(tasks in the affected list(s)) — see #40.
+  async function refreshLists(listIds) {
+    const ids = new Set(listIds.filter(Boolean));
+    if (ids.size === 0) return;
+    const fetched = new Map();
+    await Promise.all([...ids].map(async (id) => {
+      const t = (await cmd("list_tasks", { listId: id })) || [];
+      const title = lists.find(l => l.id === id)?.title;
+      fetched.set(id, t.map(task => ({ ...task, listTitle: title, listId: id })));
+    }));
+    const next = [];
+    for (const list of lists) {
+      next.push(...(fetched.get(list.id) ?? allTasks.filter(t => t.listId === list.id)));
+    }
+    allTasks = next;
+  }
+
+  // The list a task currently belongs to (captured before a mutation).
+  function taskListId(id) { return allTasks.find(t => t.id === id)?.listId; }
+
   async function checkAuth() {
     const r = await cmd("auth_status");
     authenticated = r === true;
@@ -334,7 +357,7 @@
     if (task) {
       newestTaskId = task.id;
       if (isSmartView) selectedView = targetList;
-      await loadAll();
+      await refreshLists([targetList]);
       focusIndex = 0;
       editingId = task.id;
     }
@@ -349,7 +372,7 @@
     if (task) {
       newestTaskId = task.id;
       selectedView = targetList;
-      await loadAll();
+      await refreshLists([targetList]);
       focusIndex = 0;
       editingId = task.id;
     }
@@ -360,7 +383,7 @@
     if (!parent) return;
     const task = await cmd("create_task", { listId: parent.listId, parentId, title: "" });
     if (task) {
-      await loadAll();
+      await refreshLists([parent.listId]);
       // Open the new subtask in detail panel so user can name it immediately
       detailTask = allTasks.find(t => t.id === task.id) || task;
     }
@@ -375,11 +398,11 @@
       completingIds = new Set([...completingIds, id]);
       setTimeout(async () => {
         completingIds = new Set([...completingIds].filter(x => x !== id));
-        await loadAll();
+        await refreshLists([task.listId]);
         undoItem = { id, title: task.title, listId: task.listId, isComplete: true, timer: setTimeout(() => { undoItem = null; }, 10000) };
       }, 300);
     } else {
-      await loadAll();
+      await refreshLists([task.listId]);
     }
   }
 
@@ -388,37 +411,42 @@
     if (!task) return;
     const token = await cmd("delete_task", { id });
     undoItem = { id, title: task.title, listId: task.listId, deleteToken: token, timer: setTimeout(() => { undoItem = null; }, 30000) };
-    await loadAll();
+    await refreshLists([task.listId]);
     focusIndex = Math.min(focusIndex, Math.max(0, flatTasks.length - 1));
   }
 
   async function renameTask(id, title) {
     editingId = null;
     if (!title.trim()) { await deleteTask(id); return; }
+    const listId = taskListId(id);
     await cmd("rename_task", { id, title: title.trim() });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function setDue(id, mv) {
+    const listId = taskListId(id);
     await cmd("set_due", { id, mv });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function moveTask(id, parentId) {
+    const listId = taskListId(id);
     await cmd("move_task", { id, parentId, previousId: null });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function reorderTask(id, direction) {
+    const listId = taskListId(id);
     await cmd("reorder_task", { id, direction });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function handleDragReorder(id, direction, steps = 1) {
+    const listId = taskListId(id);
     for (let i = 0; i < steps; i++) {
       await cmd("reorder_task", { id, direction });
     }
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function handleUndo() {
@@ -434,8 +462,9 @@
       // Fallback: re-create
       await cmd("create_task", { listId: undoItem.listId, parentId: null, title: undoItem.title || "Untitled" });
     }
+    const lid = undoItem.listId;
     undoItem = null;
-    await loadAll();
+    await refreshLists([lid]);
   }
 
   async function openNotes(id) {
@@ -443,8 +472,9 @@
   }
 
   async function saveNotes(id, notes) {
+    const listId = taskListId(id);
     await cmd("set_notes", { id, notes });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   async function doSync() {
@@ -566,7 +596,7 @@
     const task = allTasks.find(t => t.id === taskId);
     const targetList = lists.find(l => l.id === targetListId);
     await cmd("move_to_list", { id: taskId, targetListId });
-    await loadAll();
+    await refreshLists([task?.listId, targetListId]);
     if (task && targetList) {
       undoItem = { id: taskId, title: `Moved "${task.title}" to ${targetList.title}`, isMoveToast: true, timer: setTimeout(() => { undoItem = null; }, 5000) };
     }
@@ -587,7 +617,7 @@
     if (!listId) return;
     showClearConfirm = false;
     await cmd("clear_completed", { listId });
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   function cancelClearCompleted() {
@@ -618,13 +648,14 @@
   }
 
   async function saveDetail(id, { title, notes, due }) {
+    const listId = taskListId(id);
     if (title !== undefined) await cmd("rename_task", { id, title });
     if (notes !== undefined) await cmd("set_notes", { id, notes });
     if (due !== undefined) {
       if (due) await cmd("set_due", { id, mv: "raw:" + due });
       else await cmd("set_due", { id, mv: "Clear" });
     }
-    await loadAll();
+    await refreshLists([listId]);
   }
 
   function handleSearchSelect(task) {
@@ -658,11 +689,11 @@
         "separator",
         { id: "subtask", icon: "⬆️", label: "Add subtask", action: async () => {
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
-          if (t) { await loadAll(); editingId = t.id; }
+          if (t) { await refreshLists([task.listId]); editingId = t.id; }
         }},
         { id: "duplicate", icon: "📋", label: "Duplicate", shortcut: "Ctrl+D", action: async () => {
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
-          await loadAll();
+          await refreshLists([task.listId]);
         }},
         { id: "details", icon: "ℹ️", label: "Details", shortcut: "Enter", action: () => {
           detailTask = allTasks.find(t => t.id === task.id) || task;
@@ -695,7 +726,7 @@
     }
     // Single line → one task, no dialog.
     await cmd("create_task", { listId: targetList, parentId: null, title: lines[0] });
-    await loadAll();
+    await refreshLists([targetList]);
     selectedView = targetList;
   }
 
@@ -726,7 +757,7 @@
       }
     }
     bulkAdd = null;
-    await loadAll();
+    await refreshLists([listId]);
     selectedView = listId;
     if (created > 0) {
       if (infoToast) clearTimeout(infoToast.timer);
@@ -751,27 +782,31 @@
 
   async function bulkComplete() {
     const ids = [...selectedIds];
+    const listIds = ids.map(taskListId);
     for (const id of ids) {
       const t = allTasks.find(x => x.id === id);
       if (t && t.status !== "completed") await cmd("toggle_complete", { id });
     }
-    clearSelection(); await loadAll(); bulkToast(ids.length, "completed");
+    clearSelection(); await refreshLists(listIds); bulkToast(ids.length, "completed");
   }
   async function bulkDelete() {
     const ids = [...selectedIds];
+    const listIds = ids.map(taskListId);
     for (const id of ids) await cmd("delete_task", { id });
-    clearSelection(); await loadAll(); bulkToast(ids.length, "deleted");
+    clearSelection(); await refreshLists(listIds); bulkToast(ids.length, "deleted");
   }
   async function bulkSetDue(mv) {
     const ids = [...selectedIds];
+    const listIds = ids.map(taskListId);
     for (const id of ids) await cmd("set_due", { id, mv });
-    clearSelection(); await loadAll();
+    clearSelection(); await refreshLists(listIds);
     bulkToast(ids.length, mv === "Clear" ? "cleared" : "rescheduled");
   }
   async function bulkMove(listId) {
     const ids = [...selectedIds];
+    const srcLists = ids.map(taskListId);
     for (const id of ids) await cmd("move_to_list", { id, targetListId: listId });
-    bulkMovePicker = false; clearSelection(); await loadAll(); bulkToast(ids.length, "moved");
+    bulkMovePicker = false; clearSelection(); await refreshLists([...srcLists, listId]); bulkToast(ids.length, "moved");
   }
 
   // List context menu

@@ -7,7 +7,7 @@
   {#if onundo}
     <button class="undo-btn" onclick={onundo}>Undo</button>
   {/if}
-  <button class="dismiss-btn" onclick={ondismiss}>✕</button>
+  <button class="dismiss-btn" aria-label="Dismiss" onclick={ondismiss}>✕</button>
 </div>
 
 <style>
