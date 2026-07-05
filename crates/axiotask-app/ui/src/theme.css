@@ -6,6 +6,7 @@
 
 :root,
 :root[data-theme="dark"] {
+  color-scheme: dark; /* native widgets (date input, <select>, scrollbars) */
   --bg: #1e1e1e;
   --bg-sidebar: #242424;
   --bg-panel: #2a2a2a;
@@ -37,6 +38,7 @@
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #fafafb;
   --bg-sidebar: #ebebed;
   --bg-panel: #ffffff;

@@ -136,8 +136,8 @@
   .field-row { display: flex; align-items: center; gap: 0.6rem; }
   .field-row label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg-faint); }
   .field-row select {
-    flex: 1; background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 4px;
-    color: var(--fg); padding: 0.4rem; font-size: 0.85rem; font-family: inherit; outline: none; color-scheme: dark;
+    flex: 1; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--fg); padding: 0.4rem; font-size: 0.85rem; font-family: inherit; outline: none;
   }
   .field-row select option { background: var(--bg); color: var(--fg); }
 

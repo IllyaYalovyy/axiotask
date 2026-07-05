@@ -199,15 +199,14 @@
   .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
   .add-subtask-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
   .add-subtask-btn:hover { background: var(--bg-hover); }
-  .field input[type="text"], .field textarea, .field select {
-    width: 100%; background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 4px;
+  .field input[type="text"], .field input[type="date"], .field textarea, .field select {
+    width: 100%; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     color: var(--fg); padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
     box-sizing: border-box;
   }
-  .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--bg-active); }
-  .field input[type="date"] { color-scheme: dark; }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); }
   .field textarea { resize: vertical; min-height: 100px; }
-  .field select { cursor: pointer; color-scheme: dark; }
+  .field select { cursor: pointer; }
   /* Style the dropdown popup itself — without this the <option> list inherits
      the OS default (white) background while keeping light text → unreadable. */
   .field select option { background: var(--bg); color: var(--fg); }
