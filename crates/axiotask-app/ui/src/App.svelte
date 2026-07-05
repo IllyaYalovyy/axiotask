@@ -14,6 +14,7 @@
   import TaskDetail from "./TaskDetail.svelte";
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
+  import DatePicker from "./DatePicker.svelte";
   import Properties from "./Properties.svelte";
   import BulkAdd from "./BulkAdd.svelte";
   import { storageKey } from "./storage.js";
@@ -44,6 +45,7 @@
   let detailTask = $state(null); // task object for detail panel
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
+  let datePickerTask = $state(null); // task whose due date is being picked (#37)
   let renamingListId = $state(null); // triggers inline rename in sidebar
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
@@ -429,6 +431,16 @@
     await refreshLists([listId]);
   }
 
+  // #37: open the calendar popover for a task, and apply the chosen date.
+  function openDatePicker(id) {
+    datePickerTask = allTasks.find(t => t.id === id) || null;
+  }
+  function handleDatePick(dateStr) {
+    const id = datePickerTask?.id;
+    datePickerTask = null;
+    if (id) setDue(id, dateStr ? "raw:" + dateStr : "Clear");
+  }
+
   async function moveTask(id, parentId) {
     const listId = taskListId(id);
     await cmd("move_task", { id, parentId, previousId: null });
@@ -681,6 +693,7 @@
           { label: "Tomorrow", action: () => setDue(task.id, "Tomorrow") },
           { label: "Next week", action: () => setDue(task.id, "NextWeek") },
           { label: "Next month", action: () => setDue(task.id, "NextMonth") },
+          { label: "Pick a date…", action: () => openDatePicker(task.id) },
           { label: "Clear", action: () => setDue(task.id, "Clear") },
         ]},
         { id: "move", icon: "↗️", label: "Move to list", submenu: lists.map(l => ({
@@ -1012,15 +1025,15 @@
     {:else if error}
       <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   {#if detailTask}
@@ -1092,6 +1105,9 @@
 {/if}
 {#if bulkMovePicker}
   <MoveToListPicker {lists} currentListId={null} onselect={(list) => bulkMove(list.id)} onclose={() => bulkMovePicker = false} />
+{/if}
+{#if datePickerTask}
+  <DatePicker value={datePickerTask.due} onselect={handleDatePick} onclose={() => datePickerTask = null} />
 {/if}
 {#if showClearConfirm}
   <div class="confirm-overlay" role="dialog" aria-modal="true">

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, fireEvent } from "@testing-library/svelte";
 import { describe, it, expect, vi } from "vitest";
 import TaskRow from "../TaskRow.svelte";
 
@@ -261,6 +261,23 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
     it("shows no pending marker for a clean (synced) task", () => {
       const { container } = render(TaskRow, { props: { ...defaultProps, task: makeTask({ sync_state: "clean" }) } });
       expect(container.querySelector(".sync-pending")).not.toBeInTheDocument();
+    });
+  });
+
+  // #37: clicking the due area opens the date picker.
+  describe("Due-date picker trigger", () => {
+    it("clicking the due badge requests the date picker", async () => {
+      const onpickdate = vi.fn();
+      render(TaskRow, { props: { ...defaultProps, task: makeTask({ due: "2026-06-15T00:00:00Z" }), onpickdate } });
+      await fireEvent.click(screen.getByTitle("Pick a date"));
+      expect(onpickdate).toHaveBeenCalledWith("t1");
+    });
+
+    it("clicking 'no date' requests the date picker for an undated task", async () => {
+      const onpickdate = vi.fn();
+      render(TaskRow, { props: { ...defaultProps, task: makeTask({ due: null }), onpickdate } });
+      await fireEvent.click(screen.getByText("no date"));
+      expect(onpickdate).toHaveBeenCalledWith("t1");
     });
   });
 });

@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
   let touchDragging = $state(false);
@@ -200,9 +200,13 @@
     {/if}
     {#if task.due}
       <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled">📅</span>
-      <span class="due {dueClass(task.due)}">{formatDue(task.due)}</span>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="due {dueClass(task.due)} pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>{formatDue(task.due)}</span>
     {:else}
-      <span class="no-due">no date</span>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="no-due pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>no date</span>
     {/if}
     {#if subtaskProgress}
       <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks">
@@ -297,6 +301,8 @@
   .due.overdue { color: #e74c3c; font-weight: 600; }
   .due.due-today { color: #ff9800; }
   .no-due { color: #3a3a5a; }
+  .pickable { cursor: pointer; }
+  .pickable:hover { text-decoration: underline; }
   .list-tag { color: #555; background: #2a2a4a; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.65rem; }
 
   .edit-input {
