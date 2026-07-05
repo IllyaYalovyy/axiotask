@@ -90,23 +90,23 @@
 <style>
   .context-menu {
     position: fixed; z-index: 5000;
-    background: #1e2a3e; border: 1px solid #3a4a6a; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
     padding: 0.3rem 0; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
     outline: none;
   }
-  .separator { height: 1px; background: #2a3a5a; margin: 0.3rem 0; }
+  .separator { height: 1px; background: var(--bg-elevated); margin: 0.3rem 0; }
   .menu-item {
     display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.85rem; color: #ccc;
+    padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.85rem; color: var(--fg-secondary);
   }
-  .menu-item:hover, .menu-item.focused { background: #0f3460; color: #fff; }
+  .menu-item:hover, .menu-item.focused { background: var(--bg-active); color: var(--fg-strong); }
   .icon { width: 1.2rem; text-align: center; font-size: 0.8rem; }
   .label { flex: 1; }
-  .shortcut { font-size: 0.7rem; color: #666; }
-  .arrow { color: #666; font-size: 0.7rem; }
+  .shortcut { font-size: 0.7rem; color: var(--fg-faint); }
+  .arrow { color: var(--fg-faint); font-size: 0.7rem; }
   .submenu {
     position: absolute; left: 100%; top: 0; margin-top: -0.3rem;
-    background: #1e2a3e; border: 1px solid #3a4a6a; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
     padding: 0.3rem 0; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   .has-submenu + .submenu { position: relative; left: 1rem; margin: 0; border: none; box-shadow: none; padding: 0 0 0 1rem; }

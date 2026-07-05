@@ -74,7 +74,7 @@
   .smart-view { flex: 1; overflow-y: auto; padding: 0.5rem 1rem; min-height: 0; }
   .empty { text-align: center; margin-top: 4rem; }
   .empty .icon { font-size: 2rem; margin-bottom: 0.5rem; }
-  .empty p { color: #888; font-size: 1.1rem; margin: 0.3rem; }
-  .empty .sub { font-size: 0.85rem; color: #555; }
-  .drop-indicator { height: 2px; background: #7ec8e3; margin: 0 0.5rem; border-radius: 1px; }
+  .empty p { color: var(--fg-muted); font-size: 1.1rem; margin: 0.3rem; }
+  .empty .sub { font-size: 0.85rem; color: var(--fg-faint); }
+  .drop-indicator { height: 2px; background: var(--accent); margin: 0 0.5rem; border-radius: 1px; }
 </style>

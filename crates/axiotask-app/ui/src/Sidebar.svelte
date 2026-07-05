@@ -1,5 +1,5 @@
 <script>
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -197,65 +197,71 @@
         <span class="sign-out" onclick={onlogout}>Sign out</span>
       {/if}
     </div>
-    <button class="about-btn" onclick={onproperties} title="Properties (,)">⚙ Properties</button>
+    <div class="footer-row">
+      <button class="about-btn" onclick={onproperties} title="Properties (,)">⚙ Properties</button>
+      <button class="theme-btn" onclick={ontoggletheme} title="Toggle light/dark theme" aria-label="Toggle theme">{theme === "light" ? "🌙" : "☀"}</button>
+    </div>
   </div>
 </aside>
 
 <style>
-  .sidebar { width: 200px; background: #16213e; display: flex; flex-direction: column; border-right: 1px solid #2a2a4a; }
+  .sidebar { width: 200px; background: var(--bg-sidebar); display: flex; flex-direction: column; border-right: 1px solid var(--bg-elevated); }
   .header { padding: 1rem 1rem 0.5rem; }
-  .header h1 { font-size: 1.1rem; margin: 0; color: #7ec8e3; }
+  .header h1 { font-size: 1.1rem; margin: 0; color: var(--accent); }
   .views { padding: 0.5rem; display: flex; flex-direction: column; gap: 2px; }
   .views button, .lists button {
     width: 100%; text-align: left; background: none; border: none;
-    color: #ccc; padding: 0.4rem 0.6rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; font-family: inherit;
+    color: var(--fg-secondary); padding: 0.4rem 0.6rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; font-family: inherit;
   }
-  .views button:hover, .lists button:hover { background: #1a1a3e; }
-  .views button.active, .lists button.active { background: #0f3460; color: #fff; }
+  .views button:hover, .lists button:hover { background: var(--bg-input); }
+  .views button.active, .lists button.active { background: var(--bg-active); color: var(--fg-strong); }
   .lists button.excluded { opacity: 0.5; font-style: italic; }
-  .count { font-size: 0.7rem; color: #555; background: #2a2a4a; padding: 0.1rem 0.35rem; border-radius: 8px; margin-left: auto; }
+  .count { font-size: 0.7rem; color: var(--fg-faint); background: var(--bg-elevated); padding: 0.1rem 0.35rem; border-radius: 8px; margin-left: auto; }
   .section-header { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem 0.25rem; }
-  .section-header h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin: 0; }
+  .section-header h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); margin: 0; }
   .list-actions { display: flex; gap: 4px; }
-  .icon-btn { background: none; border: 1px solid #3a3a5a; color: #888; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 3px; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
-  .icon-btn:hover { background: #0f3460; color: #fff; border-color: #0f3460; }
-  .local-badge { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: #7ec8e3; background: #1a2a4a; border: 1px solid #2a4a6a; padding: 0.05rem 0.3rem; border-radius: 8px; margin-left: 0.35rem; }
+  .icon-btn { background: none; border: 1px solid var(--border-faint); color: var(--fg-muted); min-width: 20px; height: 20px; padding: 0 4px; border-radius: 3px; cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; }
+  .icon-btn:hover { background: var(--bg-active); color: var(--fg-strong); border-color: var(--bg-active); }
+  .local-badge { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); background: var(--bg-hover); border: 1px solid var(--bg-active); padding: 0.05rem 0.3rem; border-radius: 8px; margin-left: 0.35rem; }
   .lists { padding: 0 0.5rem; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .list-row { display: flex; align-items: center; }
   .list-row.dragging { opacity: 0.4; }
   .list-row .list-btn { flex: 1; width: auto; min-width: 0; }
   .list-drag-handle {
-    flex-shrink: 0; cursor: grab; color: #3a3a5a; font-size: 0.85rem;
+    flex-shrink: 0; cursor: grab; color: var(--border-faint); font-size: 0.85rem;
     padding: 0 0.25rem; user-select: none; opacity: 0; transition: opacity 0.1s;
   }
-  .list-row:hover .list-drag-handle { opacity: 1; color: #667; }
-  .list-drag-handle:hover { color: #7ec8e3; }
+  .list-row:hover .list-drag-handle { opacity: 1; color: var(--fg-faint); }
+  .list-drag-handle:hover { color: var(--accent); }
   .list-drag-handle:active { cursor: grabbing; }
-  .list-drop-indicator { height: 2px; background: #7ec8e3; margin: 0 0.4rem; border-radius: 1px; }
-  .no-lists { color: #444; font-size: 0.8rem; padding: 0.4rem 0.6rem; }
-  .inline-input { width: 100%; padding: 0.35rem 0.6rem; background: #1a2a4a; border: 1px solid #3a4a6a; border-radius: 4px; color: #e0e0e0; font-size: 0.85rem; outline: none; box-sizing: border-box; }
-  .inline-input:focus { border-color: #7ec8e3; }
-  .footer { padding: 0.75rem; border-top: 1px solid #2a2a4a; display: flex; flex-direction: column; gap: 0.4rem; }
-  .action-btn { width: 100%; background: #2a2a4a; color: #ccc; border: none; padding: 0.45rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-family: inherit; }
-  .action-btn:hover { background: #3a3a5a; }
+  .list-drop-indicator { height: 2px; background: var(--accent); margin: 0 0.4rem; border-radius: 1px; }
+  .no-lists { color: var(--fg-faint); font-size: 0.8rem; padding: 0.4rem 0.6rem; }
+  .inline-input { width: 100%; padding: 0.35rem 0.6rem; background: var(--bg-hover); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); font-size: 0.85rem; outline: none; box-sizing: border-box; }
+  .inline-input:focus { border-color: var(--accent); }
+  .footer { padding: 0.75rem; border-top: 1px solid var(--bg-elevated); display: flex; flex-direction: column; gap: 0.4rem; }
+  .action-btn { width: 100%; background: var(--bg-elevated); color: var(--fg-secondary); border: none; padding: 0.45rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-family: inherit; }
+  .action-btn:hover { background: var(--border-faint); }
   .action-btn:disabled { opacity: 0.5; cursor: default; }
   .sync-info { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.2rem; }
-  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: #4caf50; }
-  .sync-dot.offline { background: #666; }
-  .sync-dot.syncing { background: #ff9800; animation: pulse 1s infinite; }
-  .sync-dot.error { background: #e74c3c; }
-  .sync-text { font-size: 0.7rem; color: #666; }
-  .sign-out { font-size: 0.7rem; color: #666; cursor: pointer; margin-left: auto; }
-  .sign-out:hover { color: #e74c3c; }
-  .about-btn { background: none; border: none; color: #555; font-size: 0.7rem; cursor: pointer; font-family: inherit; padding: 0.2rem; align-self: center; }
-  .about-btn:hover { color: #7ec8e3; }
+  .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
+  .sync-dot.offline { background: var(--fg-faint); }
+  .sync-dot.syncing { background: var(--warning); animation: pulse 1s infinite; }
+  .sync-dot.error { background: var(--danger); }
+  .sync-text { font-size: 0.7rem; color: var(--fg-faint); }
+  .sign-out { font-size: 0.7rem; color: var(--fg-faint); cursor: pointer; margin-left: auto; }
+  .sign-out:hover { color: var(--danger); }
+  .footer-row { display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+  .about-btn { background: none; border: none; color: var(--fg-faint); font-size: 0.7rem; cursor: pointer; font-family: inherit; padding: 0.2rem; }
+  .about-btn:hover { color: var(--accent); }
+  .theme-btn { background: none; border: none; color: var(--fg-faint); font-size: 0.85rem; cursor: pointer; padding: 0.2rem; line-height: 1; }
+  .theme-btn:hover { color: var(--accent); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
   /* Mobile: horizontal compact nav */
   @media (max-width: 700px) {
     .sidebar {
       width: 100%; flex-direction: row; align-items: center;
-      border-right: none; border-bottom: 1px solid #2a2a4a;
+      border-right: none; border-bottom: 1px solid var(--bg-elevated);
       padding: 0.4rem; gap: 0.3rem; overflow-x: auto;
     }
     .header { padding: 0 0.5rem; }

@@ -1,0 +1,68 @@
+/* Theme tokens — vanilla GNOME/Adwaita flavored, light + dark (#46).
+ *
+ * Components reference these variables instead of hardcoded colors. The active
+ * theme is chosen by the `data-theme` attribute on <html> (see main.js / the
+ * theme selector). Dark is the default. */
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --bg-sidebar: #242424;
+  --bg-panel: #2a2a2a;
+  --bg-elevated: #363636;
+  --bg-input: #1c1c1c;
+  --bg-hover: #333338;
+  --bg-active: #2f3b4d;
+
+  --fg: #ffffff;
+  --fg-secondary: #d0d0d0;
+  --fg-muted: #9a9a9a;
+  --fg-faint: #6a6a6a;
+  --fg-strong: #ffffff;
+
+  --accent: #78aeed;
+  --accent-bg: #3584e4;
+  --border: #3a3a3a;
+  --border-faint: #2c2c2c;
+
+  --danger: #ff7b6b;
+  --warning: #f5c211;
+  --success: #57e389;
+  --bg-danger: #3a1f1f;
+  --border-danger: #5a2f2f;
+  --bg-warning: #33301c;
+  --border-warning: #5a5124;
+
+  --overlay: rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="light"] {
+  --bg: #fafafb;
+  --bg-sidebar: #ebebed;
+  --bg-panel: #ffffff;
+  --bg-elevated: #e6e6e9;
+  --bg-input: #ffffff;
+  --bg-hover: #ededf0;
+  --bg-active: #d7e6fb;
+
+  --fg: #2e3436;
+  --fg-secondary: #454b4d;
+  --fg-muted: #6b7176;
+  --fg-faint: #9aa0a6;
+  --fg-strong: #1a1a1a;
+
+  --accent: #1c71d8;
+  --accent-bg: #3584e4;
+  --border: #d0d0d4;
+  --border-faint: #e2e2e5;
+
+  --danger: #c01c28;
+  --warning: #b5820a;
+  --success: #1a9c5a;
+  --bg-danger: #fbeaea;
+  --border-danger: #eccccc;
+  --bg-warning: #fbf3d9;
+  --border-warning: #ecd9a0;
+
+  --overlay: rgba(0, 0, 0, 0.35);
+}

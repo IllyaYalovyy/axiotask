@@ -161,76 +161,76 @@
 
 <style>
   .detail-panel {
-    width: 320px; background: #16213e; border-left: 1px solid #2a2a4a;
+    width: 320px; background: var(--bg-sidebar); border-left: 1px solid var(--bg-elevated);
     display: flex; flex-direction: column; padding: 1rem; overflow-y: auto;
   }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
   .panel-nav { display: flex; align-items: center; gap: 0.3rem; }
-  .nav-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; width: 1.5rem; height: 1.5rem; border-radius: 3px; cursor: pointer; font-size: 1rem; line-height: 1; }
-  .nav-btn:hover:not(:disabled) { background: #1a2a4a; }
+  .nav-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.5rem; height: 1.5rem; border-radius: 3px; cursor: pointer; font-size: 1rem; line-height: 1; }
+  .nav-btn:hover:not(:disabled) { background: var(--bg-hover); }
   .nav-btn:disabled { opacity: 0.3; cursor: default; }
-  .panel-header h3 { margin: 0; font-size: 0.9rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-  .breadcrumb { font-size: 0.8rem; color: #7ec8e3; cursor: pointer; margin-bottom: 0.75rem; padding: 0.3rem 0.5rem; background: #1a2a4a; border-radius: 4px; }
-  .breadcrumb:hover { background: #0f3460; }
+  .panel-header h3 { margin: 0; font-size: 0.9rem; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .breadcrumb { font-size: 0.8rem; color: var(--accent); cursor: pointer; margin-bottom: 0.75rem; padding: 0.3rem 0.5rem; background: var(--bg-hover); border-radius: 4px; }
+  .breadcrumb:hover { background: var(--bg-active); }
   .panel-actions { display: flex; gap: 0.4rem; }
-  .save-btn { background: #0f3460; color: #7ec8e3; border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+  .save-btn { background: var(--bg-active); color: var(--accent); border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
   .open-google {
     display: block; width: 100%; box-sizing: border-box; margin: 0 0 1rem;
-    background: none; border: 1px solid #3a4a6a; color: #7ec8e3;
+    background: none; border: 1px solid var(--border); color: var(--accent);
     padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer;
     font-size: 0.8rem; font-family: inherit; text-align: center;
   }
-  .open-google:hover { background: #1a2a4a; border-color: #7ec8e3; }
-  .save-btn:hover { background: #1a4a7a; }
-  .close-btn { background: none; border: none; color: #666; cursor: pointer; font-size: 1.1rem; }
-  .close-btn:hover { color: #e0e0e0; }
+  .open-google:hover { background: var(--bg-hover); border-color: var(--accent); }
+  .save-btn:hover { background: var(--bg-active); }
+  .close-btn { background: none; border: none; color: var(--fg-faint); cursor: pointer; font-size: 1.1rem; }
+  .close-btn:hover { color: var(--fg); }
 
   .field { margin-bottom: 1rem; }
-  .field label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
-  .field-label { display: block; font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
+  .field label { display: block; font-size: 0.75rem; color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
+  .field-label { display: block; font-size: 0.75rem; color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
   .links { display: flex; flex-direction: column; gap: 0.25rem; }
   .link-chip {
     display: block; width: 100%; box-sizing: border-box; text-align: left;
-    background: #16213e; border: 1px solid #2a2a4a; border-radius: 4px;
-    color: #7ec8e3; padding: 0.35rem 0.5rem; cursor: pointer; font-size: 0.78rem;
+    background: var(--bg-sidebar); border: 1px solid var(--bg-elevated); border-radius: 4px;
+    color: var(--accent); padding: 0.35rem 0.5rem; cursor: pointer; font-size: 0.78rem;
     font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .link-chip:hover { background: #1a2a4a; border-color: #7ec8e3; }
+  .link-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
   .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
-  .add-subtask-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
-  .add-subtask-btn:hover { background: #1a2a4a; }
+  .add-subtask-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
+  .add-subtask-btn:hover { background: var(--bg-hover); }
   .field input[type="text"], .field textarea, .field select {
-    width: 100%; background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 4px;
-    color: #e0e0e0; padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
+    width: 100%; background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 4px;
+    color: var(--fg); padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
     box-sizing: border-box;
   }
-  .field input:focus, .field textarea:focus, .field select:focus { border-color: #0f3460; }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--bg-active); }
   .field input[type="date"] { color-scheme: dark; }
   .field textarea { resize: vertical; min-height: 100px; }
   .field select { cursor: pointer; color-scheme: dark; }
   /* Style the dropdown popup itself — without this the <option> list inherits
      the OS default (white) background while keeping light text → unreadable. */
-  .field select option { background: #1a1a2e; color: #e0e0e0; }
+  .field select option { background: var(--bg); color: var(--fg); }
 
   .quick-dates { display: flex; gap: 0.3rem; margin-top: 0.4rem; flex-wrap: wrap; }
   .quick-dates button {
-    background: #2a2a4a; border: none; color: #888; padding: 0.25rem 0.5rem;
+    background: var(--bg-elevated); border: none; color: var(--fg-muted); padding: 0.25rem 0.5rem;
     border-radius: 3px; font-size: 0.75rem; cursor: pointer;
   }
-  .quick-dates button:hover { background: #0f3460; color: #7ec8e3; }
+  .quick-dates button:hover { background: var(--bg-active); color: var(--accent); }
 
-  .danger-zone { margin-top: auto; padding-top: 1rem; border-top: 1px solid #2a2a4a; }
-  .delete-btn { background: none; border: 1px solid #5a2a2a; color: #e74c3c; padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
-  .delete-btn:hover { background: #3a1a1a; }
+  .danger-zone { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--bg-elevated); }
+  .delete-btn { background: none; border: 1px solid var(--border-danger); color: var(--danger); padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
+  .delete-btn:hover { background: var(--bg-danger); }
 
   .subtask-list { display: flex; flex-direction: column; gap: 0.3rem; }
   .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
-  .subtask-item:hover { background: #1a2a4a; }
+  .subtask-item:hover { background: var(--bg-hover); }
   .subtask-item.completed .subtask-title { text-decoration: line-through; opacity: 0.5; }
   .subtask-check { cursor: pointer; font-size: 0.9rem; }
   .subtask-title { font-size: 0.85rem; }
   .subtask-title.clickable { cursor: pointer; }
-  .subtask-title.clickable:hover { text-decoration: underline; color: #7ec8e3; }
+  .subtask-title.clickable:hover { text-decoration: underline; color: var(--accent); }
 
   @media (max-width: 700px) {
     .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }

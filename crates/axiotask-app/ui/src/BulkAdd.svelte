@@ -105,52 +105,52 @@
     display: flex; align-items: center; justify-content: center; z-index: 2000;
   }
   .card {
-    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 10px;
     width: 90%; max-width: 560px; max-height: 88vh; display: flex; flex-direction: column;
     padding: 1.25rem; gap: 1rem;
   }
   .head { display: flex; align-items: center; justify-content: space-between; }
-  .head h2 { margin: 0; font-size: 1.05rem; color: #7ec8e3; }
-  .x { background: none; border: none; color: #888; font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0 0.25rem; }
-  .x:hover { color: #e0e0e0; }
+  .head h2 { margin: 0; font-size: 1.05rem; color: var(--accent); }
+  .x { background: none; border: none; color: var(--fg-muted); font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 0 0.25rem; }
+  .x:hover { color: var(--fg); }
 
   .bulk-text {
-    width: 100%; box-sizing: border-box; background: #16213e; border: 1px solid #2a2a4a;
-    border-radius: 6px; color: #e0e0e0; padding: 0.6rem; font-size: 0.9rem;
+    width: 100%; box-sizing: border-box; background: var(--bg-sidebar); border: 1px solid var(--bg-elevated);
+    border-radius: 6px; color: var(--fg); padding: 0.6rem; font-size: 0.9rem;
     font-family: inherit; resize: vertical; min-height: 120px; outline: none;
   }
-  .bulk-text:focus { border-color: #0f3460; }
+  .bulk-text:focus { border-color: var(--bg-active); }
 
   .modes { border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
   .modes legend {
     font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
-    color: #667; padding: 0; margin-bottom: 0.2rem;
+    color: var(--fg-faint); padding: 0; margin-bottom: 0.2rem;
   }
   .modes label { display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; padding: 0.4rem 0.5rem; border-radius: 6px; }
-  .modes label:hover { background: #16213e; }
+  .modes label:hover { background: var(--bg-sidebar); }
   .modes input { margin-top: 0.2rem; cursor: pointer; }
   .modes span { display: flex; flex-direction: column; gap: 0.1rem; }
-  .modes strong { color: #e0e0e0; font-size: 0.85rem; font-weight: 600; }
-  .modes small { color: #888; font-size: 0.78rem; }
+  .modes strong { color: var(--fg); font-size: 0.85rem; font-weight: 600; }
+  .modes small { color: var(--fg-muted); font-size: 0.78rem; }
 
   .field-row { display: flex; align-items: center; gap: 0.6rem; }
-  .field-row label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: #667; }
+  .field-row label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--fg-faint); }
   .field-row select {
-    flex: 1; background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 4px;
-    color: #e0e0e0; padding: 0.4rem; font-size: 0.85rem; font-family: inherit; outline: none; color-scheme: dark;
+    flex: 1; background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 4px;
+    color: var(--fg); padding: 0.4rem; font-size: 0.85rem; font-family: inherit; outline: none; color-scheme: dark;
   }
-  .field-row select option { background: #1a1a2e; color: #e0e0e0; }
+  .field-row select option { background: var(--bg); color: var(--fg); }
 
   .actions { display: flex; align-items: center; justify-content: space-between; }
-  .count { color: #888; font-size: 0.8rem; }
+  .count { color: var(--fg-muted); font-size: 0.8rem; }
   .buttons { display: flex; gap: 0.5rem; }
   .actions button {
     border: none; padding: 0.45rem 1rem; border-radius: 5px; cursor: pointer;
     font-size: 0.85rem; font-family: inherit;
   }
-  .cancel { background: #2a2a4a; color: #ccc; }
-  .cancel:hover { background: #3a3a5a; }
-  .primary { background: #0f3460; color: #7ec8e3; }
-  .primary:hover:not(:disabled) { background: #1a4a7a; }
+  .cancel { background: var(--bg-elevated); color: var(--fg-secondary); }
+  .cancel:hover { background: var(--border-faint); }
+  .primary { background: var(--bg-active); color: var(--accent); }
+  .primary:hover:not(:disabled) { background: var(--bg-active); }
   .primary:disabled { opacity: 0.45; cursor: default; }
 </style>

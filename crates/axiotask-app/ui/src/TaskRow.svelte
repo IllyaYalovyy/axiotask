@@ -225,10 +225,10 @@
     border-radius: 4px; cursor: pointer; transition: background 0.1s, opacity 0.3s, transform 0.3s;
     padding: 0.4rem 0.5rem;
   }
-  .task-widget:hover { background: #1a2a4a; }
-  .task-widget.focused { background: #0f3460; }
-  .task-widget.selected { box-shadow: inset 3px 0 0 #7ec8e3; background: #14253f; }
-  .task-widget.selected.focused { background: #0f3460; }
+  .task-widget:hover { background: var(--bg-hover); }
+  .task-widget.focused { background: var(--bg-active); }
+  .task-widget.selected { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg-active); }
+  .task-widget.selected.focused { background: var(--bg-active); }
   .task-widget.completing { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completing .title { text-decoration: line-through; }
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }
@@ -237,29 +237,29 @@
   .task-widget.dragging { opacity: 0.4; }
   .task-widget.touch-dragging { opacity: 0.6; transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
 
-  .drag-handle { flex-shrink: 0; cursor: grab; color: #555; font-size: 0.9rem; user-select: none; padding: 0 0.2rem; }
-  .drag-handle:hover { color: #7ec8e3; }
+  .drag-handle { flex-shrink: 0; cursor: grab; color: var(--fg-faint); font-size: 0.9rem; user-select: none; padding: 0 0.2rem; }
+  .drag-handle:hover { color: var(--accent); }
   .drag-handle:active { cursor: grabbing; }
 
   .main-row { display: flex; align-items: center; gap: 0.4rem; }
 
-  .tree-icon { flex-shrink: 0; width: 1rem; text-align: center; font-size: 0.7rem; color: #666; }
-  .tree-icon.sub { color: #3a3a5a; font-size: 0.75rem; }
+  .tree-icon { flex-shrink: 0; width: 1rem; text-align: center; font-size: 0.7rem; color: var(--fg-faint); }
+  .tree-icon.sub { color: var(--border-faint); font-size: 0.75rem; }
 
   .checkbox { flex-shrink: 0; font-size: 1rem; cursor: pointer; }
-  .checkbox:hover { border-color: #7ec8e3; }
+  .checkbox:hover { border-color: var(--accent); }
 
   .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; cursor: text; }
-  .title:hover { text-decoration: underline; text-decoration-color: #3a3a5a; }
+  .title:hover { text-decoration: underline; text-decoration-color: var(--border-faint); }
 
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
   .task-widget:hover .actions, .task-widget.focused .actions { display: flex; }
   .actions button {
-    background: #2a2a4a; border: none; color: #888; padding: 0.15rem 0.35rem;
+    background: var(--bg-elevated); border: none; color: var(--fg-muted); padding: 0.15rem 0.35rem;
     border-radius: 3px; font-size: 0.7rem; cursor: pointer; font-family: inherit;
     min-width: 2rem; min-height: 1.5rem; display: flex; align-items: center; justify-content: center;
   }
-  .actions button:hover { background: #0f3460; color: #7ec8e3; }
+  .actions button:hover { background: var(--bg-active); color: var(--accent); }
 
   /* Touch/mobile: always show actions, 44px min tap targets */
   @media (pointer: coarse) {
@@ -285,29 +285,29 @@
   }
 
   .progress { display: flex; align-items: center; gap: 0.3rem; }
-  .progress-bar { display: inline-block; width: 60px; height: 6px; background: #2a3a5a; border-radius: 3px; overflow: hidden; }
-  .progress-fill { display: block; height: 100%; background: #7ec8e3; border-radius: 3px; transition: width 0.2s; }
-  .progress-text { color: #aaa; }
+  .progress-bar { display: inline-block; width: 60px; height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
+  .progress-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
+  .progress-text { color: var(--fg-secondary); }
 
   .badge { font-size: 0.7rem; cursor: default; }
-  .link-badge { text-decoration: none; color: #7ec8e3; cursor: pointer; }
+  .link-badge { text-decoration: none; color: var(--accent); cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
 
   /* Pending-sync dot: a local change not yet pushed to Google. */
-  .sync-pending { color: #d9a441; font-size: 0.5rem; line-height: 1; flex-shrink: 0; cursor: default; }
+  .sync-pending { color: var(--warning); font-size: 0.5rem; line-height: 1; flex-shrink: 0; cursor: default; }
 
   .scheduled-marker { font-size: 0.7rem; cursor: default; flex-shrink: 0; }
-  .due { color: #888; }
-  .due.overdue { color: #e74c3c; font-weight: 600; }
-  .due.due-today { color: #ff9800; }
-  .no-due { color: #3a3a5a; }
+  .due { color: var(--fg-muted); }
+  .due.overdue { color: var(--danger); font-weight: 600; }
+  .due.due-today { color: var(--warning); }
+  .no-due { color: var(--border-faint); }
   .pickable { cursor: pointer; }
   .pickable:hover { text-decoration: underline; }
-  .list-tag { color: #555; background: #2a2a4a; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.65rem; }
+  .list-tag { color: var(--fg-faint); background: var(--bg-elevated); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.65rem; }
 
   .edit-input {
-    flex: 1; background: #1a1a3e; border: 1px solid #0f3460;
-    color: #e0e0e0; padding: 0.3rem 0.5rem; border-radius: 3px;
+    flex: 1; background: var(--bg-input); border: 1px solid var(--bg-active);
+    color: var(--fg); padding: 0.3rem 0.5rem; border-radius: 3px;
     font-size: 0.9rem; outline: none;
   }
 </style>

@@ -31,17 +31,17 @@
 </div>
 
 <style>
-  .sort-dropdown { position: relative; cursor: pointer; font-size: 0.8rem; color: #888; user-select: none; }
-  .label:hover { color: #ccc; }
+  .sort-dropdown { position: relative; cursor: pointer; font-size: 0.8rem; color: var(--fg-muted); user-select: none; }
+  .label:hover { color: var(--fg-secondary); }
   .arrow { font-size: 0.6rem; margin-left: 0.2rem; }
   .menu {
     position: absolute; top: 100%; left: 0; margin-top: 0.3rem;
-    background: #1e2a3e; border: 1px solid #3a4a6a; border-radius: 6px;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
     padding: 0.3rem 0; min-width: 160px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   }
-  .option { padding: 0.4rem 0.75rem; font-size: 0.8rem; color: #ccc; }
-  .option:hover { background: #0f3460; color: #fff; }
-  .option.active { color: #7ec8e3; }
+  .option { padding: 0.4rem 0.75rem; font-size: 0.8rem; color: var(--fg-secondary); }
+  .option:hover { background: var(--bg-active); color: var(--fg-strong); }
+  .option.active { color: var(--accent); }
 
   @media (pointer: coarse) {
     .sort-dropdown { font-size: 0.9rem; padding: 0.3rem 0; }

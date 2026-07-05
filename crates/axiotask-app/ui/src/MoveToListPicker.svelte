@@ -47,13 +47,13 @@
     display: flex; align-items: center; justify-content: center; z-index: 6000;
   }
   .picker {
-    background: #1e2a3e; border: 1px solid #3a4a6a; border-radius: 8px;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 1rem; min-width: 240px; outline: none;
   }
-  h3 { margin: 0 0 0.75rem; font-size: 0.9rem; color: #ccc; }
+  h3 { margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--fg-secondary); }
   .list-option {
     padding: 0.5rem 0.75rem; border-radius: 4px; cursor: pointer;
-    font-size: 0.85rem; color: #e0e0e0;
+    font-size: 0.85rem; color: var(--fg);
   }
-  .list-option:hover, .list-option.focused { background: #0f3460; color: #fff; }
+  .list-option:hover, .list-option.focused { background: var(--bg-active); color: var(--fg-strong); }
 </style>

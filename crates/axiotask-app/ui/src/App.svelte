@@ -18,6 +18,7 @@
   import Properties from "./Properties.svelte";
   import BulkAdd from "./BulkAdd.svelte";
   import { storageKey } from "./storage.js";
+  import { getThemePref, setThemePref } from "./theme.js";
 
   // --- State ---
   let lists = $state([]);
@@ -46,6 +47,7 @@
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let datePickerTask = $state(null); // task whose due date is being picked (#37)
+  let themePref = $state(getThemePref()); // "dark" | "light" | "system" (#46)
   let renamingListId = $state(null); // triggers inline rename in sidebar
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
@@ -439,6 +441,15 @@
     const id = datePickerTask?.id;
     datePickerTask = null;
     if (id) setDue(id, dateStr ? "raw:" + dateStr : "Clear");
+  }
+
+  // #46: one-click light/dark toggle, and explicit selection from Properties.
+  function toggleTheme() {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    themePref = next; setThemePref(next);
+  }
+  function selectTheme(pref) {
+    themePref = pref; setThemePref(pref);
   }
 
   async function moveTask(id, parentId) {
@@ -985,6 +996,8 @@
     onlistaction={openListContextMenu}
     onreorderlists={reorderLists}
     onproperties={openProperties}
+    ontoggletheme={toggleTheme}
+    theme={themePref}
     {authenticated}
     {syncStatus}
     {lastSynced}
@@ -1083,6 +1096,8 @@
     onfreshsync={freshSyncFromProperties}
     onexport={doExport}
     onimport={doImport}
+    theme={themePref}
+    onsettheme={selectTheme}
   />
 {/if}
 {#if bulkAdd}
@@ -1122,34 +1137,34 @@
 {/if}
 
 <style>
-  :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; -webkit-tap-highlight-color: transparent; }
+  :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   :global(*, *::before, *::after) { box-sizing: border-box; }
   .app { display: flex; height: 100vh; height: 100dvh; }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
-  .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid #2a2a4a; gap: 0.5rem; flex-wrap: wrap; }
-  .new-task-btn { background: none; border: 1px solid #3a4a6a; color: #7ec8e3; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
-  .new-task-btn:hover { background: #1a2a4a; }
-  .view-title { font-size: 0.9rem; font-weight: 600; color: #e0e0e0; margin-right: auto; }
-  .toggle { font-size: 0.8rem; color: #888; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
+  .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
+  .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
+  .new-task-btn:hover { background: var(--bg-hover); }
+  .view-title { font-size: 0.9rem; font-weight: 600; color: var(--fg); margin-right: auto; }
+  .toggle { font-size: 0.8rem; color: var(--fg-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
-  .clear-btn { background: none; border: 1px solid #3a3a5a; color: #888; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }
-  .clear-btn:hover { background: #2a2a4a; color: #e74c3c; }
-  .sort-notice { font-size: 0.7rem; color: #ff9800; margin-left: 0.5rem; }
+  .clear-btn { background: none; border: 1px solid var(--border-faint); color: var(--fg-muted); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }
+  .clear-btn:hover { background: var(--bg-elevated); color: var(--danger); }
+  .sort-notice { font-size: 0.7rem; color: var(--warning); margin-left: 0.5rem; }
   .bulk-bar {
     display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
-    padding: 0.4rem 1rem; background: #14253f; border-bottom: 1px solid #2a4a6a;
+    padding: 0.4rem 1rem; background: var(--bg-active); border-bottom: 1px solid var(--bg-active);
   }
-  .bulk-count { font-size: 0.8rem; color: #7ec8e3; font-weight: 600; margin-right: 0.3rem; }
+  .bulk-count { font-size: 0.8rem; color: var(--accent); font-weight: 600; margin-right: 0.3rem; }
   .bulk-bar button {
-    background: #2a2a4a; border: none; color: #ccc; padding: 0.25rem 0.6rem;
+    background: var(--bg-elevated); border: none; color: var(--fg-secondary); padding: 0.25rem 0.6rem;
     border-radius: 4px; cursor: pointer; font-size: 0.78rem; font-family: inherit;
   }
-  .bulk-bar button:hover { background: #3a3a5a; }
-  .bulk-bar .bulk-delete:hover { background: #3a1a1a; color: #e74c3c; }
-  .bulk-bar .bulk-clear { margin-left: auto; background: none; color: #888; }
-  .bulk-bar .bulk-clear:hover { color: #e0e0e0; background: none; }
-  .status { color: #888; text-align: center; margin-top: 4rem; }
-  .status.error { color: #e74c3c; }
+  .bulk-bar button:hover { background: var(--border-faint); }
+  .bulk-bar .bulk-delete:hover { background: var(--bg-danger); color: var(--danger); }
+  .bulk-bar .bulk-clear { margin-left: auto; background: none; color: var(--fg-muted); }
+  .bulk-bar .bulk-clear:hover { color: var(--fg); background: none; }
+  .status { color: var(--fg-muted); text-align: center; margin-top: 4rem; }
+  .status.error { color: var(--danger); }
 
   /* Mobile (<700px): sidebar becomes top nav, full-screen detail */
   @media (max-width: 700px) {
@@ -1165,11 +1180,11 @@
   }
 
   .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-  .confirm-dialog { background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 8px; padding: 1.5rem; max-width: 360px; width: 90%; }
-  .confirm-dialog p { margin: 0 0 1rem; color: #e0e0e0; }
+  .confirm-dialog { background: var(--bg-elevated); border: 1px solid var(--border-faint); border-radius: 8px; padding: 1.5rem; max-width: 360px; width: 90%; }
+  .confirm-dialog p { margin: 0 0 1rem; color: var(--fg); }
   .confirm-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
-  .confirm-cancel { background: none; border: 1px solid #3a3a5a; color: #aaa; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
-  .confirm-cancel:hover { background: #3a3a5a; }
-  .confirm-delete { background: #e74c3c; border: none; color: #fff; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
-  .confirm-delete:hover { background: #c0392b; }
+  .confirm-cancel { background: none; border: 1px solid var(--border-faint); color: var(--fg-secondary); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
+  .confirm-cancel:hover { background: var(--border-faint); }
+  .confirm-delete { background: var(--danger); border: none; color: var(--fg-strong); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
+  .confirm-delete:hover { background: var(--danger); }
 </style>

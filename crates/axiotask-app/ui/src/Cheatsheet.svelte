@@ -40,15 +40,15 @@
     display: flex; align-items: center; justify-content: center; z-index: 2000;
   }
   .sheet {
-    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 8px;
     padding: 2rem; max-width: 600px; width: 90%;
   }
-  h2 { margin: 0 0 1.5rem; font-size: 1.2rem; color: #7ec8e3; text-align: center; }
+  h2 { margin: 0 0 1.5rem; font-size: 1.2rem; color: var(--accent); text-align: center; }
   .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-  .col h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin: 1rem 0 0.4rem; }
+  .col h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-faint); margin: 1rem 0 0.4rem; }
   .col h3:first-child { margin-top: 0; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.75rem; margin: 0; }
-  dt { font-family: monospace; color: #7ec8e3; font-size: 0.8rem; }
-  dd { margin: 0; color: #aaa; font-size: 0.8rem; }
-  .hint { text-align: center; color: #555; font-size: 0.75rem; margin: 1.5rem 0 0; }
+  dt { font-family: monospace; color: var(--accent); font-size: 0.8rem; }
+  dd { margin: 0; color: var(--fg-secondary); font-size: 0.8rem; }
+  .hint { text-align: center; color: var(--fg-faint); font-size: 0.75rem; margin: 1.5rem 0 0; }
 </style>

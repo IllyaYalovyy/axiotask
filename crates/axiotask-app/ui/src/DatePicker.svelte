@@ -102,30 +102,30 @@
     display: flex; align-items: center; justify-content: center; z-index: 6000;
   }
   .datepicker {
-    background: #1e2a3e; border: 1px solid #3a4a6a; border-radius: 8px;
-    padding: 0.75rem; width: 260px; outline: none; color: #e0e0e0;
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.75rem; width: 260px; outline: none; color: var(--fg);
   }
   .dp-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
   .dp-title { font-size: 0.9rem; font-weight: 600; }
   .dp-nav {
-    background: none; border: none; color: #ccc; font-size: 1.1rem; cursor: pointer;
+    background: none; border: none; color: var(--fg-secondary); font-size: 1.1rem; cursor: pointer;
     padding: 0 0.4rem; border-radius: 4px;
   }
-  .dp-nav:hover { background: #0f3460; color: #fff; }
+  .dp-nav:hover { background: var(--bg-active); color: var(--fg-strong); }
   .dp-weekdays, .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-  .dp-weekday { text-align: center; font-size: 0.65rem; color: #888; padding: 0.2rem 0; }
+  .dp-weekday { text-align: center; font-size: 0.65rem; color: var(--fg-muted); padding: 0.2rem 0; }
   .dp-day {
-    background: none; border: none; color: #ddd; cursor: pointer;
+    background: none; border: none; color: var(--fg); cursor: pointer;
     padding: 0.35rem 0; border-radius: 4px; font-size: 0.8rem; font-family: inherit;
   }
-  .dp-day:hover, .dp-day.focused { background: #0f3460; color: #fff; }
-  .dp-day.other { color: #4a5a7a; }
-  .dp-day.today { outline: 1px solid #7ec8e3; }
-  .dp-day.selected { background: #3584e4; color: #fff; }
+  .dp-day:hover, .dp-day.focused { background: var(--bg-active); color: var(--fg-strong); }
+  .dp-day.other { color: var(--fg-faint); }
+  .dp-day.today { outline: 1px solid var(--accent); }
+  .dp-day.selected { background: var(--accent-bg); color: var(--fg-strong); }
   .dp-footer { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
   .dp-action {
-    flex: 1; background: #2a2a4a; border: none; color: #ccc; padding: 0.35rem;
+    flex: 1; background: var(--bg-elevated); border: none; color: var(--fg-secondary); padding: 0.35rem;
     border-radius: 4px; cursor: pointer; font-size: 0.78rem; font-family: inherit;
   }
-  .dp-action:hover { background: #0f3460; color: #7ec8e3; }
+  .dp-action:hover { background: var(--bg-active); color: var(--accent); }
 </style>

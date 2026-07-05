@@ -14,6 +14,8 @@
     onfreshsync,
     onexport,
     onimport,
+    theme = "dark",
+    onsettheme,
   } = $props();
 
   let section = $state("sync");
@@ -37,9 +39,16 @@
 
   const SECTIONS = [
     { id: "sync", label: "Sync", icon: "↻" },
+    { id: "appearance", label: "Appearance", icon: "◐" },
     { id: "account", label: "Account", icon: "👤" },
     { id: "shortcuts", label: "Shortcuts", icon: "⌨" },
     { id: "about", label: "About", icon: "ℹ" },
+  ];
+
+  const THEMES = [
+    { id: "light", label: "Light" },
+    { id: "dark", label: "Dark" },
+    { id: "system", label: "Follow system" },
   ];
 
   const repository = "https://github.com/yalovoy/axiotask";
@@ -175,6 +184,21 @@
             <button onclick={onimport} disabled={busy}>⭱ Restore latest…</button>
           </div>
 
+        {:else if section === "appearance"}
+          <h3>Theme</h3>
+          <div class="theme-options" role="radiogroup" aria-label="Theme">
+            {#each THEMES as t}
+              <button
+                class="theme-option"
+                class:active={theme === t.id}
+                role="radio"
+                aria-checked={theme === t.id}
+                onclick={() => onsettheme?.(t.id)}
+              >{t.label}</button>
+            {/each}
+          </div>
+          <p class="hint">Vanilla GNOME light and dark. "Follow system" tracks your desktop preference.</p>
+
         {:else if section === "account"}
           <h3>Google account</h3>
           <p class="acct-status">
@@ -245,124 +269,133 @@
     display: flex; align-items: center; justify-content: center; z-index: 2000;
   }
   .card {
-    background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 10px;
+    background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 10px;
     width: 90%; max-width: 620px; max-height: 85vh; display: flex; flex-direction: column;
     overflow: hidden;
   }
   .head {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 1rem 1.25rem; border-bottom: 1px solid #2a2a4a;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--bg-elevated);
   }
-  .head h2 { margin: 0; font-size: 1.05rem; color: #7ec8e3; }
+  .head h2 { margin: 0; font-size: 1.05rem; color: var(--accent); }
   .instance-badge {
     margin-left: 0.5rem; font-size: 0.65rem; font-weight: 600; vertical-align: middle;
-    text-transform: uppercase; letter-spacing: 0.04em; color: #ffb74d;
-    background: #3a2a14; border: 1px solid #5a4424; padding: 0.1rem 0.4rem; border-radius: 8px;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--warning);
+    background: var(--bg-warning); border: 1px solid var(--border-warning); padding: 0.1rem 0.4rem; border-radius: 8px;
   }
   .x {
-    background: none; border: none; color: #888; font-size: 1.4rem; line-height: 1;
+    background: none; border: none; color: var(--fg-muted); font-size: 1.4rem; line-height: 1;
     cursor: pointer; padding: 0 0.25rem;
   }
-  .x:hover { color: #e0e0e0; }
+  .x:hover { color: var(--fg); }
 
   .body { display: flex; min-height: 0; flex: 1; }
   .tabs {
     display: flex; flex-direction: column; gap: 2px; padding: 0.75rem;
-    border-right: 1px solid #2a2a4a; min-width: 130px; background: #16213e;
+    border-right: 1px solid var(--bg-elevated); min-width: 130px; background: var(--bg-sidebar);
   }
   .tab {
     display: flex; align-items: center; gap: 0.5rem; text-align: left;
-    background: none; border: none; color: #aaa; padding: 0.5rem 0.7rem;
+    background: none; border: none; color: var(--fg-secondary); padding: 0.5rem 0.7rem;
     border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-family: inherit;
   }
-  .tab:hover { background: #1a2a4a; color: #e0e0e0; }
-  .tab.active { background: #0f3460; color: #fff; }
+  .tab:hover { background: var(--bg-hover); color: var(--fg); }
+  .tab.active { background: var(--bg-active); color: var(--fg-strong); }
   .tab-icon { width: 1.1rem; text-align: center; }
 
   .pane { padding: 1.1rem 1.25rem; overflow-y: auto; flex: 1; min-width: 0; }
   .pane h3 {
     font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
-    color: #667; margin: 0 0 0.6rem; padding-top: 0.25rem;
+    color: var(--fg-faint); margin: 0 0 0.6rem; padding-top: 0.25rem;
   }
-  .pane h3:not(:first-child) { margin-top: 1.4rem; border-top: 1px solid #23233e; padding-top: 1rem; }
+  .pane h3:not(:first-child) { margin-top: 1.4rem; border-top: 1px solid var(--bg-panel); padding-top: 1rem; }
 
   .switch {
     display: flex; align-items: flex-start; gap: 0.7rem; margin-bottom: 0.7rem;
     cursor: pointer; padding: 0.5rem 0.6rem; border-radius: 6px;
   }
-  .switch:hover { background: #16213e; }
+  .switch:hover { background: var(--bg-sidebar); }
   .switch input { margin-top: 0.2rem; width: 1.05rem; height: 1.05rem; cursor: pointer; flex-shrink: 0; }
   .switch span { display: flex; flex-direction: column; gap: 0.15rem; }
-  .switch strong { color: #e0e0e0; font-size: 0.88rem; font-weight: 600; }
-  .switch small { color: #888; font-size: 0.78rem; line-height: 1.3; }
+  .switch strong { color: var(--fg); font-size: 0.88rem; font-weight: 600; }
+  .switch small { color: var(--fg-muted); font-size: 0.78rem; line-height: 1.3; }
 
   .confirm-push {
     margin: 0.5rem 0 0.25rem; padding: 0.6rem 0.75rem;
-    background: #2a2416; border: 1px solid #6b5a1e; border-radius: 6px;
+    background: var(--bg-warning); border: 1px solid var(--border-warning); border-radius: 6px;
   }
-  .confirm-push p { margin: 0 0 0.5rem; color: #e0d6a8; font-size: 0.82rem; line-height: 1.35; }
+  .confirm-push p { margin: 0 0 0.5rem; color: var(--warning); font-size: 0.82rem; line-height: 1.35; }
   .confirm-actions { display: flex; gap: 0.5rem; }
   .confirm-actions button {
     border: none; border-radius: 4px; padding: 0.35rem 0.7rem;
     font-size: 0.8rem; cursor: pointer; font-family: inherit;
   }
-  .confirm-enable { background: #d9a441; color: #1a1a2e; font-weight: 600; }
-  .confirm-enable:hover { background: #e6b34f; }
-  .confirm-cancel { background: #2a2a4a; color: #ccc; }
-  .confirm-cancel:hover { background: #0f3460; }
+  .confirm-enable { background: var(--warning); color: var(--bg); font-weight: 600; }
+  .confirm-enable:hover { background: var(--warning); }
+  .confirm-cancel { background: var(--bg-elevated); color: var(--fg-secondary); }
+  .confirm-cancel:hover { background: var(--bg-active); }
 
   .stats { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
-  .stats dt { color: #667; font-size: 0.8rem; }
-  .stats dd { margin: 0; color: #ccc; font-size: 0.8rem; }
+  .stats dt { color: var(--fg-faint); font-size: 0.8rem; }
+  .stats dd { margin: 0; color: var(--fg-secondary); font-size: 0.8rem; }
 
   .actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
   .actions button {
-    background: #2a2a4a; color: #ccc; border: none; padding: 0.45rem 0.9rem;
+    background: var(--bg-elevated); color: var(--fg-secondary); border: none; padding: 0.45rem 0.9rem;
     border-radius: 5px; cursor: pointer; font-size: 0.82rem; font-family: inherit;
   }
-  .actions button:hover:not(:disabled) { background: #3a3a5a; }
+  .actions button:hover:not(:disabled) { background: var(--border-faint); }
   .actions button:disabled { opacity: 0.45; cursor: default; }
-  .actions button.primary { background: #0f3460; color: #7ec8e3; }
-  .actions button.primary:hover { background: #1a4a7a; }
+  .actions button.primary { background: var(--bg-active); color: var(--accent); }
+  .actions button.primary:hover { background: var(--bg-active); }
 
   .error {
-    background: #3a1a1a; border: 1px solid #5a2a2a; color: #e8a0a0;
+    background: var(--bg-danger); border: 1px solid var(--border-danger); color: var(--danger);
     padding: 0.5rem 0.7rem; border-radius: 5px; font-size: 0.8rem; margin: 0 0 0.8rem;
   }
-  .hint { color: #667; font-size: 0.78rem; margin: 0.8rem 0 0; }
+  .hint { color: var(--fg-faint); font-size: 0.78rem; margin: 0.8rem 0 0; }
 
-  .acct-status { display: flex; align-items: center; gap: 0.5rem; color: #ccc; font-size: 0.9rem; margin: 0; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; }
-  .dot.on { background: #4caf50; }
-  .scopes { margin: 0; padding-left: 1.1rem; color: #ccc; font-size: 0.82rem; }
+  .theme-options { display: flex; gap: 0.5rem; }
+  .theme-option {
+    flex: 1; background: var(--bg-elevated); border: 1px solid var(--border);
+    color: var(--fg-secondary); padding: 0.5rem; border-radius: 6px;
+    cursor: pointer; font-size: 0.82rem; font-family: inherit;
+  }
+  .theme-option:hover { border-color: var(--accent); }
+  .theme-option.active { background: var(--accent-bg); color: #fff; border-color: var(--accent-bg); }
+
+  .acct-status { display: flex; align-items: center; gap: 0.5rem; color: var(--fg-secondary); font-size: 0.9rem; margin: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--fg-muted); }
+  .dot.on { background: var(--success); }
+  .scopes { margin: 0; padding-left: 1.1rem; color: var(--fg-secondary); font-size: 0.82rem; }
   .scopes li { margin: 0.2rem 0; }
 
   .shortcuts h4 {
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: #667; margin: 1rem 0 0.3rem;
+    color: var(--fg-faint); margin: 1rem 0 0.3rem;
   }
   .shortcuts h4:first-child { margin-top: 0; }
   .shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; margin: 0; }
-  .shortcuts dt { font-family: monospace; color: #7ec8e3; font-size: 0.8rem; }
-  .shortcuts dd { margin: 0; color: #aaa; font-size: 0.8rem; }
+  .shortcuts dt { font-family: monospace; color: var(--accent); font-size: 0.8rem; }
+  .shortcuts dd { margin: 0; color: var(--fg-secondary); font-size: 0.8rem; }
 
   .about { text-align: center; padding: 0.5rem 0; }
-  .about .name { margin: 0; font-size: 1.5rem; color: #7ec8e3; }
-  .about .tagline { margin: 0.3rem 0 1.3rem; color: #888; font-size: 0.85rem; }
+  .about .name { margin: 0; font-size: 1.5rem; color: var(--accent); }
+  .about .tagline { margin: 0.3rem 0 1.3rem; color: var(--fg-muted); font-size: 0.85rem; }
   .about .meta {
     display: grid; grid-template-columns: auto 1fr; gap: 0.4rem 1rem;
     text-align: left; margin: 0 auto 1rem; max-width: 460px;
   }
-  .about .meta dt { color: #667; font-size: 0.8rem; }
-  .about .meta dd { margin: 0; color: #ccc; font-size: 0.8rem; }
-  .about .version { font-family: monospace; color: #e0e0e0; }
-  .about .path { font-family: monospace; font-size: 0.72rem; word-break: break-all; color: #99a; }
-  .about .meta a { color: #7ec8e3; text-decoration: none; word-break: break-all; }
+  .about .meta dt { color: var(--fg-faint); font-size: 0.8rem; }
+  .about .meta dd { margin: 0; color: var(--fg-secondary); font-size: 0.8rem; }
+  .about .version { font-family: monospace; color: var(--fg); }
+  .about .path { font-family: monospace; font-size: 0.72rem; word-break: break-all; color: var(--fg-muted); }
+  .about .meta a { color: var(--accent); text-decoration: none; word-break: break-all; }
   .about .meta a:hover { text-decoration: underline; }
-  .about .license { color: #555; font-size: 0.75rem; margin: 0.5rem 0 0; }
+  .about .license { color: var(--fg-faint); font-size: 0.75rem; margin: 0.5rem 0 0; }
 
   @media (max-width: 700px) {
     .body { flex-direction: column; }
-    .tabs { flex-direction: row; min-width: 0; border-right: none; border-bottom: 1px solid #2a2a4a; overflow-x: auto; }
+    .tabs { flex-direction: row; min-width: 0; border-right: none; border-bottom: 1px solid var(--bg-elevated); overflow-x: auto; }
   }
 </style>

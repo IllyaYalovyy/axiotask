@@ -31,17 +31,17 @@
 
 <style>
   .notes-panel {
-    width: 300px; background: #16213e; border-left: 1px solid #2a2a4a;
+    width: 300px; background: var(--bg-sidebar); border-left: 1px solid var(--bg-elevated);
     display: flex; flex-direction: column; padding: 1rem;
   }
   .notes-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-  .notes-header h3 { margin: 0; font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-  .close-btn { background: none; border: none; color: #666; cursor: pointer; font-size: 1rem; }
-  .close-btn:hover { color: #e0e0e0; }
+  .notes-header h3 { margin: 0; font-size: 0.85rem; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .close-btn { background: none; border: none; color: var(--fg-faint); cursor: pointer; font-size: 1rem; }
+  .close-btn:hover { color: var(--fg); }
   textarea {
-    flex: 1; background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 4px;
-    color: #e0e0e0; padding: 0.75rem; font-size: 0.9rem; font-family: inherit;
+    flex: 1; background: var(--bg); border: 1px solid var(--bg-elevated); border-radius: 4px;
+    color: var(--fg); padding: 0.75rem; font-size: 0.9rem; font-family: inherit;
     resize: none; outline: none;
   }
-  textarea:focus { border-color: #0f3460; }
+  textarea:focus { border-color: var(--bg-active); }
 </style>

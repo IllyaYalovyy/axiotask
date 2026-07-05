@@ -1,4 +1,9 @@
 import { mount } from "svelte";
+import "./theme.css";
+import { applyTheme } from "./theme.js";
+
+// Apply the saved theme before the app renders, so there's no flash.
+applyTheme();
 
 // Capture all errors and write them visibly
 window.onerror = (msg, src, line, col, err) => {
