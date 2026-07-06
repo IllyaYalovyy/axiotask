@@ -83,6 +83,21 @@ describe("Smart Views: Focus", () => {
     await waitFor(() => expect(screen.getByText("Work task")).toBeInTheDocument());
     expect(screen.queryByText("Someday task")).not.toBeInTheDocument();
   });
+
+  it("a subtask due soon pulls its parent in as one card, count matches (#3)", async () => {
+    mockBackend([
+      task("p1", "Parent no due", { due: null }),
+      task("s1", "Subtask due tomorrow", { parent: "p1", due: daysFromNow(1) }),
+      task("other", "Unrelated no due", { due: null }),
+    ]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Parent no due")).toBeInTheDocument());
+    // Subtask never shows as its own row; unrelated undated task isn't in Focus.
+    expect(screen.queryByText("Subtask due tomorrow")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unrelated no due")).not.toBeInTheDocument();
+    // The Focus badge counts the one parent card, not the subtask separately.
+    expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");
+  });
 });
 
 describe("Smart Views: Upcoming", () => {

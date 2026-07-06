@@ -245,37 +245,58 @@
     return new Date(y, m - 1, d);
   }
 
-  function focusTasks() {
-    const now = new Date(); now.setHours(0,0,0,0);
-    const weekEnd = new Date(now.getTime() + 7 * 86400000);
-    return smartTasks().filter(t => {
-      if (!t.due) return false;
-      const d = parseLocalDate(t.due);
-      return d < weekEnd;
-    });
+  // Direct + nested children of a task (flat model, linked by parent_id).
+  function descendantsOf(id) {
+    const out = [];
+    let frontier = allTasks.filter(t => t.parent_id === id);
+    while (frontier.length) {
+      out.push(...frontier);
+      frontier = frontier.flatMap(t => allTasks.filter(c => c.parent_id === t.id));
+    }
+    return out;
   }
 
-  function upcomingTasks() {
+  // Per-task date predicates for the smart views.
+  function inFocus(t) {
+    if (!t.due) return false;
     const now = new Date(); now.setHours(0,0,0,0);
-    const end = new Date(now.getTime() + 14 * 86400000);
-    return smartTasks().filter(t => {
-      if (!t.due) return false;
-      const d = parseLocalDate(t.due);
-      return d > now && d <= end;
-    });
+    return parseLocalDate(t.due) < new Date(now.getTime() + 7 * 86400000);
+  }
+  function inUpcoming(t) {
+    if (!t.due) return false;
+    const now = new Date(); now.setHours(0,0,0,0);
+    const d = parseLocalDate(t.due);
+    return d > now && d <= new Date(now.getTime() + 14 * 86400000);
+  }
+  function inMissed(t) {
+    if (!t.due) return false;
+    const now = new Date(); now.setHours(0,0,0,0);
+    return parseLocalDate(t.due) < now;
   }
 
+  // Smart views operate on TOP-LEVEL tasks only (subtasks appear in the detail
+  // panel, never as standalone rows). A parent is included when it — or any of
+  // its subtasks — matches, so a subtask due soon pulls its whole group in and
+  // is never orphaned; the count then always equals the visible cards (#3 / A).
+  function topLevelWhere(matchFn) {
+    const visible = smartTasks();
+    const visibleIds = new Set(visible.map(t => t.id));
+    return visible.filter(t => !t.parent_id
+      && (matchFn(t) || descendantsOf(t.id).some(d => visibleIds.has(d.id) && matchFn(d))));
+  }
+
+  function focusTasks() { return topLevelWhere(inFocus); }
+  function upcomingTasks() { return topLevelWhere(inUpcoming); }
   function missedTasks() {
-    const now = new Date(); now.setHours(0,0,0,0);
-    return smartTasks().filter(t => {
-      if (!t.due) return false;
-      const d = parseLocalDate(t.due);
-      return d < now;
-    }).sort((a, b) => parseLocalDate(a.due) - parseLocalDate(b.due));
+    // Sort by the earliest overdue date among the task and its matching subtasks.
+    const earliest = (t) => Math.min(
+      ...[t, ...descendantsOf(t.id)].filter(inMissed).map(x => parseLocalDate(x.due).getTime()),
+    );
+    return topLevelWhere(inMissed).sort((a, b) => earliest(a) - earliest(b));
   }
-
   function unscheduledTasks() {
-    return smartTasks().filter(t => !t.due);
+    // A task is "unscheduled" when it itself has no due date.
+    return smartTasks().filter(t => !t.parent_id && !t.due);
   }
 
   function listTasks(listId) {
@@ -342,13 +363,16 @@
   let viewCounts = $derived.by(() => {
     const open = t => t.status !== "completed";
     const c = {};
+    // All counts are of TOP-LEVEL tasks, matching what the list actually shows
+    // (subtasks live in the detail panel), so a badge never disagrees with its
+    // visible cards.
     c.focus = focusTasks().filter(open).length;
     c.upcoming = upcomingTasks().filter(open).length;
     c.missed = missedTasks().filter(open).length;
     c.unscheduled = unscheduledTasks().filter(open).length;
-    c.all = allTasks.filter(open).length;
+    c.all = allTasks.filter(t => !t.parent_id && open(t)).length;
     for (const list of lists) {
-      c[list.id] = allTasks.filter(t => t.listId === list.id && open(t)).length;
+      c[list.id] = allTasks.filter(t => t.listId === list.id && !t.parent_id && open(t)).length;
     }
     return c;
   });
