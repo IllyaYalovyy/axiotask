@@ -8,6 +8,10 @@
   let selectedList = $state("");
 
   let prevTaskId = $state(null);
+  // The task's values when it was loaded, so we only save fields the user
+  // actually changed. Saving unchanged fields would needlessly mark the task
+  // dirty and trigger a push (and, if it races another push, a 412 conflict).
+  let orig = $state({ title: "", notes: "", due: "", list: "" });
 
   // Clickable links found in the title or notes (deduped, live as you type).
   function extractUrls(text) {
@@ -15,30 +19,45 @@
   }
   let detectedLinks = $derived([...new Set([...extractUrls(title), ...extractUrls(notes)])]);
 
-  // Auto-save when switching to a different task (prop change from parent)
+  const dueOf = (d) => (d ? `${d}T00:00:00.000Z` : null);
+
+  // Only the { title, notes, due } fields that differ from the loaded values.
+  function changedFields() {
+    const out = {};
+    if (title !== orig.title) out.title = title;
+    if (notes !== orig.notes) out.notes = notes;
+    if (dueOf(due) !== dueOf(orig.due)) out.due = dueOf(due);
+    return out;
+  }
+
+  // Auto-save the previous task's edits when switching to a different task —
+  // but only if something actually changed.
   $effect.pre(() => {
     if (task && prevTaskId && prevTaskId !== task.id) {
-      // Save the previous task's edits before resetting
-      const dueVal = due ? `${due}T00:00:00.000Z` : null;
-      onsave(prevTaskId, { title, notes, due: dueVal });
+      const ch = changedFields();
+      if (Object.keys(ch).length) onsave(prevTaskId, ch);
     }
   });
 
-  // Reset when task changes
+  // Reset when task changes. Compute from `task` only (not from the editable
+  // vars) so this effect depends solely on `task` — otherwise editing a field
+  // would re-trigger it and wipe the edit.
   $effect(() => {
     if (task) {
-      title = task.title || "";
-      notes = task.notes || "";
-      due = task.due ? task.due.slice(0, 10) : "";
-      selectedList = task.listId || "";
+      const t = task.title || "";
+      const n = task.notes || "";
+      const d = task.due ? task.due.slice(0, 10) : "";
+      const l = task.listId || "";
+      title = t; notes = n; due = d; selectedList = l;
+      orig = { title: t, notes: n, due: d, list: l };
       prevTaskId = task.id;
     }
   });
 
   function save() {
-    const dueVal = due ? `${due}T00:00:00.000Z` : null;
-    onsave(task.id, { title, notes, due: dueVal });
-    if (selectedList !== task.listId) onmovelist(task.id, selectedList);
+    const ch = changedFields();
+    if (Object.keys(ch).length) onsave(task.id, ch);
+    if (selectedList !== orig.list) onmovelist(task.id, selectedList);
   }
 
   function handleKeydown(e) {
@@ -106,7 +125,7 @@
 
   <div class="field">
     <label for="detail-list">List</label>
-    <select id="detail-list" bind:value={selectedList}>
+    <select id="detail-list" value={selectedList} onchange={(e) => (selectedList = e.currentTarget.value)}>
       {#each lists as list}
         <option value={list.id}>{list.title}</option>
       {/each}

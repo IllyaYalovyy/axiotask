@@ -147,7 +147,10 @@
           infoToast = { message: `${n} sync conflict${n > 1 ? "s" : ""} — your version was kept as a "(conflicted copy)".`, timer: setTimeout(() => (infoToast = null), 8000) };
         }
       }
-      loadAll();
+      // Don't reload while the user is typing a new/renamed task inline — a
+      // reload unmounts the editor (and its id may have been remapped by the
+      // push), losing the edit. The pending edit's own refresh will catch up.
+      if (editingId == null) loadAll();
     }).then((fn) => { unlisten = fn; });
     return () => { if (unlisten) unlisten(); };
   });

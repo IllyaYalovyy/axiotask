@@ -285,11 +285,26 @@ describe("TaskDetail Panel (GH#7)", () => {
       await fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() =>
-        expect(invoke).toHaveBeenCalledWith(
-          expect.stringContaining(""),
-          expect.objectContaining({ id: "t1" })
-        )
+        expect(invoke).toHaveBeenCalledWith("move_to_list", { id: "t1", targetListId: "L2" })
       );
+    });
+  });
+
+  describe("No spurious saves (#4 regression)", () => {
+    it("opening and closing a task without edits writes nothing", async () => {
+      mockBackend([task("t1", "Untouched"), task("t2", "Other")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Untouched")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Untouched"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+      const panel = container.querySelector(".detail-panel");
+      await fireEvent.keyDown(panel, { key: "Escape" });
+
+      // Merely viewing a task must not dirty it.
+      for (const cmd of ["rename_task", "set_notes", "set_due", "move_to_list"]) {
+        expect(invoke).not.toHaveBeenCalledWith(cmd, expect.anything());
+      }
     });
   });
 
