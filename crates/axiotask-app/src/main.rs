@@ -137,6 +137,7 @@ fn main() {
             commands::import_backup,
             commands::get_settings,
             commands::set_push_enabled,
+            commands::set_editing,
             commands::set_auto_sync,
         ])
         .run(tauri::generate_context!())

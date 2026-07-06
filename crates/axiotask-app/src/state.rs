@@ -121,6 +121,10 @@ pub struct AppState {
     /// Properties dialog (read-only vs. read-write sync) and persisted to the
     /// config file. Read on every sync run.
     push_enabled: AtomicBool,
+    /// True while the user is actively editing a task in the UI. Pushes are
+    /// held during editing so a create's id remap can't invalidate the id the
+    /// UI is operating on (pull is unaffected — it skips locally-dirty rows).
+    editing: AtomicBool,
     /// Whether to sync automatically on startup. Persisted; display-only after
     /// launch (it only governs the startup sync).
     auto_sync_on_start: AtomicBool,
@@ -176,6 +180,7 @@ impl AppState {
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
             push_enabled: AtomicBool::new(config.sync.push_enabled),
+            editing: AtomicBool::new(false),
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
             config_path: axiotask_core::config::AppConfig::default_path(),
             db_path: db_path.to_owned(),
@@ -224,6 +229,7 @@ impl AppState {
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
             push_enabled: AtomicBool::new(push_enabled),
+            editing: AtomicBool::new(false),
             auto_sync_on_start: AtomicBool::new(true),
             // A throwaway temp path so settings writes in tests never touch the
             // real user config.
@@ -381,8 +387,12 @@ impl AppState {
     /// waits for it to finish before running. Prevents double-push races.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         let _guard = self.sync_guard.lock().await;
-        let push_enabled = self.push_enabled.load(Ordering::Relaxed);
-        tracing::info!("running sync (push_enabled={push_enabled})...");
+        // Hold pushes while the user is mid-edit so a create's id remap can't
+        // invalidate the id the UI is acting on. Pull still runs (it skips
+        // locally-dirty rows), so remote changes keep flowing in.
+        let editing = self.editing.load(Ordering::Relaxed);
+        let push_enabled = self.push_enabled.load(Ordering::Relaxed) && !editing;
+        tracing::info!("running sync (push_enabled={push_enabled}, editing={editing})...");
         let client = self.client.lock().await.clone();
         let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled);
         let result = engine.run().await;
@@ -422,6 +432,11 @@ impl AppState {
     /// A snapshot of the current sync status and running stats.
     pub async fn sync_status(&self) -> SyncStatus {
         self.sync_status.lock().await.clone()
+    }
+
+    /// Mark whether the user is actively editing a task (pauses pushes).
+    pub fn set_editing(&self, editing: bool) {
+        self.editing.store(editing, Ordering::Relaxed);
     }
 
     /// Run sync only if the user is authenticated. Returns an error if not signed in.

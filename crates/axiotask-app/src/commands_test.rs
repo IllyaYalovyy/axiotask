@@ -321,6 +321,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn editing_pauses_push_until_finished() {
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap(); // pull the list
+
+        let task = StoredTask {
+            task: axiotask_core::model::Task {
+                id: "local-uuid".into(),
+                parent: None,
+                position: "1".into(),
+                title: "editing".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-05-23T00:00:00Z".into(),
+                web_view_link: None,
+            },
+            list_id: "L1".into(),
+            sync_state: SyncState::Dirty,
+            local_updated: "2026-05-23T00:00:00Z".into(),
+            pending_op: Some("create".into()),
+        };
+        state.store.upsert_task(&task).await.unwrap();
+
+        // While editing, the push is held — the local id must NOT be remapped,
+        // so the UI can keep operating on it (fixes create-then-edit failures).
+        state.set_editing(true);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.pushed, 0, "no push while editing");
+        assert!(
+            state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
+            "local id preserved while editing"
+        );
+
+        // After editing ends, it pushes and remaps as usual.
+        state.set_editing(false);
+        let out = state.run_sync().await.unwrap();
+        assert!(out.pushed >= 1, "pushes after editing ends");
+        assert!(
+            !state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
+            "id remapped once editing finished"
+        );
+    }
+
+    #[tokio::test]
     async fn set_notes_updates_notes_field() {
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Inbox").await;

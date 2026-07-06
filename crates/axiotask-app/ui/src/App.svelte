@@ -155,6 +155,14 @@
     return () => { if (unlisten) unlisten(); };
   });
 
+  // Pause background pushes while the user is actively editing (inline editor
+  // or detail panel open), so a create's id remap can't invalidate the id being
+  // edited (RC3). Pull keeps running server-side.
+  let editingActive = $derived(editingId != null || detailTask != null);
+  $effect(() => {
+    invoke("set_editing", { editing: editingActive }).catch(() => {});
+  });
+
   // --- Window geometry persistence ---
   // NOTE: programmatically restoring the saved window geometry via
   // setSize/setPosition is intentionally disabled. On WebKitGTK (Linux) driving
