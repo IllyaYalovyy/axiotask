@@ -405,8 +405,11 @@ impl AppState {
                         "sync complete: pulled={}, pushed={}, conflicts={}",
                         o.pulled, o.pushed, o.conflicts
                     );
+                    // Real UTC instant (Timestamp is UTC). Zoned::now() would
+                    // format local time but label it "Z", making the UI read the
+                    // last-synced time as hours in the past off-UTC.
                     status.last_synced = Some(
-                        jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
                     );
                     status.last_pulled = o.pulled;
                     status.last_pushed = o.pushed;
