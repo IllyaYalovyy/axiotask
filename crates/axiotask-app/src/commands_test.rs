@@ -767,6 +767,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn move_to_list_takes_subtasks_along() {
+        // Data-loss regression: moving a parent used to leave its subtasks
+        // behind on a tombstone. Deleting a parent deletes its children both
+        // on Google (verified live) and locally via the FK cascade — so the
+        // whole subtree must move together.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "sub one", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "sub two", "3", Some("C1")); // 2 levels deep
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+        assert_eq!(state.store.list_tasks("L1").await.unwrap().len(), 3);
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+
+        // Locally: the whole subtree exists in L2 with its shape intact.
+        let l2 = state.store.list_tasks("L2").await.unwrap();
+        assert_eq!(l2.len(), 3, "parent + both descendants moved");
+        let parent = l2.iter().find(|t| t.task.title == "parent").unwrap();
+        let c1 = l2.iter().find(|t| t.task.title == "sub one").unwrap();
+        let c2 = l2.iter().find(|t| t.task.title == "sub two").unwrap();
+        assert_eq!(c1.task.parent.as_deref(), Some(parent.task.id.as_str()));
+        assert_eq!(c2.task.parent.as_deref(), Some(c1.task.id.as_str()));
+
+        // After sync: everything lives in remote L2; nothing remains in L1.
+        state.run_sync().await.unwrap();
+        let l2_remote = client.list_tasks("L2", None).await.unwrap();
+        assert_eq!(l2_remote.items.len(), 3, "no subtask lost in the move");
+        let l1_remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(l1_remote.items.is_empty());
+        // And nothing is stuck dirty.
+        assert!(state.store.list_tasks("L2").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean));
+    }
+
+    #[tokio::test]
+    async fn set_due_from_picker_normalizes_bare_date_and_pushes() {
+        // The calendar picker sends "raw:YYYY-MM-DD". Google 400s a bare date
+        // (verified live) — the command must canonicalize before storing, and
+        // the round trip to the (equally strict) fake server must succeed.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "pick a date", "1");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        crate::commands::set_due_inner(&state, "T1".into(), "raw:2026-08-02".into())
+            .await
+            .unwrap();
+        let stored = state.store.list_tasks("L1").await.unwrap().remove(0);
+        assert_eq!(stored.task.due.as_deref(), Some("2026-08-02T00:00:00.000Z"));
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0, "canonical form must not 400");
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(remote.items[0].due.as_deref(), Some("2026-08-02T00:00:00.000Z"));
+    }
+
+    #[tokio::test]
+    async fn set_due_rejects_garbage_instead_of_poisoning_the_row() {
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        let err = crate::commands::set_due_inner(&state, "T1".into(), "raw:not-a-date".into()).await;
+        assert!(err.is_err(), "garbage due must be rejected at the boundary");
+        let stored = state.store.list_tasks("L1").await.unwrap().remove(0);
+        assert_eq!(stored.sync_state, SyncState::Clean, "row untouched");
+    }
+
+    #[tokio::test]
+    async fn undo_delete_after_unpushed_edit_keeps_the_edit_queued() {
+        // Edit (unpushed) → delete → undo: the revived row must stay dirty so
+        // the edit still reaches the server. Reviving it clean silently
+        // dropped the edit from the push queue.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "original", "1");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        // Unpushed local edit.
+        let mut t = state.store.list_tasks("L1").await.unwrap().remove(0);
+        t.task.title = "edited offline".into();
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        state.store.upsert_task(&t).await.unwrap();
+
+        // Delete (tombstone) then undo before any sync.
+        let token = {
+            // Inline delete_task's effect via the command path.
+            let t = state.store.find_task_any("T1").await.unwrap().unwrap();
+            let mut d = t.clone();
+            d.sync_state = SyncState::Deleted;
+            d.pending_op = Some("delete".into());
+            state.store.upsert_task(&d).await.unwrap();
+            crate::commands::DeleteToken {
+                id: t.task.id.clone(),
+                list_id: t.list_id.clone(),
+                parent_id: None,
+                title: t.task.title.clone(),
+                notes: None,
+                status: "needsAction".into(),
+                due: None,
+                position: t.task.position.clone(),
+                had_etag: true,
+            }
+        };
+        crate::commands::undo_delete_inner(&state, token).await.unwrap();
+
+        let revived = state.store.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(revived.sync_state, SyncState::Dirty, "edit must stay queued");
+        assert_eq!(revived.pending_op.as_deref(), Some("update"));
+
+        // And the edit reaches the server on the next sync.
+        state.run_sync().await.unwrap();
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(remote.items[0].title, "edited offline");
+    }
+
+    #[tokio::test]
     async fn rename_list_marks_update_for_synced_and_keeps_create_for_new() {
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Old").await;

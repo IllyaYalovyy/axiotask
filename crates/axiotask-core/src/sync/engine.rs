@@ -24,6 +24,10 @@ pub struct SyncOutcome {
     pub conflicts: u32,
     /// Tasks hard-deleted locally (confirmed by server or ghost detection).
     pub deleted: u32,
+    /// Rows whose push was rejected by the server (e.g. a 400). The row stays
+    /// dirty and the run continues — one poisoned row must not stop the other
+    /// pushes, or the pull.
+    pub errors: u32,
 }
 
 /// Configuration for a sync engine instance.
@@ -102,44 +106,89 @@ impl SyncEngine {
             self.push_list_creates(out).await?;
         }
 
-        // First pass: push parentless creates. finish_create remaps child
-        // references in DB so the second pass sees real parent ids. Held while
-        // editing so the remap can't invalidate an id the UI is holding.
+        // Creates, in dependency order. A child insert names its parent's id in
+        // the request, so a create is pushable only once its parent is resolved
+        // (parentless, or the parent row carries a server etag) — pushing with
+        // a still-local parent id draws a permanent 400 from Google ("Invalid
+        // task ID", verified live). Each finish_create remaps children's
+        // parent_id in the DB, so looping until no progress resolves arbitrary
+        // nesting depth; anything left (parent itself unpushable this run)
+        // stays dirty for the next run. Held entirely while editing so an id
+        // remap can't invalidate the id the UI is holding.
         if !self.config.hold_creates {
-            let dirty = self.store.drain_dirty().await?;
-            let parent_creates: Vec<_> = dirty.iter()
-                .filter(|r| r.pending_op.as_deref() == Some("create") && r.task.parent.is_none())
-                .collect();
-
-            for row in parent_creates {
-                self.push_create(row, out).await?;
+            // Attempt each create at most once per run: a create whose
+            // response times out after the server committed would otherwise be
+            // double-inserted (in-flight orphan recovery only runs at the
+            // start of a run, not between passes).
+            let mut attempted: HashSet<String> = HashSet::new();
+            loop {
+                let mut progressed = false;
+                for row in &self.store.drain_dirty().await? {
+                    if row.pending_op.as_deref() != Some("create")
+                        || attempted.contains(&row.task.id)
+                    {
+                        continue;
+                    }
+                    let parent_resolved = match &row.task.parent {
+                        None => true,
+                        Some(pid) => self
+                            .store
+                            .find_task_any(pid)
+                            .await?
+                            .is_some_and(|p| p.task.etag.is_some()),
+                    };
+                    if !parent_resolved {
+                        continue;
+                    }
+                    attempted.insert(row.task.id.clone());
+                    self.push_create(row, out).await?;
+                    progressed = true;
+                }
+                if !progressed {
+                    break;
+                }
             }
         }
 
-        // Second pass: re-read DB for fresh parent_ids after remaps. Only
-        // CHILD creates are pushed here — parentless creates were attempted
-        // exactly once in pass 1. Re-attempting them here would double-insert
-        // a create whose response timed out after the server committed it
-        // (the in-flight recovery that dedups such orphans only runs at the
-        // start of a run, not between passes). Updates/deletes always push;
-        // creates are held while editing.
+        // Updates and deletes (always pushed — they reuse existing ids).
         for row in &self.store.drain_dirty().await? {
             match row.pending_op.as_deref() {
-                Some("create") if self.config.hold_creates => {} // held while editing
-                Some("create") if row.task.parent.is_some() => self.push_create(row, out).await?,
-                Some("create") => {} // parentless: already attempted in pass 1
                 Some("update") => self.push_update(row, out).await?,
                 Some("delete") => self.push_delete(row, out).await?,
                 _ => {}
             }
         }
 
-        // Third pass: push position/parent moves via the move API.
+        // Then position/parent moves via the move API.
         self.push_moves(out).await?;
 
         // Finally, list renames and deletes (after task ops so a deleted list's
         // task tombstones are pushed first).
         self.push_list_mutations(out).await?;
+        Ok(())
+    }
+
+    /// Classify a push failure for one row. Transient errors leave the row
+    /// dirty for the next run. A server rejection (400 & co.) also leaves the
+    /// row dirty but is counted and logged — it must not abort the run, or one
+    /// poisoned row would permanently starve every other push AND the pull.
+    /// Only auth failures propagate: every subsequent call would fail the same
+    /// way, so aborting is correct.
+    fn row_push_failure(
+        e: ApiError,
+        out: &mut SyncOutcome,
+        id: &str,
+        op: &str,
+    ) -> Result<(), SyncError> {
+        if e.is_transient() {
+            warn!(id, err = %e, "transient error on {op}, will retry");
+            return Ok(());
+        }
+        if matches!(e, ApiError::Unauthorized) {
+            return Err(e.into());
+        }
+        warn!(id, err = %e, "server rejected {op}; row stays dirty, continuing");
+        out.errors += 1;
         Ok(())
     }
 
@@ -182,8 +231,7 @@ impl SyncEngine {
                     out.pushed += 1;
                     debug!(local_id = %l.list.id, remote_id = %remote_list.id, "pushed list create");
                 }
-                Err(e) if e.is_transient() => warn!(err = %e, "transient on list create, retry"),
-                Err(e) => return Err(e.into()),
+                Err(e) => Self::row_push_failure(e, out, &l.list.id, "list create")?,
             }
         }
         Ok(())
@@ -199,16 +247,14 @@ impl SyncEngine {
                         out.pushed += 1;
                     }
                     Err(ApiError::NotFound) => { self.store.delete_list_hard(&l.list.id).await?; }
-                    Err(e) if e.is_transient() => warn!(err = %e, "transient on list rename, retry"),
-                    Err(e) => return Err(e.into()),
+                    Err(e) => Self::row_push_failure(e, out, &l.list.id, "list rename")?,
                 },
                 Some("delete") => match self.client.delete_tasklist(&l.list.id).await {
                     Ok(()) | Err(ApiError::NotFound) => {
                         self.store.delete_list_hard(&l.list.id).await?;
                         out.deleted += 1;
                     }
-                    Err(e) if e.is_transient() => warn!(err = %e, "transient on list delete, retry"),
-                    Err(e) => return Err(e.into()),
+                    Err(e) => Self::row_push_failure(e, out, &l.list.id, "list delete")?,
                 },
                 _ => {}
             }
@@ -248,7 +294,9 @@ impl SyncEngine {
             match orphan {
                 Some(o) => {
                     info!(local_id = %local_id, remote_id = %o.id, "adopting orphaned create after crash");
-                    self.store.finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated).await?;
+                    self.store
+                        .finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated, &local.local_updated)
+                        .await?;
                 }
                 None => {
                     // Insert never reached the server — let normal push retry.
@@ -269,7 +317,10 @@ impl SyncEngine {
                 mv.previous_id.as_deref(),
             ).await {
                 Ok(remote) => {
-                    self.store.mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                    // Meta only: the move endpoint hands back a fresh etag, but
+                    // the row may carry an unrelated pending content edit whose
+                    // dirty flag must survive the move completing.
+                    self.store.refresh_task_meta(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
                     self.store.clear_move(&mv.task_id).await?;
                     out.pushed += 1;
                     debug!(id = %mv.task_id, "pushed move");
@@ -282,7 +333,12 @@ impl SyncEngine {
                 Err(e) if e.is_transient() => {
                     warn!(err = %e, "transient error on move, will retry");
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    // A rejected move must not starve the rest of the queue;
+                    // drop the intent (positions self-heal on the next pull).
+                    Self::row_push_failure(e, out, &mv.task_id, "move")?;
+                    self.store.clear_move(&mv.task_id).await?;
+                }
             }
         }
         Ok(())
@@ -292,7 +348,9 @@ impl SyncEngine {
         let payload = NewTask {
             title: row.task.title.clone(),
             notes: row.task.notes.clone(),
-            due: row.task.due.clone(),
+            // Canonicalize on the way out: Google 400s a bare date, and heals
+            // any legacy/imported row that stored a non-canonical form.
+            due: row.task.due.as_deref().and_then(crate::dates::normalize_due),
             status: Some(row.task.status),
             parent: row.task.parent.clone(),
             previous: None,
@@ -302,9 +360,17 @@ impl SyncEngine {
         match self.client.insert_task(&row.list_id, payload).await {
             Ok(remote) => {
                 // Atomic: remap local→remote id AND mark clean in one txn so a
-                // crash can't leave a remapped row still flagged 'create'.
+                // crash can't leave a remapped row still flagged 'create'. The
+                // local_updated snapshot keeps a mid-flight re-edit dirty (as
+                // an update against the new remote id) instead of wiping it.
                 self.store
-                    .finish_create(&row.task.id, &remote.id, remote.etag.as_deref(), &remote.updated)
+                    .finish_create(
+                        &row.task.id,
+                        &remote.id,
+                        remote.etag.as_deref(),
+                        &remote.updated,
+                        &row.local_updated,
+                    )
                     .await?;
                 out.pushed += 1;
                 debug!(local_id = %row.task.id, remote_id = %remote.id, "pushed create");
@@ -316,7 +382,10 @@ impl SyncEngine {
                 warn!(err = %e, "transient error on create, will retry");
                 Ok(())
             }
-            Err(e) => { self.store.clear_inflight_create(&row.task.id).await?; Err(e.into()) }
+            Err(e) => {
+                self.store.clear_inflight_create(&row.task.id).await?;
+                Self::row_push_failure(e, out, &row.task.id, "create")
+            }
         }
     }
 
@@ -324,12 +393,28 @@ impl SyncEngine {
         let patch = TaskPatch {
             title: Some(row.task.title.clone()),
             notes: row.task.notes.clone().or(Some(String::new())),
-            due: row.task.due.clone().or(Some(String::new())),
+            // Canonical form, or "" to clear — both verified against the live
+            // API ("" clears; a bare date 400s). An unparseable stored due
+            // degrades to clear rather than poisoning the row forever.
+            due: Some(
+                row.task
+                    .due
+                    .as_deref()
+                    .and_then(crate::dates::normalize_due)
+                    .unwrap_or_default(),
+            ),
             status: Some(row.task.status),
         };
         match self.client.patch_task(&row.list_id, &row.task.id, patch, row.task.etag.as_deref()).await {
             Ok(remote) => {
-                self.store.mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                self.store
+                    .mark_task_clean(
+                        &remote.id,
+                        remote.etag.as_deref(),
+                        &remote.updated,
+                        &row.local_updated,
+                    )
+                    .await?;
                 out.pushed += 1;
                 debug!(id = %row.task.id, "pushed update");
                 Ok(())
@@ -342,8 +427,7 @@ impl SyncEngine {
                 self.store.delete_task_hard(&row.task.id).await?;
                 Ok(())
             }
-            Err(e) if e.is_transient() => { warn!(err = %e, "transient error on update, will retry"); Ok(()) }
-            Err(e) => Err(e.into()),
+            Err(e) => Self::row_push_failure(e, out, &row.task.id, "update"),
         }
     }
 
@@ -370,7 +454,12 @@ impl SyncEngine {
         // Adopt remote etag if the content is already identical (no real divergence).
         if same_content(&local.task, &remote) {
             self.store
-                .mark_task_clean(&remote.id, remote.etag.as_deref(), &remote.updated)
+                .mark_task_clean(
+                    &remote.id,
+                    remote.etag.as_deref(),
+                    &remote.updated,
+                    &local.local_updated,
+                )
                 .await?;
             return Ok(());
         }
@@ -419,8 +508,7 @@ impl SyncEngine {
                 debug!(id = %row.task.id, "pushed delete");
                 Ok(())
             }
-            Err(e) if e.is_transient() => { warn!(err = %e, "transient error on delete, will retry"); Ok(()) }
-            Err(e) => Err(e.into()),
+            Err(e) => Self::row_push_failure(e, out, &row.task.id, "delete"),
         }
     }
 
@@ -482,13 +570,16 @@ impl SyncEngine {
         let remote_ids: HashSet<String> = remote_tasks.iter().map(|t| t.id.clone()).collect();
 
         // Filter: skip dirty rows and orphans of in-flight creates.
-        let mut to_upsert: Vec<_> = remote_tasks.into_iter()
+        let to_upsert: Vec<_> = remote_tasks.into_iter()
             .filter(|t| !dirty_ids.contains(&t.id))
             .filter(|t| !inflight.iter().any(|f| same_content(f, t)))
             .collect();
 
-        // Parents before children for FK safety.
-        to_upsert.sort_by_key(|t| t.parent.is_some());
+        // Parents before children for FK safety — TOPOLOGICALLY, not by a
+        // has-parent flag: the API allows nesting deeper than one level
+        // (verified live), so among tasks that all have parents, a child can
+        // otherwise land before its own parent and fail the FK.
+        let to_upsert = order_parents_first(to_upsert);
 
         // Idempotency: skip rows where local etag already matches.
         let local_etags = self.build_etag_map(&list.id).await;
@@ -621,9 +712,50 @@ impl SyncEngine {
 }
 
 /// Whether two tasks have identical user-visible content (the patchable
-/// fields). Used to tell a real conflict from an identical concurrent edit.
+/// fields). Used to tell a real conflict from an identical concurrent edit,
+/// and to adopt an orphaned create after a crash.
+///
+/// Comparison is normalization-tolerant, because Google canonicalizes what we
+/// send: `due` always comes back as `YYYY-MM-DDT00:00:00.000Z` (a local
+/// `...T00:00:00Z` is the same date), and cleared notes come back absent
+/// (`None` ≡ `Some("")`). A raw string comparison here manufactures phantom
+/// conflicts — the local edit gets duplicated as a "(conflicted copy)" even
+/// though nothing diverged.
 fn same_content(a: &Task, b: &Task) -> bool {
-    a.title == b.title && a.notes == b.notes && a.due == b.due && a.status == b.status
+    let due = |t: &Task| t.due.as_deref().and_then(crate::dates::normalize_due);
+    let notes = |t: &Task| t.notes.clone().filter(|n| !n.is_empty());
+    a.title == b.title && notes(a) == notes(b) && due(a) == due(b) && a.status == b.status
+}
+
+/// Order a batch so every task appears after its parent (Kahn-style BFS from
+/// the roots). A task whose parent is not in the batch counts as a root — the
+/// parent already exists locally. Any leftover (a parent cycle, which the API
+/// cannot produce but corrupt data could) is appended last rather than dropped.
+fn order_parents_first(tasks: Vec<Task>) -> Vec<Task> {
+    let in_batch: HashSet<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let mut remaining: Vec<Option<Task>> = tasks.into_iter().map(Some).collect();
+    let mut placed: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(remaining.len());
+    loop {
+        let mut progressed = false;
+        for slot in &mut remaining {
+            let ready = slot.as_ref().is_some_and(|t| match &t.parent {
+                None => true,
+                Some(p) => !in_batch.contains(p) || placed.contains(p),
+            });
+            if ready {
+                let t = slot.take().unwrap();
+                placed.insert(t.id.clone());
+                out.push(t);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    out.extend(remaining.into_iter().flatten());
+    out
 }
 
 #[cfg(test)]
@@ -1014,7 +1146,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_to_unknown_list_is_fatal() {
+    async fn push_to_unknown_list_is_counted_not_fatal() {
+        // A row that the server permanently rejects must not abort the run —
+        // it stays dirty (and keeps being reported) while everything else
+        // continues to sync. The old behavior (fatal) meant one poisoned row
+        // silently killed every future push AND pull.
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
@@ -1027,8 +1163,20 @@ mod tests {
             local_only: false,
         }).await.unwrap();
         eng.store.upsert_task(&dirty_task("local-1", "ghost-list", "create")).await.unwrap();
+        // A healthy create elsewhere must still push in the same run.
+        eng.store.upsert_task(&dirty_task("local-2", "L1", "create")).await.unwrap();
 
-        assert!(eng.run().await.is_err());
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 1, "rejected row is counted");
+        assert!(out.pushed >= 1, "healthy row still pushed");
+        assert!(
+            eng.store.drain_dirty().await.unwrap().iter().any(|t| t.task.id == "local-1"),
+            "rejected row stays dirty for retry/visibility"
+        );
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean),
+            "healthy row is clean"
+        );
     }
 
     #[tokio::test]
@@ -1049,6 +1197,273 @@ mod tests {
         assert_eq!(out.pushed, 1);
         let page = client.list_tasks("L1", None).await.unwrap();
         assert_eq!(page.items[0].title, "final-edit");
+    }
+
+    // ─── Real-API semantics (verified live) ─────────────────────────────────
+
+    #[tokio::test]
+    async fn bare_due_date_is_normalized_on_push_not_rejected() {
+        // The calendar picker used to store a bare "YYYY-MM-DD"; Google 400s
+        // that form. The push path must canonicalize so a legacy/imported row
+        // heals instead of poisoning sync.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut create = dirty_task("local-1", "L1", "create");
+        create.task.due = Some("2026-08-02".into());
+        eng.store.upsert_task(&create).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "bare date must not draw a 400");
+        assert_eq!(out.pushed, 1);
+        let page = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(page.items[0].due.as_deref(), Some("2026-08-02T00:00:00.000Z"));
+    }
+
+    #[tokio::test]
+    async fn bare_due_date_on_update_is_normalized_too() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        let remote = client.seed_task("L1", "T1", "task", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.due = Some("2026-08-05".into()); // legacy bare form
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = remote.etag;
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.pushed, 1);
+        let page = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(page.items[0].due.as_deref(), Some("2026-08-05T00:00:00.000Z"));
+    }
+
+    #[tokio::test]
+    async fn clearing_due_date_pushes_successfully() {
+        // Basic case: task has a due date on the server, user clears it.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        let mut remote = client.seed_task("L1", "T1", "dated", "1");
+        remote.due = Some("2026-08-01T00:00:00.000Z".into());
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.due = None; // cleared
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.pushed, 1);
+        let page = client.list_tasks("L1", None).await.unwrap();
+        assert_eq!(page.items[0].due, None, "due cleared on the server");
+        assert!(eng.store.list_tasks("L1").await.unwrap()[0].sync_state == SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn conflict_412_with_only_due_format_difference_is_not_a_conflict() {
+        // Local stores "…T00:00:00Z", the server echoes "…T00:00:00.000Z".
+        // Same date. A raw string comparison manufactured a phantom
+        // "(conflicted copy)" out of nothing.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "same", "1");
+        eng.run().await.unwrap();
+
+        // Server task gains a due date + fresh etag (etag now stale locally).
+        let patched = client
+            .patch_task("L1", "T1", TaskPatch { due: Some("2026-08-01T00:00:00.000Z".into()), ..Default::default() }, None)
+            .await
+            .unwrap();
+
+        // Local made the "same" edit, in the short form, against the old etag.
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.due = Some("2026-08-01T00:00:00Z".into());
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "identical content must not fork a copy");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+        assert_eq!(tasks[0].task.etag, patched.etag);
+    }
+
+    #[tokio::test]
+    async fn crash_adoption_matches_across_due_normalization() {
+        // Orphan adoption after a crash compares content; the server-side
+        // orphan carries the canonical due form while the local row has the
+        // short form. They must still match, or the create re-inserts a dup.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut local = dirty_task("local-1", "L1", "create");
+        local.task.title = "buy milk".into();
+        local.task.due = Some("2026-08-01T00:00:00Z".into());
+        eng.store.upsert_task(&local).await.unwrap();
+        let mut orphan = client.seed_task("L1", "remote-orphan", "buy milk", "1");
+        orphan.due = Some("2026-08-01T00:00:00.000Z".into());
+        {
+            // Write the normalized due into the fake's state.
+            client
+                .patch_task("L1", "remote-orphan", TaskPatch { due: Some("2026-08-01T00:00:00.000Z".into()), ..Default::default() }, None)
+                .await
+                .unwrap();
+        }
+        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+
+        eng.run().await.unwrap();
+
+        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0, "adopted, not re-inserted");
+        let milk: Vec<_> = eng.store.list_tasks("L1").await.unwrap()
+            .into_iter().filter(|t| t.task.title == "buy milk").collect();
+        assert_eq!(milk.len(), 1, "no duplicate");
+        assert_eq!(milk[0].task.id, "remote-orphan");
+    }
+
+    #[tokio::test]
+    async fn poisoned_row_does_not_starve_other_pushes_or_pull() {
+        // One row the server permanently rejects: everything else must still
+        // push, and the pull must still run. (Previously any non-transient
+        // rejection aborted the run before pull — one poisoned row froze the
+        // entire pipeline forever.)
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // Drain order is by local_updated: the poisoned row goes first.
+        let mut poison = dirty_task("local-poison", "L1", "create");
+        poison.local_updated = "2026-06-01T00:00:00Z".into();
+        eng.store.upsert_task(&poison).await.unwrap();
+        let mut ok = dirty_task("local-ok", "L1", "create");
+        ok.local_updated = "2026-06-01T00:00:01Z".into();
+        eng.store.upsert_task(&ok).await.unwrap();
+        client.seed_task("L1", "R1", "from server", "9");
+        // The server permanently rejects the first insert (a 400).
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || {
+            ApiError::Other("400: Request contains an invalid argument.".into())
+        });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 1, "poisoned row counted");
+        assert!(out.pushed >= 1, "healthy row still pushed");
+        assert!(out.pulled >= 1, "pull still ran");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.iter().any(|t| t.task.title == "from server"));
+        assert!(
+            tasks.iter().any(|t| t.task.id == "local-poison" && t.sync_state == SyncState::Dirty),
+            "poisoned row stays dirty (visible + retried), not lost"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_create_waits_for_unresolved_parent() {
+        // The parent's own create failed transiently this run — the child must
+        // NOT be pushed with a still-local parent id (permanent 400 on the
+        // real API); it stays dirty and succeeds on the next run.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        eng.store.upsert_task(&dirty_task("local-p", "L1", "create")).await.unwrap();
+        let mut child = dirty_task("local-c", "L1", "create");
+        child.task.parent = Some("local-p".into());
+        eng.store.upsert_task(&child).await.unwrap();
+
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || ApiError::Server { status: 503 });
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "no permanent 400 — the child waited");
+
+        // Next run: parent inserts, then the child (remapped parent id).
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().all(|t| t.sync_state == SyncState::Clean));
+        let child = tasks.iter().find(|t| t.task.title == "task local-c").unwrap();
+        assert!(child.task.parent.as_deref().unwrap().starts_with("remote-"), "parent id remapped");
+    }
+
+    #[tokio::test]
+    async fn three_level_creates_resolve_in_one_run() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        eng.store.upsert_task(&dirty_task("l-root", "L1", "create")).await.unwrap();
+        let mut mid = dirty_task("l-mid", "L1", "create");
+        mid.task.parent = Some("l-root".into());
+        eng.store.upsert_task(&mid).await.unwrap();
+        let mut leaf = dirty_task("l-leaf", "L1", "create");
+        leaf.task.parent = Some("l-mid".into());
+        eng.store.upsert_task(&leaf).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.pushed, 3, "whole chain lands in one run");
+        assert!(eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean));
+    }
+
+    #[tokio::test]
+    async fn pull_multilevel_nesting_is_fk_safe() {
+        // The API allows >1 level of nesting; the pull batch can arrive in any
+        // order. Children inserting before their own parent breaks the FK.
+        // Seed in the hostile order — grandchild first, root last (the seed_*
+        // helpers are fixtures, so a forward reference is fine).
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task_with_parent("L1", "leaf", "leaf", "1", Some("mid"));
+        client.seed_task_with_parent("L1", "mid", "mid", "2", Some("root"));
+        client.seed_task("L1", "root", "root", "3");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pulled, 3, "all three levels pulled despite hostile order");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.iter().find(|t| t.task.id == "leaf").unwrap().task.parent.as_deref(), Some("mid"));
+        assert_eq!(tasks.iter().find(|t| t.task.id == "mid").unwrap().task.parent.as_deref(), Some("root"));
+    }
+
+    #[tokio::test]
+    async fn move_push_preserves_pending_content_edit() {
+        // A pending content edit and a pending position move on the same task:
+        // the move completing must not wipe the edit's dirty flag.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "one", "1");
+        client.seed_task("L1", "T2", "two", "2");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap()
+            .into_iter().find(|t| t.task.id == "T1").unwrap();
+        local.task.title = "edited".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        // Simulate the update push being held this run (editing) while the
+        // move still goes out.
+        eng.store.upsert_task(&local).await.unwrap();
+        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+
+        // Force the update push to fail transiently so only the move lands.
+        client.fail_next(crate::api::in_memory::Method::PatchTask, || ApiError::Server { status: 503 });
+        eng.run().await.unwrap();
+
+        let row = eng.store.list_tasks("L1").await.unwrap()
+            .into_iter().find(|t| t.task.title == "edited").unwrap();
+        assert_eq!(row.sync_state, SyncState::Dirty, "content edit still queued");
+        assert!(eng.store.pending_moves().await.unwrap().is_empty(), "move cleared");
+
+        // Next run pushes the edit.
+        eng.run().await.unwrap();
+        let page = client.list_tasks("L1", None).await.unwrap();
+        assert!(page.items.iter().any(|t| t.title == "edited"));
     }
 
     // ─── Pull tests ──────────────────────────────────────────────────────────

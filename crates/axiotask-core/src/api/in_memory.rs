@@ -3,6 +3,15 @@
 //! Used as a test double for the sync engine and command handlers. Etags are
 //! a monotonic counter so conflict scenarios are deterministic. Faults can
 //! be queued via [`InMemoryClient::fail_next`].
+//!
+//! The fake models the REAL Google Tasks API's strictness, verified against
+//! the live service — a permissive fake lets the whole test suite pass while
+//! production sync is broken:
+//! - `due` must be a full RFC-3339 timestamp; a bare `YYYY-MM-DD` is rejected
+//!   with a permanent 400. Accepted values are normalized to
+//!   `YYYY-MM-DDT00:00:00.000Z` in responses. An empty string clears it.
+//! - inserting under a nonexistent `parent` is a permanent 400.
+//! - deleting a parent task deletes its descendants server-side.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -73,6 +82,26 @@ impl State {
 
     fn record(&mut self, m: Method) {
         self.calls[m as usize] += 1;
+    }
+}
+
+/// Validate + canonicalize a due value the way the live API does: `None`
+/// passes through, `""` means clear (→ `None`), anything else must be a full
+/// RFC-3339 timestamp (a bare date draws a permanent 400) and is normalized
+/// to `T00:00:00.000Z`.
+fn validate_due(due: Option<String>) -> Result<Option<String>, ApiError> {
+    match due.as_deref() {
+        None | Some("") => Ok(None),
+        Some(raw) => {
+            if raw.len() < 20 || !raw[10..].starts_with('T') || !raw.ends_with('Z') {
+                return Err(ApiError::Other(
+                    "400: Request contains an invalid argument. (due)".into(),
+                ));
+            }
+            crate::dates::normalize_due(raw).map(Some).ok_or_else(|| {
+                ApiError::Other("400: Request contains an invalid argument. (due)".into())
+            })
+        }
     }
 }
 
@@ -249,6 +278,14 @@ impl GoogleTasksClient for InMemoryClient {
         if !s.lists.iter().any(|l| l.id == list_id) {
             return Err(ApiError::NotFound);
         }
+        // Live-API strictness: an unknown parent id is a permanent 400 —
+        // exactly what pushing a child create before its parent resolved does.
+        if let Some(p) = new.parent.as_deref()
+            && !s.tasks.iter().any(|(_, t)| t.id == p)
+        {
+            return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
+        }
+        let due = validate_due(new.due)?;
         let etag = s.fresh_etag();
         let position = format!("{:020}", s.tasks.len() + 1);
         let id = format!("remote-{}", s.etag_counter);
@@ -260,7 +297,7 @@ impl GoogleTasksClient for InMemoryClient {
             title: new.title,
             notes: new.notes,
             status: new.status.unwrap_or(TaskStatus::NeedsAction),
-            due: new.due,
+            due,
             completed: None,
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
@@ -312,14 +349,18 @@ impl GoogleTasksClient for InMemoryClient {
         {
             return Err(ApiError::PreconditionFailed);
         }
+        let patched_due = match patch.due {
+            Some(due) => Some(validate_due(Some(due))?),
+            None => None,
+        };
         if let Some(title) = patch.title {
             t.title = title;
         }
         if let Some(notes) = patch.notes {
             t.notes = if notes.is_empty() { None } else { Some(notes) };
         }
-        if let Some(due) = patch.due {
-            t.due = if due.is_empty() { None } else { Some(due) };
+        if let Some(due) = patched_due {
+            t.due = due;
         }
         if let Some(status) = patch.status {
             t.status = status;
@@ -346,6 +387,16 @@ impl GoogleTasksClient for InMemoryClient {
         s.tasks.retain(|(_, t)| t.id != id);
         if s.tasks.len() == before {
             return Err(ApiError::NotFound);
+        }
+        // Live-API behavior: deleting a parent deletes its descendants too.
+        loop {
+            let alive: std::collections::HashSet<String> =
+                s.tasks.iter().map(|(_, t)| t.id.clone()).collect();
+            let n = s.tasks.len();
+            s.tasks.retain(|(_, t)| t.parent.as_deref().is_none_or(|p| alive.contains(p)));
+            if s.tasks.len() == n {
+                break;
+            }
         }
         Ok(())
     }

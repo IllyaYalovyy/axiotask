@@ -6,6 +6,32 @@
 
 use jiff::civil::Date;
 
+/// Canonicalize a due-date string to the exact form the Google Tasks API emits
+/// and requires: `YYYY-MM-DDT00:00:00.000Z`.
+///
+/// Google rejects a bare `YYYY-MM-DD` with 400 ("invalid argument") and
+/// normalizes any accepted timestamp to `.000Z` in responses — so a locally
+/// stored `...T00:00:00Z` never string-equals what the server sends back.
+/// Both facts were verified against the live API. Returns `None` when the
+/// input doesn't contain a parseable `YYYY-MM-DD` prefix.
+pub fn normalize_due(raw: &str) -> Option<String> {
+    let date: Date = raw.get(..10)?.parse().ok()?;
+    Some(format!("{date}T00:00:00.000Z"))
+}
+
+/// Current instant as a true-UTC RFC-3339 string with microsecond precision.
+///
+/// The single source for `local_updated` stamps. `Zoned::now()` formatted with
+/// a literal `Z` (the pattern issue #47 tracks) would label *local* time as
+/// UTC. Sub-second precision matters: the push path only clears a row's dirty
+/// flag when `local_updated` still equals the drained snapshot, so two edits
+/// within the same second must not collide.
+pub fn now_utc_string() -> String {
+    jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%S.%6fZ")
+        .to_string()
+}
+
 /// What date-move the user requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateMove {
@@ -134,5 +160,49 @@ mod tests {
         let t = apply_date_move(today, DateMove::Tomorrow).unwrap();
         let tt = apply_date_move(t, DateMove::Tomorrow).unwrap();
         assert_eq!(tt, date(2026, 5, 25));
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::*;
+
+    #[test]
+    fn bare_date_becomes_full_form() {
+        assert_eq!(normalize_due("2026-08-02").as_deref(), Some("2026-08-02T00:00:00.000Z"));
+    }
+
+    #[test]
+    fn seconds_only_form_gains_millis() {
+        assert_eq!(normalize_due("2026-08-03T00:00:00Z").as_deref(), Some("2026-08-03T00:00:00.000Z"));
+    }
+
+    #[test]
+    fn canonical_form_is_unchanged() {
+        assert_eq!(normalize_due("2026-08-01T00:00:00.000Z").as_deref(), Some("2026-08-01T00:00:00.000Z"));
+    }
+
+    #[test]
+    fn nonzero_time_is_floored_to_date() {
+        // Google stores due as date-only regardless of the time sent.
+        assert_eq!(normalize_due("2026-08-01T17:30:00.000Z").as_deref(), Some("2026-08-01T00:00:00.000Z"));
+    }
+
+    #[test]
+    fn garbage_is_rejected() {
+        assert_eq!(normalize_due(""), None);
+        assert_eq!(normalize_due("tomorrow"), None);
+        assert_eq!(normalize_due("2026-13-45"), None);
+    }
+
+    #[test]
+    fn now_utc_string_has_z_and_micros() {
+        let s = now_utc_string();
+        assert!(s.ends_with('Z'), "{s}");
+        assert_eq!(s.len(), "2026-07-10T00:00:00.000000Z".len(), "{s}");
+        // Two consecutive calls must differ (sub-second precision guards the
+        // mark-clean race even for rapid successive edits).
+        std::thread::sleep(std::time::Duration::from_micros(50));
+        assert_ne!(s, now_utc_string());
     }
 }

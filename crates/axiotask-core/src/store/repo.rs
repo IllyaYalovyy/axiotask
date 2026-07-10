@@ -384,25 +384,55 @@ impl Store {
         Ok(out)
     }
 
-    /// Mark a task as in-sync (used after a successful push).
+    /// Mark a task as in-sync after a successful push — but only if the row's
+    /// `local_updated` still equals the snapshot taken when the push drained it.
+    ///
+    /// Without the guard, an edit made while the push's HTTP request is in
+    /// flight would have its dirty flag wiped by the push completing, and that
+    /// newer edit would silently never sync (a lost update). When the guard
+    /// misses, the row stays dirty — but the fresh etag is adopted either way,
+    /// so the re-push of the newer content succeeds instead of 412ing.
     pub async fn mark_task_clean(
         &self,
         id: &str,
         new_etag: Option<&str>,
         server_updated: &str,
+        expected_local_updated: &str,
     ) -> Result<(), StoreError> {
         sqlx::query(
             r"UPDATE tasks
-              SET sync_state = 'clean', pending_op = NULL,
-                  etag = COALESCE(?, etag),
-                  updated = ?
+              SET etag = COALESCE(?, etag),
+                  updated = ?,
+                  sync_state = CASE WHEN local_updated = ? THEN 'clean' ELSE sync_state END,
+                  pending_op = CASE WHEN local_updated = ? THEN NULL ELSE pending_op END
               WHERE id = ?",
         )
         .bind(new_etag)
         .bind(server_updated)
+        .bind(expected_local_updated)
+        .bind(expected_local_updated)
         .bind(id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Adopt a fresh etag/updated from the server WITHOUT touching sync_state
+    /// or pending_op. Used after a move push: the move endpoint returns a new
+    /// etag, but the row may carry an unrelated pending content edit whose
+    /// dirty flag must survive.
+    pub async fn refresh_task_meta(
+        &self,
+        id: &str,
+        new_etag: Option<&str>,
+        server_updated: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query("UPDATE tasks SET etag = COALESCE(?, etag), updated = ? WHERE id = ?")
+            .bind(new_etag)
+            .bind(server_updated)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -633,7 +663,7 @@ impl Store {
         duration_ms: u64,
         error: Option<String>,
     ) {
-        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = crate::dates::now_utc_string();
         let _ = sqlx::query(
             "INSERT INTO sync_log (ran_at, duration_ms, pulled, pushed, conflicts, error) VALUES (?, ?, ?, ?, ?, ?)",
         )
@@ -666,6 +696,7 @@ impl Store {
         remote_id: &str,
         etag: Option<&str>,
         server_updated: &str,
+        expected_local_updated: &str,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("PRAGMA defer_foreign_keys = ON")
@@ -696,12 +727,22 @@ impl Store {
             .bind(local_id)
             .execute(&mut *tx)
             .await?;
+        // Mark clean only if the row wasn't re-edited while the insert was in
+        // flight. A re-edited row keeps its dirty flag but its pending op is
+        // rewritten create→update: the task now exists remotely under the new
+        // id, so re-running it as a create would insert a duplicate.
         sqlx::query(
-            "UPDATE tasks SET sync_state = 'clean', pending_op = NULL,
-                 etag = COALESCE(?, etag), updated = ? WHERE id = ?",
+            "UPDATE tasks SET
+                 etag = COALESCE(?, etag),
+                 updated = ?,
+                 sync_state = CASE WHEN local_updated = ? THEN 'clean' ELSE sync_state END,
+                 pending_op = CASE WHEN local_updated = ? THEN NULL ELSE 'update' END
+             WHERE id = ?",
         )
         .bind(etag)
         .bind(server_updated)
+        .bind(expected_local_updated)
+        .bind(expected_local_updated)
         .bind(remote_id)
         .execute(&mut *tx)
         .await?;
@@ -1020,7 +1061,7 @@ mod tests {
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("update".into());
         s.upsert_task(&t).await.unwrap();
-        s.mark_task_clean("T1", Some("e-new"), "2026-02-01T00:00:00Z")
+        s.mark_task_clean("T1", Some("e-new"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
             .await
             .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
@@ -1029,6 +1070,43 @@ mod tests {
         assert_eq!(rows[0].task.etag.as_deref(), Some("e-new"));
         assert_eq!(rows[0].task.updated, "2026-02-01T00:00:00Z");
         assert!(rows[0].pending_op.is_none());
+    }
+
+    #[tokio::test]
+    async fn mark_task_clean_stale_snapshot_keeps_dirty_but_adopts_etag() {
+        // The lost-update race: the row was re-edited while its push was in
+        // flight, so the drained local_updated no longer matches. The dirty
+        // flag must survive (the newer edit still needs to push), but the
+        // fresh etag is adopted so that re-push won't 412.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        t.local_updated = "2026-01-01T00:00:05Z".into(); // re-edited: newer than drain
+        s.upsert_task(&t).await.unwrap();
+        s.mark_task_clean("T1", Some("e-new"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        assert_eq!(rows[0].sync_state, SyncState::Dirty, "newer edit must stay queued");
+        assert_eq!(rows[0].pending_op.as_deref(), Some("update"));
+        assert_eq!(rows[0].task.etag.as_deref(), Some("e-new"), "fresh etag adopted");
+    }
+
+    #[tokio::test]
+    async fn refresh_task_meta_never_touches_sync_state() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("T1", "L1", None, "1");
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        s.upsert_task(&t).await.unwrap();
+        s.refresh_task_meta("T1", Some("e-move"), "2026-02-01T00:00:00Z").await.unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        assert_eq!(rows[0].sync_state, SyncState::Dirty);
+        assert_eq!(rows[0].pending_op.as_deref(), Some("update"));
+        assert_eq!(rows[0].task.etag.as_deref(), Some("e-move"));
     }
 
     #[tokio::test]
@@ -1042,7 +1120,7 @@ mod tests {
         s.upsert_task(&task("local-2", "L1", Some("local-1"), "1"))
             .await
             .unwrap();
-        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z")
+        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
             .await
             .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
@@ -1054,6 +1132,32 @@ mod tests {
         assert_eq!(parent.sync_state, SyncState::Clean);
         assert!(parent.pending_op.is_none());
         assert_eq!(parent.task.etag.as_deref(), Some("e9"));
+    }
+
+    #[tokio::test]
+    async fn finish_create_reedited_row_stays_dirty_as_update() {
+        // Re-edited while the insert was in flight: the remap must still land
+        // (the task exists remotely now) but the row keeps its dirty flag and
+        // flips create→update, so the newer content pushes against the remote
+        // id instead of inserting a duplicate.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut p = task("local-1", "L1", None, "1");
+        p.task.etag = None;
+        p.task.title = "typed more while pushing".into();
+        p.sync_state = SyncState::Dirty;
+        p.pending_op = Some("create".into());
+        p.local_updated = "2026-01-01T00:00:07Z".into(); // newer than the drain snapshot
+        s.upsert_task(&p).await.unwrap();
+        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        let row = rows.iter().find(|r| r.task.id == "remote-1").expect("remapped");
+        assert_eq!(row.sync_state, SyncState::Dirty, "mid-flight edit must stay queued");
+        assert_eq!(row.pending_op.as_deref(), Some("update"), "create would duplicate");
+        assert_eq!(row.task.etag.as_deref(), Some("e9"));
+        assert_eq!(row.task.title, "typed more while pushing");
     }
 
     #[tokio::test]
@@ -1341,7 +1445,7 @@ mod tests {
         t.pending_op = Some("create".into());
         s.upsert_task(&t).await.unwrap();
         s.record_inflight_create("local-1", "L1").await.unwrap();
-        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z").await.unwrap();
+        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z").await.unwrap();
         assert!(s.inflight_creates().await.unwrap().is_empty());
     }
 
@@ -1361,7 +1465,7 @@ mod tests {
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_task(&task("local-1", "L1", None, "1")).await.unwrap();
         s.record_move("local-1", "L1", None, Some("other")).await.unwrap();
-        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z").await.unwrap();
+        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z").await.unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].task_id, "remote-1");

@@ -264,9 +264,7 @@ impl AppState {
                 .map_err(|e| e.to_string())?;
             pairs.push((list, tasks));
         }
-        let now = jiff::Zoned::now()
-            .strftime("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
+        let now = axiotask_core::dates::now_utc_string();
         Ok(axiotask_core::export::Backup::build(now, pairs))
     }
 
@@ -307,7 +305,7 @@ impl AppState {
             return;
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = axiotask_core::dates::now_utc_string();
         let stored = axiotask_core::store::StoredTaskList {
             list: axiotask_core::model::TaskList {
                 id,
@@ -420,7 +418,16 @@ impl AppState {
                     status.last_conflicts = o.conflicts;
                     status.last_deleted = o.deleted;
                     status.total_syncs += 1;
-                    status.last_error = None;
+                    // A row the server rejected stays dirty and would retry
+                    // silently forever — tell the user instead of hiding it
+                    // behind a green "synced" state.
+                    status.last_error = (o.errors > 0).then(|| {
+                        format!(
+                            "{} change{} rejected by the server (kept locally, will retry)",
+                            o.errors,
+                            if o.errors == 1 { "" } else { "s" }
+                        )
+                    });
                 }
                 Err(e) => {
                     tracing::error!("sync failed: {e}");
@@ -467,7 +474,7 @@ impl AppState {
     ) -> Result<axiotask_core::store::StoredTaskList, String> {
         use axiotask_core::store::SyncState;
         let id = uuid::Uuid::new_v4().to_string();
-        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = axiotask_core::dates::now_utc_string();
         let (sync_state, pending_op) = if local_only {
             (SyncState::Clean, None)
         } else {
@@ -503,7 +510,7 @@ impl AppState {
         if list.pending_op.as_deref() != Some("create") {
             list.pending_op = Some("update".into());
         }
-        list.local_updated = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        list.local_updated = axiotask_core::dates::now_utc_string();
         self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
         self.schedule_sync();
         Ok(())
@@ -524,7 +531,7 @@ impl AppState {
         if list.list.etag.is_some() {
             list.sync_state = axiotask_core::store::SyncState::Deleted;
             list.pending_op = Some("delete".into());
-            list.local_updated = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+            list.local_updated = axiotask_core::dates::now_utc_string();
             self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
         } else {
             self.store.delete_list_hard(id).await.map_err(|e| e.to_string())?;
@@ -540,6 +547,11 @@ impl AppState {
     /// on sync the delete removes it from the old remote list and the create
     /// adds it to the new one. Avoids the 404-delete data-loss path that a
     /// naive `patch_task(new_list, ...)` would trigger.
+    ///
+    /// The task's WHOLE SUBTREE moves with it. Deleting a parent on Google
+    /// deletes its children too (verified against the live API), and the
+    /// local FK cascade mirrors that — so leaving subtasks behind would
+    /// silently destroy them the moment the parent's delete pushed.
     pub async fn move_task_to_list(
         &self,
         id: &str,
@@ -563,20 +575,36 @@ impl AppState {
             return Ok(()); // already there
         }
 
-        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = axiotask_core::dates::now_utc_string();
+        let siblings = self.store.list_tasks(&old.list_id).await.map_err(|e| e.to_string())?;
 
-        // Create the task in the target list with a fresh local id.
-        let mut new_task = old.clone();
-        new_task.task.id = uuid::Uuid::new_v4().to_string();
-        new_task.task.parent = None; // top-level in the new list
-        new_task.task.etag = None; // brand-new remote row
-        new_task.list_id = target_list_id.to_string();
-        new_task.sync_state = axiotask_core::store::SyncState::Dirty;
-        new_task.pending_op = Some("create".into());
-        new_task.local_updated = now.clone();
-        self.store.upsert_task(&new_task).await.map_err(|e| e.to_string())?;
+        // Recreate the subtree root in the target list under a fresh local id,
+        // then each descendant level under its recreated parent's new id.
+        let mut recreated: Vec<(String, String)> = Vec::new(); // (old_id, new_id)
+        let mut frontier = vec![(old.clone(), None::<String>)];
+        while let Some((node, new_parent)) = frontier.pop() {
+            let mut copy = node.clone();
+            copy.task.id = uuid::Uuid::new_v4().to_string();
+            copy.task.parent = new_parent;
+            copy.task.etag = None; // brand-new remote row
+            copy.task.web_view_link = None;
+            copy.list_id = target_list_id.to_string();
+            copy.sync_state = axiotask_core::store::SyncState::Dirty;
+            copy.pending_op = Some("create".into());
+            copy.local_updated = now.clone();
+            self.store.upsert_task(&copy).await.map_err(|e| e.to_string())?;
+            recreated.push((node.task.id.clone(), copy.task.id.clone()));
+            for child in siblings.iter().filter(|t| t.task.parent.as_deref() == Some(&node.task.id)) {
+                frontier.push((child.clone(), Some(copy.task.id.clone())));
+            }
+        }
 
-        // Remove the task from the old list.
+        // Remove the old subtree: hard-delete descendants locally (the
+        // server cascades them when the root's delete lands), then tombstone
+        // or hard-delete the root itself.
+        for (old_id, _) in recreated.iter().skip(1) {
+            self.store.delete_task_hard(old_id).await.map_err(|e| e.to_string())?;
+        }
         if old.task.etag.is_some() {
             // Synced row → tombstone so the delete reaches the server.
             let mut tomb = old;

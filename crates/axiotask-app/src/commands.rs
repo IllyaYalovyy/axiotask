@@ -116,9 +116,7 @@ pub async fn create_task(
     title: String,
 ) -> Result<TaskView, String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let now = jiff::Zoned::now()
-        .strftime("%Y-%m-%dT%H:%M:%SZ")
-        .to_string();
+    let now = now_str();
     let stored = StoredTask {
         task: axiotask_core::model::Task {
             id: id.clone(),
@@ -241,6 +239,12 @@ pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<
 
 #[tauri::command]
 pub async fn undo_delete(state: State<'_, Arc<AppState>>, token: DeleteToken) -> Result<(), String> {
+    undo_delete_inner(&state, token).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> Result<(), String> {
     let now = now_str();
     let status = match token.status.as_str() {
         "completed" => TaskStatus::Completed,
@@ -256,9 +260,13 @@ pub async fn undo_delete(state: State<'_, Arc<AppState>>, token: DeleteToken) ->
         existing.task.completed = None;
         existing.local_updated = now;
         if existing.task.etag.is_some() {
-            // Was synced and the delete hasn't pushed → restore to clean.
-            existing.sync_state = SyncState::Clean;
-            existing.pending_op = None;
+            // Was synced and the delete hasn't pushed. Revive as a dirty
+            // UPDATE, not clean: the tombstone may be sitting on top of an
+            // edit that never pushed, and reviving clean would silently drop
+            // that edit from the push queue. If nothing actually changed, the
+            // extra patch is an idempotent no-op.
+            existing.sync_state = SyncState::Dirty;
+            existing.pending_op = Some("update".into());
         } else {
             existing.sync_state = SyncState::Dirty;
             existing.pending_op = Some("create".into());
@@ -299,11 +307,22 @@ pub async fn set_due(
     id: String,
     mv: String,
 ) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
+    set_due_inner(&state, id, mv).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn set_due_inner(state: &AppState, id: String, mv: String) -> Result<(), String> {
+    let mut t = find_task(state, &id).await?;
 
     if let Some(raw) = mv.strip_prefix("raw:") {
-        // Direct date string from detail panel
-        t.task.due = Some(raw.to_string());
+        // Direct date string from the calendar picker / detail panel. Must be
+        // canonicalized: Google rejects a bare "YYYY-MM-DD" with a permanent
+        // 400, which would poison this row's push on every future sync run.
+        t.task.due = Some(
+            axiotask_core::dates::normalize_due(raw)
+                .ok_or_else(|| format!("invalid due date: {raw}"))?,
+        );
     } else {
         let date_move = match mv.as_str() {
             "Today" => DateMove::Today,
@@ -705,9 +724,7 @@ async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
 }
 
 fn now_str() -> String {
-    jiff::Zoned::now()
-        .strftime("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+    axiotask_core::dates::now_utc_string()
 }
 
 /// Pending op for a field edit. A row that was never pushed (no etag) must
