@@ -387,14 +387,18 @@ impl AppState {
     /// waits for it to finish before running. Prevents double-push races.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         let _guard = self.sync_guard.lock().await;
-        // Hold pushes while the user is mid-edit so a create's id remap can't
-        // invalidate the id the UI is acting on. Pull still runs (it skips
-        // locally-dirty rows), so remote changes keep flowing in.
+        // While the user is mid-edit, hold only CREATE pushes: a create remaps a
+        // local id to the server id, which would invalidate the id the UI is
+        // holding for the row being edited. Committed edits (completing a
+        // subtask, renaming a synced task) reuse the existing id and MUST keep
+        // pushing — otherwise anything changed with the detail panel open would
+        // never sync. Pull always runs.
         let editing = self.editing.load(Ordering::Relaxed);
-        let push_enabled = self.push_enabled.load(Ordering::Relaxed) && !editing;
-        tracing::info!("running sync (push_enabled={push_enabled}, editing={editing})...");
+        let push_enabled = self.push_enabled.load(Ordering::Relaxed);
+        tracing::info!("running sync (push_enabled={push_enabled}, hold_creates={editing})...");
         let client = self.client.lock().await.clone();
-        let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled);
+        let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled)
+            .hold_creates(editing);
         let result = engine.run().await;
         // Record status/stats and notify the UI of the outcome.
         let snapshot = {

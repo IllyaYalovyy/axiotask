@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn editing_pauses_push_until_finished() {
+    async fn editing_holds_creates_until_finished() {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
@@ -348,11 +348,11 @@ mod tests {
         };
         state.store.upsert_task(&task).await.unwrap();
 
-        // While editing, the push is held — the local id must NOT be remapped,
+        // While editing, the CREATE is held — the local id must NOT be remapped,
         // so the UI can keep operating on it (fixes create-then-edit failures).
         state.set_editing(true);
         let out = state.run_sync().await.unwrap();
-        assert_eq!(out.pushed, 0, "no push while editing");
+        assert_eq!(out.pushed, 0, "create held while editing");
         assert!(
             state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
             "local id preserved while editing"
@@ -366,6 +366,38 @@ mod tests {
             !state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
             "id remapped once editing finished"
         );
+    }
+
+    #[tokio::test]
+    async fn editing_still_pushes_updates() {
+        // Regression: holding pushes for the WHOLE detail panel starved committed
+        // edits — a subtask marked done (an update) never synced while the panel
+        // was open. Only creates should be held; updates must push while editing.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let parent = client.seed_task("L1", "parent-1", "Parent", "1");
+        let child = client.seed_task_with_parent("L1", "child-1", "Sub", "2", Some("parent-1"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap(); // pull the list + tasks
+
+        // Mark the subtask done locally (an update on an already-synced id).
+        let mut sub = state.store.list_tasks("L1").await.unwrap()
+            .into_iter().find(|t| t.task.id == "child-1").unwrap();
+        sub.task.status = TaskStatus::Completed;
+        sub.task.completed = Some("2026-05-23T00:00:00Z".into());
+        sub.sync_state = SyncState::Dirty;
+        sub.pending_op = Some("update".into());
+        state.store.upsert_task(&sub).await.unwrap();
+
+        // With the detail panel open (editing), the completion must still push.
+        state.set_editing(true);
+        let out = state.run_sync().await.unwrap();
+        assert!(out.pushed >= 1, "update pushes while editing");
+        let cleared = state.store.list_tasks("L1").await.unwrap()
+            .into_iter().find(|t| t.task.id == "child-1").unwrap();
+        assert_eq!(cleared.sync_state, SyncState::Clean, "completed subtask is no longer dirty");
+        assert_eq!(cleared.task.status, TaskStatus::Completed);
+        let _ = (parent, child);
     }
 
     #[tokio::test]

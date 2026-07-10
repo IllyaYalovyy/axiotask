@@ -31,6 +31,12 @@ pub struct SyncOutcome {
 pub struct SyncConfig {
     /// Whether to push local changes to the server.
     pub push_enabled: bool,
+    /// Hold CREATE pushes this run (lists + tasks), while still pushing
+    /// updates/deletes/moves. A create remaps a local id to the server id, which
+    /// would invalidate the id the UI is still holding for a row being edited.
+    /// Committed edits (completing a subtask, renaming a synced task) reuse the
+    /// existing id and must keep syncing, so only creates are held.
+    pub hold_creates: bool,
 }
 
 /// The sync engine. Stateless — each [`run`](SyncEngine::run) is independent.
@@ -48,7 +54,13 @@ impl SyncEngine {
 
     /// Create with explicit configuration.
     pub fn with_push(client: Arc<dyn GoogleTasksClient>, store: Store, push_enabled: bool) -> Self {
-        Self { client, store, config: SyncConfig { push_enabled } }
+        Self { client, store, config: SyncConfig { push_enabled, hold_creates: false } }
+    }
+
+    /// Hold CREATE pushes this run (see [`SyncConfig::hold_creates`]).
+    pub fn hold_creates(mut self, hold: bool) -> Self {
+        self.config.hold_creates = hold;
+        self
     }
 
     /// Execute a full sync cycle: push then pull. Always writes to sync_log.
@@ -85,18 +97,23 @@ impl SyncEngine {
         self.recover_inflight_creates().await?;
 
         // List CREATES first — tasks reference lists, so the list must exist
-        // (with its remote id) before we push tasks into it.
-        self.push_list_creates(out).await?;
+        // (with its remote id) before we push tasks into it. Held while editing.
+        if !self.config.hold_creates {
+            self.push_list_creates(out).await?;
+        }
 
         // First pass: push parentless creates. finish_create remaps child
-        // references in DB so the second pass sees real parent ids.
-        let dirty = self.store.drain_dirty().await?;
-        let parent_creates: Vec<_> = dirty.iter()
-            .filter(|r| r.pending_op.as_deref() == Some("create") && r.task.parent.is_none())
-            .collect();
+        // references in DB so the second pass sees real parent ids. Held while
+        // editing so the remap can't invalidate an id the UI is holding.
+        if !self.config.hold_creates {
+            let dirty = self.store.drain_dirty().await?;
+            let parent_creates: Vec<_> = dirty.iter()
+                .filter(|r| r.pending_op.as_deref() == Some("create") && r.task.parent.is_none())
+                .collect();
 
-        for row in parent_creates {
-            self.push_create(row, out).await?;
+            for row in parent_creates {
+                self.push_create(row, out).await?;
+            }
         }
 
         // Second pass: re-read DB for fresh parent_ids after remaps. Only
@@ -104,9 +121,11 @@ impl SyncEngine {
         // exactly once in pass 1. Re-attempting them here would double-insert
         // a create whose response timed out after the server committed it
         // (the in-flight recovery that dedups such orphans only runs at the
-        // start of a run, not between passes).
+        // start of a run, not between passes). Updates/deletes always push;
+        // creates are held while editing.
         for row in &self.store.drain_dirty().await? {
             match row.pending_op.as_deref() {
+                Some("create") if self.config.hold_creates => {} // held while editing
                 Some("create") if row.task.parent.is_some() => self.push_create(row, out).await?,
                 Some("create") => {} // parentless: already attempted in pass 1
                 Some("update") => self.push_update(row, out).await?,
