@@ -50,13 +50,23 @@ async function main() {
 
   try {
     // 1) App must leave the loading state and render the sidebar.
-    let rendered = false;
+    let rendered = false, last = "";
     for (let i = 0; i < 60; i++) {
-      const src = await source();
-      if (src.includes("Focus") && !src.includes("Loading...")) { rendered = true; break; }
+      last = await source();
+      if (last.includes("Focus") && !last.includes("Loading...")) { rendered = true; break; }
       await sleep(500);
     }
-    if (!rendered) throw new Error("FAIL: app stuck on 'Loading...' / never rendered (startup/IPC wedge)");
+    if (!rendered) {
+      // A binary built with plain `cargo build --release` loads the dev server
+      // URL and renders a connection error. That is a build mistake, not an app
+      // bug, and it otherwise looks identical to a startup wedge.
+      if (last.includes("Could not connect to localhost")) {
+        throw new Error(
+          "FAIL: binary was built in dev mode (it loads http://localhost:1420).\n" +
+          "      rebuild it: cd crates/axiotask-app && cargo tauri build --no-bundle");
+      }
+      throw new Error("FAIL: app stuck on 'Loading...' / never rendered (startup/IPC wedge)");
+    }
     console.log("ok 1 - app rendered, not stuck on Loading");
 
     // 2) A real click on "+ New task" must produce an editable task input.

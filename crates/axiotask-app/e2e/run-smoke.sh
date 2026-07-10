@@ -6,7 +6,11 @@
 # runs e2e/smoke.mjs against it. Exit 0 = the app actually works.
 #
 # Requires: tauri-driver (cargo install tauri-driver), WebKitWebDriver, Xephyr,
-# node, and a release build (cargo build -p axiotask-app --release).
+# node, and a release build made with `cargo tauri build --no-bundle`.
+#
+# It must be `cargo tauri build` — a plain `cargo build --release` bakes in the
+# dev server URL, so the binary loads http://localhost:1420 and shows
+# "Could not connect to localhost" instead of the app.
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,7 +36,7 @@ trap cleanup EXIT
 
 if [ ! -x "$BIN" ]; then
   echo "release binary missing: $BIN"
-  echo "build it first: cargo build -p axiotask-app --release"
+  echo "build it first: cd crates/axiotask-app && cargo tauri build --no-bundle"
   exit 2
 fi
 
