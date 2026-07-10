@@ -110,8 +110,7 @@ describe("TaskDetail Panel (GH#7)", () => {
 
       await fireEvent.click(screen.getByText("Dated Task"));
       await waitFor(() => {
-        const input = screen.getByLabelText("Due date");
-        expect(input).toHaveValue("2026-06-15");
+        expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-06-15");
       });
     });
 
@@ -254,8 +253,7 @@ describe("TaskDetail Panel (GH#7)", () => {
 
       const todayStr = new Date().toISOString().slice(0, 10);
       await fireEvent.click(screen.getByText("Today"));
-      const dateInput = screen.getByLabelText("Due date");
-      expect(dateInput).toHaveValue(todayStr);
+      expect(screen.getByLabelText("Due date")).toHaveTextContent(todayStr);
     });
 
     it("Clear button removes due date", async () => {
@@ -264,10 +262,30 @@ describe("TaskDetail Panel (GH#7)", () => {
       await waitFor(() => expect(screen.getByText("Dated")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByText("Dated"));
-      await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveValue("2026-06-10"));
+      await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-06-10"));
 
       await fireEvent.click(screen.getByText("Clear"));
-      expect(screen.getByLabelText("Due date")).toHaveValue("");
+      expect(screen.getByLabelText("Due date")).toHaveTextContent("No date");
+    });
+
+    it("the Due date field opens our calendar popover, which closes on pick", async () => {
+      mockBackend([task("t1", "Dated", { due: "2026-06-10T00:00:00.000Z" })]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Dated")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Dated"));
+      await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-06-10"));
+
+      // Not a native <input type="date"> — WebKitGTK's popup for that never
+      // closes on selection and ignores the theme.
+      expect(screen.getByLabelText("Due date").tagName).toBe("BUTTON");
+
+      await fireEvent.click(screen.getByLabelText("Due date"));
+      await waitFor(() => expect(screen.getByRole("dialog", { name: "Pick a date" })).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByLabelText("2026-06-17"));
+
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Pick a date" })).not.toBeInTheDocument());
+      expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-06-17");
     });
   });
 

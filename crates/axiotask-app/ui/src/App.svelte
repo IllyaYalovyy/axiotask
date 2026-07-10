@@ -43,7 +43,7 @@
   let focusIndex = $state(0);
   let editingId = $state(null);
   let contextMenu = $state(null); // { items, x, y }
-  let detailTask = $state(null); // task object for detail panel
+  let detailId = $state(null); // id of the task shown in the detail panel
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let datePickerTask = $state(null); // task whose due date is being picked (#37)
@@ -359,6 +359,20 @@
 
   let flatTasks = $derived(buildFlatTree(applySortAndOrder(visibleTasks())));
 
+  // The detail panel reads the task live out of the store rather than holding a
+  // snapshot, so renames/date changes made anywhere else (inline editor, a sync
+  // pull) show up in the open panel instead of leaving it stale.
+  let detailTask = $derived(detailId ? (allTasks.find(t => t.id === detailId) ?? null) : null);
+
+  // Open the panel on a task and move the list's focus to it, so panel
+  // navigation (‹ ›, breadcrumb, subtask links) and the list stay in sync.
+  function openDetail(task) {
+    detailId = task?.id ?? null;
+    if (!task) return;
+    const i = flatTasks.findIndex(t => t.id === task.id);
+    if (i >= 0) focusIndex = i;
+  }
+
   // Counts for sidebar badges
   let viewCounts = $derived.by(() => {
     const open = t => t.status !== "completed";
@@ -424,7 +438,7 @@
     if (task) {
       await refreshLists([parent.listId]);
       // Open the new subtask in detail panel so user can name it immediately
-      detailTask = allTasks.find(t => t.id === task.id) || task;
+      openDetail(task);
     }
   }
 
@@ -702,7 +716,7 @@
   function handleFocus(i, action) {
     focusIndex = i;
     if (action === "edit") editingId = flatTasks[i]?.id;
-    else detailTask = flatTasks[i] || null;
+    else detailId = flatTasks[i]?.id ?? null;
   }
 
   async function saveDetail(id, { title, notes, due }) {
@@ -720,9 +734,7 @@
     // Navigate to the task's list and focus it
     selectedView = task.listId;
     loadAll().then(() => {
-      const idx = flatTasks.findIndex(t => t.id === task.id);
-      if (idx >= 0) focusIndex = idx;
-      detailTask = task;
+      openDetail(task);
     });
   }
 
@@ -755,7 +767,7 @@
           await refreshLists([task.listId]);
         }},
         { id: "details", icon: "ℹ️", label: "Details", shortcut: "Enter", action: () => {
-          detailTask = allTasks.find(t => t.id === task.id) || task;
+          openDetail(task);
         }},
         ...(task.web_view_link ? [{
           id: "open-google", icon: "↗", label: "Open in Google Tasks",
@@ -936,7 +948,7 @@
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
-    if (detailTask && e.key === "Escape") { detailTask = null; e.preventDefault(); return; }
+    if (detailTask && e.key === "Escape") { detailId = null; e.preventDefault(); return; }
     if (notesTask || detailTask) return;
     // With an active selection, Esc clears it (when no panel intercepted above).
     if (selectedIds.size > 0 && e.key === "Escape") { clearSelection(); e.preventDefault(); return; }
@@ -993,7 +1005,7 @@
         e.preventDefault();
         if (f) {
           // Toggle detail panel
-          detailTask = (detailTask?.id === f.id) ? null : f;
+          detailId = (detailId === f.id) ? null : f.id;
         } else {
           await newTask();
         }
@@ -1021,7 +1033,7 @@
   <Sidebar
     lists={orderedLists}
     {selectedView}
-    onselect={(v) => { selectedView = v; focusIndex = 0; detailTask = null; clearSelection(); }}
+    onselect={(v) => { selectedView = v; focusIndex = 0; detailId = null; clearSelection(); }}
     onlogin={login}
     onlogout={logout}
     onsync={doSync}
@@ -1085,21 +1097,23 @@
     {/if}
   </section>
   {#if detailTask}
+    {@const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks}
+    {@const si = siblings.findIndex(t => t.id === detailTask.id)}
     <TaskDetail
       task={detailTask}
       parentTask={detailTask.parent_id ? allTasks.find(t => t.id === detailTask.parent_id) : null}
       {lists}
       subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
       onsave={saveDetail}
-      onclose={() => detailTask = null}
+      onclose={() => detailId = null}
       ondelete={deleteTask}
       onmovelist={moveToList}
       ontogglesubtask={toggleComplete}
-      onopensubtask={(sub) => detailTask = sub}
-      onopenparent={(p) => detailTask = p}
+      onopensubtask={openDetail}
+      onopenparent={openDetail}
       onaddsubtask={addSubtask}
-      onprev={(() => { const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks; const i = siblings.findIndex(t => t.id === detailTask.id); return i > 0 ? () => { detailTask = siblings[i-1]; } : null; })()}
-      onnext={(() => { const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks; const i = siblings.findIndex(t => t.id === detailTask.id); return i < siblings.length - 1 ? () => { detailTask = siblings[i+1]; } : null; })()}
+      onprev={si > 0 ? () => openDetail(siblings[si - 1]) : null}
+      onnext={si >= 0 && si < siblings.length - 1 ? () => openDetail(siblings[si + 1]) : null}
     />
   {:else if notesTask}
     <NotesPanel taskId={notesTask.id} notes={notesTask.notes || ""} onsave={saveNotes} onclose={() => notesTask = null} />

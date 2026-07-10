@@ -1,11 +1,18 @@
 <script>
+  import { untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import DatePicker from "./DatePicker.svelte";
   let { task, parentTask, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
   let due = $state("");
   let selectedList = $state("");
+
+  // The "Due date" field opens our own calendar popover rather than relying on
+  // <input type="date">: WebKitGTK's native date popup does not close when a day
+  // is picked, and it ignores the app's light/dark theme.
+  let showDatePicker = $state(false);
 
   let prevTaskId = $state(null);
   // The task's values when it was loaded, so we only save fields the user
@@ -39,19 +46,32 @@
     }
   });
 
-  // Reset when task changes. Compute from `task` only (not from the editable
-  // vars) so this effect depends solely on `task` — otherwise editing a field
-  // would re-trigger it and wipe the edit.
+  // Load `task` into the editable fields. Reads of the editable vars are
+  // untracked so this effect depends solely on `task` — otherwise editing a
+  // field would re-trigger it and wipe the edit.
   $effect(() => {
-    if (task) {
-      const t = task.title || "";
-      const n = task.notes || "";
-      const d = task.due ? task.due.slice(0, 10) : "";
-      const l = task.listId || "";
-      title = t; notes = n; due = d; selectedList = l;
+    if (!task) return;
+    const id = task.id;
+    const t = task.title || "";
+    const n = task.notes || "";
+    const d = task.due ? task.due.slice(0, 10) : "";
+    const l = task.listId || "";
+    untrack(() => {
+      if (id !== prevTaskId) {
+        // A different task: load it wholesale.
+        title = t; notes = n; due = d; selectedList = l;
+        prevTaskId = id;
+      } else {
+        // Same task, refreshed from the store (an inline rename, a sync pull, a
+        // quick date action). Adopt each incoming value only where the user has
+        // not typed over it, so the panel stays current without losing edits.
+        if (title === orig.title) title = t;
+        if (notes === orig.notes) notes = n;
+        if (due === orig.due) due = d;
+        if (selectedList === orig.list) selectedList = l;
+      }
       orig = { title: t, notes: n, due: d, list: l };
-      prevTaskId = task.id;
-    }
+    });
   });
 
   function save() {
@@ -113,7 +133,9 @@
 
   <div class="field">
     <label for="detail-due">Due date</label>
-    <input id="detail-due" type="date" bind:value={due} />
+    <button id="detail-due" class="due-btn" class:empty={!due} onclick={() => (showDatePicker = true)}>
+      {due || "No date"}
+    </button>
     <div class="quick-dates">
       <button onclick={() => { const d = new Date(); due = d.toISOString().slice(0,10); }}>Today</button>
       <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); due = d.toISOString().slice(0,10); }}>Tomorrow</button>
@@ -178,6 +200,14 @@
   </div>
 </aside>
 
+{#if showDatePicker}
+  <DatePicker
+    value={due || null}
+    onselect={(d) => { due = d || ""; showDatePicker = false; }}
+    onclose={() => (showDatePicker = false)}
+  />
+{/if}
+
 <style>
   .detail-panel {
     width: 320px; background: var(--bg-sidebar); border-left: 1px solid var(--bg-elevated);
@@ -218,11 +248,14 @@
   .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
   .add-subtask-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
   .add-subtask-btn:hover { background: var(--bg-hover); }
-  .field input[type="text"], .field input[type="date"], .field textarea, .field select {
+  .field input[type="text"], .field .due-btn, .field textarea, .field select {
     width: 100%; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     color: var(--fg); padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
     box-sizing: border-box;
   }
+  .due-btn { text-align: left; cursor: pointer; }
+  .due-btn:hover { border-color: var(--accent); }
+  .due-btn.empty { color: var(--fg-faint); }
   .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); }
   .field textarea { resize: vertical; min-height: 100px; }
   .field select { cursor: pointer; }
@@ -254,7 +287,7 @@
     .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }
   }
   @media (pointer: coarse) {
-    .field input, .field textarea, .field select { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
+    .field input, .field textarea, .field select, .field .due-btn { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
     .quick-dates button { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
     .save-btn, .close-btn { min-height: 44px; min-width: 44px; }
     .delete-btn { min-height: 44px; }

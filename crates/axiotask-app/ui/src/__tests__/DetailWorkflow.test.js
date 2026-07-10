@@ -85,6 +85,61 @@ describe("Detail Panel Workflows", () => {
     });
   });
 
+  describe("The open panel tracks the task it is showing", () => {
+    it("renaming a task inline updates the title in the open panel", async () => {
+      mockBackend([task("t1", "Old name")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Old name")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Old name"));
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Old name"));
+
+      // Rename inline (double-click the title → edit input → Enter).
+      await fireEvent.dblClick(container.querySelector(".title"));
+      await waitFor(() => expect(container.querySelector(".edit-input")).toBeTruthy());
+      const inline = container.querySelector(".edit-input");
+      await fireEvent.input(inline, { target: { value: "New name" } });
+      await fireEvent.keyDown(inline, { key: "Enter" });
+
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("New name"));
+    });
+
+    it("a refresh of the shown task does not clobber what the user is typing", async () => {
+      mockBackend([task("t1", "Original", { pos: "1" }), task("t2", "Other", { pos: "2" })]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Original")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Original"));
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Original"));
+
+      const titleInput = screen.getByLabelText("Title");
+      await fireEvent.input(titleInput, { target: { value: "Half-typed" } });
+
+      // Completing the *other* task reloads the store while the panel is open.
+      const otherRow = [...container.querySelectorAll(".task-widget")]
+        .find(el => el.textContent.includes("Other"));
+      await fireEvent.click(otherRow.querySelector(".checkbox"));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t2" }));
+
+      expect(screen.getByLabelText("Title")).toHaveValue("Half-typed");
+    });
+
+    it("panel ‹ › navigation moves the focused row in the list", async () => {
+      mockBackend([task("t1", "First", { pos: "1" }), task("t2", "Second", { pos: "2" })]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("First")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("First"));
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("First"));
+      expect(container.querySelector(".task-widget.focused .title")).toHaveTextContent("First");
+
+      await fireEvent.click(screen.getByTitle("Next (→)"));
+
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Second"));
+      expect(container.querySelector(".task-widget.focused .title")).toHaveTextContent("Second");
+    });
+  });
+
   describe("UT-38: Reschedule to today (o key)", () => {
     it("pressing o on focused task calls set_due with Today", async () => {
       mockBackend([task("t1", "My task")]);
