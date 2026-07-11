@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import DatePicker from "./DatePicker.svelte";
-  let { task, parentTask, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
+  let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -151,6 +151,15 @@
     </div>
   </div>
 
+  {#if propagatedDue}
+    <div class="field">
+      <span class="field-label">From subtasks</span>
+      <div class="inherited-due" title="Earliest due date among unfinished subtasks. Read-only — set on the subtasks. The task is sorted and filtered by whichever is earlier, this or its own due date.">
+        ↳ {propagatedDue}
+      </div>
+    </div>
+  {/if}
+
   <div class="field">
     <label for="detail-list">List</label>
     <select id="detail-list" value={selectedList} onchange={(e) => (selectedList = e.currentTarget.value)}>
@@ -262,6 +271,10 @@
   .due-btn { text-align: left; cursor: pointer; }
   .due-btn:hover { border-color: var(--accent); }
   .due-btn.empty { color: var(--fg-faint); }
+  .inherited-due {
+    font-style: italic; color: var(--fg-muted); font-size: 0.9rem;
+    padding: 0.5rem; border: 1px dashed var(--border); border-radius: 4px;
+  }
   .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); }
   .field textarea { resize: vertical; min-height: 100px; }
   .field select { cursor: pointer; }

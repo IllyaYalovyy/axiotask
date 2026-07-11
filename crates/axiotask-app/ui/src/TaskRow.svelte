@@ -203,6 +203,12 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="due {dueClass(task.due)} pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>{formatDue(task.due)}</span>
+    {:else if task.inheritedDue}
+      <!-- Date inherited from the earliest unfinished subtask. Read-only marker
+           (↳), but still clickable to set the task's own explicit date. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="due inherited {dueClass(task.inheritedDue)} pickable" title="Earliest subtask date — used for sorting and filtering. Click to set this task's own date." onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>↳ {formatDue(task.inheritedDue)}</span>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -300,6 +306,9 @@
   .due { color: var(--fg-muted); }
   .due.overdue { color: var(--danger); font-weight: 600; }
   .due.due-today { color: var(--warning); }
+  /* Inherited (propagated from a subtask): dimmer + italic so it reads as
+     borrowed, not set on this task. */
+  .due.inherited { font-style: italic; opacity: 0.8; }
   .no-due { color: var(--border-faint); }
   .pickable { cursor: pointer; }
   .pickable:hover { text-decoration: underline; }

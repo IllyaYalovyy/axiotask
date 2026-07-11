@@ -256,47 +256,88 @@
     return out;
   }
 
-  // Per-task date predicates for the smart views.
-  function inFocus(t) {
-    if (!t.due) return false;
+  // --- Effective due dates with subtask propagation ---
+  //
+  // Each task has up to two dates:
+  //   • explicit  — the date set directly on the task (its own `due`)
+  //   • propagated — the earliest EFFECTIVE date among its UNFINISHED direct
+  //                  subtasks (recurses, so a completed subtask cuts off its
+  //                  whole subtree; only pending work propagates a date up)
+  // The EFFECTIVE date is the earlier of the two. It's what smart views filter
+  // and sort on, so a parent with a dated subtask lands in Focus/Upcoming even
+  // when the parent itself is undated. The propagated date is read-only.
+  //
+  // Dates compare as "YYYY-MM-DD" strings (lexical == chronological). Memoized
+  // per allTasks change so the recursion is linear, not quadratic.
+  let dueInfo = $derived.by(() => {
+    const childrenByParent = new Map();
+    for (const t of allTasks) {
+      if (!t.parent_id) continue;
+      (childrenByParent.get(t.parent_id) ?? childrenByParent.set(t.parent_id, []).get(t.parent_id)).push(t);
+    }
+    const minDate = (a, b) => (!a ? b : !b ? a : (a <= b ? a : b));
+    const memo = new Map();
+    const compute = (t, seen) => {
+      const cached = memo.get(t.id);
+      if (cached) return cached;
+      if (seen.has(t.id)) return { explicit: null, propagated: null, effective: null };
+      seen.add(t.id);
+      const explicit = t.due ? t.due.slice(0, 10) : null;
+      let propagated = null;
+      for (const c of childrenByParent.get(t.id) ?? []) {
+        if (c.status === "completed") continue; // done subtask → no date propagates
+        propagated = minDate(propagated, compute(c, seen).effective);
+      }
+      seen.delete(t.id);
+      const info = { explicit, propagated, effective: minDate(explicit, propagated) };
+      memo.set(t.id, info);
+      return info;
+    };
+    const out = new Map();
+    for (const t of allTasks) out.set(t.id, compute(t, new Set()));
+    return out;
+  });
+
+  const effectiveDue = (t) => dueInfo.get(t.id)?.effective ?? null;
+  const propagatedDueOf = (t) => dueInfo.get(t.id)?.propagated ?? null;
+
+  // Date-window predicates. They take a due-date string (the task's EFFECTIVE
+  // date) rather than a task, so parent and subtask dates flow through one path.
+  function inFocusDate(due) {
+    if (!due) return false;
     const now = new Date(); now.setHours(0,0,0,0);
-    return parseLocalDate(t.due) < new Date(now.getTime() + 7 * 86400000);
+    return parseLocalDate(due) < new Date(now.getTime() + 7 * 86400000);
   }
-  function inUpcoming(t) {
-    if (!t.due) return false;
+  function inUpcomingDate(due) {
+    if (!due) return false;
     const now = new Date(); now.setHours(0,0,0,0);
-    const d = parseLocalDate(t.due);
+    const d = parseLocalDate(due);
     return d > now && d <= new Date(now.getTime() + 14 * 86400000);
   }
-  function inMissed(t) {
-    if (!t.due) return false;
+  function inMissedDate(due) {
+    if (!due) return false;
     const now = new Date(); now.setHours(0,0,0,0);
-    return parseLocalDate(t.due) < now;
+    return parseLocalDate(due) < now;
   }
 
   // Smart views operate on TOP-LEVEL tasks only (subtasks appear in the detail
-  // panel, never as standalone rows). A parent is included when it — or any of
-  // its subtasks — matches, so a subtask due soon pulls its whole group in and
-  // is never orphaned; the count then always equals the visible cards (#3 / A).
-  function topLevelWhere(matchFn) {
-    const visible = smartTasks();
-    const visibleIds = new Set(visible.map(t => t.id));
-    return visible.filter(t => !t.parent_id
-      && (matchFn(t) || descendantsOf(t.id).some(d => visibleIds.has(d.id) && matchFn(d))));
+  // panel, never as standalone rows), filtered by their EFFECTIVE date — so a
+  // subtask due soon pulls its parent in and the count always equals the
+  // visible cards.
+  function topLevelWhere(matchDate) {
+    return smartTasks().filter(t => !t.parent_id && matchDate(effectiveDue(t)));
   }
 
-  function focusTasks() { return topLevelWhere(inFocus); }
-  function upcomingTasks() { return topLevelWhere(inUpcoming); }
+  function focusTasks() { return topLevelWhere(inFocusDate); }
+  function upcomingTasks() { return topLevelWhere(inUpcomingDate); }
   function missedTasks() {
-    // Sort by the earliest overdue date among the task and its matching subtasks.
-    const earliest = (t) => Math.min(
-      ...[t, ...descendantsOf(t.id)].filter(inMissed).map(x => parseLocalDate(x.due).getTime()),
-    );
-    return topLevelWhere(inMissed).sort((a, b) => earliest(a) - earliest(b));
+    return topLevelWhere(inMissedDate)
+      .sort((a, b) => parseLocalDate(effectiveDue(a)) - parseLocalDate(effectiveDue(b)));
   }
   function unscheduledTasks() {
-    // A task is "unscheduled" when it itself has no due date.
-    return smartTasks().filter(t => !t.parent_id && !t.due);
+    // Unscheduled = no EFFECTIVE date, so a parent with a dated subtask is
+    // excluded here (it belongs to the dated views instead).
+    return smartTasks().filter(t => !t.parent_id && !effectiveDue(t));
   }
 
   function listTasks(listId) {
@@ -319,10 +360,11 @@
     // Apply sort mode
     if (sortMode === "due") {
       sorted.sort((a, b) => {
-        if (!a.due && !b.due) return 0;
-        if (!a.due) return 1;
-        if (!b.due) return -1;
-        return new Date(a.due) - new Date(b.due);
+        const da = effectiveDue(a), db = effectiveDue(b);
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return parseLocalDate(da) - parseLocalDate(db);
       });
     } else if (sortMode === "alpha") {
       sorted.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
@@ -392,12 +434,15 @@
   });
 
   function buildFlatTree(tasks) {
-    // Flat list: only top-level tasks, no tree indentation
+    // Flat list: only top-level tasks, no tree indentation. Carry the inherited
+    // (propagated) date for rows whose own `due` is empty so the row can show
+    // it, read-only and marked, instead of "no date".
     return tasks.filter(t => !t.parent_id).map(t => ({
       ...t,
       depth: 0,
       hasChildren: allTasks.some(c => c.parent_id === t.id),
       isCollapsed: false,
+      inheritedDue: !t.due ? propagatedDueOf(t) : null,
     }));
   }
 
@@ -1102,6 +1147,7 @@
     <TaskDetail
       task={detailTask}
       parentTask={detailTask.parent_id ? allTasks.find(t => t.id === detailTask.parent_id) : null}
+      propagatedDue={propagatedDueOf(detailTask)}
       {lists}
       subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
       onsave={saveDetail}
