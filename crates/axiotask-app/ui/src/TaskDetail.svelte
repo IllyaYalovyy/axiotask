@@ -28,6 +28,12 @@
 
   const dueOf = (d) => (d ? `${d}T00:00:00.000Z` : null);
 
+  // Local calendar date as YYYY-MM-DD. Must NOT go through toISOString(), which
+  // converts to UTC — west of UTC in the evening that rolls to tomorrow, so
+  // "Today" would set the wrong day.
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const localISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
   // Only the { title, notes, due } fields that differ from the loaded values.
   function changedFields() {
     const out = {};
@@ -137,10 +143,10 @@
       {due || "No date"}
     </button>
     <div class="quick-dates">
-      <button onclick={() => { const d = new Date(); due = d.toISOString().slice(0,10); }}>Today</button>
-      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); due = d.toISOString().slice(0,10); }}>Tomorrow</button>
-      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); due = d.toISOString().slice(0,10); }}>+1 week</button>
-      <button onclick={() => { const d = new Date(); d.setMonth(d.getMonth()+1); due = d.toISOString().slice(0,10); }}>+1 month</button>
+      <button onclick={() => { const d = new Date(); due = localISO(d); }}>Today</button>
+      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); due = localISO(d); }}>Tomorrow</button>
+      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); due = localISO(d); }}>+1 week</button>
+      <button onclick={() => { const d = new Date(); d.setMonth(d.getMonth()+1); due = localISO(d); }}>+1 month</button>
       <button onclick={() => due = ""}>Clear</button>
     </div>
   </div>

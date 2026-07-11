@@ -251,9 +251,35 @@ describe("TaskDetail Panel (GH#7)", () => {
       await fireEvent.click(screen.getByText("Date Task"));
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
-      const todayStr = new Date().toISOString().slice(0, 10);
+      const d = new Date();
+      const localToday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       await fireEvent.click(screen.getByText("Today"));
-      expect(screen.getByLabelText("Due date")).toHaveTextContent(todayStr);
+      expect(screen.getByLabelText("Due date")).toHaveTextContent(localToday);
+    });
+
+    it("Today uses the LOCAL date, not UTC — no off-by-one west of UTC in the evening", async () => {
+      // Regression: the quick-date buttons used toISOString() (UTC). At 22:46
+      // in a UTC-4 zone the UTC date is already tomorrow, so "Today" set the
+      // wrong day. Fake only Date so testing-library's polling timers stay real.
+      const origTZ = process.env.TZ;
+      process.env.TZ = "America/New_York"; // UTC-4 in July
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // 02:46 UTC on the 11th == 22:46 EDT on the 10th → the local day is the 10th.
+      vi.setSystemTime(new Date("2026-07-11T02:46:00Z"));
+      try {
+        mockBackend([task("t1", "Evening Task")]);
+        render(App);
+        await waitFor(() => expect(screen.getByText("Evening Task")).toBeInTheDocument());
+        await fireEvent.click(screen.getByText("Evening Task"));
+        await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+
+        await fireEvent.click(screen.getByText("Today"));
+        expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-07-10");
+      } finally {
+        vi.useRealTimers();
+        if (origTZ === undefined) delete process.env.TZ;
+        else process.env.TZ = origTZ;
+      }
     });
 
     it("Clear button removes due date", async () => {
