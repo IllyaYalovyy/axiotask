@@ -429,10 +429,10 @@ impl AppState {
     pub async fn run_sync_loop(self: Arc<Self>) {
         loop {
             wait_for_sync_trigger(&self.sync_notify, SYNC_DEBOUNCE, SYNC_PERIOD).await;
-            if self.is_authenticated() {
-                if let Err(e) = self.run_sync_if_authed().await {
-                    tracing::warn!("background sync failed: {e}");
-                }
+            if self.is_authenticated()
+                && let Err(e) = self.run_sync_if_authed().await
+            {
+                tracing::warn!("background sync failed: {e}");
             }
         }
     }
@@ -806,6 +806,56 @@ pub fn default_db_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     data.join(axiotask_core::config::app_dir_name())
         .join("axiotask.sqlite")
+}
+
+/// Single-instance guard (#48): take an exclusive advisory lock on a file next
+/// to the database, held for the process lifetime.
+///
+/// Two processes on the same DB are unsafe REGARDLESS of WAL: the sync mutex
+/// is per-process, so both would drain the same dirty rows and double-push
+/// creates (each remapping the local id to a different remote task — duplicates
+/// on Google). The lock is scoped to the DATA DIRECTORY, which is exactly the
+/// unit that must be exclusive — a `dev`-prefixed instance, the production
+/// instance, and an e2e run under its own `XDG_DATA_HOME` all use different
+/// directories and may run side by side. (This is why the single-instance
+/// plugin is unsuitable: it keys on the app identifier over the session bus —
+/// one global claim per machine, breaking exactly those workflows.)
+///
+/// The kernel releases the lock when the process dies, however it dies, so a
+/// crash never leaves a stale guard. Returns the open file — the caller must
+/// keep it alive for the lifetime of the process.
+pub fn acquire_instance_lock(db_path: &std::path::Path) -> Result<std::fs::File, String> {
+    let dir = db_path.parent().ok_or("db path has no parent directory")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create data dir: {e}"))?;
+    let lock_path = dir.join("instance.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
+    match file.try_lock() {
+        Ok(()) => {
+            // Informational only — the flock is the guard, the pid is for humans.
+            let _ = std::fs::write(&lock_path, format!("{}\n", std::process::id()));
+            Ok(file)
+        }
+        Err(std::fs::TryLockError::WouldBlock) => {
+            let holder = std::fs::read_to_string(&lock_path).unwrap_or_default();
+            let holder = holder.trim();
+            Err(format!(
+                "another axiotask instance is already running on this data directory \
+                 ({}{}). Close it first — two processes on one database would \
+                 duplicate tasks on Google.",
+                dir.display(),
+                if holder.is_empty() { String::new() } else { format!(", pid {holder}") },
+            ))
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            Err(format!("lock {}: {e}", lock_path.display()))
+        }
+    }
 }
 
 /// Default backup path: a timestamped JSON file under the instance's

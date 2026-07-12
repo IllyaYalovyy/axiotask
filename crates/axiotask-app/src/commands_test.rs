@@ -840,6 +840,49 @@ mod tests {
         assert_eq!(stored.sync_state, SyncState::Clean, "row untouched");
     }
 
+    #[test]
+    fn instance_lock_excludes_a_second_holder_and_frees_on_drop() {
+        // #48: the guard that stops two processes from double-pushing the same
+        // dirty rows. flock semantics apply across separate opens even within
+        // one process, so this exercises the real contention path.
+        let dir = std::env::temp_dir().join(format!(
+            "axiotask-lock-test-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_nanosecond(),
+        ));
+        let db = dir.join("axiotask.sqlite");
+
+        let first = crate::state::acquire_instance_lock(&db).expect("first instance acquires");
+
+        let second = crate::state::acquire_instance_lock(&db);
+        let err = second.expect_err("second instance must be refused");
+        assert!(err.contains("already running"), "{err}");
+        assert!(err.contains(&std::process::id().to_string()), "names the holder pid: {err}");
+
+        // First instance exits → the lock frees → a new instance may start.
+        drop(first);
+        crate::state::acquire_instance_lock(&db).expect("lock freed after drop");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn instance_lock_is_scoped_per_data_directory() {
+        // Prod, a dev-prefixed instance, and an e2e run under its own
+        // XDG_DATA_HOME use different data dirs — they must coexist.
+        let base = std::env::temp_dir().join(format!(
+            "axiotask-lock-scope-{}-{}",
+            std::process::id(),
+            jiff::Timestamp::now().as_nanosecond(),
+        ));
+        let prod = crate::state::acquire_instance_lock(&base.join("axiotask").join("axiotask.sqlite"))
+            .expect("prod acquires");
+        let dev = crate::state::acquire_instance_lock(&base.join("axiotask-dev").join("axiotask.sqlite"))
+            .expect("dev coexists with prod");
+        drop((prod, dev));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[tokio::test]
     async fn completing_a_parent_completes_open_descendants() {
         // Google auto-completes children when a parent completes (verified

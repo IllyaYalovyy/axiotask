@@ -53,6 +53,22 @@ fn main() {
         Some(p) => format!("axiotask ({p})"),
         None => "axiotask".to_string(),
     };
+
+    // Single-instance guard (#48): refuse to start on a data directory another
+    // process already owns — two processes would double-push the same dirty
+    // rows and duplicate tasks on Google. Must happen before anything opens
+    // the database. The lock lives as long as the process; the kernel releases
+    // it on any kind of exit.
+    let instance_lock = match state::acquire_instance_lock(&default_db_path()) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("{e}");
+            eprintln!("axiotask: {e}");
+            std::process::exit(1);
+        }
+    };
+    // Hold the fd (and with it the flock) for the process lifetime.
+    std::mem::forget(instance_lock);
     // Injected before any page script so the frontend can namespace its
     // localStorage per instance. JSON-encoded so it is always safely quoted.
     let init_script = format!(
