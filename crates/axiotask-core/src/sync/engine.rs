@@ -259,7 +259,23 @@ impl SyncEngine {
                         self.store.delete_list_hard(&l.list.id).await?;
                         out.deleted += 1;
                     }
-                    Err(e) => Self::row_push_failure(e, out, &l.list.id, "list delete")?,
+                    Err(e) if e.is_transient() => {
+                        warn!(err = %e, "transient on list delete, retry");
+                    }
+                    Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized.into()),
+                    Err(e) => {
+                        // Permanently refused — Google will not delete an
+                        // account's default list, for example. A tombstone that
+                        // can never push would error on every run forever;
+                        // revive the list instead (its tasks re-pull) and tell
+                        // the user via the error count.
+                        warn!(id = %l.list.id, err = %e, "list delete refused by server; restoring list");
+                        out.errors += 1;
+                        let mut revived = l.clone();
+                        revived.sync_state = SyncState::Clean;
+                        revived.pending_op = None;
+                        self.store.upsert_list(&revived).await?;
+                    }
                 },
                 _ => {}
             }
@@ -624,10 +640,31 @@ impl SyncEngine {
 
         // Idempotency: skip rows where local etag already matches.
         let local_etags = self.build_etag_map(&list.id).await;
+        let known_local: HashSet<String> = self
+            .store
+            .list_tasks(&list.id)
+            .await?
+            .into_iter()
+            .map(|t| t.task.id)
+            .collect();
+        let batch_ids: HashSet<String> = to_upsert.iter().map(|t| t.id.clone()).collect();
 
-        for task in to_upsert {
+        for mut task in to_upsert {
             if Self::is_up_to_date(&task.id, task.etag.as_deref(), &local_etags) {
                 continue;
+            }
+            // A parent that is neither in this batch nor already local (its
+            // row was skipped as dirty/in-flight, or it moved mid-pagination)
+            // would fail the FK and abort the whole pull. Detach instead, and
+            // drop the etag so the row is NOT etag-skipped next pull — it gets
+            // re-processed and re-linked once the parent is present.
+            if let Some(p) = &task.parent
+                && !batch_ids.contains(p)
+                && !known_local.contains(p)
+            {
+                warn!(id = %task.id, parent = %p, "pulled task's parent unknown; detaching until it appears");
+                task.parent = None;
+                task.etag = None;
             }
             let stored = StoredTask {
                 list_id: list.id.clone(),
@@ -1628,6 +1665,75 @@ mod tests {
         // One adopted the remote list, the other created a second remote list.
         let remote = client.list_tasklists().await.unwrap();
         assert_eq!(remote.iter().filter(|l| l.title == "Work").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn refused_list_delete_revives_the_list_instead_of_nagging_forever() {
+        // Google refuses to delete an account's default list (permanent 400).
+        // A tombstone that can never push would surface an error on every run
+        // forever; the list is revived instead and its tasks re-pull.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_task("L1", "T1", "still here", "1");
+        eng.run().await.unwrap();
+
+        // Tombstone the list locally (as delete_list does for synced lists).
+        let mut l = eng.store.all_lists().await.unwrap().remove(0);
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+        eng.store.upsert_list(&l).await.unwrap();
+        // Server permanently refuses.
+        client.fail_next(crate::api::in_memory::Method::DeleteTaskList, || {
+            ApiError::Other("400: Cannot delete the default task list".into())
+        });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 1, "refusal surfaced once");
+        let lists = eng.store.all_lists().await.unwrap();
+        assert_eq!(lists.len(), 1, "list revived");
+        assert_eq!(lists[0].sync_state, SyncState::Clean);
+
+        // Next run: no tombstone left, no repeat error.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "no permanent nag");
+        assert!(eng.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.title == "still here"));
+    }
+
+    #[tokio::test]
+    async fn pull_detaches_task_whose_parent_is_unknown_instead_of_failing() {
+        // The reachable FK hazard: a create crashed mid-push (orphan exists on
+        // the server, local row still carries the local UUID + an in-flight
+        // marker), and a CHILD of that orphan exists remotely. Pull filters
+        // the orphan out of the batch (in-flight dedup), so the child
+        // references a parent that is in neither the batch nor the store. In
+        // READ-ONLY mode crash recovery never runs (it lives in the push
+        // phase), so without the guard every pull FK-fails — forever.
+        let (client, eng) = engine().await; // push DISABLED
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // Crashed create: local row under a local UUID + in-flight marker…
+        let mut local = dirty_task("local-p", "L1", "create");
+        local.task.title = "buy milk".into();
+        eng.store.upsert_task(&local).await.unwrap();
+        eng.store.record_inflight_create("local-p", "L1").await.unwrap();
+        // …its committed orphan on the server, plus a child under the orphan.
+        client.seed_task("L1", "remote-orphan", "buy milk", "1");
+        client.seed_task_with_parent("L1", "C", "child of orphan", "2", Some("remote-orphan"));
+
+        let out = eng.run().await;
+        assert!(out.is_ok(), "pull must survive the unknown parent: {out:?}");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let child = tasks.iter().find(|t| t.task.id == "C").expect("child pulled, not lost");
+        assert_eq!(child.task.parent, None, "detached until the parent id resolves");
+
+        // Once recovery runs (push re-enabled), the orphan is adopted and the
+        // next pull re-links the child (its etag was dropped, so it re-pulls).
+        let eng_push = SyncEngine::with_push(client.clone(), eng.store.clone(), true);
+        eng_push.run().await.unwrap();
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let child = tasks.iter().find(|t| t.task.id == "C").unwrap();
+        assert_eq!(child.task.parent.as_deref(), Some("remote-orphan"), "re-linked");
     }
 
     // ─── Pull tests ──────────────────────────────────────────────────────────

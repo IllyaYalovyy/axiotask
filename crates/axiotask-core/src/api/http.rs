@@ -75,6 +75,8 @@ impl HttpClient {
 #[derive(Debug, Deserialize)]
 struct TaskListsResponse {
     items: Option<Vec<TaskListWire>>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,8 +146,20 @@ impl TryFrom<TaskWire> for Task {
 }
 
 fn map_status(status: StatusCode, retry_after: Option<Duration>) -> ApiError {
+    map_status_with_body(status, retry_after, "")
+}
+
+/// Map an HTTP status to an [`ApiError`], using the error body to split 403:
+/// Google signals per-user rate limiting and quota exhaustion as 403 (with
+/// reasons like `rateLimitExceeded` / `quotaExceeded`), which must be treated
+/// as transient-with-backoff — while a permission 403 (revoked scope) is
+/// permanent. Treating quota 403s as permanent would mark every pending change
+/// "rejected" the moment a burst hits the quota.
+fn map_status_with_body(status: StatusCode, retry_after: Option<Duration>, body: &str) -> ApiError {
     match status.as_u16() {
         401 => ApiError::Unauthorized,
+        403 if is_rate_limit_body(body) => ApiError::RateLimited { retry_after },
+        403 => ApiError::Other(format!("403 forbidden: {}", body_reason(body))),
         404 => ApiError::NotFound,
         409 | 412 => ApiError::PreconditionFailed,
         429 => ApiError::RateLimited { retry_after },
@@ -154,6 +168,19 @@ fn map_status(status: StatusCode, retry_after: Option<Duration>) -> ApiError {
         },
         other => ApiError::Other(format!("unexpected status {other}")),
     }
+}
+
+fn is_rate_limit_body(body: &str) -> bool {
+    ["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"]
+        .iter()
+        .any(|r| body.contains(r))
+}
+
+fn body_reason(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(String::from))
+        .unwrap_or_else(|| "permission denied".into())
 }
 
 fn retry_after_from(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -191,7 +218,14 @@ where
             return Ok(resp);
         }
         let retry_after = retry_after_from(resp.headers());
-        let err = map_status(status, retry_after);
+        // 403 needs the body to tell quota exhaustion (transient) from a real
+        // permission failure (permanent); other statuses map without it.
+        let err = if status.as_u16() == 403 {
+            let body = resp.text().await.unwrap_or_default();
+            map_status_with_body(status, retry_after, &body)
+        } else {
+            map_status(status, retry_after)
+        };
         if !err.is_transient() || attempt >= max_retries {
             return Err(err);
         }
@@ -210,19 +244,30 @@ fn backoff(attempt: u32) -> Duration {
 #[async_trait]
 impl GoogleTasksClient for HttpClient {
     async fn list_tasklists(&self) -> Result<Vec<TaskList>, ApiError> {
-        let url = format!("{}/users/@me/lists", self.base_url);
-        let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
-        let body: TaskListsResponse = resp
-            .json()
-            .await
-            .map_err(|e| ApiError::Other(format!("decode lists: {e}")))?;
-        Ok(body
-            .items
-            .unwrap_or_default()
-            .into_iter()
-            .map(TaskList::from)
-            .collect())
+        // Paginate: ghost detection treats this as the COMPLETE set of remote
+        // lists — silently dropping a page would delete the missing lists
+        // locally, tasks and all. (The observed default page fits many lists,
+        // but the response contract includes nextPageToken, so honor it.)
+        let mut out = Vec::new();
+        let mut page_token: Option<String> = None;
+        loop {
+            let mut url = format!("{}/users/@me/lists?maxResults=100", self.base_url);
+            if let Some(tok) = &page_token {
+                url.push_str("&pageToken=");
+                url.push_str(&urlencoding::encode(tok));
+            }
+            let auth = &self.auth;
+            let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
+            let body: TaskListsResponse = resp
+                .json()
+                .await
+                .map_err(|e| ApiError::Other(format!("decode lists: {e}")))?;
+            out.extend(body.items.unwrap_or_default().into_iter().map(TaskList::from));
+            match body.next_page_token {
+                Some(tok) => page_token = Some(tok),
+                None => return Ok(out),
+            }
+        }
     }
 
     async fn insert_tasklist(&self, title: &str) -> Result<TaskList, ApiError> {
@@ -264,8 +309,10 @@ impl GoogleTasksClient for HttpClient {
         list_id: &str,
         page_token: Option<&str>,
     ) -> Result<Page<Task>, ApiError> {
+        // maxResults=100 (the maximum): the default page size is 20, which
+        // costs 5x the requests on any list with more than a screenful.
         let mut url = format!(
-            "{}/lists/{}/tasks?showCompleted=true&showHidden=true",
+            "{}/lists/{}/tasks?showCompleted=true&showHidden=true&maxResults=100",
             self.base_url, list_id
         );
         if let Some(tok) = page_token {
@@ -537,6 +584,72 @@ mod tests {
     fn plain_client(base_url: &str) -> HttpClient {
         let refresh = Arc::new(AtomicU32::new(0));
         build_test_client(base_url, make_tokens("token"), counting_refresh(refresh))
+    }
+
+    #[tokio::test]
+    async fn quota_403_is_transient_rate_limit_not_permanent_rejection() {
+        // Google signals per-user rate limiting / quota exhaustion as 403 with
+        // a reason in the body. Mapping that to a permanent error would mark
+        // every pending change "rejected" during a burst.
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/lists/L1/tasks/T1"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "error": {"code": 403, "message": "Rate Limit Exceeded",
+                          "errors": [{"reason": "rateLimitExceeded"}]}
+            })))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        let err = client.delete_task("L1", "T1").await.unwrap_err();
+        assert!(matches!(err, ApiError::RateLimited { .. }), "got {err:?}");
+        assert!(err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn permission_403_stays_permanent() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path("/lists/L1/tasks/T1"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "error": {"code": 403, "message": "Insufficient Permission",
+                          "errors": [{"reason": "insufficientPermissions"}]}
+            })))
+            .mount(&server)
+            .await;
+        let client = plain_client(&server.uri());
+        let err = client.delete_task("L1", "T1").await.unwrap_err();
+        assert!(matches!(err, ApiError::Other(_)), "got {err:?}");
+        assert!(!err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn list_tasklists_follows_pagination() {
+        // Ghost detection treats this as the COMPLETE remote list set — a
+        // dropped page would locally delete the missing lists, tasks and all.
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .and(query_param("pageToken", "page2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{"id": "L2", "title": "Second", "updated": "2026-01-01T00:00:00Z"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{"id": "L1", "title": "First", "updated": "2026-01-01T00:00:00Z"}],
+                "nextPageToken": "page2"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let lists = client.list_tasklists().await.unwrap();
+        let titles: Vec<_> = lists.iter().map(|l| l.title.as_str()).collect();
+        assert_eq!(titles, vec!["First", "Second"], "both pages collected");
     }
 
     #[tokio::test]

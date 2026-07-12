@@ -270,27 +270,85 @@ impl AppState {
 
     /// Restore a backup into the local store (the inverse of [`build_backup`]).
     ///
-    /// Non-destructive merge: every list and task in the backup is upserted by
-    /// id, overwriting a matching local row but never deleting rows absent from
-    /// the backup. This honors the vision's "never lose data" promise — an
-    /// import can only add or refresh, never silently drop.
+    /// Non-destructive merge: restore the lists and tasks from the backup that
+    /// are MISSING locally, and leave everything that exists alone. Counts in
+    /// the summary are the rows actually restored.
     ///
-    /// Sync metadata is restored verbatim, so a backup taken while signed in
-    /// comes back exactly as it was. Pure store IO, no network — testable
-    /// without a Tauri runtime. Does not trigger a sync (push stays disabled by
-    /// default; restored rows simply reflect their saved state).
+    /// Restored rows come back as fresh local CREATES (etag stripped, dirty),
+    /// NOT with their saved sync metadata. Restoring them "clean" with their
+    /// old etags is a trap: the primary reason to restore a backup is that the
+    /// data no longer exists on the server — and the very next sync's ghost
+    /// detection would see clean rows absent from the server and silently
+    /// delete everything the restore just brought back. As creates they push
+    /// back to Google instead. If we're signed in, a sync runs first so
+    /// "missing" is judged against the server's current truth, not a stale
+    /// cache (this also prevents duplicating tasks that still exist remotely).
     pub async fn restore_backup(
         &self,
         backup: axiotask_core::export::Backup,
     ) -> Result<RestoreSummary, String> {
+        if self.is_authenticated() {
+            // Best effort — an offline restore still works against the cache.
+            if let Err(e) = self.run_sync().await {
+                tracing::warn!("pre-restore sync failed (continuing offline): {e}");
+            }
+        }
+        let now = axiotask_core::dates::now_utc_string();
         let mut summary = RestoreSummary { lists: 0, tasks: 0 };
+        let existing_lists: std::collections::HashSet<String> = self
+            .store
+            .all_lists()
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|l| l.list.id)
+            .collect();
+
         for (list, tasks) in backup.into_stored() {
-            self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
-            summary.lists += 1;
+            if !existing_lists.contains(&list.list.id) {
+                let mut l = list.clone();
+                l.list.etag = None;
+                l.sync_state = if l.local_only {
+                    axiotask_core::store::SyncState::Clean
+                } else {
+                    axiotask_core::store::SyncState::Dirty
+                };
+                l.pending_op = (!l.local_only).then(|| "create".to_string());
+                l.local_updated = now.clone();
+                self.store.upsert_list(&l).await.map_err(|e| e.to_string())?;
+                summary.lists += 1;
+            }
+            // Backup order is parents-before-children (export walks the store's
+            // ordering), so a restored child finds its restored parent.
             for task in &tasks {
-                self.store.upsert_task(task).await.map_err(|e| e.to_string())?;
+                if self
+                    .store
+                    .find_task_any(&task.task.id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .is_some()
+                {
+                    continue;
+                }
+                let mut t = task.clone();
+                // Re-parent to top level if the parent exists neither locally
+                // nor in this backup's restored set (FK safety).
+                if let Some(p) = &t.task.parent
+                    && self.store.find_task_any(p).await.map_err(|e| e.to_string())?.is_none()
+                {
+                    t.task.parent = None;
+                }
+                t.task.etag = None;
+                t.task.web_view_link = None;
+                t.sync_state = axiotask_core::store::SyncState::Dirty;
+                t.pending_op = Some("create".into());
+                t.local_updated = now.clone();
+                self.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
                 summary.tasks += 1;
             }
+        }
+        if summary.lists + summary.tasks > 0 {
+            self.schedule_sync();
         }
         Ok(summary)
     }

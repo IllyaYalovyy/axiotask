@@ -1454,9 +1454,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_backup_round_trips_a_full_export() {
-        // Seed one state, export it, then restore the export into a brand-new
-        // state and prove every row comes back byte-for-byte.
+    async fn restore_backup_round_trips_content_as_fresh_creates() {
+        // Export from one state, restore into a fresh one: the CONTENT comes
+        // back intact, but as dirty CREATES with etags stripped — restoring
+        // rows "clean" with their saved etags is the ghost-detection trap
+        // (see restore_backup_survives_the_next_sync below).
         let (_client, source) = setup().await;
         seed_list(&source, "L1", "Inbox").await;
 
@@ -1491,16 +1493,26 @@ mod tests {
 
         let restored = dest.store.list_tasks("L1").await.unwrap();
         let t = restored.iter().find(|t| t.task.id == "T1").expect("task restored");
-        assert_eq!(*t, original);
+        // Content preserved…
+        assert_eq!(t.task.title, original.task.title);
+        assert_eq!(t.task.notes, original.task.notes);
+        assert_eq!(t.task.status, original.task.status);
+        assert_eq!(t.task.due, original.task.due);
+        assert_eq!(t.task.position, original.task.position);
+        // …but as a fresh create that will push back to the server.
+        assert_eq!(t.task.etag, None);
+        assert_eq!(t.sync_state, SyncState::Dirty);
+        assert_eq!(t.pending_op.as_deref(), Some("create"));
     }
 
     #[tokio::test]
-    async fn restore_backup_overwrites_existing_rows_without_dropping_others() {
-        // Restore is a non-destructive merge: it upserts everything in the
-        // backup (overwriting matching ids) but leaves untouched rows alone.
+    async fn restore_backup_merges_missing_rows_and_never_clobbers_existing() {
+        // Restore only ADDS what is missing. An existing row keeps its current
+        // content (restore must not silently roll back live state), and rows
+        // absent from the backup are untouched.
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Inbox").await;
-        seed_task(&state, "T1", "L1", "old title").await;
+        seed_task(&state, "T1", "L1", "current title").await;
         seed_task(&state, "KEEP", "L1", "not in backup").await;
 
         let backup = axiotask_core::export::Backup::build(
@@ -1518,37 +1530,93 @@ mod tests {
                     pending_op: None,
                     local_only: false,
                 },
-                vec![StoredTask {
-                    task: axiotask_core::model::Task {
-                        id: "T1".into(),
-                        parent: None,
-                        position: "00000000000001".into(),
-                        title: "new title".into(),
-                        notes: None,
-                        status: TaskStatus::NeedsAction,
-                        due: None,
-                        completed: None,
-                        etag: Some("e1".into()),
-                        updated: "2026-01-02T00:00:00Z".into(),
-                        web_view_link: None,
+                vec![
+                    StoredTask {
+                        task: axiotask_core::model::Task {
+                            id: "T1".into(),
+                            parent: None,
+                            position: "00000000000001".into(),
+                            title: "stale backup title".into(),
+                            notes: None,
+                            status: TaskStatus::NeedsAction,
+                            due: None,
+                            completed: None,
+                            etag: Some("e1".into()),
+                            updated: "2026-01-02T00:00:00Z".into(),
+                            web_view_link: None,
+                        },
+                        list_id: "L1".into(),
+                        sync_state: SyncState::Clean,
+                        local_updated: "2026-01-02T00:00:00Z".into(),
+                        pending_op: None,
                     },
-                    list_id: "L1".into(),
-                    sync_state: SyncState::Clean,
-                    local_updated: "2026-01-02T00:00:00Z".into(),
-                    pending_op: None,
-                }],
+                    StoredTask {
+                        task: axiotask_core::model::Task {
+                            id: "T-deleted-since".into(),
+                            parent: None,
+                            position: "00000000000002".into(),
+                            title: "bring me back".into(),
+                            notes: None,
+                            status: TaskStatus::NeedsAction,
+                            due: None,
+                            completed: None,
+                            etag: Some("e2".into()),
+                            updated: "2026-01-02T00:00:00Z".into(),
+                            web_view_link: None,
+                        },
+                        list_id: "L1".into(),
+                        sync_state: SyncState::Clean,
+                        local_updated: "2026-01-02T00:00:00Z".into(),
+                        pending_op: None,
+                    },
+                ],
             )],
         );
 
-        state.restore_backup(backup).await.unwrap();
+        let summary = state.restore_backup(backup).await.unwrap();
+        assert_eq!(summary.tasks, 1, "only the missing row is restored");
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
-        assert_eq!(t1.task.title, "new title", "matching id overwritten");
-        assert!(
-            tasks.iter().any(|t| t.task.id == "KEEP"),
-            "untouched row preserved"
-        );
+        assert_eq!(t1.task.title, "current title", "existing row not clobbered");
+        assert!(tasks.iter().any(|t| t.task.id == "KEEP"), "untouched row preserved");
+        let back = tasks.iter().find(|t| t.task.id == "T-deleted-since").unwrap();
+        assert_eq!(back.pending_op.as_deref(), Some("create"));
+    }
+
+    #[tokio::test]
+    async fn restore_backup_survives_the_next_sync() {
+        // THE reason restores exist: the data is gone from the server. The old
+        // implementation restored rows clean-with-etags, and the next sync's
+        // ghost detection saw "clean rows absent from the server" and silently
+        // deleted everything the user had just restored. Now they push back.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "precious", "1");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        // Backup taken while the task existed.
+        let backup_json = state.build_backup().await.unwrap().to_json_pretty().unwrap();
+
+        // The task is deleted (remotely AND locally, fully synced away).
+        client.delete_task_from_state("L1", "T1");
+        state.run_sync().await.unwrap();
+        assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
+
+        // Restore, then sync — the data must survive and reach the server.
+        let parsed = axiotask_core::export::Backup::from_json(&backup_json).unwrap();
+        let summary = state.restore_backup(parsed).await.unwrap();
+        assert_eq!(summary.tasks, 1);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+
+        let local = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(local.len(), 1, "restored task survives the sync");
+        assert_eq!(local[0].task.title, "precious");
+        assert_eq!(local[0].sync_state, SyncState::Clean, "pushed back to the server");
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(remote.items.iter().any(|t| t.title == "precious"), "back on the server");
     }
 
     // ─── Properties / settings ───────────────────────────────────────────────
