@@ -287,7 +287,18 @@ impl GoogleTasksClient for InMemoryClient {
         }
         let due = validate_due(new.due)?;
         let etag = s.fresh_etag();
-        let position = format!("{:020}", s.tasks.len() + 1);
+        // Live-API positioning: with `previous`, insert right after it; with
+        // none, insert FIRST. Positions are opaque lexicographically-sortable
+        // strings. '+' sorts before digits, so "P+" lands between P and the
+        // next sibling, and '!' sorts before everything numeric (top slot,
+        // successive top-inserts each land above the previous).
+        let position = match new.previous.as_deref() {
+            Some(prev) => match s.tasks.iter().find(|(_, t)| t.id == prev) {
+                Some((_, p)) => format!("{}+", p.position),
+                None => return Err(ApiError::Other("400: Invalid task ID (previous)".into())),
+            },
+            None => format!("!{:019}", u64::MAX - s.etag_counter),
+        };
         let id = format!("remote-{}", s.etag_counter);
         let web_view_link = Some(format!("https://tasks.google.com/task/{id}"));
         let task = Task {
@@ -304,7 +315,6 @@ impl GoogleTasksClient for InMemoryClient {
             web_view_link,
         };
         s.tasks.push((list_id.into(), task.clone()));
-        let _ = new.previous;
         if s.commit_then_fail_insert {
             s.commit_then_fail_insert = false;
             return Err(ApiError::Network("response timeout after commit".into()));
@@ -418,7 +428,9 @@ impl GoogleTasksClient for InMemoryClient {
         }
         let new_etag = s.fresh_etag();
         let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == id) else {
-            return Err(ApiError::NotFound);
+            // Live-API behavior: an unknown task id in a move is a permanent
+            // 400 "Invalid task ID" (verified live), NOT a 404.
+            return Err(ApiError::Other("400: Invalid task ID".into()));
         };
         t.parent = parent.map(String::from);
         t.position = match previous {
@@ -568,11 +580,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_task_not_found() {
+    async fn move_task_unknown_id_is_permanent_400() {
+        // Live-API behavior: moving an unknown id is 400 "Invalid task ID",
+        // not 404 — a non-transient rejection.
         let c = InMemoryClient::new();
         c.seed_list("L1", "Inbox");
         let err = c.move_task("L1", "nope", None, None).await.unwrap_err();
-        assert!(matches!(err, ApiError::NotFound));
+        assert!(matches!(err, ApiError::Other(_)));
+        assert!(!err.is_transient());
     }
 
     #[tokio::test]

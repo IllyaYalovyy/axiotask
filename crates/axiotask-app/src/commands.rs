@@ -171,7 +171,13 @@ pub async fn toggle_complete(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
+    toggle_complete_inner(&state, id).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn toggle_complete_inner(state: &AppState, id: String) -> Result<(), String> {
+    let mut t = find_task(state, &id).await?;
     t.task.status = match t.task.status {
         TaskStatus::NeedsAction => TaskStatus::Completed,
         TaskStatus::Completed => TaskStatus::NeedsAction,
@@ -185,9 +191,48 @@ pub async fn toggle_complete(
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
 
+    // Completing a parent completes its open descendants — Google does this
+    // server-side (verified live), so mirror it locally and push the same,
+    // keeping UI state, subtask progress, and date propagation truthful now
+    // instead of after the next pull. Un-completing does NOT cascade: the
+    // server leaves children completed in that direction (also verified).
+    let cascade = t.task.status == TaskStatus::Completed;
     state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    if cascade {
+        let siblings = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+        let mut frontier = vec![id.clone()];
+        while let Some(pid) = frontier.pop() {
+            for child in siblings.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+                frontier.push(child.task.id.clone());
+                if child.task.status == TaskStatus::Completed {
+                    continue;
+                }
+                let mut c = child.clone();
+                c.task.status = TaskStatus::Completed;
+                c.task.completed = Some(now_str());
+                c.sync_state = SyncState::Dirty;
+                c.pending_op = Some(dirty_op(c.task.etag.as_deref()));
+                c.local_updated = now_str();
+                state.store.upsert_task(&c).await.map_err(|e| e.to_string())?;
+            }
+        }
+    }
     state.schedule_sync();
     Ok(())
+}
+
+/// A descendant captured in a [`DeleteToken`], so undo can rebuild the whole
+/// subtree even after the parent's delete pushed (the server cascades child
+/// deletion when a parent dies — verified live — and the local FK mirrors it).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubtreeEntry {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub notes: Option<String>,
+    pub status: String,
+    pub due: Option<String>,
+    pub position: String,
 }
 
 /// Token returned by delete_task to enable undo.
@@ -202,11 +247,41 @@ pub struct DeleteToken {
     pub due: Option<String>,
     pub position: String,
     pub had_etag: bool,
+    /// Descendants at delete time, parents before children.
+    #[serde(default)]
+    pub subtree: Vec<SubtreeEntry>,
 }
 
 #[tauri::command]
 pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<DeleteToken, String> {
-    let t = find_task(&state, &id).await?;
+    delete_task_inner(&state, id).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<DeleteToken, String> {
+    let t = find_task(state, &id).await?;
+
+    // Snapshot the descendants (BFS → parents before children) so undo can
+    // rebuild them after the delete's server-side cascade destroyed them.
+    let list = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+    let mut subtree = Vec::new();
+    let mut frontier = vec![id.clone()];
+    while let Some(pid) = frontier.pop() {
+        for c in list.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+            frontier.push(c.task.id.clone());
+            subtree.push(SubtreeEntry {
+                id: c.task.id.clone(),
+                parent_id: c.task.parent.clone(),
+                title: c.task.title.clone(),
+                notes: c.task.notes.clone(),
+                status: c.task.status.as_api_str().to_string(),
+                due: c.task.due.clone(),
+                position: c.task.position.clone(),
+            });
+        }
+    }
+
     let token = DeleteToken {
         id: t.task.id.clone(),
         list_id: t.list_id.clone(),
@@ -217,6 +292,7 @@ pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<
         due: t.task.due.clone(),
         position: t.task.position.clone(),
         had_etag: t.task.etag.is_some(),
+        subtree,
     };
 
     if t.task.etag.is_none() {
@@ -258,7 +334,7 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
     if let Some(mut existing) = state.store.find_task_any(&token.id).await.map_err(|e| e.to_string())? {
         existing.task.status = status;
         existing.task.completed = None;
-        existing.local_updated = now;
+        existing.local_updated = now.clone();
         if existing.task.etag.is_some() {
             // Was synced and the delete hasn't pushed. Revive as a dirty
             // UPDATE, not clean: the tombstone may be sitting on top of an
@@ -272,32 +348,80 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
             existing.pending_op = Some("create".into());
         }
         state.store.upsert_task(&existing).await.map_err(|e| e.to_string())?;
+        restore_subtree(state, &token, &now).await?;
         state.schedule_sync();
         return Ok(());
     }
 
-    // Tombstone gone (delete already pushed) → recreate as a fresh task.
+    // Tombstone gone (delete already pushed) → recreate as a fresh task. If
+    // its original parent no longer exists (deleted separately), fall back to
+    // top level instead of failing the FK.
+    let parent = match &token.parent_id {
+        Some(p) if state.store.find_task_any(p).await.map_err(|e| e.to_string())?.is_some() => {
+            Some(p.clone())
+        }
+        _ => None,
+    };
     let stored = StoredTask {
         task: axiotask_core::model::Task {
-            id: token.id,
-            parent: token.parent_id,
-            position: token.position,
-            title: token.title,
-            notes: token.notes,
+            id: token.id.clone(),
+            parent,
+            position: token.position.clone(),
+            title: token.title.clone(),
+            notes: token.notes.clone(),
             status,
-            due: token.due,
+            due: token.due.clone(),
             completed: None,
             etag: None,
             updated: now.clone(),
             web_view_link: None,
         },
-        list_id: token.list_id,
+        list_id: token.list_id.clone(),
         sync_state: SyncState::Dirty,
         pending_op: Some("create".into()),
-        local_updated: now,
+        local_updated: now.clone(),
     };
     state.store.upsert_task(&stored).await.map_err(|e| e.to_string())?;
+    restore_subtree(state, &token, &now).await?;
     state.schedule_sync();
+    Ok(())
+}
+
+/// Recreate the descendants captured at delete time that no longer exist
+/// locally (the push of the parent's delete cascaded them away, both on the
+/// server and via the local FK). Entries are ordered parents-before-children,
+/// and each is revived as a fresh dirty CREATE — the old remote ids are dead.
+/// Descendants that still exist (delete never pushed) are left untouched.
+async fn restore_subtree(state: &AppState, token: &DeleteToken, now: &str) -> Result<(), String> {
+    for e in &token.subtree {
+        if state.store.find_task_any(&e.id).await.map_err(|err| err.to_string())?.is_some() {
+            continue;
+        }
+        let status = match e.status.as_str() {
+            "completed" => TaskStatus::Completed,
+            _ => TaskStatus::NeedsAction,
+        };
+        let stored = StoredTask {
+            task: axiotask_core::model::Task {
+                id: e.id.clone(),
+                parent: e.parent_id.clone(),
+                position: e.position.clone(),
+                title: e.title.clone(),
+                notes: e.notes.clone(),
+                status,
+                due: e.due.clone(),
+                completed: None,
+                etag: None,
+                updated: now.to_string(),
+                web_view_link: None,
+            },
+            list_id: token.list_id.clone(),
+            sync_state: SyncState::Dirty,
+            pending_op: Some("create".into()),
+            local_updated: now.to_string(),
+        };
+        state.store.upsert_task(&stored).await.map_err(|err| err.to_string())?;
+    }
     Ok(())
 }
 
@@ -386,14 +510,42 @@ pub async fn clear_completed(
     state: State<'_, Arc<AppState>>,
     list_id: String,
 ) -> Result<u32, String> {
+    clear_completed_inner(&state, list_id).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn clear_completed_inner(state: &AppState, list_id: String) -> Result<u32, String> {
     let tasks = state.store.list_tasks(&list_id).await.map_err(|e| e.to_string())?;
+
+    // Deleting a task deletes its descendants — on Google (verified live) and
+    // locally via the FK cascade. A completed parent can still shelter OPEN
+    // subtasks (e.g. completed remotely before its children, or local edits),
+    // so deleting it would destroy unfinished work. Skip those parents.
+    let has_open_descendant = |root: &str| -> bool {
+        let mut frontier = vec![root.to_string()];
+        while let Some(pid) = frontier.pop() {
+            for c in tasks.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+                if c.task.status != TaskStatus::Completed {
+                    return true;
+                }
+                frontier.push(c.task.id.clone());
+            }
+        }
+        false
+    };
+
     let mut count = 0u32;
-    for t in tasks {
+    for t in &tasks {
         if t.task.status == TaskStatus::Completed {
+            if has_open_descendant(&t.task.id) {
+                tracing::info!(id = %t.task.id, "clear-completed: skipping parent with open subtasks");
+                continue;
+            }
             if t.task.etag.is_none() {
                 state.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
             } else {
-                let mut d = t;
+                let mut d = t.clone();
                 d.sync_state = SyncState::Deleted;
                 d.pending_op = Some("delete".into());
                 d.local_updated = now_str();

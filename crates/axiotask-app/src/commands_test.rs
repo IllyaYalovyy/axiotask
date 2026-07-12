@@ -841,6 +841,145 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completing_a_parent_completes_open_descendants() {
+        // Google auto-completes children when a parent completes (verified
+        // live). Mirror locally so subtask progress and date propagation are
+        // truthful immediately, and push the same state.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "grandkid", "3", Some("C1"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap();
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.iter().all(|t| t.task.status == TaskStatus::Completed),
+            "parent + all descendants completed locally");
+
+        // And the same state pushes cleanly.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(remote.items.iter().all(|t| t.status == TaskStatus::Completed));
+    }
+
+    #[tokio::test]
+    async fn uncompleting_a_parent_does_not_reopen_descendants() {
+        // The server leaves children completed when a parent reopens
+        // (verified live) — mirror that.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap(); // complete all
+        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap(); // reopen parent
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let p = tasks.iter().find(|t| t.task.id == "P").unwrap();
+        let c = tasks.iter().find(|t| t.task.id == "C1").unwrap();
+        assert_eq!(p.task.status, TaskStatus::NeedsAction);
+        assert_eq!(c.task.status, TaskStatus::Completed, "child stays done");
+    }
+
+    #[tokio::test]
+    async fn undo_after_delete_pushed_restores_the_whole_subtree() {
+        // Data-loss regression: delete a parent, let the delete sync (server
+        // cascades the children away — verified live), then undo. The token
+        // now carries the subtree, so undo rebuilds parent AND children.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid one", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("C1"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        let token = crate::commands::delete_task_inner(&state, "P".into()).await.unwrap();
+        assert_eq!(token.subtree.len(), 2, "descendants captured");
+
+        // The delete pushes; server cascade + local FK wipe the subtree.
+        state.run_sync().await.unwrap();
+        assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
+        assert!(client.list_tasks("L1", None).await.unwrap().items.is_empty());
+
+        // Undo: everything comes back, shape intact, and pushes to the server.
+        crate::commands::undo_delete_inner(&state, token).await.unwrap();
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 3, "parent + both descendants restored");
+        let kid = tasks.iter().find(|t| t.task.title == "kid one").unwrap();
+        let grandkid = tasks.iter().find(|t| t.task.title == "kid two").unwrap();
+        assert_eq!(kid.task.parent.as_deref(), Some("P"));
+        assert_eq!(grandkid.task.parent.as_deref(), Some("C1"));
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(client.list_tasks("L1", None).await.unwrap().items.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn undo_recreate_with_dead_parent_falls_back_to_top_level() {
+        // The subtask's parent was deleted separately before the undo — the
+        // recreate must not fail the FK; it lands at top level instead.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        let kid_token = crate::commands::delete_task_inner(&state, "C1".into()).await.unwrap();
+        let _ = crate::commands::delete_task_inner(&state, "P".into()).await.unwrap();
+        state.run_sync().await.unwrap(); // both deletes land
+
+        crate::commands::undo_delete_inner(&state, kid_token).await.unwrap();
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let kid = tasks.iter().find(|t| t.task.title == "kid").expect("kid restored");
+        assert_eq!(kid.task.parent, None, "orphaned undo lands at top level");
+    }
+
+    #[tokio::test]
+    async fn clear_completed_spares_open_subtasks_under_a_completed_parent() {
+        // Deleting a completed parent cascades to its children on the server
+        // (verified live) — clear-completed must not destroy open work.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P-open-kid", "done parent, open kid", "1");
+        client.seed_task_with_parent("L1", "K-open", "still todo", "2", Some("P-open-kid"));
+        client.seed_task("L1", "P-done", "done parent, done kid", "3");
+        client.seed_task_with_parent("L1", "K-done", "also done", "4", Some("P-done"));
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        state.run_sync().await.unwrap();
+
+        // Mark the two parents + the second kid completed (kid K-open stays open).
+        for id in ["K-done", "P-done"] {
+            crate::commands::toggle_complete_inner(&state, id.into()).await.unwrap();
+        }
+        // Complete P-open-kid WITHOUT the cascade taking K-open with it:
+        // simulate a pull state where the parent is completed but a child is
+        // open (happens when the parent completed remotely first).
+        let mut p = state.store.list_tasks("L1").await.unwrap()
+            .into_iter().find(|t| t.task.id == "P-open-kid").unwrap();
+        p.task.status = TaskStatus::Completed;
+        state.store.upsert_task(&p).await.unwrap();
+
+        let cleared = crate::commands::clear_completed_inner(&state, "L1".into()).await.unwrap();
+        state.run_sync().await.unwrap();
+
+        let left = state.store.list_tasks("L1").await.unwrap();
+        assert!(left.iter().any(|t| t.task.id == "K-open"), "open subtask survives");
+        assert!(left.iter().any(|t| t.task.id == "P-open-kid"), "its parent is spared too");
+        assert!(left.iter().all(|t| t.task.id != "P-done" && t.task.id != "K-done"),
+            "fully-completed subtree is cleared");
+        assert_eq!(cleared, 2);
+    }
+
+    #[tokio::test]
     async fn undo_delete_after_unpushed_edit_keeps_the_edit_queued() {
         // Edit (unpushed) → delete → undo: the revived row must stay dirty so
         // the edit still reaches the server. Reviving it clean silently
@@ -876,6 +1015,7 @@ mod tests {
                 due: None,
                 position: t.task.position.clone(),
                 had_etag: true,
+                subtree: vec![],
             }
         };
         crate::commands::undo_delete_inner(&state, token).await.unwrap();

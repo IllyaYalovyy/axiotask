@@ -202,6 +202,32 @@ describe("GH#11: Complete/uncomplete with undo", () => {
       expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
     });
 
+    it("undo of a parent completion reopens the subtasks the cascade closed", async () => {
+      // Completing a parent completes its open subtasks (server behavior we
+      // mirror). Un-completing does NOT cascade — so Undo must explicitly
+      // reopen the subtasks that were open before, restoring what the user saw.
+      const { taskStore } = mockBackend([
+        task("p1", "Parent task"),
+        task("s1", "Open sub", { parent: "p1" }),
+        task("s2", "Done sub", { parent: "p1", status: "completed" }),
+      ]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+
+      await fireEvent.keyDown(window, { key: " " }); // complete the parent
+      await waitFor(() => expect(screen.getByText("Undo")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Undo"));
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "p1" }); // reopen parent
+        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s1" }); // reopen cascaded sub
+      });
+      // The already-done sub was NOT open before — undo must not reopen it.
+      const s2Toggles = invoke.mock.calls.filter(c => c[0] === "toggle_complete" && c[1].id === "s2");
+      expect(s2Toggles).toHaveLength(0);
+      expect(taskStore.find(t => t.id === "s2").status).toBe("completed");
+    });
+
     it("dismiss button removes undo toast immediately", async () => {
       mockBackend([task("t1", "Dismiss me")]);
       render(App);

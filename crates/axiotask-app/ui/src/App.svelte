@@ -490,6 +490,12 @@
   async function toggleComplete(id) {
     const task = allTasks.find(t => t.id === id);
     const wasOpen = task?.status === "needsAction";
+    // Completing a parent cascades to its open descendants (mirrors Google).
+    // Remember which ones were open so undo can restore them — un-completing
+    // deliberately does NOT cascade, matching the server.
+    const reopenIds = wasOpen
+      ? descendantsOf(id).filter(d => d.status === "needsAction").map(d => d.id)
+      : [];
     await cmd("toggle_complete", { id });
     if (wasOpen && !task?.parent_id) {
       // Animate only top-level tasks in the list
@@ -497,7 +503,7 @@
       setTimeout(async () => {
         completingIds = new Set([...completingIds].filter(x => x !== id));
         await refreshLists([task.listId]);
-        undoItem = { id, title: task.title, listId: task.listId, isComplete: true, timer: setTimeout(() => { undoItem = null; }, 10000) };
+        undoItem = { id, title: task.title, listId: task.listId, isComplete: true, reopenIds, timer: setTimeout(() => { undoItem = null; }, 10000) };
       }, 300);
     } else {
       await refreshLists([task.listId]);
@@ -570,8 +576,13 @@
     if (!undoItem) return;
     clearTimeout(undoItem.timer);
     if (undoItem.isComplete) {
-      // Undo completion — toggle it back
+      // Undo completion — reopen the task AND the subtasks the completion
+      // cascade closed (un-completing a parent doesn't reopen children on
+      // its own, matching Google's behavior).
       await cmd("toggle_complete", { id: undoItem.id });
+      for (const rid of undoItem.reopenIds ?? []) {
+        await cmd("toggle_complete", { id: rid });
+      }
     } else if (undoItem.deleteToken) {
       // Undo delete — restore via token
       await cmd("undo_delete", { token: undoItem.deleteToken });

@@ -209,7 +209,7 @@ impl SyncEngine {
             Err(e) if e.is_transient() => { warn!(err = %e, "transient listing lists, retry"); return Ok(()); }
             Err(e) => return Err(e.into()),
         };
-        let local_ids: HashSet<String> = self.store.all_lists().await?
+        let mut local_ids: HashSet<String> = self.store.all_lists().await?
             .into_iter().map(|l| l.list.id).collect();
 
         for l in creates {
@@ -217,6 +217,11 @@ impl SyncEngine {
             if let Some(existing) = remote.iter()
                 .find(|r| r.title == l.list.title && !local_ids.contains(&r.id))
             {
+                // Record the adoption so a SECOND same-title local create in
+                // this batch doesn't remap onto the same remote id (a primary
+                // key collision that aborts the run); it inserts a new remote
+                // list instead.
+                local_ids.insert(existing.id.clone());
                 self.store
                     .remap_list_id(&l.list.id, &existing.id, existing.etag.as_deref(), &existing.updated)
                     .await?;
@@ -295,7 +300,7 @@ impl SyncEngine {
                 Some(o) => {
                     info!(local_id = %local_id, remote_id = %o.id, "adopting orphaned create after crash");
                     self.store
-                        .finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated, &local.local_updated)
+                        .finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated, &local.local_updated, Some(&o.position))
                         .await?;
                 }
                 None => {
@@ -307,9 +312,34 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Whether an id referenced by a pending move is safe to send: `None`
+    /// (no constraint) or a task that exists locally with a server etag.
+    async fn task_is_synced(&self, id: Option<&str>) -> Result<bool, SyncError> {
+        match id {
+            None => Ok(true),
+            Some(i) => Ok(self
+                .store
+                .find_task_any(i)
+                .await?
+                .is_some_and(|t| t.task.etag.is_some())),
+        }
+    }
+
     /// Push pending position/parent moves via the Tasks move endpoint.
     async fn push_moves(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         for mv in self.store.pending_moves().await? {
+            // A move whose task (or target parent/previous) hasn't been pushed
+            // yet still carries a local UUID — the API answers 400 "Invalid
+            // task ID" (verified live), which would drop the user's reordering.
+            // Hold the intent; finish_create rewrites the ids when the create
+            // lands, and the move pushes on that run or the next.
+            if !self.task_is_synced(Some(&mv.task_id)).await?
+                || !self.task_is_synced(mv.parent_id.as_deref()).await?
+                || !self.task_is_synced(mv.previous_id.as_deref()).await?
+            {
+                debug!(id = %mv.task_id, "move waits for its ids to be synced");
+                continue;
+            }
             match self.client.move_task(
                 &mv.list_id,
                 &mv.task_id,
@@ -345,6 +375,22 @@ impl SyncEngine {
     }
 
     async fn push_create(&self, row: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
+        // For a SUBTASK, anchor the insert after its last already-synced
+        // sibling: without `previous` the API inserts at the top, so a batch
+        // of subtasks lands on Google in reverse creation order.
+        let previous = match &row.task.parent {
+            None => None,
+            Some(pid) => self
+                .store
+                .list_tasks(&row.list_id)
+                .await?
+                .into_iter()
+                .filter(|t| t.task.parent.as_deref() == Some(pid)
+                    && t.task.id != row.task.id
+                    && t.task.etag.is_some())
+                .max_by(|a, b| a.task.position.cmp(&b.task.position))
+                .map(|t| t.task.id),
+        };
         let payload = NewTask {
             title: row.task.title.clone(),
             notes: row.task.notes.clone(),
@@ -353,7 +399,7 @@ impl SyncEngine {
             due: row.task.due.as_deref().and_then(crate::dates::normalize_due),
             status: Some(row.task.status),
             parent: row.task.parent.clone(),
-            previous: None,
+            previous,
         };
         // Durably mark in-flight BEFORE the non-idempotent insert.
         self.store.record_inflight_create(&row.task.id, &row.list_id).await?;
@@ -363,6 +409,8 @@ impl SyncEngine {
                 // crash can't leave a remapped row still flagged 'create'. The
                 // local_updated snapshot keeps a mid-flight re-edit dirty (as
                 // an update against the new remote id) instead of wiping it.
+                // The server-assigned position is adopted (an etag match makes
+                // pull skip the row, so it would never arrive otherwise).
                 self.store
                     .finish_create(
                         &row.task.id,
@@ -370,6 +418,7 @@ impl SyncEngine {
                         remote.etag.as_deref(),
                         &remote.updated,
                         &row.local_updated,
+                        Some(&remote.position),
                     )
                     .await?;
                 out.pushed += 1;
@@ -407,14 +456,12 @@ impl SyncEngine {
         };
         match self.client.patch_task(&row.list_id, &row.task.id, patch, row.task.etag.as_deref()).await {
             Ok(remote) => {
-                self.store
-                    .mark_task_clean(
-                        &remote.id,
-                        remote.etag.as_deref(),
-                        &remote.updated,
-                        &row.local_updated,
-                    )
-                    .await?;
+                // Adopt the response body, not just the etag: the server can
+                // normalize or silently coerce fields (verified live: it
+                // ignores re-opening a subtask of a completed parent while
+                // returning 200), and the matching etag would otherwise block
+                // pull from ever correcting the drift.
+                self.store.apply_pushed_task(&remote, &row.local_updated).await?;
                 out.pushed += 1;
                 debug!(id = %row.task.id, "pushed update");
                 Ok(())
@@ -451,16 +498,10 @@ impl SyncEngine {
             Err(e) => return Err(e.into()),
         };
 
-        // Adopt remote etag if the content is already identical (no real divergence).
+        // Adopt the remote wholesale if the content is already identical (no
+        // real divergence — just normalization/etag drift to absorb).
         if same_content(&local.task, &remote) {
-            self.store
-                .mark_task_clean(
-                    &remote.id,
-                    remote.etag.as_deref(),
-                    &remote.updated,
-                    &local.local_updated,
-                )
-                .await?;
+            self.store.apply_pushed_task(&remote, &local.local_updated).await?;
             return Ok(());
         }
 
@@ -1464,6 +1505,129 @@ mod tests {
         eng.run().await.unwrap();
         let page = client.list_tasks("L1", None).await.unwrap();
         assert!(page.items.iter().any(|t| t.title == "edited"));
+    }
+
+    #[tokio::test]
+    async fn created_task_adopts_server_assigned_position() {
+        // The insert response carries the server-assigned position. Discarding
+        // it left the local placeholder ("000…0") in place FOREVER — the
+        // adopted etag makes every subsequent pull skip the row.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut create = dirty_task("local-1", "L1", "create");
+        create.task.position = "00000000000000000000".into();
+        eng.store.upsert_task(&create).await.unwrap();
+        eng.run().await.unwrap();
+
+        let local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        let remote = client.list_tasks("L1", None).await.unwrap().items.remove(0);
+        assert_eq!(local.task.position, remote.position, "local mirrors the server's position");
+        assert_ne!(local.task.position, "00000000000000000000");
+    }
+
+    #[tokio::test]
+    async fn server_coercion_in_patch_response_is_adopted() {
+        // The server can normalize/coerce what we send (verified live: it even
+        // ignores some status changes while returning 200). The response body
+        // is the truth; discarding it leaves local/remote permanently diverged
+        // because the matching etag blocks pull from ever correcting it.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "task", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        // A due with a time-of-day: the (live-verified) server stores date-only.
+        local.task.due = Some("2026-08-01T17:30:00.000Z".into());
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        eng.run().await.unwrap();
+        let after = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        assert_eq!(after.task.due.as_deref(), Some("2026-08-01T00:00:00.000Z"),
+            "local adopts the server's canonical value, not what we sent");
+        assert_eq!(after.sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn move_for_unsynced_task_waits_for_its_create() {
+        // A reorder recorded while the task's create is held (editing) must
+        // NOT be pushed with the local UUID — the live API rejects that with a
+        // permanent 400, and the old code then dropped the user's move.
+        let (client, eng0) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T-prev", "anchor", "1");
+        eng0.run().await.unwrap();
+
+        eng0.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng0.store.record_move("local-1", "L1", None, Some("T-prev")).await.unwrap();
+
+        // Run 1: creates held (user editing). The move must wait, not error.
+        let eng_hold = SyncEngine::with_push(client.clone(), eng0.store.clone(), true).hold_creates(true);
+        let out = eng_hold.run().await.unwrap();
+        assert_eq!(out.errors, 0, "move with a local UUID must not be sent (400)");
+        assert_eq!(eng0.store.pending_moves().await.unwrap().len(), 1, "intent retained");
+
+        // Run 2: create lands, finish_create remaps the move's ids, move pushes.
+        let out = eng0.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert!(eng0.store.pending_moves().await.unwrap().is_empty(), "move pushed");
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let moved = remote.items.iter().find(|t| t.title == "task local-1").unwrap();
+        assert_eq!(moved.position, "after-T-prev", "reorder reached the server");
+    }
+
+    #[tokio::test]
+    async fn subtask_creates_land_in_creation_order() {
+        // Without `previous`, the API inserts each subtask FIRST — a batch
+        // lands on Google in reverse creation order.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        for (i, id) in ["local-a", "local-b", "local-c"].iter().enumerate() {
+            let mut c = dirty_task(id, "L1", "create");
+            c.task.parent = Some("P".into());
+            c.task.title = format!("sub {i}");
+            c.local_updated = format!("2026-06-01T00:00:0{i}Z");
+            eng.store.upsert_task(&c).await.unwrap();
+            // Push one at a time — like a user adding subtasks across syncs.
+            eng.run().await.unwrap();
+        }
+
+        let mut remote: Vec<_> = client.list_tasks("L1", None).await.unwrap().items
+            .into_iter().filter(|t| t.parent.as_deref() == Some("P")).collect();
+        remote.sort_by(|a, b| a.position.cmp(&b.position));
+        let titles: Vec<_> = remote.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(titles, vec!["sub 0", "sub 1", "sub 2"], "creation order preserved on the server");
+    }
+
+    #[tokio::test]
+    async fn two_same_title_local_list_creates_do_not_collide() {
+        // Both used to adopt the SAME remote list → primary-key collision on
+        // the second remap → the whole run aborted with a store error.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L-remote", "Work");
+
+        for id in ["local-l1", "local-l2"] {
+            eng.store.upsert_list(&StoredTaskList {
+                list: TaskList { id: id.into(), title: "Work".into(), etag: None, updated: "2026-01-01T00:00:00Z".into() },
+                sync_state: SyncState::Dirty,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: Some("create".into()),
+                local_only: false,
+            }).await.unwrap();
+        }
+
+        let out = eng.run().await;
+        assert!(out.is_ok(), "no PK collision: {out:?}");
+        // One adopted the remote list, the other created a second remote list.
+        let remote = client.list_tasklists().await.unwrap();
+        assert_eq!(remote.iter().filter(|l| l.title == "Work").count(), 2);
     }
 
     // ─── Pull tests ──────────────────────────────────────────────────────────

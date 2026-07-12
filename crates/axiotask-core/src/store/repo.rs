@@ -417,6 +417,61 @@ impl Store {
         Ok(())
     }
 
+    /// Adopt the full task the server returned from a successful push.
+    ///
+    /// The response is what the server ACTUALLY stored, and it can differ from
+    /// what we sent: it assigns `position` on insert (locally we'd otherwise
+    /// keep the placeholder zeros forever, since the matching etag makes pull
+    /// skip the row), sets the `completed` timestamp, normalizes `due`, and can
+    /// silently coerce fields (re-opening a subtask of a completed parent is
+    /// accepted with 200 but ignored — verified live). Discarding the body
+    /// creates permanent drift that no later pull corrects.
+    ///
+    /// Same race guard as [`mark_task_clean`]: content + clean only when
+    /// `local_updated` still equals the drained snapshot; a mid-flight re-edit
+    /// keeps its content and dirty flag, adopting just the fresh etag.
+    pub async fn apply_pushed_task(
+        &self,
+        remote: &Task,
+        expected_local_updated: &str,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            r"UPDATE tasks
+              SET etag = COALESCE(?1, etag),
+                  updated = ?2,
+                  parent_id    = CASE WHEN local_updated = ?3 AND NOT EXISTS
+                                   (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
+                                 THEN ?4 ELSE parent_id END,
+                  position     = CASE WHEN local_updated = ?3 AND NOT EXISTS
+                                   (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
+                                 THEN ?5 ELSE position END,
+                  title        = CASE WHEN local_updated = ?3 THEN ?6  ELSE title        END,
+                  notes        = CASE WHEN local_updated = ?3 THEN ?7  ELSE notes        END,
+                  status       = CASE WHEN local_updated = ?3 THEN ?8  ELSE status       END,
+                  due          = CASE WHEN local_updated = ?3 THEN ?9  ELSE due          END,
+                  completed_at = CASE WHEN local_updated = ?3 THEN ?10 ELSE completed_at END,
+                  web_view_link = COALESCE(?11, web_view_link),
+                  sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END,
+                  pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END
+              WHERE id = ?12",
+        )
+        .bind(remote.etag.as_deref())        // ?1
+        .bind(&remote.updated)               // ?2
+        .bind(expected_local_updated)        // ?3
+        .bind(&remote.parent)                // ?4
+        .bind(&remote.position)              // ?5
+        .bind(&remote.title)                 // ?6
+        .bind(&remote.notes)                 // ?7
+        .bind(remote.status.as_api_str())    // ?8
+        .bind(&remote.due)                   // ?9
+        .bind(&remote.completed)             // ?10
+        .bind(&remote.web_view_link)         // ?11
+        .bind(&remote.id)                    // ?12
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Adopt a fresh etag/updated from the server WITHOUT touching sync_state
     /// or pending_op. Used after a move push: the move endpoint returns a new
     /// etag, but the row may carry an unrelated pending content edit whose
@@ -697,6 +752,7 @@ impl Store {
         etag: Option<&str>,
         server_updated: &str,
         expected_local_updated: &str,
+        server_position: Option<&str>,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("PRAGMA defer_foreign_keys = ON")
@@ -731,18 +787,26 @@ impl Store {
         // flight. A re-edited row keeps its dirty flag but its pending op is
         // rewritten create→update: the task now exists remotely under the new
         // id, so re-running it as a create would insert a duplicate.
+        //
+        // Also adopt the server-assigned position (guarded like the rest, and
+        // skipped when a pending move exists — the move will supersede it).
+        // Without this the row keeps its local placeholder position forever:
+        // the adopted etag makes every future pull skip the row.
         sqlx::query(
             "UPDATE tasks SET
-                 etag = COALESCE(?, etag),
-                 updated = ?,
-                 sync_state = CASE WHEN local_updated = ? THEN 'clean' ELSE sync_state END,
-                 pending_op = CASE WHEN local_updated = ? THEN NULL ELSE 'update' END
-             WHERE id = ?",
+                 etag = COALESCE(?1, etag),
+                 updated = ?2,
+                 position = CASE WHEN local_updated = ?3 AND ?4 IS NOT NULL AND NOT EXISTS
+                              (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
+                            THEN ?4 ELSE position END,
+                 sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END,
+                 pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE 'update' END
+             WHERE id = ?5",
         )
         .bind(etag)
         .bind(server_updated)
         .bind(expected_local_updated)
-        .bind(expected_local_updated)
+        .bind(server_position)
         .bind(remote_id)
         .execute(&mut *tx)
         .await?;
@@ -1120,7 +1184,7 @@ mod tests {
         s.upsert_task(&task("local-2", "L1", Some("local-1"), "1"))
             .await
             .unwrap();
-        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
+        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None)
             .await
             .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
@@ -1149,7 +1213,7 @@ mod tests {
         p.pending_op = Some("create".into());
         p.local_updated = "2026-01-01T00:00:07Z".into(); // newer than the drain snapshot
         s.upsert_task(&p).await.unwrap();
-        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
+        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None)
             .await
             .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
@@ -1445,7 +1509,7 @@ mod tests {
         t.pending_op = Some("create".into());
         s.upsert_task(&t).await.unwrap();
         s.record_inflight_create("local-1", "L1").await.unwrap();
-        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z").await.unwrap();
+        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None).await.unwrap();
         assert!(s.inflight_creates().await.unwrap().is_empty());
     }
 
@@ -1465,7 +1529,7 @@ mod tests {
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_task(&task("local-1", "L1", None, "1")).await.unwrap();
         s.record_move("local-1", "L1", None, Some("other")).await.unwrap();
-        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z").await.unwrap();
+        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None).await.unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].task_id, "remote-1");

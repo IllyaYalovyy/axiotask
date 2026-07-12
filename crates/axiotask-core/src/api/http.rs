@@ -237,6 +237,9 @@ impl GoogleTasksClient for HttpClient {
         Ok(TaskList::from(wire))
     }
 
+    // NOTE: no If-Match — the tasklists endpoint IGNORES it (a stale etag still
+    // returns 200; verified live), so list renames are last-writer-wins by
+    // server design. Conflict detection for lists is not possible.
     async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError> {
         let url = format!("{}/users/@me/lists/{}", self.base_url, urlencoding::encode(id));
         let body = serde_json::json!({ "title": title });
