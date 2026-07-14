@@ -184,7 +184,7 @@ impl SyncEngine {
             warn!(id, err = %e, "transient error on {op}, will retry");
             return Ok(());
         }
-        if matches!(e, ApiError::Unauthorized) {
+        if matches!(e, ApiError::Unauthorized | ApiError::AuthExpired(_)) {
             return Err(e.into());
         }
         warn!(id, err = %e, "server rejected {op}; row stays dirty, continuing");
@@ -262,7 +262,9 @@ impl SyncEngine {
                     Err(e) if e.is_transient() => {
                         warn!(err = %e, "transient on list delete, retry");
                     }
-                    Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized.into()),
+                    Err(e @ (ApiError::Unauthorized | ApiError::AuthExpired(_))) => {
+                        return Err(e.into());
+                    }
                     Err(e) => {
                         // Permanently refused — Google will not delete an
                         // account's default list, for example. A tombstone that
@@ -1440,6 +1442,41 @@ mod tests {
             tasks.iter().any(|t| t.task.id == "local-poison" && t.sync_state == SyncState::Dirty),
             "poisoned row stays dirty (visible + retried), not lost"
         );
+    }
+
+    #[tokio::test]
+    async fn auth_expired_aborts_the_run_instead_of_grinding_through_rows() {
+        // A dead refresh token (invalid_grant) fails every call identically.
+        // Unlike a poisoned row, this must abort on first sight: grinding on
+        // would hammer the token endpoint once per row and mis-count every
+        // pending change as a server rejection.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut first = dirty_task("local-a", "L1", "create");
+        first.local_updated = "2026-06-01T00:00:00Z".into();
+        eng.store.upsert_task(&first).await.unwrap();
+        let mut second = dirty_task("local-b", "L1", "create");
+        second.local_updated = "2026-06-01T00:00:01Z".into();
+        eng.store.upsert_task(&second).await.unwrap();
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || {
+            ApiError::AuthExpired("invalid_grant: Token has been expired or revoked.".into())
+        });
+
+        let err = eng.run().await.unwrap_err();
+        assert!(
+            matches!(err, SyncError::Api(ApiError::AuthExpired(_))),
+            "got {err:?}"
+        );
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            1,
+            "aborted after the first failing call"
+        );
+        // Nothing is lost: both rows stay dirty and push after re-login.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.iter().all(|t| t.sync_state == SyncState::Dirty));
     }
 
     #[tokio::test]

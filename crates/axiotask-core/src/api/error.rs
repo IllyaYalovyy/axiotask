@@ -12,6 +12,13 @@ pub enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
 
+    /// Token refresh was permanently denied (`invalid_grant`: refresh token
+    /// expired or revoked). No retry can succeed — the user must sign in
+    /// again. Distinct from [`Self::Unauthorized`], which is the recoverable
+    /// "refresh and retry" signal.
+    #[error("session expired — sign in again ({0})")]
+    AuthExpired(String),
+
     /// The target row no longer exists on the server.
     #[error("not found")]
     NotFound,
@@ -64,6 +71,7 @@ mod tests {
         assert!(ApiError::RateLimited { retry_after: None }.is_transient());
         assert!(ApiError::Network("connect refused".into()).is_transient());
         assert!(!ApiError::Unauthorized.is_transient());
+        assert!(!ApiError::AuthExpired("invalid_grant".into()).is_transient());
         assert!(!ApiError::NotFound.is_transient());
         assert!(!ApiError::PreconditionFailed.is_transient());
         assert!(!ApiError::Other("bad json".into()).is_transient());

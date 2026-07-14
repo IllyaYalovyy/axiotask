@@ -202,9 +202,23 @@
         {:else if section === "account"}
           <h3>Google account</h3>
           <p class="acct-status">
-            <span class="dot" class:on={settings.authenticated}></span>
-            {settings.authenticated ? "Signed in" : "Not signed in"}
+            <span
+              class="dot"
+              class:on={settings.authenticated && !settings.needs_reauth}
+              class:warn={settings.needs_reauth}
+            ></span>
+            {settings.needs_reauth
+              ? "Session expired — sign in again"
+              : settings.authenticated
+                ? "Signed in"
+                : "Not signed in"}
           </p>
+          {#if settings.needs_reauth}
+            <p class="hint">
+              Google stopped accepting the saved sign-in (it expired or was revoked).
+              Your changes are kept locally and will sync after you sign in again.
+            </p>
+          {/if}
           <h3>Access</h3>
           <ul class="scopes">
             {#each settings.scopes as scope}
@@ -213,7 +227,10 @@
           </ul>
           <p class="hint">axiotask only requests access to your Google Tasks — nothing else.</p>
           <div class="actions">
-            {#if settings.authenticated}
+            {#if settings.needs_reauth}
+              <button class="primary" onclick={onlogin}>Sign in again</button>
+              <button onclick={onlogout}>Sign out</button>
+            {:else if settings.authenticated}
               <button onclick={onlogout}>Sign out</button>
             {:else}
               <button class="primary" onclick={onlogin}>Sign in with Google</button>
@@ -367,6 +384,7 @@
   .acct-status { display: flex; align-items: center; gap: 0.5rem; color: var(--fg-secondary); font-size: 0.9rem; margin: 0; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--fg-muted); }
   .dot.on { background: var(--success); }
+  .dot.warn { background: var(--warning, #e5a50a); }
   .scopes { margin: 0; padding-left: 1.1rem; color: var(--fg-secondary); font-size: 0.82rem; }
   .scopes li { margin: 0.2rem 0; }
 

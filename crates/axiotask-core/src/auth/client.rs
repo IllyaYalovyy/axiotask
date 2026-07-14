@@ -9,12 +9,87 @@ use reqwest::Method;
 
 use super::store::{StoredTokens, TokenStore};
 
+/// Why a token refresh failed — the split the sync engine needs to pick
+/// between "retry later" and "make the user sign in again".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshError {
+    /// The grant itself is dead (`invalid_grant`: token expired or revoked,
+    /// `invalid_client`, `unauthorized_client`). No retry will ever succeed;
+    /// the user must go through the OAuth flow again.
+    Denied(String),
+    /// Network trouble, a 5xx from the token endpoint, an unparseable
+    /// response — worth retrying later with the same refresh token.
+    Transient(String),
+}
+
+impl std::fmt::Display for RefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Denied(m) => write!(f, "refresh denied: {m}"),
+            Self::Transient(m) => write!(f, "refresh failed: {m}"),
+        }
+    }
+}
+
+/// Interpret a token-endpoint refresh response.
+///
+/// OAuth error responses carry a machine-readable `error` code in the JSON
+/// body (RFC 6749 §5.2); that code — not the HTTP status — decides whether
+/// the grant is dead or the failure is retryable. Google returns
+/// `invalid_grant` with HTTP 400 both for expired/revoked tokens (permanent)
+/// and never for transient conditions, so grant-level codes map to
+/// [`RefreshError::Denied`] and everything else to `Transient`.
+///
+/// `refresh_token` is carried over unless the response rotates it (Google
+/// normally omits it on refresh). Pure so it is unit-testable; the caller
+/// does the HTTP.
+pub fn parse_refresh_response(
+    http_status: u16,
+    body: &str,
+    refresh_token: String,
+    scope_fallback: &str,
+    now_epoch: i64,
+) -> Result<StoredTokens, RefreshError> {
+    let json: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    if let Some(code) = json["error"].as_str() {
+        let desc = json["error_description"].as_str().unwrap_or("");
+        let msg = if desc.is_empty() { code.to_string() } else { format!("{code}: {desc}") };
+        return Err(match code {
+            "invalid_grant" | "invalid_client" | "unauthorized_client" => {
+                RefreshError::Denied(msg)
+            }
+            _ => RefreshError::Transient(msg),
+        });
+    }
+    if !(200..300).contains(&http_status) {
+        let head: String = body.chars().take(200).collect();
+        return Err(RefreshError::Transient(format!(
+            "token endpoint returned {http_status}: {head}"
+        )));
+    }
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or_else(|| RefreshError::Transient("token response has no access_token".into()))?
+        .to_string();
+    let expires_in = json["expires_in"].as_i64().unwrap_or(3600);
+    Ok(StoredTokens {
+        access_token,
+        // Adopt a rotated refresh token if the server sent one.
+        refresh_token: json["refresh_token"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or(refresh_token),
+        access_expires_at: Some(now_epoch + expires_in),
+        scope: json["scope"].as_str().unwrap_or(scope_fallback).to_string(),
+    })
+}
+
 /// Function used to acquire a fresh access token, given the current refresh
 /// token. Returns the new bundle (which may include a rotated refresh token).
 ///
 /// Boxed and stored as `Arc` so the wrapper itself is `Clone`-friendly.
 pub type RefreshFn = Arc<
-    dyn Fn(String) -> futures::future::BoxFuture<'static, Result<StoredTokens, String>>
+    dyn Fn(String) -> futures::future::BoxFuture<'static, Result<StoredTokens, RefreshError>>
         + Send
         + Sync,
 >;
@@ -71,11 +146,15 @@ impl AuthedClient {
     }
 
     /// Force a refresh now. Useful for `refresh-on-401` paths and tests.
-    pub async fn refresh_now(&self) -> Result<(), String> {
+    ///
+    /// A failure to persist the rotated tokens is reported as transient: the
+    /// refresh itself succeeded and the new token is live in memory, so the
+    /// caller may proceed and a later attempt can retry the write.
+    pub async fn refresh_now(&self) -> Result<(), RefreshError> {
         let refresh_token = self.tokens.lock().unwrap().refresh_token.clone();
         let new = (self.refresh)(refresh_token).await?;
         self.replace_tokens(new)
-            .map_err(|e| format!("persist: {e}"))?;
+            .map_err(|e| RefreshError::Transient(format!("persist: {e}")))?;
         Ok(())
     }
 
@@ -144,6 +223,59 @@ mod tests {
         client.refresh_now().await.unwrap();
         assert_eq!(client.access_token(), "brand-new");
         assert_eq!(store.load().unwrap().unwrap().access_token, "brand-new");
+    }
+
+    #[test]
+    fn refresh_response_invalid_grant_is_denied_not_transient() {
+        // Google's exact body for an expired/revoked refresh token (verified
+        // live 2026-07-14) — arrives with HTTP 400.
+        let body = r#"{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}"#;
+        let err = parse_refresh_response(400, body, "rt".into(), "tasks", 0).unwrap_err();
+        assert_eq!(
+            err,
+            RefreshError::Denied("invalid_grant: Token has been expired or revoked.".into())
+        );
+    }
+
+    #[test]
+    fn refresh_response_5xx_and_garbage_are_transient() {
+        let err = parse_refresh_response(503, "<html>oops</html>", "rt".into(), "t", 0).unwrap_err();
+        assert!(matches!(err, RefreshError::Transient(_)), "{err}");
+        // 200 with a body missing access_token (proxy mangling, etc.)
+        let err = parse_refresh_response(200, "{}", "rt".into(), "t", 0).unwrap_err();
+        assert!(matches!(err, RefreshError::Transient(_)), "{err}");
+        // OAuth error code other than the grant-level ones stays retryable.
+        let err = parse_refresh_response(400, r#"{"error":"temporarily_unavailable"}"#, "rt".into(), "t", 0)
+            .unwrap_err();
+        assert!(matches!(err, RefreshError::Transient(_)), "{err}");
+    }
+
+    #[test]
+    fn refresh_response_success_keeps_or_rotates_the_refresh_token() {
+        // Google normally omits refresh_token on refresh — keep the old one.
+        let kept = parse_refresh_response(
+            200,
+            r#"{"access_token":"new-at","expires_in":3599,"scope":"tasks"}"#,
+            "old-rt".into(),
+            "fallback",
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(kept.access_token, "new-at");
+        assert_eq!(kept.refresh_token, "old-rt");
+        assert_eq!(kept.access_expires_at, Some(4_599));
+        assert_eq!(kept.scope, "tasks");
+        // ...but adopt a rotated one when present.
+        let rotated = parse_refresh_response(
+            200,
+            r#"{"access_token":"at","refresh_token":"fresh-rt"}"#,
+            "old-rt".into(),
+            "fallback",
+            0,
+        )
+        .unwrap();
+        assert_eq!(rotated.refresh_token, "fresh-rt");
+        assert_eq!(rotated.scope, "fallback");
     }
 
     #[test]

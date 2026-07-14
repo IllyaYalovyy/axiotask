@@ -13,6 +13,7 @@ const baseSettings = {
   scopes: ["https://www.googleapis.com/auth/tasks"],
   db_path: "/home/u/.local/share/axiotask/axiotask.sqlite",
   config_path: "/home/u/.config/axiotask/config.toml",
+  needs_reauth: false,
   pending_pushes: 2,
   sync: {
     last_synced: new Date(Date.now() - 120000).toISOString(),
@@ -145,6 +146,27 @@ describe("Properties dialog", () => {
     expect(dialog).toHaveTextContent(/signed in/i);
     expect(dialog).toHaveTextContent(/Google Tasks/i);
     expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument();
+  });
+
+  it("Account tab surfaces an expired session with a Sign in again action", async () => {
+    // needs_reauth: tokens exist (authenticated) but Google permanently
+    // rejects the refresh — the user must re-run the OAuth flow.
+    mockBackend();
+    settings.needs_reauth = true;
+    render(App);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /properties/i })).toBeInTheDocument(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+    const dialog = await screen.findByRole("dialog", { name: /properties/i });
+    await fireEvent.click(screen.getByRole("tab", { name: /account/i }));
+    expect(dialog).toHaveTextContent(/session expired/i);
+    expect(dialog).toHaveTextContent(/kept locally/i);
+    const signIn = screen.getByRole("button", { name: /sign in again/i });
+    await fireEvent.click(signIn);
+    await waitFor(() =>
+      expect(invoke.mock.calls.some((c) => c[0] === "auth_login")).toBe(true),
+    );
   });
 
   it("Shortcuts tab lists key bindings", async () => {

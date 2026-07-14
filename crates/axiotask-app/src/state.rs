@@ -128,6 +128,13 @@ pub struct AppState {
     /// Whether to sync automatically on startup. Persisted; display-only after
     /// launch (it only governs the startup sync).
     auto_sync_on_start: AtomicBool,
+    /// Set when token refresh is permanently denied (`invalid_grant`: the
+    /// refresh token expired or was revoked). Gates the background sync loop —
+    /// retrying with a dead grant fails identically forever and spams the
+    /// token endpoint. Cleared on re-login, logout, or a successful sync.
+    /// Manual "Sync now" is deliberately NOT gated, so the user can always
+    /// force a re-check.
+    needs_reauth: AtomicBool,
     /// Path to the config file, so settings changes persist to the right place.
     config_path: PathBuf,
     /// Path to the SQLite database (shown in the Properties dialog).
@@ -182,6 +189,7 @@ impl AppState {
             push_enabled: AtomicBool::new(config.sync.push_enabled),
             editing: AtomicBool::new(false),
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
+            needs_reauth: AtomicBool::new(false),
             config_path: axiotask_core::config::AppConfig::default_path(),
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
@@ -231,6 +239,7 @@ impl AppState {
             push_enabled: AtomicBool::new(push_enabled),
             editing: AtomicBool::new(false),
             auto_sync_on_start: AtomicBool::new(true),
+            needs_reauth: AtomicBool::new(false),
             // A throwaway temp path so settings writes in tests never touch the
             // real user config.
             config_path: std::env::temp_dir()
@@ -246,6 +255,12 @@ impl AppState {
     /// Whether we have stored tokens (user is logged in).
     pub fn is_authenticated(&self) -> bool {
         matches!(self.token_store.load(), Ok(Some(_)))
+    }
+
+    /// Whether the stored session is dead (refresh permanently denied) and the
+    /// user must sign in again. See the `needs_reauth` field.
+    pub fn needs_reauth(&self) -> bool {
+        self.needs_reauth.load(Ordering::Relaxed)
     }
 
     /// Collect every task list and its tasks into a lossless backup snapshot.
@@ -395,6 +410,8 @@ impl AppState {
         // Switch to real HTTP client.
         let http_client = build_http_client(tokens, self.token_store.clone(), &self.oauth_config);
         *self.client.lock().await = Arc::new(http_client);
+        // Fresh grant — background syncs may resume.
+        self.needs_reauth.store(false, Ordering::Relaxed);
 
         // Verify tokens persisted
         match self.token_store.load() {
@@ -411,6 +428,8 @@ impl AppState {
         // Switch to offline client (block_on is fine here — quick operation)
         let offline: Arc<dyn GoogleTasksClient> = Arc::new(InMemoryClient::new());
         *tauri::async_runtime::block_on(self.client.lock()) = offline;
+        // Signed out — the expired-session state no longer applies.
+        self.needs_reauth.store(false, Ordering::Relaxed);
         Ok(())
     }
 
@@ -429,6 +448,13 @@ impl AppState {
     pub async fn run_sync_loop(self: Arc<Self>) {
         loop {
             wait_for_sync_trigger(&self.sync_notify, SYNC_DEBOUNCE, SYNC_PERIOD).await;
+            // A dead session fails identically on every attempt — don't churn
+            // (and spam the token endpoint) until the user signs in again.
+            // Manual "Sync now" stays available as an explicit re-check.
+            if self.needs_reauth() {
+                tracing::debug!("background sync skipped: session expired, waiting for re-login");
+                continue;
+            }
             if self.is_authenticated()
                 && let Err(e) = self.run_sync_if_authed().await
             {
@@ -471,6 +497,9 @@ impl AppState {
                     status.last_synced = Some(
                         jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
                     );
+                    // A working sync proves the session is alive again (e.g.
+                    // after re-login, or a mis-flagged transient).
+                    self.needs_reauth.store(false, Ordering::Relaxed);
                     status.last_pulled = o.pulled;
                     status.last_pushed = o.pushed;
                     status.last_conflicts = o.conflicts;
@@ -489,7 +518,23 @@ impl AppState {
                 }
                 Err(e) => {
                     tracing::error!("sync failed: {e}");
-                    status.last_error = Some(e.to_string());
+                    if matches!(
+                        e,
+                        axiotask_core::sync::SyncError::Api(
+                            axiotask_core::api::ApiError::AuthExpired(_)
+                        )
+                    ) {
+                        // The refresh token is dead — stop the background
+                        // retry churn and tell the user what to actually do.
+                        self.needs_reauth.store(true, Ordering::Relaxed);
+                        status.last_error = Some(
+                            "Google session expired — please sign in again \
+                             (Properties → Account)"
+                                .into(),
+                        );
+                    } else {
+                        status.last_error = Some(e.to_string());
+                    }
                 }
             }
             status.clone()
@@ -763,6 +808,7 @@ fn build_http_client(
         let client_id = client_id.clone();
         let client_secret = client_secret.clone();
         Box::pin(async move {
+            use axiotask_core::auth::RefreshError;
             let client = reqwest::Client::new();
             let resp = client
                 .post(&token_url)
@@ -774,23 +820,25 @@ fn build_http_client(
                 ])
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
-            let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-            let access_token = body["access_token"]
-                .as_str()
-                .ok_or("no access_token")?
-                .to_string();
-            let expires_in = body["expires_in"].as_i64().unwrap_or(3600);
+                .map_err(|e| RefreshError::Transient(e.to_string()))?;
+            let status = resp.status().as_u16();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| RefreshError::Transient(e.to_string()))?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            Ok(StoredTokens {
-                access_token,
+            // Classifies invalid_grant & co. as Denied (permanent — the user
+            // must sign in again) and everything else as Transient.
+            axiotask_core::auth::parse_refresh_response(
+                status,
+                &body,
                 refresh_token,
-                access_expires_at: Some(now + expires_in),
-                scope: "https://www.googleapis.com/auth/tasks".into(),
-            })
+                "https://www.googleapis.com/auth/tasks",
+                now,
+            )
         })
     });
 

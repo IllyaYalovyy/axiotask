@@ -9,7 +9,7 @@ pub mod flow;
 mod pkce;
 mod store;
 
-pub use client::{AuthedClient, RefreshFn};
+pub use client::{AuthedClient, RefreshError, RefreshFn, parse_refresh_response};
 pub use error::AuthError;
 pub use flow::{OAuthConfig, login};
 pub use pkce::{Pkce, PkceParams, random_state};

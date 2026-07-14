@@ -686,6 +686,9 @@ impl From<&crate::state::SyncStatus> for SyncStatusView {
 }
 
 /// Everything the Properties dialog needs in a single round-trip.
+// A flat wire DTO mirroring independent UI toggles — grouping the bools into
+// enums would only complicate the frontend contract.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// App version (from Cargo).
@@ -699,6 +702,10 @@ pub struct AppSettings {
     pub auto_sync_on_start: bool,
     /// Whether the user is signed in to Google.
     pub authenticated: bool,
+    /// Tokens exist but the session is dead (refresh permanently denied,
+    /// e.g. `invalid_grant`) — the user must sign in again before anything
+    /// syncs. Background syncs are paused while this is set.
+    pub needs_reauth: bool,
     /// OAuth scopes the app is configured to request (what it can access).
     pub scopes: Vec<String>,
     /// Local SQLite database path.
@@ -720,6 +727,7 @@ async fn build_settings(state: &AppState) -> Result<AppSettings, String> {
         push_enabled: state.is_push_enabled(),
         auto_sync_on_start: state.auto_sync_on_start(),
         authenticated: state.is_authenticated(),
+        needs_reauth: state.needs_reauth(),
         scopes: state.scopes(),
         db_path: state.db_path().display().to_string(),
         config_path: state.config_path().display().to_string(),

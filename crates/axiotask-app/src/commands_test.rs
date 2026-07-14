@@ -281,6 +281,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_session_sets_needs_reauth_with_an_actionable_error() {
+        // A permanently-denied token refresh (invalid_grant) must flip the
+        // app into "sign in again" state — with a message that says what to
+        // do — and a later working sync must clear it (re-login recovery).
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        assert!(!state.needs_reauth());
+
+        client.fail_next(Method::ListTaskLists, || {
+            ApiError::AuthExpired("invalid_grant: Token has been expired or revoked.".into())
+        });
+        state.run_sync().await.unwrap_err();
+
+        assert!(state.needs_reauth(), "dead session must be flagged");
+        let msg = state.sync_status().await.last_error.expect("error surfaced");
+        assert!(msg.contains("sign in again"), "actionable, got: {msg}");
+
+        // After re-login the next sync works — the flag and error clear.
+        state.run_sync().await.unwrap();
+        assert!(!state.needs_reauth());
+        assert!(state.sync_status().await.last_error.is_none());
+    }
+
+    #[tokio::test]
     async fn sync_pushes_local_creates_to_remote() {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");

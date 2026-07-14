@@ -60,12 +60,20 @@ impl HttpClient {
     {
         match send_with_retry(self.max_retries, &mut req).await {
             Err(ApiError::Unauthorized) => {
-                // Attempt token refresh, then retry once.
-                self.auth
-                    .refresh_now()
-                    .await
-                    .map_err(|e| ApiError::Other(format!("refresh failed: {e}")))?;
-                send_with_retry(self.max_retries, &mut req).await
+                // Attempt token refresh, then retry once. A permanent denial
+                // (invalid_grant: refresh token expired/revoked) becomes
+                // AuthExpired so the sync engine aborts the whole run — every
+                // remaining call would fail identically, and retrying each
+                // row would hammer the token endpoint. A transient refresh
+                // failure maps to Network so the run is retried later.
+                use crate::auth::RefreshError;
+                match self.auth.refresh_now().await {
+                    Ok(()) => send_with_retry(self.max_retries, &mut req).await,
+                    Err(RefreshError::Denied(msg)) => Err(ApiError::AuthExpired(msg)),
+                    Err(RefreshError::Transient(msg)) => {
+                        Err(ApiError::Network(format!("token refresh: {msg}")))
+                    }
+                }
             }
             other => other,
         }
@@ -577,6 +585,58 @@ mod tests {
         let err = client.list_tasklists().await.unwrap_err();
         assert!(matches!(err, ApiError::Unauthorized));
         assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn denied_refresh_surfaces_auth_expired_without_retrying_the_call() {
+        // invalid_grant on refresh (expired/revoked refresh token) must become
+        // AuthExpired — the engine's abort signal — and must NOT replay the
+        // original request with the same dead token.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1) // exactly one attempt: no retry after a dead refresh
+            .mount(&server)
+            .await;
+
+        let denied: RefreshFn = Arc::new(|_rt: String| {
+            Box::pin(async {
+                Err(crate::auth::RefreshError::Denied(
+                    "invalid_grant: Token has been expired or revoked.".into(),
+                ))
+            })
+        });
+        let client = build_test_client(&server.uri(), make_tokens("dead-token"), denied);
+
+        let err = client.list_tasklists().await.unwrap_err();
+        assert!(matches!(err, ApiError::AuthExpired(_)), "got {err:?}");
+        assert!(!err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn transient_refresh_failure_maps_to_retryable_network_error() {
+        // A token-endpoint hiccup (5xx / network) must not look permanent —
+        // the next sync run should simply try again.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me/lists"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let flaky: RefreshFn = Arc::new(|_rt: String| {
+            Box::pin(async {
+                Err(crate::auth::RefreshError::Transient(
+                    "token endpoint returned 503".into(),
+                ))
+            })
+        });
+        let client = build_test_client(&server.uri(), make_tokens("expired"), flaky);
+
+        let err = client.list_tasklists().await.unwrap_err();
+        assert!(matches!(err, ApiError::Network(_)), "got {err:?}");
+        assert!(err.is_transient());
     }
 
     // ─── Task method tests (request construction + response parsing) ──────────
