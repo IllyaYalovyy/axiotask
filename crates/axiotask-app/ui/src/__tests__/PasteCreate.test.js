@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
@@ -62,13 +62,11 @@ describe("Ctrl+V paste creates tasks", () => {
 
     pasteText("Task one\nTask two\nTask three");
 
-    await waitFor(() =>
-      expect(screen.getByRole("dialog", { name: /add multiple tasks/i })).toBeInTheDocument(),
-    );
+    const dialog = await screen.findByRole("dialog", { name: /add multiple tasks/i });
     // Nothing is created until the user confirms in the dialog.
     expect(invoke.mock.calls.filter(c => c[0] === "create_task").length).toBe(0);
     // The pasted text is prefilled.
-    expect(screen.getByRole("textbox")).toHaveValue("Task one\nTask two\nTask three");
+    expect(within(dialog).getByRole("textbox")).toHaveValue("Task one\nTask two\nTask three");
   });
 
   it("does not intercept paste when an input/textarea is focused", async () => {

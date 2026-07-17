@@ -28,63 +28,65 @@ function task(id, title, listId = "L1", opts = {}) {
   return { id, parent_id: null, title, notes: null, status: "needsAction", due: opts.due || today, position: opts.pos || id, sync_state: "clean", listId, listTitle: "Work" };
 }
 
-describe("GH#1: New task appears at top, in focus, edit mode active", () => {
+describe("Quick-add task creation", () => {
   beforeEach(() => { localStorage.clear(); invoke.mockReset(); });
 
-  it("+ New task button creates task at top in edit mode", async () => {
+  it("+ New task button focuses the quick-add input without creating an empty task", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend([task("t1", "Existing task")]);
-    const { container } = render(App);
+    render(App);
     await waitFor(() => expect(screen.getByText("Existing task")).toBeInTheDocument());
 
     await fireEvent.click(screen.getByText("+ New task"));
 
-    await waitFor(() => {
-      const widgets = container.querySelectorAll(".task-widget");
-      expect(widgets.length).toBeGreaterThanOrEqual(2);
-      expect(widgets[0].querySelector(".edit-input")).toBeInTheDocument();
-    });
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    expect(input).toHaveFocus();
+    expect(invoke.mock.calls.filter(c => c[0] === "create_task")).toHaveLength(0);
   });
 
-  it("n key creates task at top in edit mode", async () => {
+  it("n key focuses the quick-add input without creating an empty task", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend([task("t1", "Existing task")]);
-    const { container } = render(App);
+    render(App);
     await waitFor(() => expect(screen.getByText("Existing task")).toBeInTheDocument());
 
     await fireEvent.keyDown(window, { key: "n" });
 
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "", listId: "L1" }));
-      const editInput = container.querySelector(".task-widget .edit-input");
-      expect(editInput).toBeInTheDocument();
-    });
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    expect(input).toHaveFocus();
+    expect(invoke.mock.calls.filter(c => c[0] === "create_task")).toHaveLength(0);
   });
 
-  it("new task is focused (first widget has .focused class)", async () => {
+  it("submitting quick-add creates a titled task at the top", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend([task("t1", "Existing task")]);
     const { container } = render(App);
     await waitFor(() => expect(screen.getByText("Existing task")).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByText("+ New task"));
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "New titled task" } });
+    await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
       const widgets = container.querySelectorAll(".task-widget");
-      expect(widgets[0]).toHaveClass("focused");
+      expect(widgets.length).toBeGreaterThanOrEqual(2);
+      expect(widgets[0]).toHaveTextContent("New titled task");
     });
   });
 
-  it("in smart view, switches to target list", async () => {
+  it("submitting in a smart view creates in the target list without switching views", async () => {
     localStorage.setItem("axiotask:view", "focus");
     mockBackend([task("t1", "Focus task", "L1", { due: today })]);
     render(App);
     await waitFor(() => expect(screen.getByText("Focus task")).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByText("+ New task"));
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "Smart capture" } });
+    await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1" }));
+      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1", title: "Smart capture" }));
     });
+    expect(screen.getByText("Focus")).toBeInTheDocument();
   });
 });
