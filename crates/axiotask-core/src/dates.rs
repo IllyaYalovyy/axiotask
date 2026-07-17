@@ -169,23 +169,35 @@ mod normalize_tests {
 
     #[test]
     fn bare_date_becomes_full_form() {
-        assert_eq!(normalize_due("2026-08-02").as_deref(), Some("2026-08-02T00:00:00.000Z"));
+        assert_eq!(
+            normalize_due("2026-08-02").as_deref(),
+            Some("2026-08-02T00:00:00.000Z")
+        );
     }
 
     #[test]
     fn seconds_only_form_gains_millis() {
-        assert_eq!(normalize_due("2026-08-03T00:00:00Z").as_deref(), Some("2026-08-03T00:00:00.000Z"));
+        assert_eq!(
+            normalize_due("2026-08-03T00:00:00Z").as_deref(),
+            Some("2026-08-03T00:00:00.000Z")
+        );
     }
 
     #[test]
     fn canonical_form_is_unchanged() {
-        assert_eq!(normalize_due("2026-08-01T00:00:00.000Z").as_deref(), Some("2026-08-01T00:00:00.000Z"));
+        assert_eq!(
+            normalize_due("2026-08-01T00:00:00.000Z").as_deref(),
+            Some("2026-08-01T00:00:00.000Z")
+        );
     }
 
     #[test]
     fn nonzero_time_is_floored_to_date() {
         // Google stores due as date-only regardless of the time sent.
-        assert_eq!(normalize_due("2026-08-01T17:30:00.000Z").as_deref(), Some("2026-08-01T00:00:00.000Z"));
+        assert_eq!(
+            normalize_due("2026-08-01T17:30:00.000Z").as_deref(),
+            Some("2026-08-01T00:00:00.000Z")
+        );
     }
 
     #[test]

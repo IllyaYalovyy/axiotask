@@ -179,9 +179,14 @@ fn map_status_with_body(status: StatusCode, retry_after: Option<Duration>, body:
 }
 
 fn is_rate_limit_body(body: &str) -> bool {
-    ["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"]
-        .iter()
-        .any(|r| body.contains(r))
+    [
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+        "quotaExceeded",
+        "dailyLimitExceeded",
+    ]
+    .iter()
+    .any(|r| body.contains(r))
 }
 
 fn body_reason(body: &str) -> String {
@@ -265,12 +270,19 @@ impl GoogleTasksClient for HttpClient {
                 url.push_str(&urlencoding::encode(tok));
             }
             let auth = &self.auth;
-            let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
+            let resp = self
+                .send_authed(|| async { auth.get(&url).send().await })
+                .await?;
             let body: TaskListsResponse = resp
                 .json()
                 .await
                 .map_err(|e| ApiError::Other(format!("decode lists: {e}")))?;
-            out.extend(body.items.unwrap_or_default().into_iter().map(TaskList::from));
+            out.extend(
+                body.items
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TaskList::from),
+            );
             match body.next_page_token {
                 Some(tok) => page_token = Some(tok),
                 None => return Ok(out),
@@ -282,7 +294,9 @@ impl GoogleTasksClient for HttpClient {
         let url = format!("{}/users/@me/lists", self.base_url);
         let body = serde_json::json!({ "title": title });
         let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.post(&url).json(&body).send().await }).await?;
+        let resp = self
+            .send_authed(|| async { auth.post(&url).json(&body).send().await })
+            .await?;
         let wire: TaskListWire = resp
             .json()
             .await
@@ -294,10 +308,16 @@ impl GoogleTasksClient for HttpClient {
     // returns 200; verified live), so list renames are last-writer-wins by
     // server design. Conflict detection for lists is not possible.
     async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError> {
-        let url = format!("{}/users/@me/lists/{}", self.base_url, urlencoding::encode(id));
+        let url = format!(
+            "{}/users/@me/lists/{}",
+            self.base_url,
+            urlencoding::encode(id)
+        );
         let body = serde_json::json!({ "title": title });
         let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.patch(&url).json(&body).send().await }).await?;
+        let resp = self
+            .send_authed(|| async { auth.patch(&url).json(&body).send().await })
+            .await?;
         let wire: TaskListWire = resp
             .json()
             .await
@@ -306,9 +326,15 @@ impl GoogleTasksClient for HttpClient {
     }
 
     async fn delete_tasklist(&self, id: &str) -> Result<(), ApiError> {
-        let url = format!("{}/users/@me/lists/{}", self.base_url, urlencoding::encode(id));
+        let url = format!(
+            "{}/users/@me/lists/{}",
+            self.base_url,
+            urlencoding::encode(id)
+        );
         let auth = &self.auth;
-        let _ = self.send_authed(|| async { auth.delete(&url).send().await }).await?;
+        let _ = self
+            .send_authed(|| async { auth.delete(&url).send().await })
+            .await?;
         Ok(())
     }
 
@@ -328,7 +354,9 @@ impl GoogleTasksClient for HttpClient {
             url.push_str(&urlencoding::encode(tok));
         }
         let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
+        let resp = self
+            .send_authed(|| async { auth.get(&url).send().await })
+            .await?;
         let body: TasksResponse = resp
             .json()
             .await
@@ -362,10 +390,9 @@ impl GoogleTasksClient for HttpClient {
             "status": new.status.unwrap_or(crate::model::TaskStatus::NeedsAction).as_api_str(),
         });
         let auth = &self.auth;
-        let resp = self.send_authed(|| async {
-            auth.post(&url).json(&body).send().await
-        })
-        .await?;
+        let resp = self
+            .send_authed(|| async { auth.post(&url).json(&body).send().await })
+            .await?;
         let wire: TaskWire = resp
             .json()
             .await
@@ -381,7 +408,9 @@ impl GoogleTasksClient for HttpClient {
             urlencoding::encode(id)
         );
         let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.get(&url).send().await }).await?;
+        let resp = self
+            .send_authed(|| async { auth.get(&url).send().await })
+            .await?;
         let wire: TaskWire = resp
             .json()
             .await
@@ -414,14 +443,15 @@ impl GoogleTasksClient for HttpClient {
             );
         }
         let auth = &self.auth;
-        let resp = self.send_authed(|| async {
-            let mut req = auth.patch(&url);
-            if let Some(e) = etag {
-                req = req.header(reqwest::header::IF_MATCH, e);
-            }
-            req.json(&body).send().await
-        })
-        .await?;
+        let resp = self
+            .send_authed(|| async {
+                let mut req = auth.patch(&url);
+                if let Some(e) = etag {
+                    req = req.header(reqwest::header::IF_MATCH, e);
+                }
+                req.json(&body).send().await
+            })
+            .await?;
         let wire: TaskWire = resp
             .json()
             .await
@@ -432,10 +462,9 @@ impl GoogleTasksClient for HttpClient {
     async fn delete_task(&self, list_id: &str, id: &str) -> Result<(), ApiError> {
         let url = format!("{}/lists/{}/tasks/{}", self.base_url, list_id, id);
         let auth = &self.auth;
-        let _ = self.send_authed(|| async {
-            auth.delete(&url).send().await
-        })
-        .await?;
+        let _ = self
+            .send_authed(|| async { auth.delete(&url).send().await })
+            .await?;
         Ok(())
     }
 
@@ -460,7 +489,9 @@ impl GoogleTasksClient for HttpClient {
             url.push_str(&urlencoding::encode(prev));
         }
         let auth = &self.auth;
-        let resp = self.send_authed(|| async { auth.post(&url).send().await }).await?;
+        let resp = self
+            .send_authed(|| async { auth.post(&url).send().await })
+            .await?;
         let wire: TaskWire = resp
             .json()
             .await
@@ -746,7 +777,9 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/lists/L1/tasks"))
             .and(query_param("pageToken", "tok-abc"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})),
+            )
             .mount(&server)
             .await;
 
@@ -766,7 +799,9 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/lists/L1/tasks"))
             .and(query_param("pageToken", "a b+c/d=e"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})),
+            )
             .mount(&server)
             .await;
 
@@ -789,7 +824,16 @@ mod tests {
             .await;
 
         let client = plain_client(&server.uri());
-        let task = client.insert_task("L1", NewTask { title: "new task".into(), ..Default::default() }).await.unwrap();
+        let task = client
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "new task".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert_eq!(task.id, "remote-1");
         assert_eq!(task.etag.as_deref(), Some("etag-1"));
     }
@@ -810,8 +854,14 @@ mod tests {
             .await;
 
         let client = plain_client(&server.uri());
-        let patch = TaskPatch { title: Some("updated".into()), ..Default::default() };
-        let task = client.patch_task("L1", "T1", patch, Some("etag-xyz")).await.unwrap();
+        let patch = TaskPatch {
+            title: Some("updated".into()),
+            ..Default::default()
+        };
+        let task = client
+            .patch_task("L1", "T1", patch, Some("etag-xyz"))
+            .await
+            .unwrap();
         assert_eq!(task.title, "updated");
         assert_eq!(task.etag.as_deref(), Some("etag-new"));
     }
@@ -827,8 +877,14 @@ mod tests {
             .await;
 
         let client = plain_client(&server.uri());
-        let patch = TaskPatch { title: Some("x".into()), ..Default::default() };
-        let err = client.patch_task("L1", "T1", patch, Some("stale")).await.unwrap_err();
+        let patch = TaskPatch {
+            title: Some("x".into()),
+            ..Default::default()
+        };
+        let err = client
+            .patch_task("L1", "T1", patch, Some("stale"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, ApiError::PreconditionFailed));
     }
 
@@ -878,7 +934,10 @@ mod tests {
             .await;
 
         let client = plain_client(&server.uri());
-        let task = client.move_task("L1", "T1", Some("P1"), Some("T0")).await.unwrap();
+        let task = client
+            .move_task("L1", "T1", Some("P1"), Some("T0"))
+            .await
+            .unwrap();
         assert_eq!(task.parent.as_deref(), Some("P1"));
     }
 
@@ -936,6 +995,9 @@ mod tests {
             .mount(&server)
             .await;
         let client = plain_client(&server.uri());
-        assert!(matches!(client.delete_tasklist("gone").await.unwrap_err(), ApiError::NotFound));
+        assert!(matches!(
+            client.delete_tasklist("gone").await.unwrap_err(),
+            ApiError::NotFound
+        ));
     }
 }

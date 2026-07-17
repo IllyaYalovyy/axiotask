@@ -161,7 +161,10 @@ mod tests {
         migrate(&pool).await.expect("legacy DB resets cleanly");
 
         // Now at the latest version with the new schema.
-        let ver: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&pool).await.unwrap();
+        let ver: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(ver, MIGRATIONS.len() as i64);
         let store = Store::new(pool);
         // Exercising a query that references pending_op proves the new schema.

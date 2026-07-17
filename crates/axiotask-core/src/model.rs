@@ -49,7 +49,11 @@ pub struct Task {
     pub updated: String,
     /// Absolute link to the task in the Google Tasks web UI (output-only from
     /// Google; `None` for tasks not yet synced). Powers "Open in Google Tasks".
-    #[serde(rename = "webViewLink", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "webViewLink",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub web_view_link: Option<String>,
 }
 
@@ -201,7 +205,10 @@ mod tests {
             "webViewLink": "https://tasks.google.com/task/xyz"
         }"#;
         let t: Task = serde_json::from_str(json).unwrap();
-        assert_eq!(t.web_view_link.as_deref(), Some("https://tasks.google.com/task/xyz"));
+        assert_eq!(
+            t.web_view_link.as_deref(),
+            Some("https://tasks.google.com/task/xyz")
+        );
 
         // Absent field → None (tasks not yet synced).
         let j2 = r#"{"id":"a","title":"t","status":"needsAction","position":"1","updated":"x"}"#;

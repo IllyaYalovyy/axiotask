@@ -7,7 +7,7 @@ use tauri::State;
 
 use crate::state::AppState;
 use axiotask_core::dates::{DateMove, apply_date_move};
-use axiotask_core::model::{TaskStatus};
+use axiotask_core::model::TaskStatus;
 use axiotask_core::store::{StoredTask, SyncState};
 
 /// DTO sent to the frontend for a task list.
@@ -70,7 +70,9 @@ pub async fn create_list(
     title: String,
     local_only: Option<bool>,
 ) -> Result<TaskListView, String> {
-    let stored = state.create_list(&title, local_only.unwrap_or(false)).await?;
+    let stored = state
+        .create_list(&title, local_only.unwrap_or(false))
+        .await?;
     Ok(TaskListView {
         id: stored.list.id,
         title: stored.list.title,
@@ -88,10 +90,7 @@ pub async fn rename_list(
 }
 
 #[tauri::command]
-pub async fn delete_list(
-    state: State<'_, Arc<AppState>>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_list(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     state.delete_list(&id).await
 }
 
@@ -161,16 +160,17 @@ pub async fn rename_task(
         "update".into()
     });
     t.local_updated = now_str();
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&t)
+        .await
+        .map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }
 
 #[tauri::command]
-pub async fn toggle_complete(
-    state: State<'_, Arc<AppState>>,
-    id: String,
-) -> Result<(), String> {
+pub async fn toggle_complete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     toggle_complete_inner(&state, id).await
 }
 
@@ -197,12 +197,23 @@ pub(crate) async fn toggle_complete_inner(state: &AppState, id: String) -> Resul
     // instead of after the next pull. Un-completing does NOT cascade: the
     // server leaves children completed in that direction (also verified).
     let cascade = t.task.status == TaskStatus::Completed;
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&t)
+        .await
+        .map_err(|e| e.to_string())?;
     if cascade {
-        let siblings = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+        let siblings = state
+            .store
+            .list_tasks(&t.list_id)
+            .await
+            .map_err(|e| e.to_string())?;
         let mut frontier = vec![id.clone()];
         while let Some(pid) = frontier.pop() {
-            for child in siblings.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+            for child in siblings
+                .iter()
+                .filter(|c| c.task.parent.as_deref() == Some(pid.as_str()))
+            {
                 frontier.push(child.task.id.clone());
                 if child.task.status == TaskStatus::Completed {
                     continue;
@@ -213,7 +224,11 @@ pub(crate) async fn toggle_complete_inner(state: &AppState, id: String) -> Resul
                 c.sync_state = SyncState::Dirty;
                 c.pending_op = Some(dirty_op(c.task.etag.as_deref()));
                 c.local_updated = now_str();
-                state.store.upsert_task(&c).await.map_err(|e| e.to_string())?;
+                state
+                    .store
+                    .upsert_task(&c)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
@@ -253,7 +268,10 @@ pub struct DeleteToken {
 }
 
 #[tauri::command]
-pub async fn delete_task(state: State<'_, Arc<AppState>>, id: String) -> Result<DeleteToken, String> {
+pub async fn delete_task(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<DeleteToken, String> {
     delete_task_inner(&state, id).await
 }
 
@@ -264,11 +282,18 @@ pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<De
 
     // Snapshot the descendants (BFS → parents before children) so undo can
     // rebuild them after the delete's server-side cascade destroyed them.
-    let list = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+    let list = state
+        .store
+        .list_tasks(&t.list_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut subtree = Vec::new();
     let mut frontier = vec![id.clone()];
     while let Some(pid) = frontier.pop() {
-        for c in list.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+        for c in list
+            .iter()
+            .filter(|c| c.task.parent.as_deref() == Some(pid.as_str()))
+        {
             frontier.push(c.task.id.clone());
             subtree.push(SubtreeEntry {
                 id: c.task.id.clone(),
@@ -307,14 +332,21 @@ pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<De
         t.sync_state = SyncState::Deleted;
         t.pending_op = Some("delete".into());
         t.local_updated = now_str();
-        state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+        state
+            .store
+            .upsert_task(&t)
+            .await
+            .map_err(|e| e.to_string())?;
     }
     state.schedule_sync();
     Ok(token)
 }
 
 #[tauri::command]
-pub async fn undo_delete(state: State<'_, Arc<AppState>>, token: DeleteToken) -> Result<(), String> {
+pub async fn undo_delete(
+    state: State<'_, Arc<AppState>>,
+    token: DeleteToken,
+) -> Result<(), String> {
     undo_delete_inner(&state, token).await
 }
 
@@ -331,7 +363,12 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
     // place — preserving its etag — so the un-pushed delete simply never fires.
     // Reviving as a fresh 'create' here would leave the original remote task
     // un-deleted AND create a second one → duplicate.
-    if let Some(mut existing) = state.store.find_task_any(&token.id).await.map_err(|e| e.to_string())? {
+    if let Some(mut existing) = state
+        .store
+        .find_task_any(&token.id)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         existing.task.status = status;
         existing.task.completed = None;
         existing.local_updated = now.clone();
@@ -347,7 +384,11 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
             existing.sync_state = SyncState::Dirty;
             existing.pending_op = Some("create".into());
         }
-        state.store.upsert_task(&existing).await.map_err(|e| e.to_string())?;
+        state
+            .store
+            .upsert_task(&existing)
+            .await
+            .map_err(|e| e.to_string())?;
         restore_subtree(state, &token, &now).await?;
         state.schedule_sync();
         return Ok(());
@@ -357,7 +398,14 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
     // its original parent no longer exists (deleted separately), fall back to
     // top level instead of failing the FK.
     let parent = match &token.parent_id {
-        Some(p) if state.store.find_task_any(p).await.map_err(|e| e.to_string())?.is_some() => {
+        Some(p)
+            if state
+                .store
+                .find_task_any(p)
+                .await
+                .map_err(|e| e.to_string())?
+                .is_some() =>
+        {
             Some(p.clone())
         }
         _ => None,
@@ -381,7 +429,11 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
         pending_op: Some("create".into()),
         local_updated: now.clone(),
     };
-    state.store.upsert_task(&stored).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&stored)
+        .await
+        .map_err(|e| e.to_string())?;
     restore_subtree(state, &token, &now).await?;
     state.schedule_sync();
     Ok(())
@@ -394,7 +446,13 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
 /// Descendants that still exist (delete never pushed) are left untouched.
 async fn restore_subtree(state: &AppState, token: &DeleteToken, now: &str) -> Result<(), String> {
     for e in &token.subtree {
-        if state.store.find_task_any(&e.id).await.map_err(|err| err.to_string())?.is_some() {
+        if state
+            .store
+            .find_task_any(&e.id)
+            .await
+            .map_err(|err| err.to_string())?
+            .is_some()
+        {
             continue;
         }
         let status = match e.status.as_str() {
@@ -420,7 +478,11 @@ async fn restore_subtree(state: &AppState, token: &DeleteToken, now: &str) -> Re
             pending_op: Some("create".into()),
             local_updated: now.to_string(),
         };
-        state.store.upsert_task(&stored).await.map_err(|err| err.to_string())?;
+        state
+            .store
+            .upsert_task(&stored)
+            .await
+            .map_err(|err| err.to_string())?;
     }
     Ok(())
 }
@@ -464,7 +526,11 @@ pub(crate) async fn set_due_inner(state: &AppState, id: String, mv: String) -> R
     t.sync_state = SyncState::Dirty;
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&t)
+        .await
+        .map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }
@@ -486,10 +552,19 @@ pub async fn move_task(
     // Local position/parent updated immediately. The actual reorder is pushed
     // via the move API (recorded in pending_moves), not patch_task.
     t.local_updated = now_str();
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
     state
         .store
-        .record_move(&id, &t.list_id, parent_id.as_deref(), previous_id.as_deref())
+        .upsert_task(&t)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .record_move(
+            &id,
+            &t.list_id,
+            parent_id.as_deref(),
+            previous_id.as_deref(),
+        )
         .await
         .map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -515,8 +590,15 @@ pub async fn clear_completed(
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
 /// real behavior instead of a re-implementation.
-pub(crate) async fn clear_completed_inner(state: &AppState, list_id: String) -> Result<u32, String> {
-    let tasks = state.store.list_tasks(&list_id).await.map_err(|e| e.to_string())?;
+pub(crate) async fn clear_completed_inner(
+    state: &AppState,
+    list_id: String,
+) -> Result<u32, String> {
+    let tasks = state
+        .store
+        .list_tasks(&list_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Deleting a task deletes its descendants — on Google (verified live) and
     // locally via the FK cascade. A completed parent can still shelter OPEN
@@ -525,7 +607,10 @@ pub(crate) async fn clear_completed_inner(state: &AppState, list_id: String) -> 
     let has_open_descendant = |root: &str| -> bool {
         let mut frontier = vec![root.to_string()];
         while let Some(pid) = frontier.pop() {
-            for c in tasks.iter().filter(|c| c.task.parent.as_deref() == Some(pid.as_str())) {
+            for c in tasks
+                .iter()
+                .filter(|c| c.task.parent.as_deref() == Some(pid.as_str()))
+            {
                 if c.task.status != TaskStatus::Completed {
                     return true;
                 }
@@ -543,13 +628,21 @@ pub(crate) async fn clear_completed_inner(state: &AppState, list_id: String) -> 
                 continue;
             }
             if t.task.etag.is_none() {
-                state.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
+                state
+                    .store
+                    .delete_task_hard(&t.task.id)
+                    .await
+                    .map_err(|e| e.to_string())?;
             } else {
                 let mut d = t.clone();
                 d.sync_state = SyncState::Deleted;
                 d.pending_op = Some("delete".into());
                 d.local_updated = now_str();
-                state.store.upsert_task(&d).await.map_err(|e| e.to_string())?;
+                state
+                    .store
+                    .upsert_task(&d)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
             count += 1;
         }
@@ -571,7 +664,11 @@ pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String>
 pub async fn fresh_sync(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     // Drop synced local data and re-pull from Google. Local-only lists are
     // preserved — they exist nowhere else and a fresh pull cannot recreate them.
-    state.store.clear_synced().await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .clear_synced()
+        .await
+        .map_err(|e| e.to_string())?;
     let outcome = state.run_sync_if_authed().await?;
     Ok(format!(
         "fresh sync: pulled={}, lists and tasks rebuilt from remote",
@@ -590,7 +687,11 @@ pub async fn set_notes(
     t.sync_state = SyncState::Dirty;
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
-    state.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&t)
+        .await
+        .map_err(|e| e.to_string())?;
     state.schedule_sync();
     Ok(())
 }
@@ -602,10 +703,20 @@ pub async fn reorder_task(
     direction: String,
 ) -> Result<(), String> {
     let t = find_task(&state, &id).await?;
-    let all = state.store.list_tasks(&t.list_id).await.map_err(|e| e.to_string())?;
+    let all = state
+        .store
+        .list_tasks(&t.list_id)
+        .await
+        .map_err(|e| e.to_string())?;
     // Find siblings (same parent)
-    let siblings: Vec<_> = all.iter().filter(|s| s.task.parent == t.task.parent).collect();
-    let idx = siblings.iter().position(|s| s.task.id == id).ok_or("not found in siblings")?;
+    let siblings: Vec<_> = all
+        .iter()
+        .filter(|s| s.task.parent == t.task.parent)
+        .collect();
+    let idx = siblings
+        .iter()
+        .position(|s| s.task.id == id)
+        .ok_or("not found in siblings")?;
     let swap_idx = match direction.as_str() {
         "up" if idx > 0 => idx - 1,
         "down" if idx < siblings.len() - 1 => idx + 1,
@@ -618,8 +729,16 @@ pub async fn reorder_task(
     std::mem::swap(&mut current.task.position, &mut other.task.position);
     current.local_updated = now_str();
     other.local_updated = now_str();
-    state.store.upsert_task(&current).await.map_err(|e| e.to_string())?;
-    state.store.upsert_task(&other).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&current)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .upsert_task(&other)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Determine the sibling the task now follows, and record a move to push
     // via the Tasks move API (Google reorders through move, not patch).
@@ -629,7 +748,12 @@ pub async fn reorder_task(
     };
     state
         .store
-        .record_move(&id, &t.list_id, t.task.parent.as_deref(), new_previous.as_deref())
+        .record_move(
+            &id,
+            &t.list_id,
+            t.task.parent.as_deref(),
+            new_previous.as_deref(),
+        )
         .await
         .map_err(|e| e.to_string())?;
     state.schedule_sync();
@@ -842,8 +966,7 @@ pub async fn import_backup(
 ) -> Result<ImportResult, String> {
     let target = match path {
         Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p.trim()),
-        _ => crate::state::latest_backup_path()
-            .ok_or("no backup file found to restore")?,
+        _ => crate::state::latest_backup_path().ok_or("no backup file found to restore")?,
     };
 
     let json = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;

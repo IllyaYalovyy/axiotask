@@ -257,21 +257,21 @@
   .theme-btn:hover { color: var(--accent); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-  /* Mobile: horizontal compact nav */
+  /* Mobile: the app shell presents this inside a slide-in drawer. */
   @media (max-width: 700px) {
     .sidebar {
-      width: 100%; flex-direction: row; align-items: center;
-      border-right: none; border-bottom: 1px solid var(--bg-elevated);
-      padding: 0.4rem; gap: 0.3rem; overflow-x: auto;
+      width: 100%; height: 100%; flex-direction: column;
+      border-right: 1px solid var(--bg-elevated); border-bottom: none;
+      padding: 0; gap: 0; overflow: hidden;
     }
-    .header { padding: 0 0.5rem; }
-    .header h1 { font-size: 0.9rem; }
-    .views { flex-direction: row; padding: 0; gap: 0.2rem; }
-    .views button, .lists button { width: auto; padding: 0.3rem 0.6rem; font-size: 0.8rem; white-space: nowrap; }
-    .section-header { display: none; }
-    .lists { flex-direction: row; padding: 0; overflow-x: auto; flex: unset; }
-    .footer { display: none; }
-    .no-lists { display: none; }
+    .header { padding: 1rem 1rem 0.5rem; }
+    .header h1 { font-size: 1.1rem; }
+    .views { flex-direction: column; padding: 0.5rem; gap: 2px; }
+    .views button, .lists button { width: 100%; padding: 0.55rem 0.6rem; font-size: 0.9rem; white-space: normal; }
+    .section-header { display: flex; }
+    .lists { flex-direction: column; padding: 0 0.5rem; overflow-y: auto; flex: 1; }
+    .footer { display: flex; }
+    .no-lists { display: block; }
   }
 
   /* Touch: 44px minimum tap targets */

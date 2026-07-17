@@ -9,8 +9,7 @@ use tokio::sync::{Mutex, Notify};
 
 use axiotask_core::api::{GoogleTasksClient, HttpClient, InMemoryClient};
 use axiotask_core::auth::{
-    AuthedClient, InMemoryTokenStore, OAuthConfig, RefreshFn, StoredTokens,
-    TokenStore,
+    AuthedClient, InMemoryTokenStore, OAuthConfig, RefreshFn, StoredTokens, TokenStore,
 };
 use axiotask_core::store::Store;
 use axiotask_core::sync::{SyncEngine, SyncOutcome};
@@ -27,7 +26,9 @@ struct FileTokenStore {
 
 impl FileTokenStore {
     fn new(path: &std::path::Path) -> Self {
-        Self { path: path.to_owned() }
+        Self {
+            path: path.to_owned(),
+        }
     }
 }
 
@@ -158,16 +159,22 @@ impl AppState {
         let store = Store::new(pool);
 
         let config = axiotask_core::config::AppConfig::load();
-        let oauth_config = OAuthConfig::google_tasks(&config.google.client_id, &config.google.client_secret);
+        let oauth_config =
+            OAuthConfig::google_tasks(&config.google.client_id, &config.google.client_secret);
 
-        let token_store: Arc<dyn TokenStore> =
-            Arc::new(FileTokenStore::new(&db_path.parent().unwrap().join("tokens.json")));
+        let token_store: Arc<dyn TokenStore> = Arc::new(FileTokenStore::new(
+            &db_path.parent().unwrap().join("tokens.json"),
+        ));
 
         // Try to restore existing session.
         let client: Arc<dyn GoogleTasksClient> = match token_store.load() {
             Ok(Some(tokens)) => {
                 tracing::info!("restored auth session from keyring");
-                Arc::new(build_http_client(tokens, token_store.clone(), &oauth_config))
+                Arc::new(build_http_client(
+                    tokens,
+                    token_store.clone(),
+                    &oauth_config,
+                ))
             }
             Ok(None) => {
                 tracing::info!("no stored tokens, starting in offline mode");
@@ -330,7 +337,10 @@ impl AppState {
                 };
                 l.pending_op = (!l.local_only).then(|| "create".to_string());
                 l.local_updated = now.clone();
-                self.store.upsert_list(&l).await.map_err(|e| e.to_string())?;
+                self.store
+                    .upsert_list(&l)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 summary.lists += 1;
             }
             // Backup order is parents-before-children (export walks the store's
@@ -349,7 +359,12 @@ impl AppState {
                 // Re-parent to top level if the parent exists neither locally
                 // nor in this backup's restored set (FK safety).
                 if let Some(p) = &t.task.parent
-                    && self.store.find_task_any(p).await.map_err(|e| e.to_string())?.is_none()
+                    && self
+                        .store
+                        .find_task_any(p)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .is_none()
                 {
                     t.task.parent = None;
                 }
@@ -358,7 +373,10 @@ impl AppState {
                 t.sync_state = axiotask_core::store::SyncState::Dirty;
                 t.pending_op = Some("create".into());
                 t.local_updated = now.clone();
-                self.store.upsert_task(&t).await.map_err(|e| e.to_string())?;
+                self.store
+                    .upsert_task(&t)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 summary.tasks += 1;
             }
         }
@@ -373,7 +391,9 @@ impl AppState {
         if self.is_authenticated() {
             return;
         }
-        let Ok(lists) = self.store.all_lists().await else { return };
+        let Ok(lists) = self.store.all_lists().await else {
+            return;
+        };
         if !lists.is_empty() {
             return;
         }
@@ -479,8 +499,8 @@ impl AppState {
         let push_enabled = self.push_enabled.load(Ordering::Relaxed);
         tracing::info!("running sync (push_enabled={push_enabled}, hold_creates={editing})...");
         let client = self.client.lock().await.clone();
-        let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled)
-            .hold_creates(editing);
+        let engine =
+            SyncEngine::with_push(client, self.store.clone(), push_enabled).hold_creates(editing);
         let result = engine.run().await;
         // Record status/stats and notify the UI of the outcome.
         let snapshot = {
@@ -489,13 +509,17 @@ impl AppState {
                 Ok(o) => {
                     tracing::info!(
                         "sync complete: pulled={}, pushed={}, conflicts={}",
-                        o.pulled, o.pushed, o.conflicts
+                        o.pulled,
+                        o.pushed,
+                        o.conflicts
                     );
                     // Real UTC instant (Timestamp is UTC). Zoned::now() would
                     // format local time but label it "Z", making the UI read the
                     // last-synced time as hours in the past off-UTC.
                     status.last_synced = Some(
-                        jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        jiff::Timestamp::now()
+                            .strftime("%Y-%m-%dT%H:%M:%SZ")
+                            .to_string(),
                     );
                     // A working sync proves the session is alive again (e.g.
                     // after re-login, or a mis-flagged transient).
@@ -595,7 +619,10 @@ impl AppState {
             pending_op,
             local_only,
         };
-        self.store.upsert_list(&stored).await.map_err(|e| e.to_string())?;
+        self.store
+            .upsert_list(&stored)
+            .await
+            .map_err(|e| e.to_string())?;
         // Local-only lists never sync, so don't bother waking the loop for them.
         if !local_only {
             self.schedule_sync();
@@ -607,14 +634,20 @@ impl AppState {
     /// marks `update` to push via `patch_tasklist`.
     pub async fn rename_list(&self, id: &str, title: &str) -> Result<(), String> {
         let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
-        let mut list = lists.into_iter().find(|l| l.list.id == id).ok_or("list not found")?;
+        let mut list = lists
+            .into_iter()
+            .find(|l| l.list.id == id)
+            .ok_or("list not found")?;
         list.list.title = title.to_string();
         list.sync_state = axiotask_core::store::SyncState::Dirty;
         if list.pending_op.as_deref() != Some("create") {
             list.pending_op = Some("update".into());
         }
         list.local_updated = axiotask_core::dates::now_utc_string();
-        self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+        self.store
+            .upsert_list(&list)
+            .await
+            .map_err(|e| e.to_string())?;
         self.schedule_sync();
         Ok(())
     }
@@ -629,15 +662,24 @@ impl AppState {
         };
         // Remove local task rows (server cascades on its side).
         for t in self.store.list_tasks(id).await.map_err(|e| e.to_string())? {
-            self.store.delete_task_hard(&t.task.id).await.map_err(|e| e.to_string())?;
+            self.store
+                .delete_task_hard(&t.task.id)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         if list.list.etag.is_some() {
             list.sync_state = axiotask_core::store::SyncState::Deleted;
             list.pending_op = Some("delete".into());
             list.local_updated = axiotask_core::dates::now_utc_string();
-            self.store.upsert_list(&list).await.map_err(|e| e.to_string())?;
+            self.store
+                .upsert_list(&list)
+                .await
+                .map_err(|e| e.to_string())?;
         } else {
-            self.store.delete_list_hard(id).await.map_err(|e| e.to_string())?;
+            self.store
+                .delete_list_hard(id)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         self.schedule_sync();
         Ok(())
@@ -655,16 +697,16 @@ impl AppState {
     /// deletes its children too (verified against the live API), and the
     /// local FK cascade mirrors that — so leaving subtasks behind would
     /// silently destroy them the moment the parent's delete pushed.
-    pub async fn move_task_to_list(
-        &self,
-        id: &str,
-        target_list_id: &str,
-    ) -> Result<(), String> {
+    pub async fn move_task_to_list(&self, id: &str, target_list_id: &str) -> Result<(), String> {
         // Locate the task across all lists.
         let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
         let mut found: Option<axiotask_core::store::StoredTask> = None;
         for list in &lists {
-            let tasks = self.store.list_tasks(&list.list.id).await.map_err(|e| e.to_string())?;
+            let tasks = self
+                .store
+                .list_tasks(&list.list.id)
+                .await
+                .map_err(|e| e.to_string())?;
             if let Some(t) = tasks.into_iter().find(|t| t.task.id == id) {
                 found = Some(t);
                 break;
@@ -679,7 +721,11 @@ impl AppState {
         }
 
         let now = axiotask_core::dates::now_utc_string();
-        let siblings = self.store.list_tasks(&old.list_id).await.map_err(|e| e.to_string())?;
+        let siblings = self
+            .store
+            .list_tasks(&old.list_id)
+            .await
+            .map_err(|e| e.to_string())?;
 
         // Recreate the subtree root in the target list under a fresh local id,
         // then each descendant level under its recreated parent's new id.
@@ -695,9 +741,15 @@ impl AppState {
             copy.sync_state = axiotask_core::store::SyncState::Dirty;
             copy.pending_op = Some("create".into());
             copy.local_updated = now.clone();
-            self.store.upsert_task(&copy).await.map_err(|e| e.to_string())?;
+            self.store
+                .upsert_task(&copy)
+                .await
+                .map_err(|e| e.to_string())?;
             recreated.push((node.task.id.clone(), copy.task.id.clone()));
-            for child in siblings.iter().filter(|t| t.task.parent.as_deref() == Some(&node.task.id)) {
+            for child in siblings
+                .iter()
+                .filter(|t| t.task.parent.as_deref() == Some(&node.task.id))
+            {
                 frontier.push((child.clone(), Some(copy.task.id.clone())));
             }
         }
@@ -706,7 +758,10 @@ impl AppState {
         // server cascades them when the root's delete lands), then tombstone
         // or hard-delete the root itself.
         for (old_id, _) in recreated.iter().skip(1) {
-            self.store.delete_task_hard(old_id).await.map_err(|e| e.to_string())?;
+            self.store
+                .delete_task_hard(old_id)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         if old.task.etag.is_some() {
             // Synced row → tombstone so the delete reaches the server.
@@ -714,10 +769,16 @@ impl AppState {
             tomb.sync_state = axiotask_core::store::SyncState::Deleted;
             tomb.pending_op = Some("delete".into());
             tomb.local_updated = now;
-            self.store.upsert_task(&tomb).await.map_err(|e| e.to_string())?;
+            self.store
+                .upsert_task(&tomb)
+                .await
+                .map_err(|e| e.to_string())?;
         } else {
             // Never synced → hard delete.
-            self.store.delete_task_hard(id).await.map_err(|e| e.to_string())?;
+            self.store
+                .delete_task_hard(id)
+                .await
+                .map_err(|e| e.to_string())?;
         }
 
         self.schedule_sync();
@@ -752,7 +813,10 @@ impl AppState {
 
     /// Number of local changes awaiting push (delegates to the store).
     pub async fn pending_push_count(&self) -> Result<u32, String> {
-        self.store.pending_push_count().await.map_err(|e| e.to_string())
+        self.store
+            .pending_push_count()
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Enable or disable pushing local changes to Google (read-write vs.
@@ -897,12 +961,14 @@ pub fn acquire_instance_lock(db_path: &std::path::Path) -> Result<std::fs::File,
                  ({}{}). Close it first — two processes on one database would \
                  duplicate tasks on Google.",
                 dir.display(),
-                if holder.is_empty() { String::new() } else { format!(", pid {holder}") },
+                if holder.is_empty() {
+                    String::new()
+                } else {
+                    format!(", pid {holder}")
+                },
             ))
         }
-        Err(std::fs::TryLockError::Error(e)) => {
-            Err(format!("lock {}: {e}", lock_path.display()))
-        }
+        Err(std::fs::TryLockError::Error(e)) => Err(format!("lock {}: {e}", lock_path.display())),
     }
 }
 
@@ -1009,8 +1075,8 @@ mod tests {
             "axiotask-backup-20260101-000000.json",
             "axiotask-backup-20260608-014500.json", // newest
             "axiotask-backup-20260301-120000.json",
-            "notes.txt",                  // ignored: wrong name
-            "axiotask-backup-old.bak",    // ignored: wrong extension
+            "notes.txt",               // ignored: wrong name
+            "axiotask-backup-old.bak", // ignored: wrong extension
         ] {
             std::fs::write(dir.path().join(name), b"{}").unwrap();
         }

@@ -55,6 +55,7 @@
   let bulkAdd = $state(null); // { text } when the bulk-add dialog is open
   let selectedIds = $state(new Set()); // multi-select for bulk operations
   let bulkMovePicker = $state(false); // bulk "move to list" picker open
+  let showMobileDrawer = $state(false);
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -672,6 +673,11 @@
     if (settings) showProperties = true;
   }
 
+  async function openPropertiesFromNavigation() {
+    showMobileDrawer = false;
+    await openProperties();
+  }
+
   async function setPushEnabled(enabled) {
     propsBusy = true;
     const s = await cmd("set_push_enabled", { enabled });
@@ -985,8 +991,21 @@
     return lists[0]?.title || null;
   }
 
+  function selectView(v) {
+    selectedView = v;
+    focusIndex = 0;
+    detailId = null;
+    clearSelection();
+    showMobileDrawer = false;
+  }
+
   async function handleKeydown(e) {
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
+    if (showMobileDrawer && e.key === "Escape") {
+      showMobileDrawer = false;
+      e.preventDefault();
+      return;
+    }
     if (showProperties) {
       // Esc closes; all other keys are handled within the dialog (its buttons
       // and checkboxes keep their default behavior) and must not reach the
@@ -1086,30 +1105,46 @@
 <svelte:window onkeydown={handleKeydown} onpaste={handlePaste} onbeforeunload={saveWindowGeometry} />
 
 <main class="app">
-  <Sidebar
-    lists={orderedLists}
-    {selectedView}
-    onselect={(v) => { selectedView = v; focusIndex = 0; detailId = null; clearSelection(); }}
-    onlogin={login}
-    onlogout={logout}
-    onsync={doSync}
-    onfreshsync={doFreshSync}
-    oncreateList={createList}
-    onrenameList={renameList}
-    onlistaction={openListContextMenu}
-    onreorderlists={reorderLists}
-    onproperties={openProperties}
-    ontoggletheme={toggleTheme}
-    theme={themePref}
-    {authenticated}
-    {syncStatus}
-    {lastSynced}
-    {renamingListId}
-    {excludedLists}
-    counts={viewCounts}
-  />
+  <div
+    id="mobile-navigation"
+    class="sidebar-shell"
+    class:mobile-open={showMobileDrawer}
+    role="navigation"
+    aria-label="Mobile navigation"
+  >
+    <Sidebar
+      lists={orderedLists}
+      {selectedView}
+      onselect={selectView}
+      onlogin={login}
+      onlogout={logout}
+      onsync={doSync}
+      onfreshsync={doFreshSync}
+      oncreateList={createList}
+      onrenameList={renameList}
+      onlistaction={openListContextMenu}
+      onreorderlists={reorderLists}
+      onproperties={openPropertiesFromNavigation}
+      ontoggletheme={toggleTheme}
+      theme={themePref}
+      {authenticated}
+      {syncStatus}
+      {lastSynced}
+      {renamingListId}
+      {excludedLists}
+      counts={viewCounts}
+    />
+  </div>
   <section class="content">
     <div class="toolbar">
+      <button
+        class="mobile-nav-btn"
+        type="button"
+        aria-label="Open navigation"
+        aria-controls="mobile-navigation"
+        aria-expanded={showMobileDrawer}
+        onclick={() => showMobileDrawer = true}
+      >☰</button>
       <span class="view-title">{viewTitle()}</span>
       <button class="new-task-btn" onclick={newTask}>+ New task</button>
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
@@ -1152,6 +1187,14 @@
       <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
+  {#if showMobileDrawer}
+    <button
+      class="mobile-drawer-backdrop"
+      type="button"
+      aria-label="Close navigation"
+      onclick={() => showMobileDrawer = false}
+    ></button>
+  {/if}
   {#if detailTask}
     {@const siblings = detailTask.parent_id ? allTasks.filter(t => t.parent_id === detailTask.parent_id) : flatTasks}
     {@const si = siblings.findIndex(t => t.id === detailTask.id)}
@@ -1246,8 +1289,11 @@
   :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   :global(*, *::before, *::after) { box-sizing: border-box; }
   .app { display: flex; height: 100vh; height: 100dvh; }
+  .sidebar-shell { display: flex; flex: 0 0 auto; min-height: 0; }
   .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
+  .mobile-nav-btn { display: none; background: none; border: 1px solid var(--border); color: var(--fg-secondary); width: 2rem; height: 2rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
+  .mobile-nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
   .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: var(--bg-hover); }
   .view-title { font-size: 0.9rem; font-weight: 600; color: var(--fg); margin-right: auto; }
@@ -1272,10 +1318,21 @@
   .status { color: var(--fg-muted); text-align: center; margin-top: 4rem; }
   .status.error { color: var(--danger); }
 
-  /* Mobile (<700px): sidebar becomes top nav, full-screen detail */
+  /* Mobile (<700px): sidebar becomes a slide-in drawer. */
   @media (max-width: 700px) {
     .app { flex-direction: column; }
     .toolbar { padding: 0.3rem 0.75rem; }
+    .mobile-nav-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .sidebar-shell {
+      position: fixed; inset: 0 auto 0 0; z-index: 1100;
+      width: min(82vw, 300px); transform: translateX(-100%);
+      transition: transform 0.16s ease-out; box-shadow: 0 0 24px rgba(0,0,0,0.35);
+    }
+    .sidebar-shell.mobile-open { transform: translateX(0); }
+    .mobile-drawer-backdrop {
+      position: fixed; inset: 0; z-index: 1090; border: 0; padding: 0;
+      background: rgba(0,0,0,0.45); cursor: pointer;
+    }
   }
 
   /* Touch devices: 44px minimum tap targets */

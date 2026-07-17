@@ -7,8 +7,8 @@
 mod tests {
     use std::sync::Arc;
 
-    use axiotask_core::api::InMemoryClient;
     use axiotask_core::api::GoogleTasksClient;
+    use axiotask_core::api::InMemoryClient;
     use axiotask_core::model::TaskStatus;
     use axiotask_core::store::{StoredTask, StoredTaskList, SyncState};
 
@@ -212,7 +212,8 @@ mod tests {
         let mut t = tasks.remove(0);
         // Simulate set_due with Tomorrow
         let today = jiff::Zoned::now().date();
-        let new_due = axiotask_core::dates::apply_date_move(today, axiotask_core::dates::DateMove::Tomorrow);
+        let new_due =
+            axiotask_core::dates::apply_date_move(today, axiotask_core::dates::DateMove::Tomorrow);
         t.task.due = new_due.map(|d| format!("{d}T00:00:00.000Z"));
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("update".into());
@@ -290,7 +291,11 @@ mod tests {
 
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         assert!(!state.needs_reauth());
 
         client.fail_next(Method::ListTaskLists, || {
@@ -299,7 +304,11 @@ mod tests {
         state.run_sync().await.unwrap_err();
 
         assert!(state.needs_reauth(), "dead session must be flagged");
-        let msg = state.sync_status().await.last_error.expect("error surfaced");
+        let msg = state
+            .sync_status()
+            .await
+            .last_error
+            .expect("error surfaced");
         assert!(msg.contains("sign in again"), "actionable, got: {msg}");
 
         // After re-login the next sync works — the flag and error clear.
@@ -312,7 +321,11 @@ mod tests {
     async fn sync_pushes_local_creates_to_remote() {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
 
         // Pull to get the list locally
         state.run_sync().await.unwrap();
@@ -352,7 +365,11 @@ mod tests {
     async fn editing_holds_creates_until_finished() {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap(); // pull the list
 
         let task = StoredTask {
@@ -382,7 +399,13 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert_eq!(out.pushed, 0, "create held while editing");
         assert!(
-            state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
+            state
+                .store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "local-uuid"),
             "local id preserved while editing"
         );
 
@@ -391,7 +414,13 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert!(out.pushed >= 1, "pushes after editing ends");
         assert!(
-            !state.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-uuid"),
+            !state
+                .store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "local-uuid"),
             "id remapped once editing finished"
         );
     }
@@ -405,12 +434,22 @@ mod tests {
         client.seed_list("L1", "Inbox");
         let parent = client.seed_task("L1", "parent-1", "Parent", "1");
         let child = client.seed_task_with_parent("L1", "child-1", "Sub", "2", Some("parent-1"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap(); // pull the list + tasks
 
         // Mark the subtask done locally (an update on an already-synced id).
-        let mut sub = state.store.list_tasks("L1").await.unwrap()
-            .into_iter().find(|t| t.task.id == "child-1").unwrap();
+        let mut sub = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "child-1")
+            .unwrap();
         sub.task.status = TaskStatus::Completed;
         sub.task.completed = Some("2026-05-23T00:00:00Z".into());
         sub.sync_state = SyncState::Dirty;
@@ -421,9 +460,19 @@ mod tests {
         state.set_editing(true);
         let out = state.run_sync().await.unwrap();
         assert!(out.pushed >= 1, "update pushes while editing");
-        let cleared = state.store.list_tasks("L1").await.unwrap()
-            .into_iter().find(|t| t.task.id == "child-1").unwrap();
-        assert_eq!(cleared.sync_state, SyncState::Clean, "completed subtask is no longer dirty");
+        let cleared = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "child-1")
+            .unwrap();
+        assert_eq!(
+            cleared.sync_state,
+            SyncState::Clean,
+            "completed subtask is no longer dirty"
+        );
         assert_eq!(cleared.task.status, TaskStatus::Completed);
         let _ = (parent, child);
     }
@@ -540,7 +589,10 @@ mod tests {
         let result = state.run_sync_if_authed().await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("not authenticated"), "expected auth error, got: {err}");
+        assert!(
+            err.contains("not authenticated"),
+            "expected auth error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -628,7 +680,10 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task.title, "restore me");
         assert_eq!(tasks[0].task.notes.as_deref(), Some("important notes"));
-        assert_eq!(tasks[0].task.due.as_deref(), Some("2026-06-01T00:00:00.000Z"));
+        assert_eq!(
+            tasks[0].task.due.as_deref(),
+            Some("2026-06-01T00:00:00.000Z")
+        );
         assert_eq!(tasks[0].sync_state, SyncState::Dirty);
     }
 
@@ -763,7 +818,11 @@ mod tests {
         assert_eq!(l2[0].task.title, "unsynced");
         // No delete tombstone should remain (only the create).
         let dirty = state.store.drain_dirty().await.unwrap();
-        assert!(dirty.iter().all(|t| t.pending_op.as_deref() != Some("delete")));
+        assert!(
+            dirty
+                .iter()
+                .all(|t| t.pending_op.as_deref() != Some("delete"))
+        );
     }
 
     #[tokio::test]
@@ -775,7 +834,9 @@ mod tests {
         client.seed_list("L2", "Personal");
         client.seed_task("L1", "T1", "movable", "1");
         let state = Arc::new(
-            AppState::new_memory_with_push(client.clone()).await.unwrap(),
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
         );
 
         // Pull so both lists + the task are local.
@@ -806,7 +867,11 @@ mod tests {
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "sub one", "2", Some("P"));
         client.seed_task_with_parent("L1", "C2", "sub two", "3", Some("C1")); // 2 levels deep
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
         assert_eq!(state.store.list_tasks("L1").await.unwrap().len(), 3);
 
@@ -828,7 +893,15 @@ mod tests {
         let l1_remote = client.list_tasks("L1", None).await.unwrap();
         assert!(l1_remote.items.is_empty());
         // And nothing is stuck dirty.
-        assert!(state.store.list_tasks("L2").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean));
+        assert!(
+            state
+                .store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .iter()
+                .all(|t| t.sync_state == SyncState::Clean)
+        );
     }
 
     #[tokio::test]
@@ -839,7 +912,11 @@ mod tests {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "pick a date", "1");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
         crate::commands::set_due_inner(&state, "T1".into(), "raw:2026-08-02".into())
@@ -851,7 +928,10 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert_eq!(out.errors, 0, "canonical form must not 400");
         let remote = client.list_tasks("L1", None).await.unwrap();
-        assert_eq!(remote.items[0].due.as_deref(), Some("2026-08-02T00:00:00.000Z"));
+        assert_eq!(
+            remote.items[0].due.as_deref(),
+            Some("2026-08-02T00:00:00.000Z")
+        );
     }
 
     #[tokio::test]
@@ -859,10 +939,15 @@ mod tests {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "task", "1");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
-        let err = crate::commands::set_due_inner(&state, "T1".into(), "raw:not-a-date".into()).await;
+        let err =
+            crate::commands::set_due_inner(&state, "T1".into(), "raw:not-a-date".into()).await;
         assert!(err.is_err(), "garbage due must be rejected at the boundary");
         let stored = state.store.list_tasks("L1").await.unwrap().remove(0);
         assert_eq!(stored.sync_state, SyncState::Clean, "row untouched");
@@ -885,7 +970,10 @@ mod tests {
         let second = crate::state::acquire_instance_lock(&db);
         let err = second.expect_err("second instance must be refused");
         assert!(err.contains("already running"), "{err}");
-        assert!(err.contains(&std::process::id().to_string()), "names the holder pid: {err}");
+        assert!(
+            err.contains(&std::process::id().to_string()),
+            "names the holder pid: {err}"
+        );
 
         // First instance exits → the lock frees → a new instance may start.
         drop(first);
@@ -903,10 +991,12 @@ mod tests {
             std::process::id(),
             jiff::Timestamp::now().as_nanosecond(),
         ));
-        let prod = crate::state::acquire_instance_lock(&base.join("axiotask").join("axiotask.sqlite"))
-            .expect("prod acquires");
-        let dev = crate::state::acquire_instance_lock(&base.join("axiotask-dev").join("axiotask.sqlite"))
-            .expect("dev coexists with prod");
+        let prod =
+            crate::state::acquire_instance_lock(&base.join("axiotask").join("axiotask.sqlite"))
+                .expect("prod acquires");
+        let dev =
+            crate::state::acquire_instance_lock(&base.join("axiotask-dev").join("axiotask.sqlite"))
+                .expect("dev coexists with prod");
         drop((prod, dev));
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -921,20 +1011,33 @@ mod tests {
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
         client.seed_task_with_parent("L1", "C2", "grandkid", "3", Some("C1"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
-        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap();
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
-        assert!(tasks.iter().all(|t| t.task.status == TaskStatus::Completed),
-            "parent + all descendants completed locally");
+        assert!(
+            tasks.iter().all(|t| t.task.status == TaskStatus::Completed),
+            "parent + all descendants completed locally"
+        );
 
         // And the same state pushes cleanly.
         let out = state.run_sync().await.unwrap();
         assert_eq!(out.errors, 0);
         let remote = client.list_tasks("L1", None).await.unwrap();
-        assert!(remote.items.iter().all(|t| t.status == TaskStatus::Completed));
+        assert!(
+            remote
+                .items
+                .iter()
+                .all(|t| t.status == TaskStatus::Completed)
+        );
     }
 
     #[tokio::test]
@@ -945,11 +1048,19 @@ mod tests {
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
-        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap(); // complete all
-        crate::commands::toggle_complete_inner(&state, "P".into()).await.unwrap(); // reopen parent
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap(); // complete all
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap(); // reopen parent
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         let p = tasks.iter().find(|t| t.task.id == "P").unwrap();
@@ -968,19 +1079,34 @@ mod tests {
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid one", "2", Some("P"));
         client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("C1"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
-        let token = crate::commands::delete_task_inner(&state, "P".into()).await.unwrap();
+        let token = crate::commands::delete_task_inner(&state, "P".into())
+            .await
+            .unwrap();
         assert_eq!(token.subtree.len(), 2, "descendants captured");
 
         // The delete pushes; server cascade + local FK wipe the subtree.
         state.run_sync().await.unwrap();
         assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
-        assert!(client.list_tasks("L1", None).await.unwrap().items.is_empty());
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .is_empty()
+        );
 
         // Undo: everything comes back, shape intact, and pushes to the server.
-        crate::commands::undo_delete_inner(&state, token).await.unwrap();
+        crate::commands::undo_delete_inner(&state, token)
+            .await
+            .unwrap();
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 3, "parent + both descendants restored");
         let kid = tasks.iter().find(|t| t.task.title == "kid one").unwrap();
@@ -1001,16 +1127,29 @@ mod tests {
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
-        let kid_token = crate::commands::delete_task_inner(&state, "C1".into()).await.unwrap();
-        let _ = crate::commands::delete_task_inner(&state, "P".into()).await.unwrap();
+        let kid_token = crate::commands::delete_task_inner(&state, "C1".into())
+            .await
+            .unwrap();
+        let _ = crate::commands::delete_task_inner(&state, "P".into())
+            .await
+            .unwrap();
         state.run_sync().await.unwrap(); // both deletes land
 
-        crate::commands::undo_delete_inner(&state, kid_token).await.unwrap();
+        crate::commands::undo_delete_inner(&state, kid_token)
+            .await
+            .unwrap();
         let tasks = state.store.list_tasks("L1").await.unwrap();
-        let kid = tasks.iter().find(|t| t.task.title == "kid").expect("kid restored");
+        let kid = tasks
+            .iter()
+            .find(|t| t.task.title == "kid")
+            .expect("kid restored");
         assert_eq!(kid.task.parent, None, "orphaned undo lands at top level");
     }
 
@@ -1024,29 +1163,52 @@ mod tests {
         client.seed_task_with_parent("L1", "K-open", "still todo", "2", Some("P-open-kid"));
         client.seed_task("L1", "P-done", "done parent, done kid", "3");
         client.seed_task_with_parent("L1", "K-done", "also done", "4", Some("P-done"));
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
         // Mark the two parents + the second kid completed (kid K-open stays open).
         for id in ["K-done", "P-done"] {
-            crate::commands::toggle_complete_inner(&state, id.into()).await.unwrap();
+            crate::commands::toggle_complete_inner(&state, id.into())
+                .await
+                .unwrap();
         }
         // Complete P-open-kid WITHOUT the cascade taking K-open with it:
         // simulate a pull state where the parent is completed but a child is
         // open (happens when the parent completed remotely first).
-        let mut p = state.store.list_tasks("L1").await.unwrap()
-            .into_iter().find(|t| t.task.id == "P-open-kid").unwrap();
+        let mut p = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "P-open-kid")
+            .unwrap();
         p.task.status = TaskStatus::Completed;
         state.store.upsert_task(&p).await.unwrap();
 
-        let cleared = crate::commands::clear_completed_inner(&state, "L1".into()).await.unwrap();
+        let cleared = crate::commands::clear_completed_inner(&state, "L1".into())
+            .await
+            .unwrap();
         state.run_sync().await.unwrap();
 
         let left = state.store.list_tasks("L1").await.unwrap();
-        assert!(left.iter().any(|t| t.task.id == "K-open"), "open subtask survives");
-        assert!(left.iter().any(|t| t.task.id == "P-open-kid"), "its parent is spared too");
-        assert!(left.iter().all(|t| t.task.id != "P-done" && t.task.id != "K-done"),
-            "fully-completed subtree is cleared");
+        assert!(
+            left.iter().any(|t| t.task.id == "K-open"),
+            "open subtask survives"
+        );
+        assert!(
+            left.iter().any(|t| t.task.id == "P-open-kid"),
+            "its parent is spared too"
+        );
+        assert!(
+            left.iter()
+                .all(|t| t.task.id != "P-done" && t.task.id != "K-done"),
+            "fully-completed subtree is cleared"
+        );
         assert_eq!(cleared, 2);
     }
 
@@ -1058,7 +1220,11 @@ mod tests {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "original", "1");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
         // Unpushed local edit.
@@ -1089,10 +1255,16 @@ mod tests {
                 subtree: vec![],
             }
         };
-        crate::commands::undo_delete_inner(&state, token).await.unwrap();
+        crate::commands::undo_delete_inner(&state, token)
+            .await
+            .unwrap();
 
         let revived = state.store.find_task_any("T1").await.unwrap().unwrap();
-        assert_eq!(revived.sync_state, SyncState::Dirty, "edit must stay queued");
+        assert_eq!(
+            revived.sync_state,
+            SyncState::Dirty,
+            "edit must stay queued"
+        );
         assert_eq!(revived.pending_op.as_deref(), Some("update"));
 
         // And the edit reaches the server on the next sync.
@@ -1106,14 +1278,22 @@ mod tests {
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Old").await;
         state.rename_list("L1", "New").await.unwrap();
-        let l = state.store.drain_dirty_lists().await.unwrap()
-            .into_iter().find(|l| l.list.id == "L1").unwrap();
+        let l = state
+            .store
+            .drain_dirty_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         assert_eq!(l.list.title, "New");
         assert_eq!(l.pending_op.as_deref(), Some("update"));
 
         let create = StoredTaskList {
             list: axiotask_core::model::TaskList {
-                id: "local".into(), title: "Draft".into(), etag: None,
+                id: "local".into(),
+                title: "Draft".into(),
+                etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
             },
             sync_state: SyncState::Dirty,
@@ -1123,16 +1303,30 @@ mod tests {
         };
         state.store.upsert_list(&create).await.unwrap();
         state.rename_list("local", "Renamed Draft").await.unwrap();
-        let l = state.store.drain_dirty_lists().await.unwrap()
-            .into_iter().find(|l| l.list.id == "local").unwrap();
-        assert_eq!(l.pending_op.as_deref(), Some("create"), "rename folds into create");
+        let l = state
+            .store
+            .drain_dirty_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "local")
+            .unwrap();
+        assert_eq!(
+            l.pending_op.as_deref(),
+            Some("create"),
+            "rename folds into create"
+        );
     }
 
     #[tokio::test]
     async fn rename_list_syncs_to_remote() {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Before");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
         state.rename_list("L1", "After").await.unwrap();
         state.run_sync().await.unwrap();
@@ -1150,9 +1344,21 @@ mod tests {
         state.delete_list("L1").await.unwrap();
 
         // Hidden from all_lists but present as a delete tombstone in drain.
-        assert!(state.store.all_lists().await.unwrap().iter().all(|l| l.list.id != "L1"));
+        assert!(
+            state
+                .store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L1")
+        );
         let dirty = state.store.drain_dirty_lists().await.unwrap();
-        assert!(dirty.iter().any(|l| l.list.id == "L1" && l.pending_op.as_deref() == Some("delete")));
+        assert!(
+            dirty
+                .iter()
+                .any(|l| l.list.id == "L1" && l.pending_op.as_deref() == Some("delete"))
+        );
         // Tasks removed locally.
         assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
     }
@@ -1165,7 +1371,9 @@ mod tests {
         let lists_before = state.store.all_lists().await.unwrap().len();
         let l = StoredTaskList {
             list: axiotask_core::model::TaskList {
-                id: "local-list".into(), title: "Temp".into(), etag: None,
+                id: "local-list".into(),
+                title: "Temp".into(),
+                etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
             },
             sync_state: SyncState::Dirty,
@@ -1294,16 +1502,26 @@ mod tests {
         use crate::commands::dirty_op;
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
         // Offline create.
         let mut t = StoredTask {
             task: axiotask_core::model::Task {
-                id: "local-1".into(), parent: None, position: "1".into(),
-                title: "offline task".into(), notes: None,
-                status: TaskStatus::NeedsAction, due: None, completed: None,
-                etag: None, updated: "2026-06-01T00:00:00Z".into(),
+                id: "local-1".into(),
+                parent: None,
+                position: "1".into(),
+                title: "offline task".into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: None,
+                updated: "2026-06-01T00:00:00Z".into(),
                 web_view_link: None,
             },
             list_id: "L1".into(),
@@ -1476,41 +1694,39 @@ mod tests {
         let (_client, state) = setup().await;
         let backup = axiotask_core::export::Backup::build(
             "2026-06-08T00:00:00Z",
-            vec![
-                (
-                    StoredTaskList {
-                        list: axiotask_core::model::TaskList {
-                            id: "RL1".into(),
-                            title: "Restored".into(),
-                            etag: Some("e".into()),
-                            updated: "2026-01-01T00:00:00Z".into(),
-                        },
-                        sync_state: SyncState::Clean,
-                        local_updated: "2026-01-01T00:00:00Z".into(),
-                        pending_op: None,
-                        local_only: false,
+            vec![(
+                StoredTaskList {
+                    list: axiotask_core::model::TaskList {
+                        id: "RL1".into(),
+                        title: "Restored".into(),
+                        etag: Some("e".into()),
+                        updated: "2026-01-01T00:00:00Z".into(),
                     },
-                    vec![StoredTask {
-                        task: axiotask_core::model::Task {
-                            id: "RT1".into(),
-                            parent: None,
-                            position: "00000000000001".into(),
-                            title: "Restored task".into(),
-                            notes: None,
-                            status: TaskStatus::NeedsAction,
-                            due: None,
-                            completed: None,
-                            etag: Some("e".into()),
-                            updated: "2026-01-01T00:00:00Z".into(),
-                            web_view_link: None,
-                        },
-                        list_id: "RL1".into(),
-                        sync_state: SyncState::Clean,
-                        local_updated: "2026-01-01T00:00:00Z".into(),
-                        pending_op: None,
-                    }],
-                ),
-            ],
+                    sync_state: SyncState::Clean,
+                    local_updated: "2026-01-01T00:00:00Z".into(),
+                    pending_op: None,
+                    local_only: false,
+                },
+                vec![StoredTask {
+                    task: axiotask_core::model::Task {
+                        id: "RT1".into(),
+                        parent: None,
+                        position: "00000000000001".into(),
+                        title: "Restored task".into(),
+                        notes: None,
+                        status: TaskStatus::NeedsAction,
+                        due: None,
+                        completed: None,
+                        etag: Some("e".into()),
+                        updated: "2026-01-01T00:00:00Z".into(),
+                        web_view_link: None,
+                    },
+                    list_id: "RL1".into(),
+                    sync_state: SyncState::Clean,
+                    local_updated: "2026-01-01T00:00:00Z".into(),
+                    pending_op: None,
+                }],
+            )],
         );
 
         let summary = state.restore_backup(backup).await.unwrap();
@@ -1518,7 +1734,11 @@ mod tests {
         assert_eq!(summary.tasks, 1);
 
         let lists = state.store.all_lists().await.unwrap();
-        assert!(lists.iter().any(|l| l.list.id == "RL1" && l.list.title == "Restored"));
+        assert!(
+            lists
+                .iter()
+                .any(|l| l.list.id == "RL1" && l.list.title == "Restored")
+        );
         let tasks = state.store.list_tasks("RL1").await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task.title, "Restored task");
@@ -1563,7 +1783,10 @@ mod tests {
         dest.restore_backup(parsed).await.unwrap();
 
         let restored = dest.store.list_tasks("L1").await.unwrap();
-        let t = restored.iter().find(|t| t.task.id == "T1").expect("task restored");
+        let t = restored
+            .iter()
+            .find(|t| t.task.id == "T1")
+            .expect("task restored");
         // Content preserved…
         assert_eq!(t.task.title, original.task.title);
         assert_eq!(t.task.notes, original.task.notes);
@@ -1650,8 +1873,14 @@ mod tests {
         let tasks = state.store.list_tasks("L1").await.unwrap();
         let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
         assert_eq!(t1.task.title, "current title", "existing row not clobbered");
-        assert!(tasks.iter().any(|t| t.task.id == "KEEP"), "untouched row preserved");
-        let back = tasks.iter().find(|t| t.task.id == "T-deleted-since").unwrap();
+        assert!(
+            tasks.iter().any(|t| t.task.id == "KEEP"),
+            "untouched row preserved"
+        );
+        let back = tasks
+            .iter()
+            .find(|t| t.task.id == "T-deleted-since")
+            .unwrap();
         assert_eq!(back.pending_op.as_deref(), Some("create"));
     }
 
@@ -1664,11 +1893,20 @@ mod tests {
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "precious", "1");
-        let state = Arc::new(AppState::new_memory_with_push(client.clone()).await.unwrap());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
         state.run_sync().await.unwrap();
 
         // Backup taken while the task existed.
-        let backup_json = state.build_backup().await.unwrap().to_json_pretty().unwrap();
+        let backup_json = state
+            .build_backup()
+            .await
+            .unwrap()
+            .to_json_pretty()
+            .unwrap();
 
         // The task is deleted (remotely AND locally, fully synced away).
         client.delete_task_from_state("L1", "T1");
@@ -1685,9 +1923,16 @@ mod tests {
         let local = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(local.len(), 1, "restored task survives the sync");
         assert_eq!(local[0].task.title, "precious");
-        assert_eq!(local[0].sync_state, SyncState::Clean, "pushed back to the server");
+        assert_eq!(
+            local[0].sync_state,
+            SyncState::Clean,
+            "pushed back to the server"
+        );
         let remote = client.list_tasks("L1", None).await.unwrap();
-        assert!(remote.items.iter().any(|t| t.title == "precious"), "back on the server");
+        assert!(
+            remote.items.iter().any(|t| t.title == "precious"),
+            "back on the server"
+        );
     }
 
     // ─── Properties / settings ───────────────────────────────────────────────
@@ -1747,7 +1992,9 @@ mod tests {
         let baseline = state.pending_push_count().await.unwrap();
 
         // A fresh create is a pending push.
-        let now = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = jiff::Zoned::now()
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
         let t = StoredTask {
             task: axiotask_core::model::Task {
                 id: "T1".into(),
@@ -1781,14 +2028,24 @@ mod tests {
         state.run_sync().await.unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
-        let t = tasks.iter().find(|t| t.task.id == "remote-1").expect("pulled task");
+        let t = tasks
+            .iter()
+            .find(|t| t.task.id == "remote-1")
+            .expect("pulled task");
         assert!(
-            t.task.web_view_link.as_deref().unwrap_or("").contains("tasks.google.com"),
+            t.task
+                .web_view_link
+                .as_deref()
+                .unwrap_or("")
+                .contains("tasks.google.com"),
             "stored task keeps the Google web link"
         );
 
         let view = crate::commands::TaskView::from(t);
-        assert!(view.web_view_link.is_some(), "TaskView exposes the link to the UI");
+        assert!(
+            view.web_view_link.is_some(),
+            "TaskView exposes the link to the UI"
+        );
     }
 
     // ---- Sync observability (#4, step 1) ----
@@ -1818,7 +2075,10 @@ mod tests {
         let calls = spy.calls.lock().unwrap();
         assert_eq!(calls.len(), 1, "exactly one notification per sync run");
         assert!(calls[0].last_error.is_none(), "success clears last_error");
-        assert!(calls[0].last_synced.is_some(), "success records last_synced");
+        assert!(
+            calls[0].last_synced.is_some(),
+            "success records last_synced"
+        );
         assert_eq!(calls[0].total_syncs, 1);
     }
 

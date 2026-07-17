@@ -53,12 +53,23 @@ pub struct SyncEngine {
 impl SyncEngine {
     /// Create a new sync engine.
     pub fn new(client: Arc<dyn GoogleTasksClient>, store: Store) -> Self {
-        Self { client, store, config: SyncConfig::default() }
+        Self {
+            client,
+            store,
+            config: SyncConfig::default(),
+        }
     }
 
     /// Create with explicit configuration.
     pub fn with_push(client: Arc<dyn GoogleTasksClient>, store: Store, push_enabled: bool) -> Self {
-        Self { client, store, config: SyncConfig { push_enabled, hold_creates: false } }
+        Self {
+            client,
+            store,
+            config: SyncConfig {
+                push_enabled,
+                hold_creates: false,
+            },
+        }
     }
 
     /// Hold CREATE pushes this run (see [`SyncConfig::hold_creates`]).
@@ -196,7 +207,10 @@ impl SyncEngine {
     /// Adopts an existing remote list with the same title instead of creating
     /// a duplicate (covers the default "My Tasks" and same-named lists).
     async fn push_list_creates(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
-        let creates: Vec<_> = self.store.drain_dirty_lists().await?
+        let creates: Vec<_> = self
+            .store
+            .drain_dirty_lists()
+            .await?
             .into_iter()
             .filter(|l| l.pending_op.as_deref() == Some("create"))
             .collect();
@@ -206,15 +220,24 @@ impl SyncEngine {
         // Snapshot remote lists once for adoption matching.
         let remote = match self.client.list_tasklists().await {
             Ok(v) => v,
-            Err(e) if e.is_transient() => { warn!(err = %e, "transient listing lists, retry"); return Ok(()); }
+            Err(e) if e.is_transient() => {
+                warn!(err = %e, "transient listing lists, retry");
+                return Ok(());
+            }
             Err(e) => return Err(e.into()),
         };
-        let mut local_ids: HashSet<String> = self.store.all_lists().await?
-            .into_iter().map(|l| l.list.id).collect();
+        let mut local_ids: HashSet<String> = self
+            .store
+            .all_lists()
+            .await?
+            .into_iter()
+            .map(|l| l.list.id)
+            .collect();
 
         for l in creates {
             // Adopt a remote list with the same title we don't already track.
-            if let Some(existing) = remote.iter()
+            if let Some(existing) = remote
+                .iter()
                 .find(|r| r.title == l.list.title && !local_ids.contains(&r.id))
             {
                 // Record the adoption so a SECOND same-title local create in
@@ -223,7 +246,12 @@ impl SyncEngine {
                 // list instead.
                 local_ids.insert(existing.id.clone());
                 self.store
-                    .remap_list_id(&l.list.id, &existing.id, existing.etag.as_deref(), &existing.updated)
+                    .remap_list_id(
+                        &l.list.id,
+                        &existing.id,
+                        existing.etag.as_deref(),
+                        &existing.updated,
+                    )
                     .await?;
                 debug!(local_id = %l.list.id, remote_id = %existing.id, "adopted existing list by title");
                 continue;
@@ -231,7 +259,12 @@ impl SyncEngine {
             match self.client.insert_tasklist(&l.list.title).await {
                 Ok(remote_list) => {
                     self.store
-                        .remap_list_id(&l.list.id, &remote_list.id, remote_list.etag.as_deref(), &remote_list.updated)
+                        .remap_list_id(
+                            &l.list.id,
+                            &remote_list.id,
+                            remote_list.etag.as_deref(),
+                            &remote_list.updated,
+                        )
                         .await?;
                     out.pushed += 1;
                     debug!(local_id = %l.list.id, remote_id = %remote_list.id, "pushed list create");
@@ -246,12 +279,17 @@ impl SyncEngine {
     async fn push_list_mutations(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         for l in self.store.drain_dirty_lists().await? {
             match l.pending_op.as_deref() {
-                Some("update") => match self.client.patch_tasklist(&l.list.id, &l.list.title).await {
+                Some("update") => match self.client.patch_tasklist(&l.list.id, &l.list.title).await
+                {
                     Ok(remote) => {
-                        self.store.mark_list_clean(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                        self.store
+                            .mark_list_clean(&remote.id, remote.etag.as_deref(), &remote.updated)
+                            .await?;
                         out.pushed += 1;
                     }
-                    Err(ApiError::NotFound) => { self.store.delete_list_hard(&l.list.id).await?; }
+                    Err(ApiError::NotFound) => {
+                        self.store.delete_list_hard(&l.list.id).await?;
+                    }
                     Err(e) => Self::row_push_failure(e, out, &l.list.id, "list rename")?,
                 },
                 Some("delete") => match self.client.delete_tasklist(&l.list.id).await {
@@ -293,8 +331,12 @@ impl SyncEngine {
     async fn recover_inflight_creates(&self) -> Result<(), SyncError> {
         let inflight = self.store.inflight_creates().await?;
         for (local_id, list_id) in inflight {
-            let local = self.store.list_tasks(&list_id).await?
-                .into_iter().find(|t| t.task.id == local_id);
+            let local = self
+                .store
+                .list_tasks(&list_id)
+                .await?
+                .into_iter()
+                .find(|t| t.task.id == local_id);
             let Some(local) = local else {
                 // Local task gone (e.g. user deleted it) — drop the marker.
                 self.store.clear_inflight_create(&local_id).await?;
@@ -307,18 +349,31 @@ impl SyncEngine {
             }
             // Ids we already track locally — a remote task NOT in this set is
             // a candidate orphan we created on the server but never linked.
-            let local_id_set: HashSet<String> = self.store.list_tasks(&list_id).await?
-                .into_iter().map(|t| t.task.id).collect();
+            let local_id_set: HashSet<String> = self
+                .store
+                .list_tasks(&list_id)
+                .await?
+                .into_iter()
+                .map(|t| t.task.id)
+                .collect();
 
             // Orphan: a remote task with our content whose id we never recorded.
-            let orphan = remote.iter()
+            let orphan = remote
+                .iter()
                 .find(|r| !local_id_set.contains(&r.id) && same_content(&local.task, r));
 
             match orphan {
                 Some(o) => {
                     info!(local_id = %local_id, remote_id = %o.id, "adopting orphaned create after crash");
                     self.store
-                        .finish_create(&local_id, &o.id, o.etag.as_deref(), &o.updated, &local.local_updated, Some(&o.position))
+                        .finish_create(
+                            &local_id,
+                            &o.id,
+                            o.etag.as_deref(),
+                            &o.updated,
+                            &local.local_updated,
+                            Some(&o.position),
+                        )
                         .await?;
                 }
                 None => {
@@ -358,17 +413,23 @@ impl SyncEngine {
                 debug!(id = %mv.task_id, "move waits for its ids to be synced");
                 continue;
             }
-            match self.client.move_task(
-                &mv.list_id,
-                &mv.task_id,
-                mv.parent_id.as_deref(),
-                mv.previous_id.as_deref(),
-            ).await {
+            match self
+                .client
+                .move_task(
+                    &mv.list_id,
+                    &mv.task_id,
+                    mv.parent_id.as_deref(),
+                    mv.previous_id.as_deref(),
+                )
+                .await
+            {
                 Ok(remote) => {
                     // Meta only: the move endpoint hands back a fresh etag, but
                     // the row may carry an unrelated pending content edit whose
                     // dirty flag must survive the move completing.
-                    self.store.refresh_task_meta(&remote.id, remote.etag.as_deref(), &remote.updated).await?;
+                    self.store
+                        .refresh_task_meta(&remote.id, remote.etag.as_deref(), &remote.updated)
+                        .await?;
                     self.store.clear_move(&mv.task_id).await?;
                     out.pushed += 1;
                     debug!(id = %mv.task_id, "pushed move");
@@ -403,9 +464,11 @@ impl SyncEngine {
                 .list_tasks(&row.list_id)
                 .await?
                 .into_iter()
-                .filter(|t| t.task.parent.as_deref() == Some(pid)
-                    && t.task.id != row.task.id
-                    && t.task.etag.is_some())
+                .filter(|t| {
+                    t.task.parent.as_deref() == Some(pid)
+                        && t.task.id != row.task.id
+                        && t.task.etag.is_some()
+                })
                 .max_by(|a, b| a.task.position.cmp(&b.task.position))
                 .map(|t| t.task.id),
         };
@@ -414,13 +477,19 @@ impl SyncEngine {
             notes: row.task.notes.clone(),
             // Canonicalize on the way out: Google 400s a bare date, and heals
             // any legacy/imported row that stored a non-canonical form.
-            due: row.task.due.as_deref().and_then(crate::dates::normalize_due),
+            due: row
+                .task
+                .due
+                .as_deref()
+                .and_then(crate::dates::normalize_due),
             status: Some(row.task.status),
             parent: row.task.parent.clone(),
             previous,
         };
         // Durably mark in-flight BEFORE the non-idempotent insert.
-        self.store.record_inflight_create(&row.task.id, &row.list_id).await?;
+        self.store
+            .record_inflight_create(&row.task.id, &row.list_id)
+            .await?;
         match self.client.insert_task(&row.list_id, payload).await {
             Ok(remote) => {
                 // Atomic: remap local→remote id AND mark clean in one txn so a
@@ -472,21 +541,25 @@ impl SyncEngine {
             ),
             status: Some(row.task.status),
         };
-        match self.client.patch_task(&row.list_id, &row.task.id, patch, row.task.etag.as_deref()).await {
+        match self
+            .client
+            .patch_task(&row.list_id, &row.task.id, patch, row.task.etag.as_deref())
+            .await
+        {
             Ok(remote) => {
                 // Adopt the response body, not just the etag: the server can
                 // normalize or silently coerce fields (verified live: it
                 // ignores re-opening a subtask of a completed parent while
                 // returning 200), and the matching etag would otherwise block
                 // pull from ever correcting the drift.
-                self.store.apply_pushed_task(&remote, &row.local_updated).await?;
+                self.store
+                    .apply_pushed_task(&remote, &row.local_updated)
+                    .await?;
                 out.pushed += 1;
                 debug!(id = %row.task.id, "pushed update");
                 Ok(())
             }
-            Err(ApiError::PreconditionFailed) => {
-                self.resolve_conflict(row, out).await
-            }
+            Err(ApiError::PreconditionFailed) => self.resolve_conflict(row, out).await,
             Err(ApiError::NotFound) => {
                 debug!(id = %row.task.id, "task gone from server, deleting locally");
                 self.store.delete_task_hard(&row.task.id).await?;
@@ -504,7 +577,11 @@ impl SyncEngine {
     ///  * otherwise → preserve BOTH: the remote becomes the canonical task,
     ///    and the local edit is kept as a new "(conflicted copy)" task to be
     ///    pushed on the next run. Nothing is silently discarded.
-    async fn resolve_conflict(&self, local: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
+    async fn resolve_conflict(
+        &self,
+        local: &StoredTask,
+        out: &mut SyncOutcome,
+    ) -> Result<(), SyncError> {
         let remote = match self.client.get_task(&local.list_id, &local.task.id).await {
             Ok(t) => t,
             // Server deleted it; mirror the push_update NotFound behavior.
@@ -519,7 +596,9 @@ impl SyncEngine {
         // Adopt the remote wholesale if the content is already identical (no
         // real divergence — just normalization/etag drift to absorb).
         if same_content(&local.task, &remote) {
-            self.store.apply_pushed_task(&remote, &local.local_updated).await?;
+            self.store
+                .apply_pushed_task(&remote, &local.local_updated)
+                .await?;
             return Ok(());
         }
 
@@ -577,7 +656,10 @@ impl SyncEngine {
     async fn pull_all(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         let lists = match self.client.list_tasklists().await {
             Ok(v) => v,
-            Err(e) if e.is_transient() => { warn!(err = %e, "transient error listing tasklists"); return Ok(()); }
+            Err(e) if e.is_transient() => {
+                warn!(err = %e, "transient error listing tasklists");
+                return Ok(());
+            }
             Err(e) => return Err(e.into()),
         };
 
@@ -588,7 +670,12 @@ impl SyncEngine {
         // List ghost detection: a clean local list absent from the server was
         // deleted remotely — remove it (FK cascade drops its tasks).
         let remote_list_ids: HashSet<String> = lists.iter().map(|l| l.id.clone()).collect();
-        for ghost in self.store.clean_list_ids().await?.difference(&remote_list_ids) {
+        for ghost in self
+            .store
+            .clean_list_ids()
+            .await?
+            .difference(&remote_list_ids)
+        {
             debug!(id = %ghost, "removing ghost list");
             self.store.delete_list_hard_if_clean(ghost).await?;
             out.deleted += 1;
@@ -629,7 +716,8 @@ impl SyncEngine {
         let remote_ids: HashSet<String> = remote_tasks.iter().map(|t| t.id.clone()).collect();
 
         // Filter: skip dirty rows and orphans of in-flight creates.
-        let to_upsert: Vec<_> = remote_tasks.into_iter()
+        let to_upsert: Vec<_> = remote_tasks
+            .into_iter()
             .filter(|t| !dirty_ids.contains(&t.id))
             .filter(|t| !inflight.iter().any(|f| same_content(f, t)))
             .collect();
@@ -715,7 +803,10 @@ impl SyncEngine {
 
     /// Build a map of task_id → etag for idempotency checks.
     async fn build_etag_map(&self, list_id: &str) -> HashMap<String, Option<String>> {
-        self.store.list_tasks(list_id).await.unwrap_or_default()
+        self.store
+            .list_tasks(list_id)
+            .await
+            .unwrap_or_default()
             .into_iter()
             // Only treat a row as a skip candidate once its webViewLink is
             // stored. Rows saved before that column existed (web_view_link
@@ -761,7 +852,10 @@ impl SyncEngine {
         let locals = self.store.all_lists().await?;
 
         // Locally dirty list with the same id → preserve local intent (push will handle it).
-        if locals.iter().any(|l| l.list.id == list.id && l.sync_state != SyncState::Clean) {
+        if locals
+            .iter()
+            .any(|l| l.list.id == list.id && l.sync_state != SyncState::Clean)
+        {
             return Ok(());
         }
 
@@ -773,7 +867,12 @@ impl SyncEngine {
                 && l.list.title == list.title
         }) {
             self.store
-                .remap_list_id(&orphan.list.id, &list.id, list.etag.as_deref(), &list.updated)
+                .remap_list_id(
+                    &orphan.list.id,
+                    &list.id,
+                    list.etag.as_deref(),
+                    &list.updated,
+                )
                 .await?;
             return Ok(());
         }
@@ -877,7 +976,11 @@ mod tests {
                 web_view_link: None,
             },
             list_id: list_id.into(),
-            sync_state: if op == "delete" { SyncState::Deleted } else { SyncState::Dirty },
+            sync_state: if op == "delete" {
+                SyncState::Deleted
+            } else {
+                SyncState::Dirty
+            },
             local_updated: "2026-06-01T00:00:00Z".into(),
             pending_op: Some(op.into()),
         }
@@ -890,11 +993,17 @@ mod tests {
         let (client, eng) = engine().await;
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
-        eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0);
-        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0);
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            0
+        );
     }
 
     #[tokio::test]
@@ -902,7 +1011,10 @@ mod tests {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
-        eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 1);
@@ -927,15 +1039,24 @@ mod tests {
         // Server already has the task from the interrupted attempt.
         client.seed_task("L1", "remote-orphan", "buy milk", "1");
         // In-flight marker persisted before the (crashed) finish.
-        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+        eng.store
+            .record_inflight_create("local-1", "L1")
+            .await
+            .unwrap();
 
         let _out = eng.run().await.unwrap();
 
         // No re-insert: InsertTask not called this run.
-        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0);
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            0
+        );
         // Exactly one task remains, adopted to the orphan's id.
         let tasks = eng.store.list_tasks("L1").await.unwrap();
-        let milk: Vec<_> = tasks.iter().filter(|t| t.task.title == "buy milk").collect();
+        let milk: Vec<_> = tasks
+            .iter()
+            .filter(|t| t.task.title == "buy milk")
+            .collect();
         assert_eq!(milk.len(), 1, "no duplicate");
         assert_eq!(milk[0].task.id, "remote-orphan");
         assert_eq!(milk[0].sync_state, SyncState::Clean);
@@ -954,11 +1075,17 @@ mod tests {
         let mut local = dirty_task("local-1", "L1", "create");
         local.task.title = "orphan-free".into();
         eng.store.upsert_task(&local).await.unwrap();
-        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+        eng.store
+            .record_inflight_create("local-1", "L1")
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 1, "normal insert happened");
-        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 1);
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            1
+        );
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].task.id.starts_with("remote-"));
@@ -971,7 +1098,10 @@ mod tests {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
-        eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
         eng.run().await.unwrap();
         assert!(eng.store.inflight_creates().await.unwrap().is_empty());
     }
@@ -996,14 +1126,29 @@ mod tests {
         // Exactly one insert attempted this run (no pass-2 re-insert).
         assert_eq!(client.call_count(Method::InsertTask), 1);
         // Server has exactly one "buy milk".
-        assert_eq!(client.list_tasks("L1", None).await.unwrap().items.iter()
-            .filter(|t| t.title == "buy milk").count(), 1);
+        assert_eq!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .filter(|t| t.title == "buy milk")
+                .count(),
+            1
+        );
 
         // Run 2: recovery adopts the orphan instead of inserting again.
         eng.run().await.unwrap();
         assert_eq!(client.call_count(Method::InsertTask), 1, "no second insert");
-        let milk: Vec<_> = eng.store.list_tasks("L1").await.unwrap()
-            .into_iter().filter(|t| t.task.title == "buy milk").collect();
+        let milk: Vec<_> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.title == "buy milk")
+            .collect();
         assert_eq!(milk.len(), 1, "no duplicate after recovery");
         assert!(milk[0].task.id.starts_with("remote-"));
         assert!(eng.store.inflight_creates().await.unwrap().is_empty());
@@ -1070,8 +1215,16 @@ mod tests {
         // Both survive: canonical remote version + a conflicted copy of the edit.
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 2, "remote + conflicted copy");
-        assert!(tasks.iter().any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean));
-        assert!(tasks.iter().any(|t| t.task.title == "local-edit (conflicted copy)"));
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean)
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "local-edit (conflicted copy)")
+        );
         // Nothing lost.
     }
 
@@ -1122,7 +1275,11 @@ mod tests {
         // The conflicted copy is now a real remote task.
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert!(tasks.iter().all(|t| t.sync_state == SyncState::Clean));
-        assert!(tasks.iter().any(|t| t.task.title == "conflict (conflicted copy)"));
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "conflict (conflicted copy)")
+        );
     }
 
     #[tokio::test]
@@ -1145,7 +1302,14 @@ mod tests {
 
         eng.run().await.unwrap();
         // Local row dropped to mirror server.
-        assert!(eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.task.id != "T1"));
+        assert!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|t| t.task.id != "T1")
+        );
     }
 
     #[tokio::test]
@@ -1190,16 +1354,24 @@ mod tests {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
-        eng.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
 
         // A single transient. A parentless create must be attempted EXACTLY
         // once per run (no pass-2 re-attempt that could double-insert).
-        client.fail_next(crate::api::in_memory::Method::InsertTask, || ApiError::Network("timeout".into()));
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || {
+            ApiError::Network("timeout".into())
+        });
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0);
-        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 1,
-            "parentless create attempted exactly once per run");
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            1,
+            "parentless create attempted exactly once per run"
+        );
         // Still dirty + in-flight marker for next-run recovery.
         assert_eq!(eng.store.drain_dirty().await.unwrap().len(), 1);
         assert_eq!(eng.store.inflight_creates().await.unwrap().len(), 1);
@@ -1217,8 +1389,12 @@ mod tests {
         row.pending_op = Some("delete".into());
         eng.store.upsert_task(&row).await.unwrap();
 
-        client.fail_next(crate::api::in_memory::Method::DeleteTask, || ApiError::Server { status: 503 });
-        client.fail_next(crate::api::in_memory::Method::DeleteTask, || ApiError::Server { status: 503 });
+        client.fail_next(crate::api::in_memory::Method::DeleteTask, || {
+            ApiError::Server { status: 503 }
+        });
+        client.fail_next(crate::api::in_memory::Method::DeleteTask, || {
+            ApiError::Server { status: 503 }
+        });
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.deleted, 0);
@@ -1235,26 +1411,50 @@ mod tests {
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
 
-        eng.store.upsert_list(&StoredTaskList {
-            list: TaskList { id: "ghost-list".into(), title: "Local".into(), etag: None, updated: "2026-01-01T00:00:00Z".into() },
-            sync_state: SyncState::Dirty,
-            local_updated: "2026-01-01T00:00:00Z".into(),
-            pending_op: None,
-            local_only: false,
-        }).await.unwrap();
-        eng.store.upsert_task(&dirty_task("local-1", "ghost-list", "create")).await.unwrap();
+        eng.store
+            .upsert_list(&StoredTaskList {
+                list: TaskList {
+                    id: "ghost-list".into(),
+                    title: "Local".into(),
+                    etag: None,
+                    updated: "2026-01-01T00:00:00Z".into(),
+                },
+                sync_state: SyncState::Dirty,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: None,
+                local_only: false,
+            })
+            .await
+            .unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "ghost-list", "create"))
+            .await
+            .unwrap();
         // A healthy create elsewhere must still push in the same run.
-        eng.store.upsert_task(&dirty_task("local-2", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-2", "L1", "create"))
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.errors, 1, "rejected row is counted");
         assert!(out.pushed >= 1, "healthy row still pushed");
         assert!(
-            eng.store.drain_dirty().await.unwrap().iter().any(|t| t.task.id == "local-1"),
+            eng.store
+                .drain_dirty()
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "local-1"),
             "rejected row stays dirty for retry/visibility"
         );
         assert!(
-            eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean),
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|t| t.sync_state == SyncState::Clean),
             "healthy row is clean"
         );
     }
@@ -1298,7 +1498,10 @@ mod tests {
         assert_eq!(out.errors, 0, "bare date must not draw a 400");
         assert_eq!(out.pushed, 1);
         let page = client.list_tasks("L1", None).await.unwrap();
-        assert_eq!(page.items[0].due.as_deref(), Some("2026-08-02T00:00:00.000Z"));
+        assert_eq!(
+            page.items[0].due.as_deref(),
+            Some("2026-08-02T00:00:00.000Z")
+        );
     }
 
     #[tokio::test]
@@ -1319,7 +1522,10 @@ mod tests {
         assert_eq!(out.errors, 0);
         assert_eq!(out.pushed, 1);
         let page = client.list_tasks("L1", None).await.unwrap();
-        assert_eq!(page.items[0].due.as_deref(), Some("2026-08-05T00:00:00.000Z"));
+        assert_eq!(
+            page.items[0].due.as_deref(),
+            Some("2026-08-05T00:00:00.000Z")
+        );
     }
 
     #[tokio::test]
@@ -1357,7 +1563,15 @@ mod tests {
 
         // Server task gains a due date + fresh etag (etag now stale locally).
         let patched = client
-            .patch_task("L1", "T1", TaskPatch { due: Some("2026-08-01T00:00:00.000Z".into()), ..Default::default() }, None)
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    due: Some("2026-08-01T00:00:00.000Z".into()),
+                    ..Default::default()
+                },
+                None,
+            )
             .await
             .unwrap();
 
@@ -1394,17 +1608,38 @@ mod tests {
         {
             // Write the normalized due into the fake's state.
             client
-                .patch_task("L1", "remote-orphan", TaskPatch { due: Some("2026-08-01T00:00:00.000Z".into()), ..Default::default() }, None)
+                .patch_task(
+                    "L1",
+                    "remote-orphan",
+                    TaskPatch {
+                        due: Some("2026-08-01T00:00:00.000Z".into()),
+                        ..Default::default()
+                    },
+                    None,
+                )
                 .await
                 .unwrap();
         }
-        eng.store.record_inflight_create("local-1", "L1").await.unwrap();
+        eng.store
+            .record_inflight_create("local-1", "L1")
+            .await
+            .unwrap();
 
         eng.run().await.unwrap();
 
-        assert_eq!(client.call_count(crate::api::in_memory::Method::InsertTask), 0, "adopted, not re-inserted");
-        let milk: Vec<_> = eng.store.list_tasks("L1").await.unwrap()
-            .into_iter().filter(|t| t.task.title == "buy milk").collect();
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            0,
+            "adopted, not re-inserted"
+        );
+        let milk: Vec<_> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.title == "buy milk")
+            .collect();
         assert_eq!(milk.len(), 1, "no duplicate");
         assert_eq!(milk[0].task.id, "remote-orphan");
     }
@@ -1439,7 +1674,9 @@ mod tests {
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert!(tasks.iter().any(|t| t.task.title == "from server"));
         assert!(
-            tasks.iter().any(|t| t.task.id == "local-poison" && t.sync_state == SyncState::Dirty),
+            tasks
+                .iter()
+                .any(|t| t.task.id == "local-poison" && t.sync_state == SyncState::Dirty),
             "poisoned row stays dirty (visible + retried), not lost"
         );
     }
@@ -1488,12 +1725,17 @@ mod tests {
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
 
-        eng.store.upsert_task(&dirty_task("local-p", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-p", "L1", "create"))
+            .await
+            .unwrap();
         let mut child = dirty_task("local-c", "L1", "create");
         child.task.parent = Some("local-p".into());
         eng.store.upsert_task(&child).await.unwrap();
 
-        client.fail_next(crate::api::in_memory::Method::InsertTask, || ApiError::Server { status: 503 });
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || {
+            ApiError::Server { status: 503 }
+        });
         let out = eng.run().await.unwrap();
         assert_eq!(out.errors, 0, "no permanent 400 — the child waited");
 
@@ -1503,8 +1745,14 @@ mod tests {
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 2);
         assert!(tasks.iter().all(|t| t.sync_state == SyncState::Clean));
-        let child = tasks.iter().find(|t| t.task.title == "task local-c").unwrap();
-        assert!(child.task.parent.as_deref().unwrap().starts_with("remote-"), "parent id remapped");
+        let child = tasks
+            .iter()
+            .find(|t| t.task.title == "task local-c")
+            .unwrap();
+        assert!(
+            child.task.parent.as_deref().unwrap().starts_with("remote-"),
+            "parent id remapped"
+        );
     }
 
     #[tokio::test]
@@ -1513,7 +1761,10 @@ mod tests {
         client.seed_list("L1", "Inbox");
         eng.run().await.unwrap();
 
-        eng.store.upsert_task(&dirty_task("l-root", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("l-root", "L1", "create"))
+            .await
+            .unwrap();
         let mut mid = dirty_task("l-mid", "L1", "create");
         mid.task.parent = Some("l-root".into());
         eng.store.upsert_task(&mid).await.unwrap();
@@ -1524,7 +1775,14 @@ mod tests {
         let out = eng.run().await.unwrap();
         assert_eq!(out.errors, 0);
         assert_eq!(out.pushed, 3, "whole chain lands in one run");
-        assert!(eng.store.list_tasks("L1").await.unwrap().iter().all(|t| t.sync_state == SyncState::Clean));
+        assert!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|t| t.sync_state == SyncState::Clean)
+        );
     }
 
     #[tokio::test]
@@ -1540,10 +1798,31 @@ mod tests {
         client.seed_task("L1", "root", "root", "3");
 
         let out = eng.run().await.unwrap();
-        assert_eq!(out.pulled, 3, "all three levels pulled despite hostile order");
+        assert_eq!(
+            out.pulled, 3,
+            "all three levels pulled despite hostile order"
+        );
         let tasks = eng.store.list_tasks("L1").await.unwrap();
-        assert_eq!(tasks.iter().find(|t| t.task.id == "leaf").unwrap().task.parent.as_deref(), Some("mid"));
-        assert_eq!(tasks.iter().find(|t| t.task.id == "mid").unwrap().task.parent.as_deref(), Some("root"));
+        assert_eq!(
+            tasks
+                .iter()
+                .find(|t| t.task.id == "leaf")
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("mid")
+        );
+        assert_eq!(
+            tasks
+                .iter()
+                .find(|t| t.task.id == "mid")
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("root")
+        );
     }
 
     #[tokio::test]
@@ -1556,24 +1835,48 @@ mod tests {
         client.seed_task("L1", "T2", "two", "2");
         eng.run().await.unwrap();
 
-        let mut local = eng.store.list_tasks("L1").await.unwrap()
-            .into_iter().find(|t| t.task.id == "T1").unwrap();
+        let mut local = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "T1")
+            .unwrap();
         local.task.title = "edited".into();
         local.sync_state = SyncState::Dirty;
         local.pending_op = Some("update".into());
         // Simulate the update push being held this run (editing) while the
         // move still goes out.
         eng.store.upsert_task(&local).await.unwrap();
-        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+        eng.store
+            .record_move("T1", "L1", None, Some("T2"))
+            .await
+            .unwrap();
 
         // Force the update push to fail transiently so only the move lands.
-        client.fail_next(crate::api::in_memory::Method::PatchTask, || ApiError::Server { status: 503 });
+        client.fail_next(crate::api::in_memory::Method::PatchTask, || {
+            ApiError::Server { status: 503 }
+        });
         eng.run().await.unwrap();
 
-        let row = eng.store.list_tasks("L1").await.unwrap()
-            .into_iter().find(|t| t.task.title == "edited").unwrap();
-        assert_eq!(row.sync_state, SyncState::Dirty, "content edit still queued");
-        assert!(eng.store.pending_moves().await.unwrap().is_empty(), "move cleared");
+        let row = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.title == "edited")
+            .unwrap();
+        assert_eq!(
+            row.sync_state,
+            SyncState::Dirty,
+            "content edit still queued"
+        );
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "move cleared"
+        );
 
         // Next run pushes the edit.
         eng.run().await.unwrap();
@@ -1597,7 +1900,10 @@ mod tests {
 
         let local = eng.store.list_tasks("L1").await.unwrap().remove(0);
         let remote = client.list_tasks("L1", None).await.unwrap().items.remove(0);
-        assert_eq!(local.task.position, remote.position, "local mirrors the server's position");
+        assert_eq!(
+            local.task.position, remote.position,
+            "local mirrors the server's position"
+        );
         assert_ne!(local.task.position, "00000000000000000000");
     }
 
@@ -1621,8 +1927,11 @@ mod tests {
 
         eng.run().await.unwrap();
         let after = eng.store.list_tasks("L1").await.unwrap().remove(0);
-        assert_eq!(after.task.due.as_deref(), Some("2026-08-01T00:00:00.000Z"),
-            "local adopts the server's canonical value, not what we sent");
+        assert_eq!(
+            after.task.due.as_deref(),
+            Some("2026-08-01T00:00:00.000Z"),
+            "local adopts the server's canonical value, not what we sent"
+        );
         assert_eq!(after.sync_state, SyncState::Clean);
     }
 
@@ -1636,21 +1945,42 @@ mod tests {
         client.seed_task("L1", "T-prev", "anchor", "1");
         eng0.run().await.unwrap();
 
-        eng0.store.upsert_task(&dirty_task("local-1", "L1", "create")).await.unwrap();
-        eng0.store.record_move("local-1", "L1", None, Some("T-prev")).await.unwrap();
+        eng0.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
+        eng0.store
+            .record_move("local-1", "L1", None, Some("T-prev"))
+            .await
+            .unwrap();
 
         // Run 1: creates held (user editing). The move must wait, not error.
-        let eng_hold = SyncEngine::with_push(client.clone(), eng0.store.clone(), true).hold_creates(true);
+        let eng_hold =
+            SyncEngine::with_push(client.clone(), eng0.store.clone(), true).hold_creates(true);
         let out = eng_hold.run().await.unwrap();
-        assert_eq!(out.errors, 0, "move with a local UUID must not be sent (400)");
-        assert_eq!(eng0.store.pending_moves().await.unwrap().len(), 1, "intent retained");
+        assert_eq!(
+            out.errors, 0,
+            "move with a local UUID must not be sent (400)"
+        );
+        assert_eq!(
+            eng0.store.pending_moves().await.unwrap().len(),
+            1,
+            "intent retained"
+        );
 
         // Run 2: create lands, finish_create remaps the move's ids, move pushes.
         let out = eng0.run().await.unwrap();
         assert_eq!(out.errors, 0);
-        assert!(eng0.store.pending_moves().await.unwrap().is_empty(), "move pushed");
+        assert!(
+            eng0.store.pending_moves().await.unwrap().is_empty(),
+            "move pushed"
+        );
         let remote = client.list_tasks("L1", None).await.unwrap();
-        let moved = remote.items.iter().find(|t| t.title == "task local-1").unwrap();
+        let moved = remote
+            .items
+            .iter()
+            .find(|t| t.title == "task local-1")
+            .unwrap();
         assert_eq!(moved.position, "after-T-prev", "reorder reached the server");
     }
 
@@ -1673,11 +2003,21 @@ mod tests {
             eng.run().await.unwrap();
         }
 
-        let mut remote: Vec<_> = client.list_tasks("L1", None).await.unwrap().items
-            .into_iter().filter(|t| t.parent.as_deref() == Some("P")).collect();
+        let mut remote: Vec<_> = client
+            .list_tasks("L1", None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|t| t.parent.as_deref() == Some("P"))
+            .collect();
         remote.sort_by(|a, b| a.position.cmp(&b.position));
         let titles: Vec<_> = remote.iter().map(|t| t.title.as_str()).collect();
-        assert_eq!(titles, vec!["sub 0", "sub 1", "sub 2"], "creation order preserved on the server");
+        assert_eq!(
+            titles,
+            vec!["sub 0", "sub 1", "sub 2"],
+            "creation order preserved on the server"
+        );
     }
 
     #[tokio::test]
@@ -1688,13 +2028,21 @@ mod tests {
         client.seed_list("L-remote", "Work");
 
         for id in ["local-l1", "local-l2"] {
-            eng.store.upsert_list(&StoredTaskList {
-                list: TaskList { id: id.into(), title: "Work".into(), etag: None, updated: "2026-01-01T00:00:00Z".into() },
-                sync_state: SyncState::Dirty,
-                local_updated: "2026-01-01T00:00:00Z".into(),
-                pending_op: Some("create".into()),
-                local_only: false,
-            }).await.unwrap();
+            eng.store
+                .upsert_list(&StoredTaskList {
+                    list: TaskList {
+                        id: id.into(),
+                        title: "Work".into(),
+                        etag: None,
+                        updated: "2026-01-01T00:00:00Z".into(),
+                    },
+                    sync_state: SyncState::Dirty,
+                    local_updated: "2026-01-01T00:00:00Z".into(),
+                    pending_op: Some("create".into()),
+                    local_only: false,
+                })
+                .await
+                .unwrap();
         }
 
         let out = eng.run().await;
@@ -1733,7 +2081,14 @@ mod tests {
         // Next run: no tombstone left, no repeat error.
         let out = eng.run().await.unwrap();
         assert_eq!(out.errors, 0, "no permanent nag");
-        assert!(eng.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.title == "still here"));
+        assert!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.title == "still here")
+        );
     }
 
     #[tokio::test]
@@ -1753,7 +2108,10 @@ mod tests {
         let mut local = dirty_task("local-p", "L1", "create");
         local.task.title = "buy milk".into();
         eng.store.upsert_task(&local).await.unwrap();
-        eng.store.record_inflight_create("local-p", "L1").await.unwrap();
+        eng.store
+            .record_inflight_create("local-p", "L1")
+            .await
+            .unwrap();
         // …its committed orphan on the server, plus a child under the orphan.
         client.seed_task("L1", "remote-orphan", "buy milk", "1");
         client.seed_task_with_parent("L1", "C", "child of orphan", "2", Some("remote-orphan"));
@@ -1761,8 +2119,14 @@ mod tests {
         let out = eng.run().await;
         assert!(out.is_ok(), "pull must survive the unknown parent: {out:?}");
         let tasks = eng.store.list_tasks("L1").await.unwrap();
-        let child = tasks.iter().find(|t| t.task.id == "C").expect("child pulled, not lost");
-        assert_eq!(child.task.parent, None, "detached until the parent id resolves");
+        let child = tasks
+            .iter()
+            .find(|t| t.task.id == "C")
+            .expect("child pulled, not lost");
+        assert_eq!(
+            child.task.parent, None,
+            "detached until the parent id resolves"
+        );
 
         // Once recovery runs (push re-enabled), the orphan is adopted and the
         // next pull re-links the child (its etag was dropped, so it re-pulls).
@@ -1770,7 +2134,11 @@ mod tests {
         eng_push.run().await.unwrap();
         let tasks = eng.store.list_tasks("L1").await.unwrap();
         let child = tasks.iter().find(|t| t.task.id == "C").unwrap();
-        assert_eq!(child.task.parent.as_deref(), Some("remote-orphan"), "re-linked");
+        assert_eq!(
+            child.task.parent.as_deref(),
+            Some("remote-orphan"),
+            "re-linked"
+        );
     }
 
     // ─── Pull tests ──────────────────────────────────────────────────────────
@@ -1798,7 +2166,10 @@ mod tests {
 
         // Simulate the pre-migration state: clear the stored link, keep etag.
         let mut row = eng.store.find_task_any("T1").await.unwrap().unwrap();
-        assert!(row.task.web_view_link.is_some(), "first pull stored the link");
+        assert!(
+            row.task.web_view_link.is_some(),
+            "first pull stored the link"
+        );
         let etag_before = row.task.etag.clone();
         row.task.web_view_link = None;
         eng.store.upsert_task(&row).await.unwrap();
@@ -1806,7 +2177,10 @@ mod tests {
         // A normal sync (no server change) must re-populate the link.
         eng.run().await.unwrap();
         let healed = eng.store.find_task_any("T1").await.unwrap().unwrap();
-        assert!(healed.task.web_view_link.is_some(), "link backfilled on next pull");
+        assert!(
+            healed.task.web_view_link.is_some(),
+            "link backfilled on next pull"
+        );
         assert_eq!(healed.task.etag, etag_before, "etag unchanged");
     }
 
@@ -1830,8 +2204,14 @@ mod tests {
         client.seed_task("L2", "T2", "personal", "1");
 
         eng.run().await.unwrap();
-        assert_eq!(eng.store.list_tasks("L1").await.unwrap()[0].task.title, "work");
-        assert_eq!(eng.store.list_tasks("L2").await.unwrap()[0].task.title, "personal");
+        assert_eq!(
+            eng.store.list_tasks("L1").await.unwrap()[0].task.title,
+            "work"
+        );
+        assert_eq!(
+            eng.store.list_tasks("L2").await.unwrap()[0].task.title,
+            "personal"
+        );
     }
 
     #[tokio::test]
@@ -1843,7 +2223,14 @@ mod tests {
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 2);
-        let child = eng.store.list_tasks("L1").await.unwrap().into_iter().find(|t| t.task.id == "C1").unwrap();
+        let child = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "C1")
+            .unwrap();
         assert_eq!(child.task.parent.as_deref(), Some("P1"));
     }
 
@@ -1856,7 +2243,14 @@ mod tests {
         eng.run().await.unwrap();
 
         // Locally edit T1
-        let mut t1 = eng.store.list_tasks("L1").await.unwrap().into_iter().find(|t| t.task.id == "T1").unwrap();
+        let mut t1 = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "T1")
+            .unwrap();
         t1.task.title = "local edit".into();
         t1.sync_state = SyncState::Dirty;
         t1.pending_op = Some("update".into());
@@ -1866,7 +2260,14 @@ mod tests {
         // Neither T1 (dirty, skipped) nor T2 (etag unchanged) should count
         assert_eq!(out.pulled, 0);
         // Local edit preserved
-        let t1 = eng.store.list_tasks("L1").await.unwrap().into_iter().find(|t| t.task.id == "T1").unwrap();
+        let t1 = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "T1")
+            .unwrap();
         assert_eq!(t1.task.title, "local edit");
     }
 
@@ -1878,11 +2279,25 @@ mod tests {
         eng.run().await.unwrap();
 
         // Remote edit (changes etag)
-        client.patch_task("L1", "T1", TaskPatch { title: Some("v2".into()), ..Default::default() }, None).await.unwrap();
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("v2".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 1);
-        assert_eq!(eng.store.list_tasks("L1").await.unwrap()[0].task.title, "v2");
+        assert_eq!(
+            eng.store.list_tasks("L1").await.unwrap()[0].task.title,
+            "v2"
+        );
     }
 
     #[tokio::test]
@@ -1890,7 +2305,12 @@ mod tests {
         let (client, eng) = engine().await;
         client.seed_list("L1", "Inbox");
         for i in 0..10 {
-            client.seed_task("L1", &format!("T{i}"), &format!("task {i}"), &format!("{i:014}"));
+            client.seed_task(
+                "L1",
+                &format!("T{i}"),
+                &format!("task {i}"),
+                &format!("{i:014}"),
+            );
         }
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 10);
@@ -1923,10 +2343,20 @@ mod tests {
         eng.run().await.unwrap();
 
         // Local-only task (not on server)
-        eng.store.upsert_task(&dirty_task("local-only", "L1", "create")).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-only", "L1", "create"))
+            .await
+            .unwrap();
 
         eng.run().await.unwrap();
-        assert!(eng.store.list_tasks("L1").await.unwrap().iter().any(|t| t.task.id == "local-only"));
+        assert!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "local-only")
+        );
     }
 
     #[tokio::test]
@@ -1937,7 +2367,9 @@ mod tests {
         client.seed_task("L1", "T2", "task2", "2");
         eng.run().await.unwrap();
 
-        client.fail_next(crate::api::in_memory::Method::ListTasks, || ApiError::Server { status: 503 });
+        client.fail_next(crate::api::in_memory::Method::ListTasks, || {
+            ApiError::Server { status: 503 }
+        });
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.deleted, 0);
@@ -1980,7 +2412,9 @@ mod tests {
     async fn transient_list_tasklists_error_not_fatal() {
         let (client, eng) = engine().await;
         client.seed_list("L1", "Inbox");
-        client.fail_next(crate::api::in_memory::Method::ListTaskLists, || ApiError::Server { status: 503 });
+        client.fail_next(crate::api::in_memory::Method::ListTaskLists, || {
+            ApiError::Server { status: 503 }
+        });
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 0);
@@ -1995,21 +2429,28 @@ mod tests {
         client.seed_task("L1", "T1", "task", "1");
         eng.run().await.unwrap();
 
-        let row: (i64, i64, i64) = sqlx::query_as("SELECT pulled, pushed, conflicts FROM sync_log ORDER BY id DESC LIMIT 1")
-            .fetch_one(eng.store.pool())
-            .await.unwrap();
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT pulled, pushed, conflicts FROM sync_log ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(eng.store.pool())
+        .await
+        .unwrap();
         assert_eq!(row.0, 1);
     }
 
     #[tokio::test]
     async fn sync_log_written_on_error() {
         let (client, eng) = engine().await;
-        client.fail_next(crate::api::in_memory::Method::ListTaskLists, || ApiError::Other("fatal".into()));
+        client.fail_next(crate::api::in_memory::Method::ListTaskLists, || {
+            ApiError::Other("fatal".into())
+        });
         let _ = eng.run().await;
 
-        let row: (Option<String>,) = sqlx::query_as("SELECT error FROM sync_log ORDER BY id DESC LIMIT 1")
-            .fetch_one(eng.store.pool())
-            .await.unwrap();
+        let row: (Option<String>,) =
+            sqlx::query_as("SELECT error FROM sync_log ORDER BY id DESC LIMIT 1")
+                .fetch_one(eng.store.pool())
+                .await
+                .unwrap();
         assert!(row.0.unwrap().contains("fatal"));
     }
 
@@ -2025,7 +2466,10 @@ mod tests {
         eng.run().await.unwrap();
 
         // Record a move: T1 should follow T2.
-        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+        eng.store
+            .record_move("T1", "L1", None, Some("T2"))
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert!(out.pushed >= 1);
@@ -2042,7 +2486,10 @@ mod tests {
         client.seed_task("L1", "T1", "task", "1");
         eng.run().await.unwrap();
 
-        eng.store.record_move("T1", "L1", None, Some("X")).await.unwrap();
+        eng.store
+            .record_move("T1", "L1", None, Some("X"))
+            .await
+            .unwrap();
         eng.run().await.unwrap();
 
         assert_eq!(client.call_count(Method::MoveTask), 0);
@@ -2062,7 +2509,10 @@ mod tests {
         local.pending_op = None;
         local.task.etag = Some("e1".into());
         eng.store.upsert_task(&local).await.unwrap();
-        eng.store.record_move("ghost", "L1", None, None).await.unwrap();
+        eng.store
+            .record_move("ghost", "L1", None, None)
+            .await
+            .unwrap();
 
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0);
@@ -2079,7 +2529,10 @@ mod tests {
         client.seed_task("L1", "T2", "other", "2");
         eng.run().await.unwrap();
 
-        eng.store.record_move("T1", "L1", None, Some("T2")).await.unwrap();
+        eng.store
+            .record_move("T1", "L1", None, Some("T2"))
+            .await
+            .unwrap();
         client.fail_next(Method::MoveTask, || ApiError::Server { status: 503 });
 
         eng.run().await.unwrap();
@@ -2091,8 +2544,21 @@ mod tests {
 
     fn dirty_list(id: &str, title: &str, op: &str) -> StoredTaskList {
         StoredTaskList {
-            list: TaskList { id: id.into(), title: title.into(), etag: if op == "create" { None } else { Some("e1".into()) }, updated: "2026-01-01T00:00:00Z".into() },
-            sync_state: if op == "delete" { SyncState::Deleted } else { SyncState::Dirty },
+            list: TaskList {
+                id: id.into(),
+                title: title.into(),
+                etag: if op == "create" {
+                    None
+                } else {
+                    Some("e1".into())
+                },
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            sync_state: if op == "delete" {
+                SyncState::Deleted
+            } else {
+                SyncState::Dirty
+            },
             local_updated: "2026-01-01T00:00:00Z".into(),
             pending_op: Some(op.into()),
             local_only: false,
@@ -2103,7 +2569,10 @@ mod tests {
     async fn push_list_create_remaps_and_tasks_follow() {
         let (_client, eng) = engine_with_push().await;
         // Local list create + a task in it.
-        eng.store.upsert_list(&dirty_list("local-list", "Work", "create")).await.unwrap();
+        eng.store
+            .upsert_list(&dirty_list("local-list", "Work", "create"))
+            .await
+            .unwrap();
         let mut t = dirty_task("local-task", "local-list", "create");
         t.task.title = "do work".into();
         eng.store.upsert_task(&t).await.unwrap();
@@ -2126,7 +2595,14 @@ mod tests {
         client.seed_list("L1", "Old Name");
         eng.run().await.unwrap();
 
-        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         l.list.title = "New Name".into();
         l.sync_state = SyncState::Dirty;
         l.pending_op = Some("update".into());
@@ -2136,7 +2612,14 @@ mod tests {
         assert!(out.pushed >= 1);
         let page = client.list_tasklists().await.unwrap();
         assert!(page.iter().any(|l| l.id == "L1" && l.title == "New Name"));
-        let l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         assert_eq!(l.sync_state, SyncState::Clean);
     }
 
@@ -2146,7 +2629,14 @@ mod tests {
         client.seed_list("L1", "Doomed");
         eng.run().await.unwrap();
 
-        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         l.sync_state = SyncState::Deleted;
         l.pending_op = Some("delete".into());
         eng.store.upsert_list(&l).await.unwrap();
@@ -2154,8 +2644,22 @@ mod tests {
         let out = eng.run().await.unwrap();
         assert_eq!(out.deleted, 1);
         // Gone from server and local.
-        assert!(client.list_tasklists().await.unwrap().iter().all(|l| l.id != "L1"));
-        assert!(eng.store.all_lists().await.unwrap().iter().all(|l| l.list.id != "L1"));
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.id != "L1")
+        );
+        assert!(
+            eng.store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L1")
+        );
     }
 
     #[tokio::test]
@@ -2163,13 +2667,19 @@ mod tests {
         // Offline default "My Tasks" (local create) must adopt Google's
         // existing "My Tasks" on pull instead of duplicating.
         let (client, eng) = engine_with_push().await;
-        eng.store.upsert_list(&dirty_list("local-uuid", "My Tasks", "create")).await.unwrap();
+        eng.store
+            .upsert_list(&dirty_list("local-uuid", "My Tasks", "create"))
+            .await
+            .unwrap();
         client.seed_list("remote-mytasks", "My Tasks");
 
         eng.run().await.unwrap();
 
         let lists = eng.store.all_lists().await.unwrap();
-        let mt: Vec<_> = lists.iter().filter(|l| l.list.title == "My Tasks").collect();
+        let mt: Vec<_> = lists
+            .iter()
+            .filter(|l| l.list.title == "My Tasks")
+            .collect();
         assert_eq!(mt.len(), 1, "no duplicate My Tasks");
         assert_eq!(mt[0].list.id, "remote-mytasks");
         assert_eq!(mt[0].sync_state, SyncState::Clean);
@@ -2181,14 +2691,28 @@ mod tests {
         client.seed_list("L1", "Server Title");
         eng.run().await.unwrap();
 
-        let mut l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         l.list.title = "Local Rename".into();
         l.sync_state = SyncState::Dirty;
         l.pending_op = Some("update".into());
         eng.store.upsert_list(&l).await.unwrap();
 
         eng.run().await.unwrap(); // pull must not clobber the local rename (push disabled)
-        let l = eng.store.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         assert_eq!(l.list.title, "Local Rename");
         assert_eq!(l.sync_state, SyncState::Dirty);
     }

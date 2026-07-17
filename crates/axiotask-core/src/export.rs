@@ -193,7 +193,10 @@ impl Backup {
     /// safely rather than failing the whole restore (`sync_state` → `Clean`,
     /// `status` → `NeedsAction`).
     pub fn into_stored(self) -> Vec<(StoredTaskList, Vec<StoredTask>)> {
-        self.lists.into_iter().map(BackupList::into_stored).collect()
+        self.lists
+            .into_iter()
+            .map(BackupList::into_stored)
+            .collect()
     }
 
     /// Total number of tasks across all lists (handy for status messages).
@@ -313,7 +316,10 @@ mod tests {
         let b = Backup::build(
             "now",
             vec![
-                (l1, vec![task("T1", "L1", "first"), task("T2", "L1", "second")]),
+                (
+                    l1,
+                    vec![task("T1", "L1", "first"), task("T2", "L1", "second")],
+                ),
                 (l2, vec![]),
             ],
         );
@@ -393,7 +399,10 @@ mod tests {
     fn json_is_pretty_and_round_trips() {
         let b = Backup::build(
             "2026-06-08T00:00:00Z",
-            vec![(list("L1", "Inbox", false), vec![task("T1", "L1", "Buy milk")])],
+            vec![(
+                list("L1", "Inbox", false),
+                vec![task("T1", "L1", "Buy milk")],
+            )],
         );
         let json = b.to_json_pretty().expect("serialize");
         // Pretty-printed: contains newlines and indentation.
@@ -441,7 +450,10 @@ mod tests {
     fn from_json_parses_a_backup_document() {
         let b = Backup::build(
             "2026-06-08T00:00:00Z",
-            vec![(list("L1", "Inbox", false), vec![task("T1", "L1", "Buy milk")])],
+            vec![(
+                list("L1", "Inbox", false),
+                vec![task("T1", "L1", "Buy milk")],
+            )],
         );
         let json = b.to_json_pretty().unwrap();
         let parsed = Backup::from_json(&json).expect("parse backup");

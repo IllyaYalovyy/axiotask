@@ -53,11 +53,13 @@ pub fn parse_refresh_response(
     let json: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
     if let Some(code) = json["error"].as_str() {
         let desc = json["error_description"].as_str().unwrap_or("");
-        let msg = if desc.is_empty() { code.to_string() } else { format!("{code}: {desc}") };
+        let msg = if desc.is_empty() {
+            code.to_string()
+        } else {
+            format!("{code}: {desc}")
+        };
         return Err(match code {
-            "invalid_grant" | "invalid_client" | "unauthorized_client" => {
-                RefreshError::Denied(msg)
-            }
+            "invalid_grant" | "invalid_client" | "unauthorized_client" => RefreshError::Denied(msg),
             _ => RefreshError::Transient(msg),
         });
     }
@@ -239,14 +241,21 @@ mod tests {
 
     #[test]
     fn refresh_response_5xx_and_garbage_are_transient() {
-        let err = parse_refresh_response(503, "<html>oops</html>", "rt".into(), "t", 0).unwrap_err();
+        let err =
+            parse_refresh_response(503, "<html>oops</html>", "rt".into(), "t", 0).unwrap_err();
         assert!(matches!(err, RefreshError::Transient(_)), "{err}");
         // 200 with a body missing access_token (proxy mangling, etc.)
         let err = parse_refresh_response(200, "{}", "rt".into(), "t", 0).unwrap_err();
         assert!(matches!(err, RefreshError::Transient(_)), "{err}");
         // OAuth error code other than the grant-level ones stays retryable.
-        let err = parse_refresh_response(400, r#"{"error":"temporarily_unavailable"}"#, "rt".into(), "t", 0)
-            .unwrap_err();
+        let err = parse_refresh_response(
+            400,
+            r#"{"error":"temporarily_unavailable"}"#,
+            "rt".into(),
+            "t",
+            0,
+        )
+        .unwrap_err();
         assert!(matches!(err, RefreshError::Transient(_)), "{err}");
     }
 

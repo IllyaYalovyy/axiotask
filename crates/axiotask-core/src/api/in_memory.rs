@@ -184,7 +184,8 @@ impl InMemoryClient {
     /// Remove a task from internal state (simulates server-side deletion by another client).
     pub fn delete_task_from_state(&self, list_id: &str, task_id: &str) {
         let mut s = self.inner.lock().unwrap();
-        s.tasks.retain(|(lid, t)| !(lid == list_id && t.id == task_id));
+        s.tasks
+            .retain(|(lid, t)| !(lid == list_id && t.id == task_id));
     }
 
     /// How many times `m` has been invoked.
@@ -212,7 +213,12 @@ impl GoogleTasksClient for InMemoryClient {
         }
         let etag = s.fresh_etag();
         let id = format!("remote-list-{}", s.etag_counter);
-        let list = TaskList { id, title: title.into(), etag: Some(etag), updated: "2026-01-01T00:00:00Z".into() };
+        let list = TaskList {
+            id,
+            title: title.into(),
+            etag: Some(etag),
+            updated: "2026-01-01T00:00:00Z".into(),
+        };
         s.lists.push(list.clone());
         Ok(list)
     }
@@ -403,7 +409,8 @@ impl GoogleTasksClient for InMemoryClient {
             let alive: std::collections::HashSet<String> =
                 s.tasks.iter().map(|(_, t)| t.id.clone()).collect();
             let n = s.tasks.len();
-            s.tasks.retain(|(_, t)| t.parent.as_deref().is_none_or(|p| alive.contains(p)));
+            s.tasks
+                .retain(|(_, t)| t.parent.as_deref().is_none_or(|p| alive.contains(p)));
             if s.tasks.len() == n {
                 break;
             }
@@ -441,7 +448,6 @@ impl GoogleTasksClient for InMemoryClient {
         Ok(t.clone())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -594,7 +600,13 @@ mod tests {
     async fn insert_to_nonexistent_list_returns_not_found() {
         let c = InMemoryClient::new();
         let err = c
-            .insert_task("no-list", NewTask { title: "x".into(), ..Default::default() })
+            .insert_task(
+                "no-list",
+                NewTask {
+                    title: "x".into(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, ApiError::NotFound));
@@ -606,7 +618,15 @@ mod tests {
         c.seed_list("L1", "Inbox");
         let t = c.seed_task("L1", "T1", "orig", "1");
         let patched = c
-            .patch_task("L1", &t.id, TaskPatch { title: Some("new".into()), ..Default::default() }, None)
+            .patch_task(
+                "L1",
+                &t.id,
+                TaskPatch {
+                    title: Some("new".into()),
+                    ..Default::default()
+                },
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(patched.title, "new");

@@ -48,8 +48,7 @@ pub fn instance_prefix() -> Option<String> {
     match std::env::var(INSTANCE_ENV) {
         Ok(raw) if raw.trim().is_empty() => None,
         Ok(raw) => Some(
-            sanitize_prefix(raw.trim())
-                .unwrap_or_else(|e| panic!("invalid {INSTANCE_ENV}: {e}")),
+            sanitize_prefix(raw.trim()).unwrap_or_else(|e| panic!("invalid {INSTANCE_ENV}: {e}")),
         ),
         Err(_) => None,
     }
@@ -172,8 +171,8 @@ impl AppConfig {
     /// the app. If the file does not exist yet it is created from the embedded
     /// default template first, so the comments are present either way.
     pub fn save_sync_to(path: &std::path::Path, sync: &SyncConfig) -> std::io::Result<()> {
-        let text = std::fs::read_to_string(path)
-            .unwrap_or_else(|_| Self::default_toml().to_string());
+        let text =
+            std::fs::read_to_string(path).unwrap_or_else(|_| Self::default_toml().to_string());
         // Fall back to the default template if the existing file is malformed,
         // rather than silently dropping the user's settings into a blank doc.
         let mut doc = text
@@ -374,8 +373,14 @@ client_id = "partial-id"
         )
         .unwrap();
 
-        AppConfig::save_sync_to(&path, &SyncConfig { push_enabled: true, ..Default::default() })
-            .unwrap();
+        AppConfig::save_sync_to(
+            &path,
+            &SyncConfig {
+                push_enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         let raw = std::fs::read_to_string(&path).unwrap();
         // Credentials and comments survive the write.
@@ -393,8 +398,14 @@ client_id = "partial-id"
     fn save_sync_creates_file_from_template_when_missing() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nested").join("config.toml");
-        AppConfig::save_sync_to(&path, &SyncConfig { push_enabled: true, ..Default::default() })
-            .unwrap();
+        AppConfig::save_sync_to(
+            &path,
+            &SyncConfig {
+                push_enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(path.exists());
         let raw = std::fs::read_to_string(&path).unwrap();
         // Created from the documented template, so the helpful comments exist.

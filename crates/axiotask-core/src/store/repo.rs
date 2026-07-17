@@ -348,12 +348,11 @@ impl Store {
         &self,
         list_id: &str,
     ) -> Result<std::collections::HashSet<String>, StoreError> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean'",
-        )
-        .bind(list_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean'")
+                .bind(list_id)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -455,18 +454,18 @@ impl Store {
                   pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END
               WHERE id = ?12",
         )
-        .bind(remote.etag.as_deref())        // ?1
-        .bind(&remote.updated)               // ?2
-        .bind(expected_local_updated)        // ?3
-        .bind(&remote.parent)                // ?4
-        .bind(&remote.position)              // ?5
-        .bind(&remote.title)                 // ?6
-        .bind(&remote.notes)                 // ?7
-        .bind(remote.status.as_api_str())    // ?8
-        .bind(&remote.due)                   // ?9
-        .bind(&remote.completed)             // ?10
-        .bind(&remote.web_view_link)         // ?11
-        .bind(&remote.id)                    // ?12
+        .bind(remote.etag.as_deref()) // ?1
+        .bind(&remote.updated) // ?2
+        .bind(expected_local_updated) // ?3
+        .bind(&remote.parent) // ?4
+        .bind(&remote.position) // ?5
+        .bind(&remote.title) // ?6
+        .bind(&remote.notes) // ?7
+        .bind(remote.status.as_api_str()) // ?8
+        .bind(&remote.due) // ?9
+        .bind(&remote.completed) // ?10
+        .bind(&remote.web_view_link) // ?11
+        .bind(&remote.id) // ?12
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -584,20 +583,38 @@ impl Store {
         server_updated: &str,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE task_lists SET id = ? WHERE id = ?")
-            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE tasks SET list_id = ? WHERE list_id = ?")
-            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE pending_moves SET list_id = ? WHERE list_id = ?")
-            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE inflight_creates SET list_id = ? WHERE list_id = ?")
-            .bind(remote_id).bind(local_id).execute(&mut *tx).await?;
+            .bind(remote_id)
+            .bind(local_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL,
                  etag = COALESCE(?, etag), updated = ? WHERE id = ?",
         )
-        .bind(etag).bind(server_updated).bind(remote_id).execute(&mut *tx).await?;
+        .bind(etag)
+        .bind(server_updated)
+        .bind(remote_id)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -629,11 +646,10 @@ impl Store {
 
     /// All pending moves awaiting push.
     pub async fn pending_moves(&self) -> Result<Vec<PendingMove>, StoreError> {
-        let rows = sqlx::query(
-            "SELECT task_id, list_id, parent_id, previous_id FROM pending_moves",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT task_id, list_id, parent_id, previous_id FROM pending_moves")
+                .fetch_all(&self.pool)
+                .await?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             out.push(PendingMove {
@@ -681,9 +697,7 @@ impl Store {
 
     /// Drop all local tasks and lists. Used for fresh sync.
     pub async fn clear_all(&self) -> Result<(), StoreError> {
-        sqlx::query("DELETE FROM tasks")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("DELETE FROM tasks").execute(&self.pool).await?;
         sqlx::query("DELETE FROM task_lists")
             .execute(&self.pool)
             .await?;
@@ -826,13 +840,11 @@ impl Store {
         local_id: &str,
         list_id: &str,
     ) -> Result<(), StoreError> {
-        sqlx::query(
-            "INSERT OR REPLACE INTO inflight_creates (local_id, list_id) VALUES (?, ?)",
-        )
-        .bind(local_id)
-        .bind(list_id)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT OR REPLACE INTO inflight_creates (local_id, list_id) VALUES (?, ?)")
+            .bind(local_id)
+            .bind(list_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -976,7 +988,10 @@ mod tests {
         let ids = s.clean_list_ids().await.unwrap();
         // Ghost detection must never see a local-only list, or it would delete
         // it the moment it's absent from the server (which is always).
-        assert!(!ids.contains("LOCAL"), "local-only list excluded from ghost set");
+        assert!(
+            !ids.contains("LOCAL"),
+            "local-only list excluded from ghost set"
+        );
         assert!(ids.contains("SYNCED"));
     }
 
@@ -1016,7 +1031,11 @@ mod tests {
         let s = fresh().await;
         s.upsert_list(&local_list("LOCAL")).await.unwrap();
         s.upsert_list(&list("SYNCED")).await.unwrap();
-        assert_eq!(s.pending_push_count().await.unwrap(), 0, "all clean to start");
+        assert_eq!(
+            s.pending_push_count().await.unwrap(),
+            0,
+            "all clean to start"
+        );
 
         // Dirty task in synced list → counts.
         let mut t = task("T1", "SYNCED", None, "1");
@@ -1055,7 +1074,13 @@ mod tests {
         remote.pending_op = None;
         s.upsert_remote_list(&remote).await.unwrap();
 
-        let l = s.all_lists().await.unwrap().into_iter().find(|l| l.list.id == "L1").unwrap();
+        let l = s
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
         assert_eq!(l.list.title, "My Rename", "local rename preserved");
         assert_eq!(l.sync_state, SyncState::Dirty);
     }
@@ -1125,9 +1150,14 @@ mod tests {
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("update".into());
         s.upsert_task(&t).await.unwrap();
-        s.mark_task_clean("T1", Some("e-new"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
-            .await
-            .unwrap();
+        s.mark_task_clean(
+            "T1",
+            Some("e-new"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        )
+        .await
+        .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].sync_state, SyncState::Clean);
@@ -1149,13 +1179,26 @@ mod tests {
         t.pending_op = Some("update".into());
         t.local_updated = "2026-01-01T00:00:05Z".into(); // re-edited: newer than drain
         s.upsert_task(&t).await.unwrap();
-        s.mark_task_clean("T1", Some("e-new"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")
-            .await
-            .unwrap();
+        s.mark_task_clean(
+            "T1",
+            Some("e-new"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+        )
+        .await
+        .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
-        assert_eq!(rows[0].sync_state, SyncState::Dirty, "newer edit must stay queued");
+        assert_eq!(
+            rows[0].sync_state,
+            SyncState::Dirty,
+            "newer edit must stay queued"
+        );
         assert_eq!(rows[0].pending_op.as_deref(), Some("update"));
-        assert_eq!(rows[0].task.etag.as_deref(), Some("e-new"), "fresh etag adopted");
+        assert_eq!(
+            rows[0].task.etag.as_deref(),
+            Some("e-new"),
+            "fresh etag adopted"
+        );
     }
 
     #[tokio::test]
@@ -1166,7 +1209,9 @@ mod tests {
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("update".into());
         s.upsert_task(&t).await.unwrap();
-        s.refresh_task_meta("T1", Some("e-move"), "2026-02-01T00:00:00Z").await.unwrap();
+        s.refresh_task_meta("T1", Some("e-move"), "2026-02-01T00:00:00Z")
+            .await
+            .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
         assert_eq!(rows[0].sync_state, SyncState::Dirty);
         assert_eq!(rows[0].pending_op.as_deref(), Some("update"));
@@ -1184,9 +1229,16 @@ mod tests {
         s.upsert_task(&task("local-2", "L1", Some("local-1"), "1"))
             .await
             .unwrap();
-        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None)
-            .await
-            .unwrap();
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e9"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await
+        .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
         let parent = rows.iter().find(|r| r.task.id == "remote-1").unwrap();
         let child = rows.iter().find(|r| r.task.id == "local-2").unwrap();
@@ -1213,13 +1265,31 @@ mod tests {
         p.pending_op = Some("create".into());
         p.local_updated = "2026-01-01T00:00:07Z".into(); // newer than the drain snapshot
         s.upsert_task(&p).await.unwrap();
-        s.finish_create("local-1", "remote-1", Some("e9"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None)
-            .await
-            .unwrap();
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e9"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await
+        .unwrap();
         let rows = s.list_tasks("L1").await.unwrap();
-        let row = rows.iter().find(|r| r.task.id == "remote-1").expect("remapped");
-        assert_eq!(row.sync_state, SyncState::Dirty, "mid-flight edit must stay queued");
-        assert_eq!(row.pending_op.as_deref(), Some("update"), "create would duplicate");
+        let row = rows
+            .iter()
+            .find(|r| r.task.id == "remote-1")
+            .expect("remapped");
+        assert_eq!(
+            row.sync_state,
+            SyncState::Dirty,
+            "mid-flight edit must stay queued"
+        );
+        assert_eq!(
+            row.pending_op.as_deref(),
+            Some("update"),
+            "create would duplicate"
+        );
         assert_eq!(row.task.etag.as_deref(), Some("e9"));
         assert_eq!(row.task.title, "typed more while pushing");
     }
@@ -1280,9 +1350,18 @@ mod tests {
 
     #[tokio::test]
     async fn sync_state_round_trips() {
-        assert_eq!(SyncState::parse(SyncState::Clean.as_str()), Some(SyncState::Clean));
-        assert_eq!(SyncState::parse(SyncState::Dirty.as_str()), Some(SyncState::Dirty));
-        assert_eq!(SyncState::parse(SyncState::Deleted.as_str()), Some(SyncState::Deleted));
+        assert_eq!(
+            SyncState::parse(SyncState::Clean.as_str()),
+            Some(SyncState::Clean)
+        );
+        assert_eq!(
+            SyncState::parse(SyncState::Dirty.as_str()),
+            Some(SyncState::Dirty)
+        );
+        assert_eq!(
+            SyncState::parse(SyncState::Deleted.as_str()),
+            Some(SyncState::Deleted)
+        );
         assert_eq!(SyncState::parse("unknown"), None);
     }
 
@@ -1373,14 +1452,24 @@ mod tests {
         t.pending_op = Some("update".into());
         s.upsert_task(&t).await.unwrap();
         s.delete_task_hard_if_clean("T1").await.unwrap();
-        assert_eq!(s.list_tasks("L1").await.unwrap().len(), 1, "dirty row spared");
+        assert_eq!(
+            s.list_tasks("L1").await.unwrap().len(),
+            1,
+            "dirty row spared"
+        );
 
         // Clean row is removed.
         let mut c = task("T2", "L1", None, "2");
         c.sync_state = SyncState::Clean;
         s.upsert_task(&c).await.unwrap();
         s.delete_task_hard_if_clean("T2").await.unwrap();
-        assert!(s.list_tasks("L1").await.unwrap().iter().all(|r| r.task.id != "T2"));
+        assert!(
+            s.list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.task.id != "T2")
+        );
     }
 
     #[tokio::test]
@@ -1401,8 +1490,12 @@ mod tests {
         let s = fresh().await;
         s.upsert_list(&local_list("LOCAL")).await.unwrap();
         s.upsert_list(&list("SYNCED")).await.unwrap();
-        s.upsert_task(&task("LT", "LOCAL", None, "1")).await.unwrap();
-        s.upsert_task(&task("ST", "SYNCED", None, "1")).await.unwrap();
+        s.upsert_task(&task("LT", "LOCAL", None, "1"))
+            .await
+            .unwrap();
+        s.upsert_task(&task("ST", "SYNCED", None, "1"))
+            .await
+            .unwrap();
 
         s.clear_synced().await.unwrap();
 
@@ -1426,7 +1519,9 @@ mod tests {
         // Deleting synced lists must not leave orphan pending moves.
         let s = fresh().await;
         s.upsert_list(&list("SYNCED")).await.unwrap();
-        s.upsert_task(&task("ST", "SYNCED", None, "1")).await.unwrap();
+        s.upsert_task(&task("ST", "SYNCED", None, "1"))
+            .await
+            .unwrap();
         s.record_move("ST", "SYNCED", None, None).await.unwrap();
         s.clear_synced().await.unwrap();
         assert!(s.pending_moves().await.unwrap().is_empty());
@@ -1439,7 +1534,9 @@ mod tests {
         s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
         s.upsert_task(&task("P1", "L1", None, "2")).await.unwrap();
         s.upsert_task(&task("T0", "L1", None, "3")).await.unwrap();
-        s.record_move("T1", "L1", Some("P1"), Some("T0")).await.unwrap();
+        s.record_move("T1", "L1", Some("P1"), Some("T0"))
+            .await
+            .unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].task_id, "T1");
@@ -1509,7 +1606,16 @@ mod tests {
         t.pending_op = Some("create".into());
         s.upsert_task(&t).await.unwrap();
         s.record_inflight_create("local-1", "L1").await.unwrap();
-        s.finish_create("local-1", "remote-1", Some("e1"), "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None).await.unwrap();
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e1"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await
+        .unwrap();
         assert!(s.inflight_creates().await.unwrap().is_empty());
     }
 
@@ -1527,9 +1633,22 @@ mod tests {
     async fn finish_create_rewrites_pending_move_task_id() {
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
-        s.upsert_task(&task("local-1", "L1", None, "1")).await.unwrap();
-        s.record_move("local-1", "L1", None, Some("other")).await.unwrap();
-        s.finish_create("local-1", "remote-1", None, "2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z", None).await.unwrap();
+        s.upsert_task(&task("local-1", "L1", None, "1"))
+            .await
+            .unwrap();
+        s.record_move("local-1", "L1", None, Some("other"))
+            .await
+            .unwrap();
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            None,
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await
+        .unwrap();
         let moves = s.pending_moves().await.unwrap();
         assert_eq!(moves.len(), 1);
         assert_eq!(moves[0].task_id, "remote-1");
