@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import TaskRow from "../TaskRow.svelte";
 
 function makeTask(overrides = {}) {
@@ -35,6 +35,10 @@ const defaultProps = {
   showList: false,
   subtaskProgress: null,
 };
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("GH#18: Rich task widget — metadata always visible", () => {
   describe("Checkbox and title always rendered", () => {
@@ -279,5 +283,65 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       await fireEvent.click(screen.getByText("no date"));
       expect(onpickdate).toHaveBeenCalledWith("t1");
     });
+  });
+});
+
+describe("#50: touch task row interactions", () => {
+  it("long-pressing the row toggles bulk selection", async () => {
+    vi.useFakeTimers();
+    const onselect = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onselect },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 40, clientY: 80 }] });
+    vi.advanceTimersByTime(500);
+    await Promise.resolve();
+
+    expect(onselect).toHaveBeenCalledWith("t1");
+  });
+
+  it("cancels long-press selection when the touch moves", async () => {
+    vi.useFakeTimers();
+    const onselect = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onselect },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 40, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 45, clientY: 112 }] });
+    vi.advanceTimersByTime(500);
+
+    expect(onselect).not.toHaveBeenCalled();
+  });
+
+  it("swiping right completes the task", async () => {
+    const ontoggle = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), ontoggle },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 20, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 126, clientY: 84 }] });
+    await fireEvent.touchEnd(row);
+
+    expect(ontoggle).toHaveBeenCalledWith("t1");
+  });
+
+  it("swiping left defers the task to tomorrow", async () => {
+    const onsetdue = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onsetdue },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 140, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 36, clientY: 84 }] });
+    await fireEvent.touchEnd(row);
+
+    expect(onsetdue).toHaveBeenCalledWith("t1", "Tomorrow");
   });
 });

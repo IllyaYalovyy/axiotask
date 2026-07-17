@@ -5,6 +5,62 @@
   let touchTimer = $state(null);
   let touchDragging = $state(false);
   let isDragging = $state(false);
+  let rowTouch = $state(null);
+  let suppressNextClick = $state(false);
+
+  function clearRowTouchTimer() {
+    if (rowTouch?.timer) clearTimeout(rowTouch.timer);
+    if (rowTouch) rowTouch.timer = null;
+  }
+
+  function handleRowTouchStart(e) {
+    if (e.target.closest(".drag-handle, .checkbox, .actions, .edit-input, a, button")) return;
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    clearRowTouchTimer();
+    const timer = setTimeout(() => {
+      if (!rowTouch?.moved) {
+        suppressNextClick = true;
+        onselect?.(task.id);
+      }
+    }, 450);
+    rowTouch = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      moved: false,
+      timer,
+    };
+  }
+
+  function handleRowTouchMove(e) {
+    if (!rowTouch) return;
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    rowTouch.lastX = touch.clientX;
+    rowTouch.lastY = touch.clientY;
+    const dx = touch.clientX - rowTouch.startX;
+    const dy = touch.clientY - rowTouch.startY;
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      rowTouch.moved = true;
+      clearRowTouchTimer();
+    }
+  }
+
+  function handleRowTouchEnd() {
+    if (!rowTouch) return;
+    clearRowTouchTimer();
+    const dx = rowTouch.lastX - rowTouch.startX;
+    const dy = rowTouch.lastY - rowTouch.startY;
+    const isHorizontalSwipe = Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy) * 1.5;
+    if (isHorizontalSwipe) {
+      suppressNextClick = true;
+      if (dx > 0) ontoggle?.(task.id);
+      else onsetdue?.(task.id, "Tomorrow");
+    }
+    rowTouch = null;
+  }
 
   function handleTouchStart(e) {
     if (!draggable) return;
@@ -47,6 +103,12 @@
   }
 
   function handleRowClick(e) {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.target.closest(".checkbox, .edit-input, .actions")) return;
     if (e.ctrlKey || e.metaKey) { onselect?.(task.id); return; }
     onclick?.(task.id);
@@ -125,6 +187,10 @@
   class:dragging={isDragging}
   style="padding-left: {task.depth * 1.5 + 0.5}rem"
   onclick={handleRowClick}
+  ontouchstart={handleRowTouchStart}
+  ontouchmove={handleRowTouchMove}
+  ontouchend={handleRowTouchEnd}
+  ontouchcancel={handleRowTouchEnd}
   oncontextmenu={handleContextMenu}
   ondragover={handleDragOver}
   ondrop={handleDrop}

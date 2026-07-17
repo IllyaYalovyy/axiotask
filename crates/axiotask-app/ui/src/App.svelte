@@ -58,6 +58,10 @@
   let showMobileDrawer = $state(false);
   let quickAddTitle = $state("");
   let quickAddInput = $state(null);
+  let contentEl = $state(null);
+  let pullTouch = $state(null);
+  let pullArmed = $state(false);
+  let pullRefreshing = $state(false);
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -611,6 +615,46 @@
     else { syncStatus = "error"; error = "Sync failed"; }
   }
 
+  async function refreshFromPull() {
+    if (pullRefreshing) return;
+    pullRefreshing = true;
+    try {
+      if (authenticated) await doSync();
+      else await loadAll();
+    } finally {
+      pullRefreshing = false;
+      pullArmed = false;
+    }
+  }
+
+  function handleContentTouchStart(e) {
+    if (e.target.closest("input, textarea, select, button, a")) return;
+    const scroller = e.target.closest(".list-view, .smart-view");
+    if ((scroller?.scrollTop ?? contentEl?.scrollTop ?? 0) > 0) return;
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    pullTouch = { startX: touch.clientX, startY: touch.clientY, lastX: touch.clientX, lastY: touch.clientY };
+    pullArmed = false;
+  }
+
+  function handleContentTouchMove(e) {
+    if (!pullTouch) return;
+    const touch = e.touches?.[0];
+    if (!touch) return;
+    pullTouch.lastX = touch.clientX;
+    pullTouch.lastY = touch.clientY;
+    const dx = touch.clientX - pullTouch.startX;
+    const dy = touch.clientY - pullTouch.startY;
+    pullArmed = dy >= 70 && dy > Math.abs(dx) * 1.5;
+  }
+
+  function handleContentTouchEnd() {
+    const shouldRefresh = pullArmed;
+    pullTouch = null;
+    pullArmed = false;
+    if (shouldRefresh) refreshFromPull();
+  }
+
   async function doFreshSync() {
     if (!confirm("Drop all local data and re-download from Google?")) return;
     syncStatus = "syncing";
@@ -1133,7 +1177,18 @@
       counts={viewCounts}
     />
   </div>
-  <section class="content">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <section
+    class="content"
+    bind:this={contentEl}
+    ontouchstart={handleContentTouchStart}
+    ontouchmove={handleContentTouchMove}
+    ontouchend={handleContentTouchEnd}
+    ontouchcancel={handleContentTouchEnd}
+  >
+    {#if pullArmed || pullRefreshing}
+      <div class="pull-refresh" role="status">{pullRefreshing ? "Refreshing..." : "Release to refresh"}</div>
+    {/if}
     <div class="toolbar">
       <button
         class="mobile-nav-btn"
@@ -1195,6 +1250,7 @@
       <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
+  <button class="mobile-fab" type="button" aria-label="New task" onclick={newTask}>+</button>
   {#if showMobileDrawer}
     <button
       class="mobile-drawer-backdrop"
@@ -1298,7 +1354,13 @@
   :global(*, *::before, *::after) { box-sizing: border-box; }
   .app { display: flex; height: 100vh; height: 100dvh; }
   .sidebar-shell { display: flex; flex: 0 0 auto; min-height: 0; }
-  .content { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
+  .content { position: relative; flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
+  .pull-refresh {
+    position: absolute; top: 0.45rem; left: 50%; transform: translateX(-50%); z-index: 900;
+    padding: 0.3rem 0.65rem; border-radius: 999px; background: var(--bg-elevated);
+    color: var(--fg-secondary); border: 1px solid var(--border-faint); font-size: 0.75rem;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18); pointer-events: none;
+  }
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
   .mobile-nav-btn { display: none; background: none; border: 1px solid var(--border); color: var(--fg-secondary); width: 2rem; height: 2rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
   .mobile-nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
@@ -1313,6 +1375,13 @@
   .quick-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
   .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: var(--bg-hover); }
+  .mobile-fab {
+    display: none; position: fixed; right: 1rem; bottom: 1rem; z-index: 950;
+    width: 3.5rem; height: 3.5rem; border-radius: 50%; border: 0;
+    background: var(--accent); color: var(--bg); font-size: 2rem; line-height: 1;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28); cursor: pointer;
+  }
+  .mobile-fab:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
   .view-title { flex: 0 0 auto; font-size: 0.9rem; font-weight: 600; color: var(--fg); }
   .toggle { font-size: 0.8rem; color: var(--fg-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
@@ -1351,6 +1420,8 @@
       position: fixed; inset: 0; z-index: 1090; border: 0; padding: 0;
       background: rgba(0,0,0,0.45); cursor: pointer;
     }
+    .mobile-fab { display: inline-flex; align-items: center; justify-content: center; }
+    .new-task-btn { display: none; }
   }
 
   /* Touch devices: 44px minimum tap targets */
