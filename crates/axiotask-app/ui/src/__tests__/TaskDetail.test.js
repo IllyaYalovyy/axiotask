@@ -25,7 +25,14 @@ function mockBackend(tasks = [], subtasks = []) {
         if (t) t.notes = args.notes;
         return null;
       }
-      case "set_due": return null;
+      case "set_due": {
+        const t = taskStore.find((x) => x.id === args.id);
+        if (t) {
+          if (args.mv === "Clear") t.due = null;
+          else if (args.mv?.startsWith("raw:")) t.due = `${args.mv.slice(4)}T00:00:00.000Z`;
+        }
+        return null;
+      }
       case "toggle_complete": {
         const t = taskStore.find((x) => x.id === args.id);
         if (t)
@@ -156,6 +163,28 @@ describe("TaskDetail Panel (GH#7)", () => {
         expect(item).toHaveClass("completed");
       });
     });
+
+    it("lets a parent detail panel edit subtask due dates inline", async () => {
+      const parent = task("t1", "Parent");
+      const sub = task("s1", "Dated Sub", { parent: "t1", due: "2026-06-10T00:00:00.000Z" });
+      mockBackend([parent], [sub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent"));
+      await waitFor(() => expect(screen.getAllByText("Dated Sub").length).toBeGreaterThanOrEqual(1));
+
+      await fireEvent.click(screen.getByRole("button", { name: "Subtask due date: 2026-06-10" }));
+      await waitFor(() => expect(screen.getByRole("dialog", { name: "Pick a date" })).toBeInTheDocument());
+      await fireEvent.click(screen.getByLabelText("2026-06-17"));
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("set_due", { id: "s1", mv: "raw:2026-06-17" });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Subtask due date: 2026-06-17" })).toBeInTheDocument();
+      });
+    });
   });
 
   describe("Editing and saving", () => {
@@ -254,7 +283,7 @@ describe("TaskDetail Panel (GH#7)", () => {
       const d = new Date();
       const localToday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       await fireEvent.click(screen.getByText("Today"));
-      expect(screen.getByLabelText("Due date")).toHaveTextContent(localToday);
+      await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent(localToday));
     });
 
     it("Today uses the LOCAL date, not UTC — no off-by-one west of UTC in the evening", async () => {
@@ -274,7 +303,7 @@ describe("TaskDetail Panel (GH#7)", () => {
         await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
         await fireEvent.click(screen.getByText("Today"));
-        expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-07-10");
+        await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-07-10"));
       } finally {
         vi.useRealTimers();
         if (origTZ === undefined) delete process.env.TZ;
@@ -291,7 +320,7 @@ describe("TaskDetail Panel (GH#7)", () => {
       await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent("2026-06-10"));
 
       await fireEvent.click(screen.getByText("Clear"));
-      expect(screen.getByLabelText("Due date")).toHaveTextContent("No date");
+      await waitFor(() => expect(screen.getByLabelText("Due date")).toHaveTextContent("No date"));
     });
 
     it("the Due date field opens our calendar popover, which closes on pick", async () => {

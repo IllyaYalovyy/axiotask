@@ -20,7 +20,14 @@ function mockBackend(tasks = []) {
       }
       case "rename_task": { const t = taskStore.find(x => x.id === args.id); if (t) t.title = args.title; return null; }
       case "set_notes": { const t = taskStore.find(x => x.id === args.id); if (t) t.notes = args.notes; return null; }
-      case "set_due": return null;
+      case "set_due": {
+        const t = taskStore.find(x => x.id === args.id);
+        if (t) {
+          if (args.mv === "Clear") t.due = null;
+          else if (args.mv?.startsWith("raw:")) t.due = `${args.mv.slice(4)}T00:00:00.000Z`;
+        }
+        return null;
+      }
       case "toggle_complete": { const t = taskStore.find(x => x.id === args.id); if (t) t.status = t.status === "needsAction" ? "completed" : "needsAction"; return null; }
       case "delete_task": { taskStore = taskStore.filter(t => t.id !== args.id); return null; }
       case "move_to_list": return null;
@@ -58,6 +65,20 @@ describe("Detail Panel Workflows", () => {
         expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1" }));
       });
     });
+
+    it("focuses the new subtask title field after creating it", async () => {
+      mockBackend([task("t1", "Parent task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+
+      await fireEvent.click(container.querySelector(".add-subtask-btn"));
+
+      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveFocus());
+    });
   });
 
   describe("UT-36: Auto-save on close", () => {
@@ -81,6 +102,23 @@ describe("Detail Panel Workflows", () => {
       // Should have called rename_task
       await waitFor(() => {
         expect(invoke).toHaveBeenCalledWith("rename_task", { id: "t1", title: "New title" });
+      });
+    });
+
+    it("auto-saves edited title on blur without pressing Save", async () => {
+      mockBackend([task("t1", "Original title")]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Original title")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Original title"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+
+      const titleInput = screen.getByLabelText("Title");
+      await fireEvent.input(titleInput, { target: { value: "Blur saved title" } });
+      await fireEvent.blur(titleInput);
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("rename_task", { id: "t1", title: "Blur saved title" });
       });
     });
   });

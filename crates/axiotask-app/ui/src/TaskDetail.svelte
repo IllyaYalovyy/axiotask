@@ -1,5 +1,5 @@
 <script>
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import DatePicker from "./DatePicker.svelte";
   let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
@@ -13,8 +13,10 @@
   // <input type="date">: WebKitGTK's native date popup does not close when a day
   // is picked, and it ignores the app's light/dark theme.
   let showDatePicker = $state(false);
+  let subtaskDatePickerTask = $state(null);
 
   let prevTaskId = $state(null);
+  let titleInput = $state(null);
   // The task's values when it was loaded, so we only save fields the user
   // actually changed. Saving unchanged fields would needlessly mark the task
   // dirty and trigger a push (and, if it races another push, a 412 conflict).
@@ -25,8 +27,6 @@
     return text ? (text.match(/https?:\/\/[^\s)>\]]+/g) || []) : [];
   }
   let detectedLinks = $derived([...new Set([...extractUrls(title), ...extractUrls(notes)])]);
-
-  const dueOf = (d) => (d ? `${d}T00:00:00.000Z` : null);
 
   // Local calendar date as YYYY-MM-DD. Must NOT go through toISOString(), which
   // converts to UTC — west of UTC in the evening that rolls to tomorrow, so
@@ -39,7 +39,7 @@
     const out = {};
     if (title !== orig.title) out.title = title;
     if (notes !== orig.notes) out.notes = notes;
-    if (dueOf(due) !== dueOf(orig.due)) out.due = dueOf(due);
+    if (due !== orig.due) out.due = due || null;
     return out;
   }
 
@@ -67,6 +67,7 @@
         // A different task: load it wholesale.
         title = t; notes = n; due = d; selectedList = l;
         prevTaskId = id;
+        if (!t) tick().then(() => titleInput?.focus());
       } else {
         // Same task, refreshed from the store (an inline rename, a sync pull, a
         // quick date action). Adopt each incoming value only where the user has
@@ -82,8 +83,53 @@
 
   function save() {
     const ch = changedFields();
-    if (Object.keys(ch).length) onsave(task.id, ch);
-    if (selectedList !== orig.list) onmovelist(task.id, selectedList);
+    if (Object.keys(ch).length) {
+      onsave(task.id, ch);
+      orig = { ...orig, ...ch, due: ch.due ?? (ch.due === null ? "" : orig.due) };
+    }
+    if (selectedList !== orig.list) {
+      onmovelist(task.id, selectedList);
+      orig = { ...orig, list: selectedList };
+    }
+  }
+
+  function saveTitle() {
+    if (title === orig.title) return;
+    onsave(task.id, { title });
+    orig = { ...orig, title };
+  }
+
+  function saveNotes() {
+    if (notes === orig.notes) return;
+    onsave(task.id, { notes });
+    orig = { ...orig, notes };
+  }
+
+  function saveDue(nextDue = due) {
+    due = nextDue;
+    if (due === orig.due) return;
+    onsave(task.id, { due: due || null });
+    orig = { ...orig, due };
+  }
+
+  function saveList() {
+    if (selectedList === orig.list) return;
+    onmovelist(task.id, selectedList);
+    orig = { ...orig, list: selectedList };
+  }
+
+  function subtaskDue(sub) {
+    return sub.due ? sub.due.slice(0, 10) : "";
+  }
+
+  function openSubtaskDatePicker(sub) {
+    subtaskDatePickerTask = sub;
+  }
+
+  function saveSubtaskDue(date) {
+    const sub = subtaskDatePickerTask;
+    subtaskDatePickerTask = null;
+    if (sub) onsave(sub.id, { due: date || null });
   }
 
   function handleKeydown(e) {
@@ -124,7 +170,7 @@
 
   <div class="field">
     <label for="detail-title">Title</label>
-    <input id="detail-title" type="text" bind:value={title} placeholder="Task title" />
+    <input id="detail-title" type="text" bind:this={titleInput} bind:value={title} onblur={saveTitle} placeholder="Task title" />
   </div>
 
   {#if task.web_view_link}
@@ -143,11 +189,11 @@
       {due || "No date"}
     </button>
     <div class="quick-dates">
-      <button onclick={() => { const d = new Date(); due = localISO(d); }}>Today</button>
-      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); due = localISO(d); }}>Tomorrow</button>
-      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); due = localISO(d); }}>+1 week</button>
-      <button onclick={() => { const d = new Date(); d.setMonth(d.getMonth()+1); due = localISO(d); }}>+1 month</button>
-      <button onclick={() => due = ""}>Clear</button>
+      <button onclick={() => { const d = new Date(); saveDue(localISO(d)); }}>Today</button>
+      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+1); saveDue(localISO(d)); }}>Tomorrow</button>
+      <button onclick={() => { const d = new Date(); d.setDate(d.getDate()+7); saveDue(localISO(d)); }}>+1 week</button>
+      <button onclick={() => { const d = new Date(); d.setMonth(d.getMonth()+1); saveDue(localISO(d)); }}>+1 month</button>
+      <button onclick={() => saveDue("")}>Clear</button>
     </div>
   </div>
 
@@ -162,7 +208,7 @@
 
   <div class="field">
     <label for="detail-list">List</label>
-    <select id="detail-list" value={selectedList} onchange={(e) => (selectedList = e.currentTarget.value)}>
+    <select id="detail-list" value={selectedList} onchange={(e) => { selectedList = e.currentTarget.value; saveList(); }}>
       {#each lists as list}
         <option value={list.id}>{list.title}</option>
       {/each}
@@ -171,7 +217,7 @@
 
   <div class="field">
     <label for="detail-notes">Notes</label>
-    <textarea id="detail-notes" bind:value={notes} placeholder="Add notes..." rows="6"></textarea>
+    <textarea id="detail-notes" bind:value={notes} onblur={saveNotes} placeholder="Add notes..." rows="6"></textarea>
   </div>
 
   {#if detectedLinks.length > 0}
@@ -203,6 +249,15 @@
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <span class="subtask-title clickable" onclick={() => openSub(sub)}>{sub.title || "Untitled"}</span>
+              <button
+                class="subtask-due"
+                class:empty={!subtaskDue(sub)}
+                aria-label={`Subtask due date: ${subtaskDue(sub) || "No date"}`}
+                title="Pick subtask due date"
+                onclick={(e) => { e.stopPropagation(); openSubtaskDatePicker(sub); }}
+              >
+                {subtaskDue(sub) || "no date"}
+              </button>
             </div>
           {/each}
         </div>
@@ -218,8 +273,16 @@
 {#if showDatePicker}
   <DatePicker
     value={due || null}
-    onselect={(d) => { due = d || ""; showDatePicker = false; }}
+    onselect={(d) => { saveDue(d || ""); showDatePicker = false; }}
     onclose={() => (showDatePicker = false)}
+  />
+{/if}
+
+{#if subtaskDatePickerTask}
+  <DatePicker
+    value={subtaskDue(subtaskDatePickerTask) || null}
+    onselect={saveSubtaskDue}
+    onclose={() => (subtaskDatePickerTask = null)}
   />
 {/if}
 
@@ -298,9 +361,16 @@
   .subtask-item:hover { background: var(--bg-hover); }
   .subtask-item.completed .subtask-title { text-decoration: line-through; opacity: 0.5; }
   .subtask-check { cursor: pointer; font-size: 0.9rem; }
-  .subtask-title { font-size: 0.85rem; }
+  .subtask-title { font-size: 0.85rem; flex: 1; min-width: 0; }
   .subtask-title.clickable { cursor: pointer; }
   .subtask-title.clickable:hover { text-decoration: underline; color: var(--accent); }
+  .subtask-due {
+    flex: 0 0 auto; background: var(--bg-input); border: 1px solid var(--border);
+    color: var(--fg-muted); border-radius: 3px; cursor: pointer; font-size: 0.75rem;
+    padding: 0.2rem 0.35rem; font-family: inherit;
+  }
+  .subtask-due.empty { color: var(--fg-faint); }
+  .subtask-due:hover { border-color: var(--accent); color: var(--accent); }
 
   @media (max-width: 700px) {
     .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }
