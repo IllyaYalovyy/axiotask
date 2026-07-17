@@ -1,4 +1,5 @@
 <script>
+  import { tick } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -894,12 +895,11 @@
     await refreshLists([listId]);
   }
 
-  function handleSearchSelect(task) {
+  async function handleSearchSelect(task) {
     // Navigate to the task's list and focus it
     selectedView = task.listId;
-    loadAll().then(() => {
-      openDetail(task);
-    });
+    await tick();
+    openDetail(allTasks.find(t => t.id === task.id) ?? task);
   }
 
   // Context menu for tasks

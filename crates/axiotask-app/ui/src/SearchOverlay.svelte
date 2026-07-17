@@ -7,12 +7,21 @@
 
   $effect(() => { if (inputEl) inputEl.focus(); });
 
+  function matchesQuery(task, normalizedQuery) {
+    return task.title?.toLowerCase().includes(normalizedQuery) ||
+      task.notes?.toLowerCase().includes(normalizedQuery);
+  }
+
+  function rankResults(matches) {
+    return [...matches].sort((a, b) => {
+      if (a.status !== b.status) return a.status === "completed" ? 1 : -1;
+      return 0;
+    });
+  }
+
   let results = $derived(
     query.trim().length > 0
-      ? tasks.filter(t =>
-          t.title?.toLowerCase().includes(query.toLowerCase()) ||
-          t.notes?.toLowerCase().includes(query.toLowerCase())
-        ).slice(0, 20)
+      ? rankResults(tasks.filter(t => matchesQuery(t, query.toLowerCase()))).slice(0, 20)
       : []
   );
 
@@ -46,6 +55,9 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="result" class:selected={i === selectedIdx} onclick={() => { onselect(task); onclose(); }}>
             <span class="result-title">{task.title}</span>
+            {#if task.parent_id}
+              <span class="result-kind">Subtask</span>
+            {/if}
             {#if task.listTitle}
               <span class="result-list">{task.listTitle}</span>
             {/if}
@@ -85,6 +97,7 @@
   }
   .result:hover, .result.selected { background: var(--bg-active); color: var(--fg-strong); }
   .result-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-kind { font-size: 0.7rem; color: var(--fg-secondary); border: 1px solid var(--border); padding: 0.08rem 0.35rem; border-radius: 3px; }
   .result-list { font-size: 0.7rem; color: var(--fg-faint); background: var(--bg-elevated); padding: 0.1rem 0.4rem; border-radius: 3px; }
   .result-due { font-size: 0.7rem; color: var(--fg-muted); }
   .no-results { padding: 1rem; text-align: center; color: var(--fg-faint); font-size: 0.9rem; }

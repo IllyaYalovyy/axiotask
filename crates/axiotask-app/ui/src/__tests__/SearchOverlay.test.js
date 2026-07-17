@@ -2,13 +2,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
+import SearchOverlay from "../SearchOverlay.svelte";
 
 const lists = [{ id: "L1", title: "Work" }, { id: "L2", title: "Personal" }];
 
 function task(id, title, opts = {}) {
   return {
-    id, parent_id: null, title, notes: opts.notes || null,
-    status: "needsAction", due: opts.due || null,
+    id, parent_id: opts.parent_id || null, title, notes: opts.notes || null,
+    status: opts.status || "needsAction", due: opts.due || null,
     position: "00001", sync_state: "clean",
     listId: opts.listId || "L1", listTitle: opts.listTitle || "Work",
   };
@@ -167,6 +168,45 @@ describe("GH#17: Search overlay", () => {
     expect(document.querySelectorAll(".result")[0].classList.contains("selected")).toBe(true);
   });
 
+  it("ranks open results before completed results", async () => {
+    render(SearchOverlay, {
+      props: {
+        tasks: [
+          task("done", "Alpha done", { status: "completed" }),
+          task("open", "Alpha open"),
+        ],
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+
+    await waitFor(() => {
+      const titles = [...document.querySelectorAll(".result-title")].map(el => el.textContent);
+      expect(titles).toEqual(["Alpha open", "Alpha done"]);
+    });
+  });
+
+  it("marks subtask search results", async () => {
+    render(SearchOverlay, {
+      props: {
+        tasks: [task("sub", "Alpha child", { parent_id: "parent" })],
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Subtask")).toBeInTheDocument();
+      expect(screen.getByText("Subtask").closest(".result")).toHaveTextContent("Alpha child");
+    });
+  });
+
   it("selects task on Enter and closes overlay", async () => {
     mockBackend([
       task("t1", "Alpha task"),
@@ -186,6 +226,27 @@ describe("GH#17: Search overlay", () => {
     await waitFor(() => {
       expect(screen.queryByPlaceholderText("Search tasks...")).not.toBeInTheDocument();
     });
+  });
+
+  it("selecting a search result opens it without reloading every list", async () => {
+    mockBackend([
+      task("t1", "Work task", { listId: "L1", listTitle: "Work" }),
+      task("t2", "Personal alpha", { listId: "L2", listTitle: "Personal" }),
+    ]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Work task")).toBeInTheDocument());
+
+    await openSearch();
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+    await waitFor(() => expect(screen.getByText("Personal alpha")).toBeInTheDocument());
+    const listCallsBeforeSelect = invoke.mock.calls.filter(([cmd]) => cmd === "list_tasks").length;
+
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByText("Personal alpha")).toBeInTheDocument());
+    const listCallsAfterSelect = invoke.mock.calls.filter(([cmd]) => cmd === "list_tasks").length;
+    expect(listCallsAfterSelect).toBe(listCallsBeforeSelect);
   });
 
   it("shows 'No tasks found' when no matches", async () => {
