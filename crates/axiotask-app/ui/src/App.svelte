@@ -56,6 +56,8 @@
   let selectedIds = $state(new Set()); // multi-select for bulk operations
   let bulkMovePicker = $state(false); // bulk "move to list" picker open
   let showMobileDrawer = $state(false);
+  let quickAddTitle = $state("");
+  let quickAddInput = $state(null);
 
   // --- Safe invoke ---
   let errorToast = $state(null);
@@ -448,18 +450,8 @@
   }
 
   // --- Actions ---
-  async function newTask() {
-    const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
-    const targetList = isSmartView ? lists[0]?.id : selectedView;
-    if (!targetList) return;
-    const task = await cmd("create_task", { listId: targetList, parentId: null, title: "" });
-    if (task) {
-      newestTaskId = task.id;
-      if (isSmartView) selectedView = targetList;
-      await refreshLists([targetList]);
-      focusIndex = 0;
-      editingId = task.id;
-    }
+  function newTask() {
+    quickAddInput?.focus();
   }
 
   async function createTask(title, listId) {
@@ -470,11 +462,17 @@
     const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
     if (task) {
       newestTaskId = task.id;
-      selectedView = targetList;
       await refreshLists([targetList]);
       focusIndex = 0;
-      editingId = task.id;
     }
+  }
+
+  async function submitQuickAdd(e) {
+    e.preventDefault();
+    const title = quickAddTitle.trim();
+    if (!title) return;
+    await createTask(title, selectedView);
+    quickAddTitle = "";
   }
 
   async function addSubtask(parentId) {
@@ -1146,6 +1144,16 @@
         onclick={() => showMobileDrawer = true}
       >☰</button>
       <span class="view-title">{viewTitle()}</span>
+      <form class="quick-add" onsubmit={submitQuickAdd}>
+        <label class="sr-only" for="quick-add-input">Quick add task</label>
+        <input
+          id="quick-add-input"
+          aria-label="Quick add task"
+          bind:value={quickAddTitle}
+          bind:this={quickAddInput}
+          placeholder={`Add a task${quickAddTargetName() ? ` to ${quickAddTargetName()}` : ""}...`}
+        />
+      </form>
       <button class="new-task-btn" onclick={newTask}>+ New task</button>
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">
@@ -1294,9 +1302,18 @@
   .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
   .mobile-nav-btn { display: none; background: none; border: 1px solid var(--border); color: var(--fg-secondary); width: 2rem; height: 2rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
   .mobile-nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .quick-add { flex: 1 1 18rem; min-width: min(18rem, 100%); max-width: 34rem; }
+  .quick-add input {
+    width: 100%; height: 2rem; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg-elevated); color: var(--fg); padding: 0 0.65rem;
+    font: inherit; font-size: 0.85rem;
+  }
+  .quick-add input::placeholder { color: var(--fg-muted); }
+  .quick-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
   .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: var(--bg-hover); }
-  .view-title { font-size: 0.9rem; font-weight: 600; color: var(--fg); margin-right: auto; }
+  .view-title { flex: 0 0 auto; font-size: 0.9rem; font-weight: 600; color: var(--fg); }
   .toggle { font-size: 0.8rem; color: var(--fg-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
   .clear-btn { background: none; border: 1px solid var(--border-faint); color: var(--fg-muted); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }
@@ -1322,6 +1339,7 @@
   @media (max-width: 700px) {
     .app { flex-direction: column; }
     .toolbar { padding: 0.3rem 0.75rem; }
+    .quick-add { order: 10; flex-basis: 100%; max-width: none; }
     .mobile-nav-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
     .sidebar-shell {
       position: fixed; inset: 0 auto 0 0; z-index: 1100;

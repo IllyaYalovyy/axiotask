@@ -88,12 +88,15 @@ describe("GH#26: Offline-First", () => {
     await waitFor(() => expect(screen.getByText("My Tasks")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("My Tasks"));
 
-    // Create a task via + New task button
+    // Create a task through quick-add.
     await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("+ New task"));
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "Offline capture" } });
+    await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "" }));
+      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "Offline capture" }));
     });
   });
 
@@ -106,12 +109,15 @@ describe("GH#26: Offline-First", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /My Tasks/ })).toBeInTheDocument());
     await fireEvent.click(screen.getByRole("button", { name: /My Tasks/ }));
 
-    // Perform create operation via button
+    // Perform create operation via quick-add.
     await waitFor(() => expect(screen.getByText("+ New task")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("+ New task"));
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "Offline no-sync capture" } });
+    await fireEvent.submit(input.closest("form"));
 
     // Wait for create_task to be called
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "" })));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "Offline no-sync capture" })));
 
     // sync_now should never have been called
     expect(wasSyncCalled()).toBe(false);

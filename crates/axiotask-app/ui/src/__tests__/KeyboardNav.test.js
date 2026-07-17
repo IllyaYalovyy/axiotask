@@ -144,12 +144,11 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("n — new task", () => {
-    it("pressing n creates a new task", async () => {
+    it("pressing n focuses quick-add without creating an empty task", async () => {
       await renderWithTasks();
       await pressKey("n");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1", title: "" }));
-      });
+      expect(screen.getByRole("textbox", { name: /quick add task/i })).toHaveFocus();
+      expect(invoke.mock.calls.filter(c => c[0] === "create_task")).toHaveLength(0);
     });
   });
 
