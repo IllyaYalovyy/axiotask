@@ -217,7 +217,7 @@ describe("UT-03: Fresh sync", () => {
 
   it("clicking Fresh sync calls fresh_sync after confirmation", async () => {
     mockBackend([task("t1", "Local task")]);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, "confirm");
     render(App);
     await waitFor(() => expect(screen.getByText("Local task")).toBeInTheDocument());
 
@@ -228,24 +228,33 @@ describe("UT-03: Fresh sync", () => {
     });
 
     await fireEvent.click(screen.getByText("⟳ Fresh sync"));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alertdialog", { name: /fresh sync/i })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /^fresh sync$/i }));
 
     await waitFor(() => {
       const freshCalls = invoke.mock.calls.filter(c => c[0] === "fresh_sync");
       expect(freshCalls.length).toBe(1);
     });
-    window.confirm.mockRestore();
+    confirmSpy.mockRestore();
   });
 
   it("does not call fresh_sync if user cancels confirmation", async () => {
     mockBackend([task("t1", "Local task")]);
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirmSpy = vi.spyOn(window, "confirm");
     render(App);
     await waitFor(() => expect(screen.getByText("Local task")).toBeInTheDocument());
+    await waitFor(() => {
+      const btn = screen.getByText("⟳ Fresh sync");
+      expect(btn.disabled).toBe(false);
+    });
 
     await fireEvent.click(screen.getByText("⟳ Fresh sync"));
+    await fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
 
+    expect(confirmSpy).not.toHaveBeenCalled();
     const freshCalls = invoke.mock.calls.filter(c => c[0] === "fresh_sync");
     expect(freshCalls).toHaveLength(0);
-    window.confirm.mockRestore();
+    confirmSpy.mockRestore();
   });
 });

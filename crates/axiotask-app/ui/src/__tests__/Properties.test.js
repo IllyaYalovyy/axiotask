@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
 import pkg from "../../package.json";
@@ -37,6 +37,14 @@ function mockBackend(lists = [{ id: "L1", title: "Work" }]) {
       case "list_tasklists": return lists;
       case "list_tasks": return [];
       case "sync_now": return "ok";
+      case "fresh_sync":
+        settings.pending_pushes = 0;
+        settings.sync.last_pulled = 7;
+        settings.sync.last_pushed = 0;
+        settings.sync.last_deleted = 3;
+        settings.sync.total_syncs += 1;
+        settings.sync.last_synced = new Date().toISOString();
+        return "fresh sync: pulled=7, deleted=3";
       case "get_settings": return structuredClone(settings);
       case "set_push_enabled":
         settings.push_enabled = args.enabled;
@@ -229,6 +237,43 @@ describe("Properties dialog", () => {
     await waitFor(() =>
       expect(invoke.mock.calls.some((c) => c[0] === "import_backup")).toBe(true),
     );
+  });
+
+  it("Fresh sync uses a styled confirmation inside Properties", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    await openProperties();
+    const dialog = screen.getByRole("dialog", { name: /properties/i });
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: /fresh sync/i }));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const alert = await screen.findByRole("alertdialog", { name: /fresh sync/i });
+    expect(alert).toHaveTextContent(/drop local data/i);
+    expect(invoke.mock.calls.some((c) => c[0] === "fresh_sync")).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: /^fresh sync$/i }));
+
+    await waitFor(() =>
+      expect(invoke.mock.calls.some((c) => c[0] === "fresh_sync")).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: /properties/i })).toHaveTextContent(/↓7 ↑0/i),
+    );
+    confirmSpy.mockRestore();
+  });
+
+  it("canceling the Fresh sync confirmation keeps local data untouched", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    await openProperties();
+    const dialog = screen.getByRole("dialog", { name: /properties/i });
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: /fresh sync/i }));
+    await fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some((c) => c[0] === "fresh_sync")).toBe(false);
+    expect(screen.queryByRole("alertdialog", { name: /fresh sync/i })).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 
   it("closes on Escape", async () => {

@@ -51,7 +51,7 @@
   let renamingListId = $state(null); // triggers inline rename in sidebar
   let collapsed = $state(new Set());
   let completingIds = $state(new Set());
-  let showClearConfirm = $state(false);
+  let confirmDialog = $state(null); // { title, message, confirmLabel, danger, onconfirm }
   let bulkAdd = $state(null); // { text } when the bulk-add dialog is open
   let selectedIds = $state(new Set()); // multi-select for bulk operations
   let bulkMovePicker = $state(false); // bulk "move to list" picker open
@@ -647,6 +647,20 @@
     else { syncStatus = "error"; error = "Sync failed"; }
   }
 
+  function requestConfirm({ title, message, confirmLabel, danger = true, onconfirm }) {
+    confirmDialog = { title, message, confirmLabel, danger, onconfirm };
+  }
+
+  function cancelConfirm() {
+    confirmDialog = null;
+  }
+
+  async function confirmAction() {
+    const action = confirmDialog?.onconfirm;
+    confirmDialog = null;
+    if (action) await action();
+  }
+
   async function refreshFromPull() {
     if (pullRefreshing) return;
     pullRefreshing = true;
@@ -687,12 +701,20 @@
     if (shouldRefresh) refreshFromPull();
   }
 
-  async function doFreshSync() {
-    if (!confirm("Drop all local data and re-download from Google?")) return;
+  async function executeFreshSync() {
     syncStatus = "syncing";
     const r = await cmd("fresh_sync");
     if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
     else { syncStatus = "error"; error = "Fresh sync failed"; }
+  }
+
+  function doFreshSync() {
+    requestConfirm({
+      title: "Fresh sync",
+      message: "Drop local data and re-download everything from Google Tasks? Unsynced local changes can be removed.",
+      confirmLabel: "Fresh sync",
+      onconfirm: executeFreshSync,
+    });
   }
 
   // Export a complete, human-readable JSON backup of every list and task.
@@ -774,11 +796,18 @@
     propsBusy = false;
   }
 
-  async function freshSyncFromProperties() {
-    propsBusy = true;
-    await doFreshSync();
-    await refreshSettings();
-    propsBusy = false;
+  function freshSyncFromProperties() {
+    requestConfirm({
+      title: "Fresh sync",
+      message: "Drop local data and re-download everything from Google Tasks? Unsynced local changes can be removed.",
+      confirmLabel: "Fresh sync",
+      onconfirm: async () => {
+        propsBusy = true;
+        await executeFreshSync();
+        await refreshSettings();
+        propsBusy = false;
+      },
+    });
   }
 
   // Sign in from the dialog, then refresh so the Account tab updates.
@@ -817,19 +846,18 @@
   }
 
   async function clearCompleted() {
-    showClearConfirm = true;
-  }
-
-  async function confirmClearCompleted() {
     const listId = selectedView !== "today" && selectedView !== "all" ? selectedView : null;
     if (!listId) return;
-    showClearConfirm = false;
-    await cmd("clear_completed", { listId });
-    await refreshLists([listId]);
-  }
-
-  function cancelClearCompleted() {
-    showClearConfirm = false;
+    const count = completedCount();
+    requestConfirm({
+      title: "Clear completed",
+      message: `Delete ${count} completed task${count === 1 ? "" : "s"}? This cannot be undone.`,
+      confirmLabel: "Delete",
+      onconfirm: async () => {
+        await cmd("clear_completed", { listId });
+        await refreshLists([listId]);
+      },
+    });
   }
 
   function completedCount() {
@@ -1028,11 +1056,16 @@
         { id: "exclude", icon: isExcl ? "✅" : "🚫", label: isExcl ? "Include in smart views" : "Exclude from smart views", action: () => toggleExclude(list.id) },
         "separator",
         { id: "delete", icon: "🗑️", label: "Delete list", action: async () => {
-          if (confirm(`Delete "${list.title}" and all its tasks?`)) {
-            await cmd("delete_list", { id: list.id });
-            if (selectedView === list.id) selectedView = "focus";
-            await loadAll();
-          }
+          requestConfirm({
+            title: "Delete list",
+            message: `Delete "${list.title}" and all its tasks? This cannot be undone.`,
+            confirmLabel: "Delete",
+            onconfirm: async () => {
+              await cmd("delete_list", { id: list.id });
+              if (selectedView === list.id) selectedView = "focus";
+              await loadAll();
+            },
+          });
         }},
       ]
     };
@@ -1080,6 +1113,7 @@
       e.preventDefault();
       return;
     }
+    if (confirmDialog) { confirmDialog = null; e.preventDefault(); return; }
     if (showProperties) {
       // Esc closes; all other keys are handled within the dialog (its buttons
       // and checkboxes keep their default behavior) and must not reach the
@@ -1087,7 +1121,6 @@
       if (e.key === "Escape") { showProperties = false; e.preventDefault(); }
       return;
     }
-    if (showClearConfirm) { showClearConfirm = false; e.preventDefault(); return; }
     if (bulkAdd) {
       // The dialog (a textarea) handles its own keys; Esc closes it. Don't let
       // task shortcuts fire underneath.
@@ -1373,13 +1406,18 @@
 {#if datePickerTask}
   <DatePicker value={datePickerTask.due} onselect={handleDatePick} onclose={() => datePickerTask = null} />
 {/if}
-{#if showClearConfirm}
-  <div class="confirm-overlay" role="dialog" aria-modal="true">
+{#if confirmDialog}
+  <div class="confirm-overlay" role="alertdialog" aria-modal="true" aria-label={confirmDialog.title}>
     <div class="confirm-dialog">
-      <p>Delete {completedCount()} completed task{completedCount() === 1 ? "" : "s"}? This cannot be undone.</p>
+      <h2>{confirmDialog.title}</h2>
+      <p>{confirmDialog.message}</p>
       <div class="confirm-actions">
-        <button class="confirm-cancel" onclick={cancelClearCompleted}>Cancel</button>
-        <button class="confirm-delete" onclick={confirmClearCompleted}>Delete</button>
+        <button class="confirm-cancel" onclick={cancelConfirm}>Cancel</button>
+        <button
+          class:confirm-delete={confirmDialog.danger}
+          class:confirm-primary={!confirmDialog.danger}
+          onclick={confirmAction}
+        >{confirmDialog.confirmLabel}</button>
       </div>
     </div>
   </div>
@@ -1469,10 +1507,13 @@
 
   .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
   .confirm-dialog { background: var(--bg-elevated); border: 1px solid var(--border-faint); border-radius: 8px; padding: 1.5rem; max-width: 360px; width: 90%; }
+  .confirm-dialog h2 { margin: 0 0 0.5rem; color: var(--fg); font-size: 1rem; }
   .confirm-dialog p { margin: 0 0 1rem; color: var(--fg); }
   .confirm-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
   .confirm-cancel { background: none; border: 1px solid var(--border-faint); color: var(--fg-secondary); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
   .confirm-cancel:hover { background: var(--border-faint); }
   .confirm-delete { background: var(--danger); border: none; color: var(--fg-strong); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
   .confirm-delete:hover { background: var(--danger); }
+  .confirm-primary { background: var(--accent); border: none; color: var(--bg); padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; }
+  .confirm-primary:hover { filter: brightness(1.05); }
 </style>

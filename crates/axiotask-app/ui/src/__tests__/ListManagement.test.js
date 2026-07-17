@@ -189,9 +189,9 @@ describe("GH#14: List Management", () => {
   });
 
   describe("App integration: delete list via context menu", () => {
-    it("deletes a list after right-click → Delete with confirmation", async () => {
+    it("deletes a list after right-click → Delete with styled confirmation", async () => {
       mockBackend();
-      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const confirmSpy = vi.spyOn(window, "confirm");
       render(App);
       await waitFor(() => expect(screen.getByRole("button", { name: /Work/i })).toBeInTheDocument());
 
@@ -199,28 +199,40 @@ describe("GH#14: List Management", () => {
       await fireEvent.contextMenu(screen.getByRole("button", { name: /Work/i }), { clientX: 100, clientY: 100 });
       await waitFor(() => expect(screen.getByText("Delete list")).toBeInTheDocument());
 
-      // Click Delete — confirm dialog
+      // Click Delete — styled confirmation dialog
       await fireEvent.click(screen.getByText("Delete list"));
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(invoke.mock.calls.some((c) => c[0] === "delete_list")).toBe(false);
+      const alert = await screen.findByRole("alertdialog", { name: /delete list/i });
+      expect(alert).toHaveTextContent(/delete "Work"/i);
+
+      await fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
       await waitFor(() => {
         expect(invoke).toHaveBeenCalledWith("delete_list", { id: "L1" });
       });
       await waitFor(() => expect(screen.queryByRole("button", { name: /^Work$/i })).not.toBeInTheDocument());
+      confirmSpy.mockRestore();
     });
 
-    it("does not delete list if confirmation is cancelled", async () => {
+    it("does not delete list if styled confirmation is cancelled", async () => {
       mockBackend();
-      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const confirmSpy = vi.spyOn(window, "confirm");
       render(App);
       await waitFor(() => expect(screen.getByRole("button", { name: /Work/i })).toBeInTheDocument());
 
       await fireEvent.contextMenu(screen.getByRole("button", { name: /Work/i }), { clientX: 100, clientY: 100 });
       await waitFor(() => expect(screen.getByText("Delete list")).toBeInTheDocument());
 
+      const deleteCallsBefore = invoke.mock.calls.filter((c) => c[0] === "delete_list").length;
       await fireEvent.click(screen.getByText("Delete list"));
+      await fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
 
       // List should still be present — confirm was cancelled
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(invoke.mock.calls.filter((c) => c[0] === "delete_list")).toHaveLength(deleteCallsBefore);
       await waitFor(() => expect(screen.getByRole("button", { name: /Work/i })).toBeInTheDocument());
+      confirmSpy.mockRestore();
     });
   });
 });
