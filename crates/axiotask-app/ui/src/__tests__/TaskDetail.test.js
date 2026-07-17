@@ -164,6 +164,20 @@ describe("TaskDetail Panel (GH#7)", () => {
       });
     });
 
+    it("uses real checkboxes for subtask completion", async () => {
+      const parent = task("t1", "Parent");
+      const sub = task("s1", "Done Sub", { parent: "t1", status: "completed" });
+      mockBackend([parent], [sub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent"));
+      const checkbox = await screen.findByRole("checkbox", { name: /mark done sub incomplete/i });
+      expect(checkbox).toBeChecked();
+      await fireEvent.click(checkbox);
+      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s1" });
+    });
+
     it("lets a parent detail panel edit subtask due dates inline", async () => {
       const parent = task("t1", "Parent");
       const sub = task("s1", "Dated Sub", { parent: "t1", due: "2026-06-10T00:00:00.000Z" });

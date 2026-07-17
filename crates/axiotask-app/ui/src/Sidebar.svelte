@@ -1,4 +1,6 @@
 <script>
+  import { onMount } from "svelte";
+
   let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
@@ -12,6 +14,14 @@
   // Drag-to-reorder state for the lists.
   let draggingListId = $state(null);
   let dropTargetId = $state(null);
+  let nowTick = $state(Date.now());
+
+  onMount(() => {
+    const timer = setInterval(() => {
+      nowTick = Date.now();
+    }, 30_000);
+    return () => clearInterval(timer);
+  });
 
   function handleListDragStart(e, id) {
     // WebKit only initiates a drag when data is set in dragstart.
@@ -52,7 +62,7 @@
 
   function formatSynced(date) {
     if (!date) return "";
-    const secs = Math.floor((Date.now() - date.getTime()) / 1000);
+    const secs = Math.floor((nowTick - date.getTime()) / 1000);
     if (secs < 60) return "just now";
     if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
     return `${Math.floor(secs / 3600)}h ago`;
