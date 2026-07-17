@@ -47,7 +47,7 @@ describe("Sort: Dropdown and modes", () => {
     await fireEvent.click(dropdown);
     expect(screen.getByText(/Due date/)).toBeInTheDocument();
     expect(screen.getByText(/Alphabetical/)).toBeInTheDocument();
-    expect(screen.getByText(/Recently created/)).toBeInTheDocument();
+    expect(screen.getByText(/Reverse my order/)).toBeInTheDocument();
   });
 
   it("sorts by due date — earliest first, no-date last", async () => {
@@ -84,7 +84,7 @@ describe("Sort: Dropdown and modes", () => {
     expect(rows[2].textContent).toContain("Cherry");
   });
 
-  it("sorts by recently created — newest (highest position) first", async () => {
+  it("sorts by reverse manual order — highest position first", async () => {
     localStorage.setItem("axiotask:view", "L1");
     localStorage.setItem("axiotask:sort:L1", "created");
     const tasks = [

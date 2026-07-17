@@ -42,15 +42,27 @@ afterEach(() => {
 
 describe("GH#18: Rich task widget — metadata always visible", () => {
   describe("Checkbox and title always rendered", () => {
-    it("renders checkbox in unchecked state", () => {
-      const { container } = render(TaskRow, { props: { ...defaultProps, task: makeTask() } });
-      expect(container.querySelector(".checkbox")).toBeInTheDocument();
-      expect(container.querySelector(".checkbox").textContent).toBe("☐");
+    it("renders a real checkbox in unchecked state", () => {
+      render(TaskRow, { props: { ...defaultProps, task: makeTask() } });
+      const checkbox = screen.getByRole("checkbox", { name: /mark test task complete/i });
+      expect(checkbox).toBeInTheDocument();
+      expect(checkbox).not.toBeChecked();
     });
 
-    it("renders checkbox in checked state for completed tasks", () => {
-      const { container } = render(TaskRow, { props: { ...defaultProps, task: makeTask({ status: "completed" }) } });
-      expect(container.querySelector(".checkbox").textContent).toBe("☑");
+    it("renders a real checked checkbox for completed tasks", () => {
+      render(TaskRow, { props: { ...defaultProps, task: makeTask({ status: "completed" }) } });
+      expect(screen.getByRole("checkbox", { name: /mark test task incomplete/i })).toBeChecked();
+    });
+
+    it("toggling the checkbox does not select the row", async () => {
+      const onToggle = vi.fn();
+      const onClick = vi.fn();
+      render(TaskRow, {
+        props: { ...defaultProps, task: makeTask(), ontoggle: onToggle, onclick: onClick },
+      });
+      await fireEvent.click(screen.getByRole("checkbox", { name: /mark test task complete/i }));
+      expect(onToggle).toHaveBeenCalledWith("t1");
+      expect(onClick).not.toHaveBeenCalled();
     });
 
     it("renders task title", () => {
@@ -68,28 +80,28 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(metaRow).toBeVisible();
     });
 
-    it("shows notes badge 📝 when task has notes", () => {
+    it("shows notes icon when task has notes", () => {
       const { container } = render(TaskRow, {
         props: { ...defaultProps, task: makeTask({ notes: "Some notes here" }) },
       });
       expect(container.querySelector(".meta-row")).toBeInTheDocument();
-      expect(container.querySelector(".meta-row").textContent).toContain("📝");
+      expect(screen.getByLabelText("Has notes")).toBeInTheDocument();
     });
 
-    it("does not show notes badge when task has no notes", () => {
+    it("does not show notes icon when task has no notes", () => {
       const { container } = render(TaskRow, {
         props: { ...defaultProps, task: makeTask({ notes: null }) },
       });
-      expect(container.querySelector(".meta-row").textContent).not.toContain("📝");
+      expect(container.querySelector(".notes-icon")).not.toBeInTheDocument();
     });
 
-    it("shows link badge 🔗 when title contains URL", () => {
+    it("shows link icon when title contains URL", () => {
       const { container } = render(TaskRow, {
         props: { ...defaultProps, task: makeTask({ title: "Check https://example.com docs" }) },
       });
       const linkBadge = container.querySelector(".link-badge");
       expect(linkBadge).toBeInTheDocument();
-      expect(linkBadge.textContent).toContain("🔗");
+      expect(linkBadge).toHaveAccessibleName(/open link/i);
     });
 
     it("shows link badge 🔗 when notes contain URL", () => {
@@ -255,7 +267,7 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       const marker = container.querySelector(".scheduled-marker");
       expect(marker).toBeInTheDocument();
       expect(marker).toBeVisible();
-      expect(marker.textContent).toContain("📅");
+      expect(marker.querySelector(".icon")).toBeInTheDocument();
     });
 
     it("does not show a scheduled marker when the task has no due date", () => {

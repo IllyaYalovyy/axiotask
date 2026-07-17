@@ -1,5 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import Icon from "./Icon.svelte";
   let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
@@ -120,6 +121,7 @@
   }
 
   function handleCheckboxClick(e) {
+    e.preventDefault();
     e.stopPropagation();
     ontoggle?.(task.id);
   }
@@ -235,9 +237,13 @@
 
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <span class="checkbox" onclick={handleCheckboxClick}>
-      {task.status === "completed" ? "☑" : "☐"}
-    </span>
+    <input
+      class="checkbox"
+      type="checkbox"
+      checked={task.status === "completed"}
+      aria-label={task.status === "completed" ? `Mark ${task.title || "task"} incomplete` : `Mark ${task.title || "task"} complete`}
+      onclick={handleCheckboxClick}
+    />
 
     {#if editing}
       <input
@@ -273,13 +279,17 @@
   <!-- Line 2: Metadata (shown when focused or hovered) -->
   <div class="meta-row">
     {#if hasVisibleNotes}
-      <span class="badge" title="Has notes">📝</span>
+      <span class="badge notes-icon" title="Has notes" aria-label="Has notes">
+        <Icon name="fileText" size={13} />
+      </span>
     {/if}
     {#if urls.length > 0}
-      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]}>🔗{urls.length > 1 ? ` ${urls.length}` : ""}</a>
+      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]} aria-label="Open link">
+        <Icon name="externalLink" size={13} />{#if urls.length > 1}<span class="link-count">{urls.length}</span>{/if}
+      </a>
     {/if}
     {#if task.due}
-      <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled">📅</span>
+      <span class="scheduled-marker" title="Scheduled" aria-label="Scheduled"><Icon name="calendar" size={13} /></span>
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="due {dueClass(task.due)} pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>{formatDue(task.due)}</span>
@@ -339,8 +349,11 @@
   .tree-toggle:hover { color: var(--accent); }
   .tree-icon.sub { color: var(--border-faint); font-size: 0.75rem; }
 
-  .checkbox { flex-shrink: 0; font-size: 1rem; cursor: pointer; }
-  .checkbox:hover { border-color: var(--accent); }
+  .checkbox {
+    flex-shrink: 0; width: 1rem; height: 1rem; margin: 0; cursor: pointer;
+    accent-color: var(--accent);
+  }
+  .checkbox:hover { outline: 1px solid var(--accent); outline-offset: 2px; }
 
   .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9rem; cursor: text; }
   .title:hover { text-decoration: underline; text-decoration-color: var(--border-faint); }
@@ -358,7 +371,7 @@
   @media (pointer: coarse) {
     .actions { display: flex; }
     .actions button { min-width: 44px; min-height: 44px; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
-    .checkbox { font-size: 1.3rem; padding: 0.2rem; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .checkbox { width: 1.3rem; height: 1.3rem; min-width: 44px; min-height: 44px; }
     .task-widget { padding: 0.6rem 0.5rem; min-height: 44px; }
     .title { font-size: 1rem; }
     .meta-row { font-size: 0.8rem; padding-top: 0.3rem; }
@@ -382,9 +395,10 @@
   .progress-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
   .progress-text { color: var(--fg-secondary); }
 
-  .badge { font-size: 0.7rem; cursor: default; }
+  .badge { font-size: 0.7rem; cursor: default; display: inline-flex; align-items: center; gap: 0.2rem; }
   .link-badge { text-decoration: none; color: var(--accent); cursor: pointer; }
   .link-badge:hover { text-decoration: underline; }
+  .link-count { color: var(--fg-secondary); font-size: 0.7rem; }
 
   /* Pending-sync dot: a local change not yet pushed to Google. */
   .sync-pending { color: var(--warning); font-size: 0.5rem; line-height: 1; flex-shrink: 0; cursor: default; }

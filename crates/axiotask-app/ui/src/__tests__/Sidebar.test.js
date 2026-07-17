@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Sidebar from "../Sidebar.svelte";
 
 const lists = [
@@ -15,9 +15,15 @@ function renderSidebar(overrides = {}) {
       selectedView: "focus",
       onselect: vi.fn(),
       onlogin: vi.fn(),
+      onlogout: vi.fn(),
       onsync: vi.fn(),
+      onfreshsync: vi.fn(),
       oncreateList: vi.fn(),
+      onrenameList: vi.fn(),
       onlistaction: vi.fn(),
+      onreorderlists: vi.fn(),
+      onproperties: vi.fn(),
+      ontoggletheme: vi.fn(),
       authenticated: true,
       syncStatus: "idle",
       lastSynced: null,
@@ -29,6 +35,10 @@ function renderSidebar(overrides = {}) {
 }
 
 describe("Sidebar", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe("Smart views", () => {
     it("renders all smart view buttons", () => {
       renderSidebar();
@@ -161,6 +171,20 @@ describe("Sidebar", () => {
       const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
       renderSidebar({ authenticated: true, lastSynced: fiveMinAgo });
       expect(screen.getByText(/Synced 5m ago/i)).toBeInTheDocument();
+    });
+
+    it("updates the last synced age while the sidebar stays open", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-16T12:00:00Z"));
+      renderSidebar({
+        authenticated: true,
+        lastSynced: new Date("2026-07-16T11:59:30Z"),
+      });
+      expect(screen.getByText(/Synced just now/i)).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(screen.getByText(/Synced 1m ago/i)).toBeInTheDocument();
     });
 
     it("shows sync error status", () => {

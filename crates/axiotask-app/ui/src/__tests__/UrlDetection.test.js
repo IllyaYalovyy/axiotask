@@ -86,15 +86,16 @@ describe("GH#21: URL detection and link opening", () => {
   });
 
   describe("Link badge display", () => {
-    it("shows 🔗 badge without count for single URL", () => {
+    it("shows an accessible link icon without count for single URL", () => {
       const { container } = render(TaskRow, {
         props: { ...defaultProps, task: makeTask({ title: "Visit https://example.com" }) },
       });
       const badge = container.querySelector(".link-badge");
-      expect(badge.textContent).toBe("🔗");
+      expect(badge).toHaveAccessibleName("Open link");
+      expect(badge).not.toHaveTextContent("1");
     });
 
-    it("shows 🔗 with count for multiple URLs", () => {
+    it("shows link count for multiple URLs", () => {
       const { container } = render(TaskRow, {
         props: {
           ...defaultProps,
@@ -102,8 +103,8 @@ describe("GH#21: URL detection and link opening", () => {
         },
       });
       const badge = container.querySelector(".link-badge");
-      expect(badge.textContent).toContain("🔗");
       expect(badge.textContent).toContain("3");
+      expect(badge).toHaveAccessibleName("Open link");
     });
 
     it("badge has title attribute with first URL", () => {

@@ -241,11 +241,13 @@
         <div class="subtask-list">
           {#each subtasks as sub}
             <div class="subtask-item" class:completed={sub.status === "completed"}>
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <span class="subtask-check" onclick={() => ontogglesubtask?.(sub.id)}>
-                {sub.status === "completed" ? "☑" : "☐"}
-              </span>
+              <input
+                class="subtask-check"
+                type="checkbox"
+                checked={sub.status === "completed"}
+                aria-label={sub.status === "completed" ? `Mark ${sub.title || "subtask"} incomplete` : `Mark ${sub.title || "subtask"} complete`}
+                onclick={(e) => { e.stopPropagation(); e.preventDefault(); ontogglesubtask?.(sub.id); }}
+              />
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <span class="subtask-title clickable" onclick={() => openSub(sub)}>{sub.title || "Untitled"}</span>
@@ -360,7 +362,10 @@
   .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
   .subtask-item:hover { background: var(--bg-hover); }
   .subtask-item.completed .subtask-title { text-decoration: line-through; opacity: 0.5; }
-  .subtask-check { cursor: pointer; font-size: 0.9rem; }
+  .subtask-check {
+    cursor: pointer; width: 0.95rem; height: 0.95rem; margin: 0;
+    accent-color: var(--accent); flex-shrink: 0;
+  }
   .subtask-title { font-size: 0.85rem; flex: 1; min-width: 0; }
   .subtask-title.clickable { cursor: pointer; }
   .subtask-title.clickable:hover { text-decoration: underline; color: var(--accent); }

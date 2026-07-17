@@ -18,7 +18,7 @@ describe("SortDropdown", () => {
     const dropdown = container.querySelector(".sort-dropdown");
     await fireEvent.click(dropdown);
     expect(screen.getByText(/Alphabetical/)).toBeInTheDocument();
-    expect(screen.getByText(/Recently created/)).toBeInTheDocument();
+    expect(screen.getByText(/Reverse my order/)).toBeInTheDocument();
     expect(screen.getByText(/Due date/)).toBeInTheDocument();
   });
 

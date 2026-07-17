@@ -6,7 +6,7 @@
     { id: "manual", label: "My order" },
     { id: "due", label: "Due date" },
     { id: "alpha", label: "Alphabetical" },
-    { id: "created", label: "Recently created" },
+    { id: "created", label: "Reverse my order" },
   ];
 
   function select(id) { onchange(id); open = false; }
