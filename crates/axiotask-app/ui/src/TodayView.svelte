@@ -18,8 +18,14 @@
     const toIdx = tasks.findIndex(t => t.id === taskId);
     if (fromIdx < 0 || toIdx < 0) { handleDragEnd(); return; }
     const direction = toIdx > fromIdx ? "down" : "up";
-    const steps = Math.abs(toIdx - fromIdx);
-    onreorder?.(draggingId, direction, steps);
+    // Count sibling rows only — rendered rows interleave subtask rows, and
+    // the backend reorders among siblings (see ListView.handleDrop).
+    const parentOf = (t) => t.parent_id ?? null;
+    const dragParent = parentOf(tasks[fromIdx]);
+    const [lo, hi] = fromIdx < toIdx ? [fromIdx + 1, toIdx] : [toIdx, fromIdx - 1];
+    let steps = 0;
+    for (let i = lo; i <= hi; i++) if (parentOf(tasks[i]) === dragParent) steps++;
+    if (steps > 0) onreorder?.(draggingId, direction, steps);
     handleDragEnd();
   }
 

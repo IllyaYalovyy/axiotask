@@ -154,4 +154,58 @@ describe("Inline expandable task tree", () => {
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
     });
   });
+
+  describe("Smart views expand the tree too", () => {
+    it("Focus: the expand toggle actually shows and hides subtask rows", async () => {
+      // Regression: smart views fed only top-level cards to the tree builder,
+      // so the ▾ toggle rendered, flipped its glyph, and did nothing — the
+      // dead-affordance bug all over again, in the most-used views.
+      localStorage.clear();
+      localStorage.setItem("axiotask:view", "focus");
+      mockBackend([
+        task("p1", "Parent card"),
+        task("c1", "Child row", { parent: "p1" }),
+      ]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent card")).toBeInTheDocument());
+      // Children render (expanded by default)…
+      expect(screen.getByText("Child row")).toBeInTheDocument();
+      // …but the sidebar badge still counts top-level cards only.
+      expect(screen.getByRole("button", { name: /Focus 1/ })).toBeInTheDocument();
+
+      await fireEvent.click(screen.getByRole("button", { name: /collapse parent card/i }));
+      expect(screen.queryByText("Child row")).not.toBeInTheDocument();
+      await fireEvent.click(screen.getByRole("button", { name: /expand parent card/i }));
+      expect(screen.getByText("Child row")).toBeInTheDocument();
+    });
+  });
+
+  describe("Drag reorder with an expanded tree", () => {
+    it("counts sibling rows crossed, not subtask rows", async () => {
+      // Regression: steps were raw row distance, so dragging across a parent
+      // with expanded children issued one reorder_task per CHILD row too and
+      // the task landed far past the drop point.
+      localStorage.clear();
+      localStorage.setItem("axiotask:view", "L1");
+      localStorage.setItem("axiotask:sort:L1", "manual");
+      mockBackend([
+        task("a", "Alpha", { pos: "001" }),
+        task("c", "Alpha sub", { parent: "a", pos: "002" }),
+        task("b", "Beta", { pos: "003" }),
+      ]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Beta")).toBeInTheDocument());
+      // Rows: Alpha, Alpha sub, Beta. Drag Beta up onto Alpha — that crosses
+      // two rows but only ONE sibling (Alpha).
+      const handles = screen.getAllByTestId("drag-handle");
+      const zones = screen.getAllByTestId("drop-zone");
+      await fireEvent.dragStart(handles[2], { dataTransfer: { setData: () => {}, effectAllowed: "" } });
+      await fireEvent.drop(zones[0], {});
+      await waitFor(() => {
+        const calls = invoke.mock.calls.filter((call) => call[0] === "reorder_task");
+        expect(calls).toHaveLength(1);
+        expect(calls[0][1]).toMatchObject({ id: "b", direction: "up" });
+      });
+    });
+  });
 });

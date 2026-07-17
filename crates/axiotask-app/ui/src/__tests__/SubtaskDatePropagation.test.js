@@ -45,8 +45,10 @@ describe("Subtask date propagation → effective date", () => {
     ]);
     render(App);
     await waitFor(() => expect(screen.getByText("Parent undated")).toBeInTheDocument());
-    // The subtask never appears as its own row; the undated unrelated task is out.
-    expect(screen.queryByText("Sub due tomorrow")).not.toBeInTheDocument();
+    // The subtask appears as a NESTED row under its parent (expandable tree),
+    // never as a standalone card; the undated unrelated task is out.
+    const subRow = screen.getByText("Sub due tomorrow").closest(".task-widget");
+    expect(subRow.querySelector(".tree-icon.sub")).not.toBeNull();
     expect(screen.queryByText("Unrelated undated")).not.toBeInTheDocument();
     // Badge counts the one parent card.
     expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");

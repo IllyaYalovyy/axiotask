@@ -17,10 +17,16 @@
     const fromIdx = tasks.findIndex(t => t.id === draggingId);
     const toIdx = tasks.findIndex(t => t.id === taskId);
     if (fromIdx < 0 || toIdx < 0) { handleDragEnd(); return; }
-    // Determine direction
     const direction = toIdx > fromIdx ? "down" : "up";
-    const steps = Math.abs(toIdx - fromIdx);
-    onreorder?.(draggingId, direction, steps);
+    // The backend reorders among SIBLINGS, but the rendered rows interleave
+    // subtask rows — counting raw row distance overshoots by every expanded
+    // child crossed. Count only siblings of the dragged task.
+    const parentOf = (t) => t.parent_id ?? null;
+    const dragParent = parentOf(tasks[fromIdx]);
+    const [lo, hi] = fromIdx < toIdx ? [fromIdx + 1, toIdx] : [toIdx, fromIdx - 1];
+    let steps = 0;
+    for (let i = lo; i <= hi; i++) if (parentOf(tasks[i]) === dragParent) steps++;
+    if (steps > 0) onreorder?.(draggingId, direction, steps);
     handleDragEnd();
   }
 </script>

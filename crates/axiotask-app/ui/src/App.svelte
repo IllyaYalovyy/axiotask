@@ -365,12 +365,23 @@
     return allTasks.filter(t => t.listId === listId && (showCompleted || t.status !== "completed"));
   }
 
+  // Smart views select top-level CARDS (that's what the sidebar badges count),
+  // but the tree builder needs the children too or the row's expand toggle is
+  // a dead control. Completed children follow the "Show completed" toggle.
+  function withDescendants(tops) {
+    const out = [...tops];
+    for (const t of tops) {
+      out.push(...descendantsOf(t.id).filter(d => showCompleted || d.status !== "completed"));
+    }
+    return out;
+  }
+
   function visibleTasks() {
     switch (selectedView) {
-      case "focus": return focusTasks();
-      case "upcoming": return upcomingTasks();
-      case "missed": return missedTasks();
-      case "unscheduled": return unscheduledTasks();
+      case "focus": return withDescendants(focusTasks());
+      case "upcoming": return withDescendants(upcomingTasks());
+      case "missed": return withDescendants(missedTasks());
+      case "unscheduled": return withDescendants(unscheduledTasks());
       case "all": return allTasks.filter(t => showCompleted || t.status !== "completed");
       default: return listTasks(selectedView);
     }
@@ -467,7 +478,10 @@
     const decorate = (t, depth) => ({
       ...t,
       depth,
-      hasChildren: allTasks.some(c => c.parent_id === t.id),
+      // Only claim children when child ROWS can actually render (they are in
+      // this view's task set) — otherwise the expand toggle is a dead control
+      // (e.g. every child completed while "Show completed" is off).
+      hasChildren: (childrenByParent.get(t.id) ?? []).length > 0,
       isCollapsed: collapsed.has(t.id),
       inheritedDue: !t.due ? propagatedDueOf(t) : null,
     });
