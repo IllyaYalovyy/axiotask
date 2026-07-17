@@ -45,7 +45,7 @@ async function renderWithTasks(tasks = makeTasks()) {
   mockBackend(lists, tasks);
   localStorage.setItem("axiotask:view", "L1");
   render(App);
-  await waitFor(() => expect(screen.getByText("Task 1")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(tasks[0]?.title || "Task 1")).toBeInTheDocument());
 }
 
 function pressKey(key, opts = {}) {
@@ -219,6 +219,33 @@ describe("Keyboard Navigation", () => {
     it("Shift+Tab on root task does nothing", async () => {
       await renderWithTasks();
       await pressKey("Tab", { shiftKey: true });
+      const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
+      expect(moveCalls).toHaveLength(0);
+    });
+
+    it("Shift+Tab promotes a subtask after its parent", async () => {
+      await renderWithTasks([
+        { id: "t1", parent_id: null, title: "Parent", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
+        { id: "t2", parent_id: "t1", title: "Child", notes: null, status: "needsAction", due: today, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
+      ]);
+      await waitFor(() => expect(screen.getByText("Child")).toBeInTheDocument());
+      await pressKey("j"); // focus child
+      await pressKey("Tab", { shiftKey: true });
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("move_task", { id: "t2", parentId: null, previousId: "t1" });
+      });
+    });
+
+    it("Tab on an existing subtask does not create a nested subtask", async () => {
+      await renderWithTasks([
+        { id: "t1", parent_id: null, title: "Parent", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
+        { id: "t2", parent_id: "t1", title: "Child A", notes: null, status: "needsAction", due: today, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
+        { id: "t3", parent_id: "t1", title: "Child B", notes: null, status: "needsAction", due: today, position: "00000000000003", sync_state: "clean", listId: "L1", listTitle: "Work" },
+      ]);
+      await waitFor(() => expect(screen.getByText("Child A")).toBeInTheDocument());
+      await pressKey("j"); // focus Child A
+      await pressKey("j"); // focus Child B
+      await pressKey("Tab");
       const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
       expect(moveCalls).toHaveLength(0);
     });

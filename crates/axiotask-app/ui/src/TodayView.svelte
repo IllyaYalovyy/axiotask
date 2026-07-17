@@ -1,7 +1,7 @@
 <script>
   import TaskRow from "./TaskRow.svelte";
 
-  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, getSubtaskProgress, showCompleted, viewType = "focus", sortMode = "manual", onreorder } = $props();
+  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, getSubtaskProgress, showCompleted, viewType = "focus", sortMode = "manual", onreorder } = $props();
 
   let draggingId = $state(null);
   let dropTargetIdx = $state(null);
@@ -52,6 +52,7 @@
         {onpickdate}
         {oncontextmenu}
         {onaddsubtask}
+        {ontogglecollapse}
         subtaskProgress={getSubtaskProgress?.(task.id)}
         showList={true}
         draggable={sortMode === "manual"}

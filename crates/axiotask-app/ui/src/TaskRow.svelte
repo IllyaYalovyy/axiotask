@@ -1,6 +1,6 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
   let touchDragging = $state(false);
@@ -135,6 +135,12 @@
     onsetdue?.(task.id, mv);
   }
 
+  function handleToggleCollapse(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    ontogglecollapse?.(task.id);
+  }
+
   // URL detection
   function extractUrls(text) {
     if (!text) return [];
@@ -212,7 +218,15 @@
       >⠿</span>
     {/if}
     {#if task.hasChildren}
-      <span class="tree-icon">{task.isCollapsed ? "▸" : "▾"}</span>
+      <button
+        class="tree-icon tree-toggle"
+        type="button"
+        aria-label={task.isCollapsed ? `Expand ${task.title || "task"}` : `Collapse ${task.title || "task"}`}
+        aria-expanded={!task.isCollapsed}
+        onclick={handleToggleCollapse}
+      >
+        {task.isCollapsed ? "▸" : "▾"}
+      </button>
     {:else if task.parent_id}
       <span class="tree-icon sub">└</span>
     {:else}
@@ -281,7 +295,9 @@
       <span class="no-due pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>no date</span>
     {/if}
     {#if subtaskProgress}
-      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks" onclick={handleToggleCollapse}>
         <span class="progress-bar"><span class="progress-fill" style="width: {(subtaskProgress.done / subtaskProgress.total) * 100}%"></span></span>
         <span class="progress-text">{subtaskProgress.done}/{subtaskProgress.total}</span>
       </span>
@@ -316,6 +332,11 @@
   .main-row { display: flex; align-items: center; gap: 0.4rem; }
 
   .tree-icon { flex-shrink: 0; width: 1rem; text-align: center; font-size: 0.7rem; color: var(--fg-faint); }
+  .tree-toggle {
+    border: 0; background: transparent; padding: 0; height: 1.25rem; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; font-family: inherit;
+  }
+  .tree-toggle:hover { color: var(--accent); }
   .tree-icon.sub { color: var(--border-faint); font-size: 0.75rem; }
 
   .checkbox { flex-shrink: 0; font-size: 1rem; cursor: pointer; }
@@ -356,7 +377,7 @@
     padding: 0.2rem 0 0 2.4rem; font-size: 0.75rem;
   }
 
-  .progress { display: flex; align-items: center; gap: 0.3rem; }
+  .progress { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
   .progress-bar { display: inline-block; width: 60px; height: 6px; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
   .progress-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
   .progress-text { color: var(--fg-secondary); }

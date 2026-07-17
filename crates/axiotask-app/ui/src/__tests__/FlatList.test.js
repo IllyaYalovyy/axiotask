@@ -38,11 +38,11 @@ function task(id, title, opts = {}) {
   return { id, parent_id: opts.parent || null, title, notes: opts.notes || null, status: opts.status || "needsAction", due: opts.due || today, position: opts.pos || id, sync_state: "clean", listId: "L1", listTitle: "Work" };
 }
 
-describe("GH#2: Flat task list", () => {
+describe("Inline expandable task tree", () => {
   beforeEach(() => { localStorage.clear(); localStorage.setItem("axiotask:view", "L1"); invoke.mockReset(); });
 
-  describe("Main list shows only top-level tasks", () => {
-    it("does not render subtasks in the main list", async () => {
+  describe("Main list shows the task hierarchy inline", () => {
+    it("renders subtasks directly under their parent", async () => {
       mockBackend([
         task("t1", "Parent task"),
         task("t2", "Subtask one", { parent: "t1" }),
@@ -52,22 +52,36 @@ describe("GH#2: Flat task list", () => {
       render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
       expect(screen.getByText("Another top-level")).toBeInTheDocument();
-      expect(screen.queryByText("Subtask one")).not.toBeInTheDocument();
-      expect(screen.queryByText("Subtask two")).not.toBeInTheDocument();
+      expect(screen.getByText("Subtask one")).toBeInTheDocument();
+      expect(screen.getByText("Subtask two")).toBeInTheDocument();
     });
 
-    it("no indentation in the main list (flat rendering)", async () => {
+    it("indents subtasks in the main list", async () => {
       mockBackend([
         task("t1", "Parent task"),
         task("t2", "Child task", { parent: "t1" }),
       ]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
-      // All visible task widgets should have no indentation (depth 0 => padding-left: 0.5rem)
       const widgets = container.querySelectorAll(".task-widget");
-      widgets.forEach(w => {
-        expect(w.style.paddingLeft).toBe("0.5rem");
-      });
+      expect(widgets[0].style.paddingLeft).toBe("0.5rem");
+      expect(widgets[1].style.paddingLeft).toBe("2rem");
+    });
+
+    it("collapses and expands subtasks from the inline tree button without opening detail", async () => {
+      mockBackend([
+        task("t1", "Parent task"),
+        task("t2", "Child task", { parent: "t1" }),
+      ]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole("button", { name: "Collapse Parent task" }));
+      await waitFor(() => expect(screen.queryByText("Child task")).not.toBeInTheDocument());
+      expect(screen.queryByText("Task Details")).not.toBeInTheDocument();
+
+      await fireEvent.click(screen.getByRole("button", { name: "Expand Parent task" }));
+      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
     });
   });
 
@@ -109,8 +123,8 @@ describe("GH#2: Flat task list", () => {
       await fireEvent.click(screen.getByText("Parent task"));
       // Detail panel should show subtasks
       await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
-      expect(screen.getByText("Sub A")).toBeInTheDocument();
-      expect(screen.getByText("Sub B")).toBeInTheDocument();
+      expect(screen.getAllByText("Sub A").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Sub B").length).toBeGreaterThanOrEqual(1);
     });
 
     it("subtask checklist shows completed state", async () => {

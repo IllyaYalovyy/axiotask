@@ -196,6 +196,49 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       });
       expect(container.querySelector(".progress")).not.toBeInTheDocument();
     });
+
+    it("clicking progress toggles the subtask tree without selecting the row", async () => {
+      const onToggleCollapse = vi.fn();
+      const onClick = vi.fn();
+      const { container } = render(TaskRow, {
+        props: {
+          ...defaultProps,
+          task: makeTask({ hasChildren: true }),
+          onclick: onClick,
+          ontogglecollapse: onToggleCollapse,
+          subtaskProgress: { done: 1, total: 2 },
+        },
+      });
+      await fireEvent.click(container.querySelector(".progress"));
+      expect(onToggleCollapse).toHaveBeenCalledWith("t1");
+      expect(onClick).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Inline tree affordance", () => {
+    it("renders an accessible expand/collapse button for parent tasks", () => {
+      render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ hasChildren: true, isCollapsed: false, title: "Parent" }) },
+      });
+      const toggle = screen.getByRole("button", { name: "Collapse Parent" });
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("clicking the tree toggle does not open the row", async () => {
+      const onToggleCollapse = vi.fn();
+      const onClick = vi.fn();
+      render(TaskRow, {
+        props: {
+          ...defaultProps,
+          task: makeTask({ hasChildren: true, isCollapsed: true, title: "Parent" }),
+          onclick: onClick,
+          ontogglecollapse: onToggleCollapse,
+        },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Expand Parent" }));
+      expect(onToggleCollapse).toHaveBeenCalledWith("t1");
+      expect(onClick).not.toHaveBeenCalled();
+    });
   });
 
   describe("Scheduled marker", () => {

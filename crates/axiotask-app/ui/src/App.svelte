@@ -441,16 +441,41 @@
   });
 
   function buildFlatTree(tasks) {
-    // Flat list: only top-level tasks, no tree indentation. Carry the inherited
-    // (propagated) date for rows whose own `due` is empty so the row can show
-    // it, read-only and marked, instead of "no date".
-    return tasks.filter(t => !t.parent_id).map(t => ({
+    const taskIds = new Set(tasks.map(t => t.id));
+    const childrenByParent = new Map();
+    for (const t of tasks) {
+      if (!t.parent_id || !taskIds.has(t.parent_id)) continue;
+      (childrenByParent.get(t.parent_id) ?? childrenByParent.set(t.parent_id, []).get(t.parent_id)).push(t);
+    }
+
+    const out = [];
+    const seen = new Set();
+    const decorate = (t, depth) => ({
       ...t,
-      depth: 0,
+      depth,
       hasChildren: allTasks.some(c => c.parent_id === t.id),
-      isCollapsed: false,
+      isCollapsed: collapsed.has(t.id),
       inheritedDue: !t.due ? propagatedDueOf(t) : null,
-    }));
+    });
+    const visit = (t, depth) => {
+      if (seen.has(t.id)) return;
+      seen.add(t.id);
+      out.push(decorate(t, depth));
+      if (collapsed.has(t.id)) return;
+      for (const child of childrenByParent.get(t.id) ?? []) visit(child, depth + 1);
+    };
+
+    for (const t of tasks) {
+      if (!t.parent_id || !taskIds.has(t.parent_id)) visit(t, 0);
+    }
+    return out;
+  }
+
+  function toggleCollapse(id) {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    collapsed = next;
   }
 
   // --- Actions ---
@@ -555,10 +580,17 @@
     themePref = pref; setThemePref(pref);
   }
 
-  async function moveTask(id, parentId) {
+  async function moveTask(id, parentId, previousId = null) {
     const listId = taskListId(id);
-    await cmd("move_task", { id, parentId, previousId: null });
+    await cmd("move_task", { id, parentId, previousId });
     await refreshLists([listId]);
+  }
+
+  async function promoteTask(id) {
+    const task = allTasks.find(t => t.id === id);
+    const parent = task?.parent_id ? allTasks.find(t => t.id === task.parent_id) : null;
+    if (!task || !parent) return;
+    await moveTask(id, parent.parent_id || null, parent.id);
   }
 
   async function reorderTask(id, direction) {
@@ -1137,8 +1169,12 @@
       case "Tab":
         e.preventDefault();
         if (!f) break;
-        if (e.shiftKey) { if (f.parent_id) await moveTask(f.id, null); }
-        else { const prev = flatTasks[focusIndex - 1]; if (prev && prev.depth === f.depth) await moveTask(f.id, prev.id); }
+        if (e.shiftKey) {
+          if (f.parent_id) await promoteTask(f.id);
+        } else {
+          const prev = flatTasks[focusIndex - 1];
+          if (prev && f.depth === 0 && prev.depth === 0) await moveTask(f.id, prev.id);
+        }
         break;
     }
   }
@@ -1239,15 +1275,15 @@
     {:else if error}
       <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   <button class="mobile-fab" type="button" aria-label="New task" onclick={newTask}>+</button>

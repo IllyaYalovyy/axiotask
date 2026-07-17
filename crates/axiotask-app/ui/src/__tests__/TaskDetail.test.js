@@ -138,8 +138,8 @@ describe("TaskDetail Panel (GH#7)", () => {
 
       await fireEvent.click(screen.getByText("Parent Task"));
       await waitFor(() => {
-        expect(screen.getByText("Subtask 1")).toBeInTheDocument();
-        expect(screen.getByText("Subtask 2")).toBeInTheDocument();
+        expect(screen.getAllByText("Subtask 1").length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText("Subtask 2").length).toBeGreaterThanOrEqual(1);
       });
     });
 
