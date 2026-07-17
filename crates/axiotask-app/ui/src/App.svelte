@@ -26,7 +26,6 @@
   let allTasks = $state([]); // all tasks from all lists
   let selectedView = $state("focus"); // "focus" | "upcoming" | "missed" | "unscheduled" | "all" | list id
   let loading = $state(true);
-  let error = $state(null);
   let authenticated = $state(false);
   let syncStatus = $state("idle");
   let lastSynced = $state(null);
@@ -68,11 +67,20 @@
   let errorToast = $state(null);
   let infoToast = $state(null);
 
+  // Backend errors are developer-speak ("not authenticated"); translate the
+  // recurring ones into something a user can act on before toasting.
+  function friendlyError(name, e) {
+    const msg = String(e);
+    if (msg.includes("not authenticated")) return "Not signed in — use “Sign in with Google” to sync.";
+    if (msg.includes("session expired")) return "Google session expired — sign in again to resume sync.";
+    return `Failed: ${name} — ${msg}`;
+  }
+
   async function cmd(name, args = {}) {
     try { return await invoke(name, args); }
     catch (e) {
       console.error(`[${name}]`, e);
-      errorToast = { message: `Failed: ${name} — ${e}`, timer: setTimeout(() => errorToast = null, 5000) };
+      errorToast = { message: friendlyError(name, e), timer: setTimeout(() => errorToast = null, 5000) };
       return null;
     }
   }
@@ -114,6 +122,8 @@
   // The list a task currently belongs to (captured before a mutation).
   function taskListId(id) { return allTasks.find(t => t.id === id)?.listId; }
 
+  let needsReauth = $state(false); // stored session is dead — re-auth required
+
   async function checkAuth() {
     const r = await cmd("auth_status");
     authenticated = r === true;
@@ -136,6 +146,9 @@
     let unlisten;
     listen("sync-updated", (e) => {
       const s = e.payload || {};
+      // A dead session needs an action (the sidebar's "Sign in again"), not
+      // just an error string.
+      needsReauth = s.needs_reauth === true;
       if (s.last_error) {
         syncStatus = "error";
         // The loop retries periodically; only toast a new/changed error so a
@@ -484,6 +497,21 @@
     quickAddInput?.focus();
   }
 
+  // Due date a quick-added task needs to be VISIBLE in the current smart view
+  // (no view switch, per #8): an undated task created from Focus would land in
+  // the default list and silently vanish — typed, Enter, gone.
+  function quickAddDueFor(view) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const d = new Date();
+    switch (view) {
+      case "focus": return local(d);                                   // today
+      case "upcoming": d.setDate(d.getDate() + 7); return local(d);    // +1 week
+      case "missed": return local(d); // can't be born overdue — today is the honest default
+      default: return null; // unscheduled/all/lists: undated is visible as-is
+    }
+  }
+
   async function createTask(title, listId) {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
     const resolvedListId = isSmartView ? null : listId;
@@ -491,6 +519,8 @@
     if (!targetList || !title.trim()) return;
     const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
     if (task) {
+      const due = isSmartView ? quickAddDueFor(selectedView) : null;
+      if (due) await cmd("set_due", { id: task.id, mv: "raw:" + due });
       newestTaskId = task.id;
       await refreshLists([targetList]);
       focusIndex = 0;
@@ -645,7 +675,10 @@
     syncStatus = "syncing";
     const r = await cmd("sync_now");
     if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
-    else { syncStatus = "error"; error = "Sync failed"; }
+    // On failure: the toast (from cmd) and the sidebar status carry the
+    // message. Never set `error` here — that template branch replaces the
+    // entire task list, hiding perfectly good local data over a sync problem.
+    else { syncStatus = "error"; await checkAuth(); }
   }
 
   function requestConfirm({ title, message, confirmLabel, danger = true, onconfirm }) {
@@ -706,7 +739,7 @@
     syncStatus = "syncing";
     const r = await cmd("fresh_sync");
     if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
-    else { syncStatus = "error"; error = "Fresh sync failed"; }
+    else { syncStatus = "error"; await checkAuth(); }
   }
 
   function doFreshSync() {
@@ -742,9 +775,13 @@
 
   async function login() {
     syncStatus = "syncing"; // show loading state
-    const result = await cmd("auth_login");
-    if (result !== null) {
-      authenticated = true;
+    await cmd("auth_login");
+    // Never infer the outcome from the invoke result (a unit Ok resolves as
+    // null — the same value the error wrapper returns, #45). Ask the backend
+    // what actually happened.
+    await checkAuth();
+    if (authenticated) {
+      needsReauth = false;
       await doSync();
     } else {
       syncStatus = "idle";
@@ -753,7 +790,8 @@
 
   async function logout() {
     await cmd("auth_logout");
-    authenticated = false;
+    await checkAuth(); // reflect the backend's reality, not an assumption
+    needsReauth = false;
     syncStatus = "idle";
     lastSynced = null;
     if (showProperties) await refreshSettings();
@@ -1239,6 +1277,7 @@
       ontoggletheme={toggleTheme}
       theme={themePref}
       {authenticated}
+      {needsReauth}
       {syncStatus}
       {lastSynced}
       {renamingListId}
@@ -1305,8 +1344,6 @@
     {/if}
     {#if loading}
       <p class="status">Loading...</p>
-    {:else if error}
-      <p class="status error">{error}</p>
     {:else if selectedView === "focus"}
       <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}

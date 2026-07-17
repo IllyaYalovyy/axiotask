@@ -89,6 +89,11 @@ pub struct SyncStatus {
     pub total_syncs: u64,
     /// Message from the most recent sync failure, cleared on the next success.
     pub last_error: Option<String>,
+    /// The stored session is dead (token refresh permanently denied) — the
+    /// user must sign in again. Mirrored into every status snapshot so the
+    /// `sync-updated` event carries it and the main window can surface a
+    /// re-auth action, not just an error string.
+    pub needs_reauth: bool,
 }
 
 /// Notified after every sync run so the UI can react to background syncs, not
@@ -270,6 +275,12 @@ impl AppState {
         self.needs_reauth.load(Ordering::Relaxed)
     }
 
+    /// Direct token-store access for tests (e.g. seeding a signed-in state).
+    #[cfg(test)]
+    pub fn token_store_for_test(&self) -> &Arc<dyn TokenStore> {
+        &self.token_store
+    }
+
     /// Collect every task list and its tasks into a lossless backup snapshot.
     ///
     /// Pure data gathering — no IO beyond the store reads — so it can be unit
@@ -443,11 +454,16 @@ impl AppState {
     }
 
     /// Sign out: clear tokens and switch back to in-memory (offline) client.
-    pub fn logout(&self) -> Result<(), String> {
+    /// Async because it awaits the client lock: a `block_on` here runs inside
+    /// a Tauri async command on a tokio worker thread and panics the runtime
+    /// ("Cannot start a runtime from within a runtime") — crashing the app on
+    /// Sign out after the tokens were already cleared, leaving the UI
+    /// believing it is still signed in.
+    pub async fn logout(&self) -> Result<(), String> {
         self.token_store.clear().map_err(|e| e.to_string())?;
-        // Switch to offline client (block_on is fine here — quick operation)
+        // Switch to offline client.
         let offline: Arc<dyn GoogleTasksClient> = Arc::new(InMemoryClient::new());
-        *tauri::async_runtime::block_on(self.client.lock()) = offline;
+        *self.client.lock().await = offline;
         // Signed out — the expired-session state no longer applies.
         self.needs_reauth.store(false, Ordering::Relaxed);
         Ok(())
@@ -524,6 +540,7 @@ impl AppState {
                     // A working sync proves the session is alive again (e.g.
                     // after re-login, or a mis-flagged transient).
                     self.needs_reauth.store(false, Ordering::Relaxed);
+                    status.needs_reauth = false;
                     status.last_pulled = o.pulled;
                     status.last_pushed = o.pushed;
                     status.last_conflicts = o.conflicts;
@@ -551,11 +568,9 @@ impl AppState {
                         // The refresh token is dead — stop the background
                         // retry churn and tell the user what to actually do.
                         self.needs_reauth.store(true, Ordering::Relaxed);
-                        status.last_error = Some(
-                            "Google session expired — please sign in again \
-                             (Properties → Account)"
-                                .into(),
-                        );
+                        status.needs_reauth = true;
+                        status.last_error =
+                            Some("Google session expired — sign in again to resume sync".into());
                     } else {
                         status.last_error = Some(e.to_string());
                     }

@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte";
 
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -180,22 +180,26 @@
   </nav>
 
   <div class="footer">
-    {#if !authenticated}
-      <button class="action-btn" onclick={onlogin} disabled={syncStatus === "syncing"}>
-        {syncStatus === "syncing" ? "Signing in..." : "Sign in with Google"}
+    {#if !authenticated || needsReauth}
+      <!-- Signed out, or the stored session is dead (refresh token expired /
+           revoked): either way the one useful action is re-running the OAuth
+           flow — never a Sync button that can only fail. -->
+      <button class="action-btn reauth-btn" class:reauth={needsReauth} onclick={onlogin} disabled={syncStatus === "syncing"}>
+        {syncStatus === "syncing" ? "Signing in..." : needsReauth ? "🔑 Sign in again" : "Sign in with Google"}
       </button>
     {:else}
       <button class="action-btn sync-btn" onclick={onsync} disabled={syncStatus === "syncing"}>
         {syncStatus === "syncing" ? "Syncing..." : "↻ Sync now"}
       </button>
     {/if}
-    <button class="action-btn fresh-sync-btn" onclick={onfreshsync} disabled={syncStatus === "syncing" || !authenticated}>
+    <button class="action-btn fresh-sync-btn" onclick={onfreshsync} disabled={syncStatus === "syncing" || !authenticated || needsReauth}>
       ⟳ Fresh sync
     </button>
     <div class="sync-info">
-      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error"} class:offline={!authenticated}></span>
+      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error" || needsReauth} class:offline={!authenticated}></span>
       <span class="sync-text">
-        {#if syncStatus === "error"}Sync error
+        {#if needsReauth}Session expired
+        {:else if syncStatus === "error"}Sync error
         {:else if lastSynced}Synced {formatSynced(lastSynced)}
         {:else if authenticated}Ready
         {:else}Offline
@@ -252,6 +256,9 @@
   .action-btn { width: 100%; background: var(--bg-elevated); color: var(--fg-secondary); border: none; padding: 0.45rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-family: inherit; }
   .action-btn:hover { background: var(--border-faint); }
   .action-btn:disabled { opacity: 0.5; cursor: default; }
+  /* Dead session: the re-auth action is the only way forward — make it read
+     as the call-to-action, not another gray utility button. */
+  .action-btn.reauth { background: var(--bg-active); color: var(--accent); font-weight: 600; }
   .sync-info { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.2rem; }
   .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
   .sync-dot.offline { background: var(--fg-faint); }

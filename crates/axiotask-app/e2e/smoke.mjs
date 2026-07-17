@@ -69,14 +69,16 @@ async function main() {
     }
     console.log("ok 1 - app rendered, not stuck on Loading");
 
-    // 2) A real click on "+ New task" must produce an editable task input.
+    // 2) A real click on "+ New task" must focus the quick-add input (#8: the
+    //    button routes into the persistent quick-add; nothing is persisted
+    //    until the user commits a title).
     await sleep(500); // let the first render settle before interacting
     // WebKitWebDriver's synthesized element click is unsupported in this config,
     // so dispatch the real DOM click event via the page — this still exercises
-    // the onclick handler → create_task IPC → re-render path end to end. Retry a
-    // couple of times to absorb startup timing jitter.
-    let editInput = null;
-    for (let attempt = 0; attempt < 3 && !editInput; attempt++) {
+    // the onclick handler end to end. Retry a couple of times to absorb
+    // startup timing jitter.
+    let quickAdd = null;
+    for (let attempt = 0; attempt < 3 && !quickAdd; attempt++) {
       const btn = await findMaybe(".new-task-btn");
       if (!btn) throw new Error("FAIL: '+ New task' button not found");
       await wd("POST", `${base}/execute/sync`, {
@@ -84,34 +86,39 @@ async function main() {
         args: [{ [EKEY]: btn }],
       });
       for (let i = 0; i < 20; i++) {
-        editInput = await findMaybe("input.edit-input");
-        if (editInput) break;
+        const focused = await wd("POST", `${base}/execute/sync`, {
+          script: "return document.activeElement?.id === 'quick-add-input';",
+          args: [],
+        });
+        if (focused.value === true) { quickAdd = await findMaybe("#quick-add-input"); }
+        if (quickAdd) break;
         await sleep(250);
       }
     }
-    if (!editInput) {
+    if (!quickAdd) {
       const diag = await wd("POST", `${base}/execute/sync`, {
         script: `return document.querySelector('.content')?.innerHTML || document.body.innerHTML.slice(0, 1500);`,
         args: [],
       }).catch((e) => ({ value: "diag-failed: " + e.message }));
       console.error("DIAG CONTENT:", diag.value);
-      throw new Error("FAIL: click had no effect — no edit input appeared (dead clicks / no repaint)");
+      throw new Error("FAIL: click had no effect — quick-add input never got focus (dead clicks / no repaint)");
     }
-    console.log("ok 2 - click created an editable task");
+    console.log("ok 2 - click focused the quick-add input");
 
-    // 3) Typing a title + Enter must round-trip and render.
+    // 3) Typing a title + Enter must create the task, round-trip through the
+    //    backend (create_task IPC), and render as a row.
     const marker = `SMOKE-${Date.now()}`;
     // sendKeys is unsupported here too; drive the input through the DOM so
-    // Svelte's bind:value and the Enter handler (commit → rename_task) both run.
+    // Svelte's bind:value and the form submit (→ create_task) both run.
     await wd("POST", `${base}/execute/sync`, {
       script: `
         const el = arguments[0], v = arguments[1];
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
         setter.call(el, v);
         el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        el.form?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
         return true;`,
-      args: [{ [EKEY]: editInput }, marker],
+      args: [{ [EKEY]: quickAdd }, marker],
     });
 
     let shown = false;

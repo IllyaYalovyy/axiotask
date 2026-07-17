@@ -310,11 +310,41 @@ mod tests {
             .last_error
             .expect("error surfaced");
         assert!(msg.contains("sign in again"), "actionable, got: {msg}");
+        // The status snapshot (and thus the sync-updated event payload) must
+        // carry the flag — it's how the main window learns to show a re-auth
+        // action instead of a Sync button that can only fail.
+        assert!(state.sync_status().await.needs_reauth);
 
         // After re-login the next sync works — the flag and error clear.
         state.run_sync().await.unwrap();
         assert!(!state.needs_reauth());
+        assert!(!state.sync_status().await.needs_reauth);
         assert!(state.sync_status().await.last_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn logout_works_inside_the_async_runtime() {
+        // Sign out runs as an async Tauri command on a tokio worker. The old
+        // implementation called block_on there, panicking the runtime AFTER
+        // clearing the tokens — the app crashed mid-signout and the UI never
+        // learned it was signed out.
+        let client = Arc::new(InMemoryClient::new());
+        let state = Arc::new(AppState::new_memory(client).await.unwrap());
+        state
+            .token_store_for_test()
+            .save(&axiotask_core::auth::StoredTokens {
+                access_token: "at".into(),
+                refresh_token: "rt".into(),
+                access_expires_at: Some(i64::MAX),
+                scope: "tasks".into(),
+            })
+            .unwrap();
+        assert!(state.is_authenticated());
+
+        state.logout().await.expect("logout must not fail");
+
+        assert!(!state.is_authenticated());
+        assert!(!state.needs_reauth());
     }
 
     #[tokio::test]

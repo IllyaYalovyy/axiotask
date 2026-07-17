@@ -8,9 +8,13 @@ const lists = [{ id: "L1", title: "Work" }];
 function mockBackend(tasks = []) {
   let taskStore = [...tasks];
   let nextId = 200;
+  // Stateful like the real backend: signing out flips auth_status. The UI
+  // re-checks auth_status after auth_logout instead of assuming the outcome.
+  let signedIn = true;
   invoke.mockImplementation(async (cmd, args) => {
     switch (cmd) {
-      case "auth_status": return true;
+      case "auth_status": return signedIn;
+      case "auth_logout": signedIn = false; return null;
       case "list_tasklists": return lists;
       case "list_tasks": return taskStore.filter(t => t.listId === args?.listId);
       case "create_task": {
@@ -33,7 +37,6 @@ function mockBackend(tasks = []) {
       case "move_to_list": return null;
       case "sync_now": return "ok";
       case "fresh_sync": { taskStore = []; return "fresh sync: pulled=0"; }
-      case "auth_logout": return null;
       default: return null;
     }
   });

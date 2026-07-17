@@ -39,6 +39,11 @@ function mockBackend(tasks = []) {
         taskStore.unshift(created);
         return created;
       }
+      case "set_due": {
+        const t = taskStore.find(x => x.id === args.id);
+        if (t) t.due = args.mv.startsWith("raw:") ? args.mv.slice(4) + "T00:00:00Z" : null;
+        return null;
+      }
       case "sync_now": return "ok";
       default: return null;
     }
@@ -69,6 +74,27 @@ describe("Quick-add input", () => {
     });
     await waitFor(() => expect(input).toHaveValue(""));
     expect(screen.getByText("Focus")).toBeInTheDocument();
+  });
+
+  it("a task quick-added from Focus is VISIBLE in Focus (due date pre-filled, no view switch)", async () => {
+    // The failure mode this pins down: an undated task created from a smart
+    // view lands in the default list and silently vanishes — the user types,
+    // hits Enter, the input clears, and nothing appears anywhere they look.
+    localStorage.setItem("axiotask:view", "focus");
+    mockBackend([task("t1", "Due today")]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Due today")).toBeInTheDocument());
+
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "Visible immediately" } });
+    await fireEvent.submit(input.closest("form"));
+
+    // Still in Focus, and the new task is rendered there.
+    await waitFor(() => expect(screen.getByText("Visible immediately")).toBeInTheDocument());
+    expect(screen.getByText("Focus")).toBeInTheDocument();
+    // It was made visible by dating it today, not by switching views.
+    const dueCall = invoke.mock.calls.find((c) => c[0] === "set_due");
+    expect(dueCall?.[1]?.mv).toMatch(/^raw:\d{4}-\d{2}-\d{2}$/);
   });
 
   it("does not create an empty task when submitted blank", async () => {

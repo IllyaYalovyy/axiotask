@@ -766,13 +766,18 @@ pub async fn auth_status(state: State<'_, Arc<AppState>>) -> Result<bool, String
 }
 
 #[tauri::command]
-pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.start_login().await
+pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    // Returns `true` rather than `()`: Tauri resolves a unit Ok as `null`,
+    // which is exactly what the frontend's error wrapper returns on failure —
+    // a successful login was indistinguishable from a failed one, so the UI
+    // never flipped to signed-in until a restart (#45).
+    state.start_login().await?;
+    Ok(true)
 }
 
 #[tauri::command]
 pub async fn auth_logout(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.logout()
+    state.logout().await
 }
 
 #[tauri::command]
@@ -793,6 +798,9 @@ pub struct SyncStatusView {
     pub total_syncs: u64,
     /// Most recent sync error, cleared on the next success.
     pub last_error: Option<String>,
+    /// The stored session is dead — the user must sign in again. Rides on the
+    /// `sync-updated` event so the main window can show a re-auth action.
+    pub needs_reauth: bool,
 }
 
 impl From<&crate::state::SyncStatus> for SyncStatusView {
@@ -805,6 +813,7 @@ impl From<&crate::state::SyncStatus> for SyncStatusView {
             last_deleted: s.last_deleted,
             total_syncs: s.total_syncs,
             last_error: s.last_error.clone(),
+            needs_reauth: s.needs_reauth,
         }
     }
 }
