@@ -189,6 +189,24 @@ describe("GH#17: Search overlay", () => {
     });
   });
 
+  it("strikes through completed search result titles", async () => {
+    render(SearchOverlay, {
+      props: {
+        tasks: [task("done", "Alpha done", { status: "completed" })],
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+
+    await waitFor(() => {
+      const title = screen.getByText("Alpha done");
+      expect(title).toHaveClass("completed");
+    });
+  });
+
   it("marks subtask search results", async () => {
     render(SearchOverlay, {
       props: {
@@ -204,6 +222,27 @@ describe("GH#17: Search overlay", () => {
     await waitFor(() => {
       expect(screen.getByText("Subtask")).toBeInTheDocument();
       expect(screen.getByText("Subtask").closest(".result")).toHaveTextContent("Alpha child");
+    });
+  });
+
+  it("shows parent title for subtask search results", async () => {
+    render(SearchOverlay, {
+      props: {
+        tasks: [
+          task("parent", "Launch plan"),
+          task("sub", "Alpha child", { parent_id: "parent" }),
+        ],
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+
+    await waitFor(() => {
+      const result = screen.getByText("Alpha child").closest(".result");
+      expect(result).toHaveTextContent("Parent: Launch plan");
     });
   });
 

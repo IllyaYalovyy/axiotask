@@ -7,6 +7,8 @@
 
   $effect(() => { if (inputEl) inputEl.focus(); });
 
+  let tasksById = $derived(new Map(tasks.map(task => [task.id, task])));
+
   function matchesQuery(task, normalizedQuery) {
     return task.title?.toLowerCase().includes(normalizedQuery) ||
       task.notes?.toLowerCase().includes(normalizedQuery);
@@ -54,9 +56,12 @@
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="result" class:selected={i === selectedIdx} onclick={() => { onselect(task); onclose(); }}>
-            <span class="result-title">{task.title}</span>
+            <span class="result-title" class:completed={task.status === "completed"}>{task.title}</span>
             {#if task.parent_id}
               <span class="result-kind">Subtask</span>
+              {#if tasksById.get(task.parent_id)?.title}
+                <span class="result-parent">Parent: {tasksById.get(task.parent_id).title}</span>
+              {/if}
             {/if}
             {#if task.listTitle}
               <span class="result-list">{task.listTitle}</span>
@@ -97,7 +102,9 @@
   }
   .result:hover, .result.selected { background: var(--bg-active); color: var(--fg-strong); }
   .result-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result-title.completed { text-decoration: line-through; opacity: 0.55; }
   .result-kind { font-size: 0.7rem; color: var(--fg-secondary); border: 1px solid var(--border); padding: 0.08rem 0.35rem; border-radius: 3px; }
+  .result-parent { font-size: 0.7rem; color: var(--fg-muted); max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .result-list { font-size: 0.7rem; color: var(--fg-faint); background: var(--bg-elevated); padding: 0.1rem 0.4rem; border-radius: 3px; }
   .result-due { font-size: 0.7rem; color: var(--fg-muted); }
   .no-results { padding: 1rem; text-align: center; color: var(--fg-faint); font-size: 0.9rem; }
