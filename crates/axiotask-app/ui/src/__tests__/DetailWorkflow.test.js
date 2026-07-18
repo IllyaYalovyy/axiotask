@@ -122,6 +122,30 @@ describe("Detail Panel Workflows", () => {
       });
       await waitFor(() => expect(screen.queryByText("Untitled")).not.toBeInTheDocument());
     });
+
+    it("never auto-discards an untitled subtask that has children of its own", async () => {
+      // Deleting it would silently take the whole subtree (server cascades),
+      // and this path has no undo token.
+      mockBackend([
+        task("t1", "Parent task"),
+        task("mid", "", { parent: "t1" }),
+        task("leaf", "Grandchild work", { parent: "mid" }),
+      ]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+
+      // Open the untitled middle subtask in the panel, then close it untouched.
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+      await fireEvent.click(container.querySelector(".detail-panel .subtask-title"));
+      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("✕"));
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(invoke).not.toHaveBeenCalledWith("delete_task", expect.anything());
+      expect(screen.getByText("Grandchild work")).toBeInTheDocument();
+    });
   });
 
   describe("UT-36: Auto-save on close", () => {

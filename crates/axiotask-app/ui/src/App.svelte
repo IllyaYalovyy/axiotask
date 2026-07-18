@@ -444,7 +444,10 @@
       task.status !== "completed" &&
       !(task.title || "").trim() &&
       !(task.notes || "").trim() &&
-      !task.due
+      !task.due &&
+      // Never auto-discard a task that has children of its own — deleting it
+      // would take the whole subtree with it, silently and with no undo.
+      !allTasks.some(c => c.parent_id === task.id)
     );
   }
 
