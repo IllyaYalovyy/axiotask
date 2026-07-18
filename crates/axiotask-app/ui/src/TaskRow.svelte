@@ -15,6 +15,10 @@
     if (rowTouch) rowTouch.timer = null;
   }
 
+  function isCoarsePointer() {
+    return window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+  }
+
   function handleRowTouchStart(e) {
     if (e.target.closest(".drag-handle, .checkbox, .actions, .edit-input, a, button")) return;
     const touch = e.touches?.[0];
@@ -61,7 +65,7 @@
       if (dx > 0) {
         swipeActionsOpen = false;
         ontoggle?.(task.id);
-      } else {
+      } else if (!isCoarsePointer()) {
         swipeActionsOpen = true;
       }
     }

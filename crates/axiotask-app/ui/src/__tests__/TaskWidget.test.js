@@ -22,6 +22,7 @@ function makeTask(overrides = {}) {
 }
 
 const noop = () => {};
+const originalMatchMedia = window.matchMedia;
 const defaultProps = {
   focused: false,
   editing: false,
@@ -38,6 +39,7 @@ const defaultProps = {
 
 afterEach(() => {
   vi.useRealTimers();
+  window.matchMedia = originalMatchMedia;
 });
 
 describe("GH#18: Rich task widget — metadata always visible", () => {
@@ -399,6 +401,32 @@ describe("#50: touch task row interactions", () => {
 
     expect(onsetdue).not.toHaveBeenCalled();
     expect(row).toHaveClass("swipe-actions-open");
+    expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
+  });
+
+  it("swiping left on coarse pointers leaves the already-visible action strip unchanged", async () => {
+    window.matchMedia = vi.fn((query) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    const onsetdue = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onsetdue },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 140, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 36, clientY: 84 }] });
+    await fireEvent.touchEnd(row);
+
+    expect(onsetdue).not.toHaveBeenCalled();
+    expect(row).not.toHaveClass("swipe-actions-open");
     expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
   });
 
