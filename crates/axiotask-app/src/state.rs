@@ -174,7 +174,7 @@ impl AppState {
         // Try to restore existing session.
         let client: Arc<dyn GoogleTasksClient> = match token_store.load() {
             Ok(Some(tokens)) => {
-                tracing::info!("restored auth session from keyring");
+                tracing::info!("restored auth session from tokens.json");
                 Arc::new(build_http_client(
                     tokens,
                     token_store.clone(),
