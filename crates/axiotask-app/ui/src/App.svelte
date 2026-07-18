@@ -773,15 +773,6 @@
     else { syncStatus = "error"; await checkAuth(); }
   }
 
-  function doFreshSync() {
-    requestConfirm({
-      title: "Fresh sync",
-      message: "Drop local data and re-download everything from Google Tasks? Unsynced local changes can be removed.",
-      confirmLabel: "Fresh sync",
-      onconfirm: executeFreshSync,
-    });
-  }
-
   // Export a complete, human-readable JSON backup of every list and task.
   async function doExport() {
     const r = await cmd("export_backup");
@@ -1302,7 +1293,6 @@
       onlogin={login}
       onlogout={logout}
       onsync={doSync}
-      onfreshsync={doFreshSync}
       oncreateList={createList}
       onrenameList={renameList}
       onlistaction={openListContextMenu}

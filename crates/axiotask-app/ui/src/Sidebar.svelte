@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte";
 
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, onfreshsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -192,9 +192,6 @@
         {syncStatus === "syncing" ? "Syncing..." : "↻ Sync now"}
       </button>
     {/if}
-    <button class="action-btn fresh-sync-btn" onclick={onfreshsync} disabled={syncStatus === "syncing" || !authenticated || needsReauth}>
-      ⟳ Fresh sync
-    </button>
     <div class="sync-info">
       <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error" || needsReauth} class:offline={!authenticated}></span>
       <span class="sync-text">

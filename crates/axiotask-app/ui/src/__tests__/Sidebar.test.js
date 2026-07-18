@@ -17,7 +17,6 @@ function renderSidebar(overrides = {}) {
       onlogin: vi.fn(),
       onlogout: vi.fn(),
       onsync: vi.fn(),
-      onfreshsync: vi.fn(),
       oncreateList: vi.fn(),
       onrenameList: vi.fn(),
       onlistaction: vi.fn(),
@@ -165,6 +164,11 @@ describe("Sidebar", () => {
       renderSidebar({ onsync });
       await fireEvent.click(screen.getByRole("button", { name: /Sync now/i }));
       expect(onsync).toHaveBeenCalled();
+    });
+
+    it("does not expose Fresh sync from the sidebar", () => {
+      renderSidebar({ authenticated: true });
+      expect(screen.queryByRole("button", { name: /Fresh sync/i })).not.toBeInTheDocument();
     });
 
     it("shows last synced time", () => {

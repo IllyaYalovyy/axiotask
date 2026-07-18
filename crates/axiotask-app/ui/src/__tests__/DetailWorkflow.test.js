@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
+import pkg from "../../package.json";
 
 const lists = [{ id: "L1", title: "Work" }];
 
@@ -37,6 +38,27 @@ function mockBackend(tasks = []) {
       case "move_to_list": return null;
       case "sync_now": return "ok";
       case "fresh_sync": { taskStore = []; return "fresh sync: pulled=0"; }
+      case "get_settings": return {
+        version: pkg.version,
+        instance: null,
+        push_enabled: false,
+        auto_sync_on_start: true,
+        authenticated: signedIn,
+        scopes: ["https://www.googleapis.com/auth/tasks"],
+        db_path: "/tmp/axiotask.sqlite",
+        config_path: "/tmp/config.toml",
+        needs_reauth: false,
+        pending_pushes: 0,
+        sync: {
+          last_synced: null,
+          last_pulled: 0,
+          last_pushed: 0,
+          last_conflicts: 0,
+          last_deleted: 0,
+          total_syncs: 0,
+          last_error: null,
+        },
+      };
       default: return null;
     }
   });
@@ -242,13 +264,10 @@ describe("UT-03: Fresh sync", () => {
     render(App);
     await waitFor(() => expect(screen.getByText("Local task")).toBeInTheDocument());
 
-    // Wait for sync to finish (button enabled)
-    await waitFor(() => {
-      const btn = screen.getByText("⟳ Fresh sync");
-      expect(btn.disabled).toBe(false);
-    });
+    await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+    const dialog = await screen.findByRole("dialog", { name: /properties/i });
 
-    await fireEvent.click(screen.getByText("⟳ Fresh sync"));
+    await fireEvent.click(screen.getByRole("button", { name: /fresh sync/i }));
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(await screen.findByRole("alertdialog", { name: /fresh sync/i })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /^fresh sync$/i }));
@@ -257,6 +276,7 @@ describe("UT-03: Fresh sync", () => {
       const freshCalls = invoke.mock.calls.filter(c => c[0] === "fresh_sync");
       expect(freshCalls.length).toBe(1);
     });
+    expect(dialog).toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 
@@ -265,12 +285,10 @@ describe("UT-03: Fresh sync", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     render(App);
     await waitFor(() => expect(screen.getByText("Local task")).toBeInTheDocument());
-    await waitFor(() => {
-      const btn = screen.getByText("⟳ Fresh sync");
-      expect(btn.disabled).toBe(false);
-    });
+    await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+    await screen.findByRole("dialog", { name: /properties/i });
 
-    await fireEvent.click(screen.getByText("⟳ Fresh sync"));
+    await fireEvent.click(screen.getByRole("button", { name: /fresh sync/i }));
     await fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
 
     expect(confirmSpy).not.toHaveBeenCalled();
