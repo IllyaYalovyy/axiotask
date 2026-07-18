@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import DatePicker from "./DatePicker.svelte";
-  let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
+  let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -141,6 +141,7 @@
 
   function goToParent() { save(); onopenparent?.(parentTask); }
   function openSub(sub) { save(); onopensubtask?.(sub); }
+  function detachFromParent() { save(); ondetach?.(task.id); }
   function close() { save(); onclose(); }
   function goPrev() { if (onprev) { save(); onprev(); } }
   function goNext() { if (onnext) { save(); onnext(); } }
@@ -166,6 +167,7 @@
     <div class="breadcrumb" onclick={goToParent}>
       ← {parentTask.title || "Parent task"}
     </div>
+    <button class="detach-btn" onclick={detachFromParent}>Detach from parent</button>
   {/if}
 
   <div class="field">
@@ -301,6 +303,12 @@
   .panel-header h3 { margin: 0; font-size: 0.9rem; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; }
   .breadcrumb { font-size: 0.8rem; color: var(--accent); cursor: pointer; margin-bottom: 0.75rem; padding: 0.3rem 0.5rem; background: var(--bg-hover); border-radius: 4px; }
   .breadcrumb:hover { background: var(--bg-active); }
+  .detach-btn {
+    width: 100%; margin: -0.35rem 0 0.75rem; background: none; border: 1px solid var(--border);
+    color: var(--accent); padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer;
+    font-size: 0.8rem; font-family: inherit; text-align: center;
+  }
+  .detach-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
   .panel-actions { display: flex; gap: 0.4rem; }
   .save-btn { background: var(--bg-active); color: var(--accent); border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
   .open-google {
@@ -383,7 +391,7 @@
   @media (pointer: coarse) {
     .field input, .field textarea, .field select, .field .due-btn { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
     .quick-dates button { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
-    .save-btn, .close-btn { min-height: 44px; min-width: 44px; }
+    .save-btn, .close-btn, .detach-btn { min-height: 44px; min-width: 44px; }
     .delete-btn { min-height: 44px; }
     .subtask-item { min-height: 44px; }
   }

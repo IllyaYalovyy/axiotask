@@ -34,7 +34,11 @@ function mockBackend(initialTasks = [], initialLists = null) {
       case "rename_task": { const t = taskStore.find(x => x.id === args.id); if (t) t.title = args.title; return null; }
       case "set_due": return null;
       case "set_notes": return null;
-      case "move_task": return null;
+      case "move_task": {
+        const t = taskStore.find(x => x.id === args.id);
+        if (t) t.parent_id = args.parentId;
+        return null;
+      }
       case "move_to_list": return null;
       case "reorder_task": return null;
       case "sync_now": return "ok";
@@ -192,6 +196,32 @@ describe("GH#19: Custom context menu", () => {
       const personalItem = [...submenu.querySelectorAll(".menu-item")].find(el => el.textContent.includes("Personal"));
       await fireEvent.click(personalItem);
       expect(invoke).toHaveBeenCalledWith("move_to_list", { id: "t1", targetListId: "L2" });
+    });
+  });
+
+  describe("Detach subtask", () => {
+    it("shows a detach action for subtasks only", async () => {
+      mockBackend([
+        task("p1", "Parent task"),
+        task("s1", "Child task", { parent: "p1" }),
+      ]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
+
+      const childRow = screen.getByText("Child task").closest(".task-widget");
+      await fireEvent.contextMenu(childRow);
+      await waitFor(() => expect(screen.getByText("Detach subtask")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Detach subtask"));
+      expect(invoke).toHaveBeenCalledWith("move_task", { id: "s1", parentId: null, previousId: "p1" });
+    });
+
+    it("does not show detach for top-level tasks", async () => {
+      mockBackend([task("t1", "Top-level task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Top-level task")).toBeInTheDocument());
+      await openContextMenu(container);
+      expect(screen.queryByText("Detach subtask")).not.toBeInTheDocument();
     });
   });
 

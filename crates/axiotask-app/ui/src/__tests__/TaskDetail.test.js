@@ -44,6 +44,11 @@ function mockBackend(tasks = [], subtasks = []) {
         taskStore = taskStore.filter((t) => t.id !== args.id);
         return null;
       }
+      case "move_task": {
+        const t = taskStore.find((x) => x.id === args.id);
+        if (t) t.parent_id = args.parentId;
+        return null;
+      }
       case "move_to_list": return null;
       case "sync_now": return "ok";
       default: return null;
@@ -197,6 +202,25 @@ describe("TaskDetail Panel (GH#7)", () => {
       });
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Subtask due date: 2026-06-17" })).toBeInTheDocument();
+      });
+    });
+
+    it("lets a subtask detach from its parent in the detail panel", async () => {
+      const parent = task("p1", "Parent");
+      const sub = task("s1", "Nested Child", { parent: "p1" });
+      mockBackend([parent], [sub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent"));
+      await waitFor(() => expect(screen.getAllByText("Nested Child").length).toBeGreaterThanOrEqual(1));
+      await fireEvent.click(screen.getAllByText("Nested Child").at(-1));
+      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole("button", { name: "Detach from parent" }));
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("move_task", { id: "s1", parentId: null, previousId: "p1" });
       });
     });
   });

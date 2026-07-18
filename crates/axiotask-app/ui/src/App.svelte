@@ -974,6 +974,9 @@
           label: l.title, action: () => moveToList(task.id, l.id)
         }))},
         "separator",
+        ...(task.parent_id ? [{
+          id: "detach-subtask", icon: "↤", label: "Detach subtask", shortcut: "Shift+Tab", action: () => promoteTask(task.id),
+        }] : []),
         { id: "subtask", icon: "⬆️", label: "Add subtask", action: async () => {
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
           if (t) { await refreshLists([task.listId]); editingId = t.id; }
@@ -1392,6 +1395,7 @@
       onclose={() => detailId = null}
       ondelete={deleteTask}
       onmovelist={moveToList}
+      ondetach={promoteTask}
       ontogglesubtask={toggleComplete}
       onopensubtask={openDetail}
       onopenparent={openDetail}
