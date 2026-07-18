@@ -404,7 +404,7 @@ describe("#50: touch task row interactions", () => {
     expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
   });
 
-  it("swiping left on coarse pointers leaves the already-visible action strip unchanged", async () => {
+  it("swiping left on coarse pointers follows the drag and reveals the hidden action strip", async () => {
     window.matchMedia = vi.fn((query) => ({
       matches: query === "(pointer: coarse)",
       media: query,
@@ -422,11 +422,41 @@ describe("#50: touch task row interactions", () => {
 
     const row = container.querySelector(".task-widget");
     await fireEvent.touchStart(row, { touches: [{ clientX: 140, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 72, clientY: 84 }] });
+
+    expect(row).toHaveClass("swipe-actions-peeking");
+    expect(row.style.getPropertyValue("--swipe-reveal")).toBe("68px");
+    expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
+
     await fireEvent.touchMove(row, { touches: [{ clientX: 36, clientY: 84 }] });
     await fireEvent.touchEnd(row);
 
     expect(onsetdue).not.toHaveBeenCalled();
+    expect(row).toHaveClass("swipe-actions-open");
+    expect(row).not.toHaveClass("swipe-actions-peeking");
+    expect(row.style.getPropertyValue("--swipe-reveal")).toBe("0px");
+    expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
+  });
+
+  it("keeps the action strip hidden by default on coarse pointers", () => {
+    window.matchMedia = vi.fn((query) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), focused: true },
+    });
+
+    const row = container.querySelector(".task-widget");
     expect(row).not.toHaveClass("swipe-actions-open");
+    expect(row).not.toHaveClass("swipe-actions-peeking");
     expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
   });
 

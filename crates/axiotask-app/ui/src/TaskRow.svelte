@@ -9,14 +9,12 @@
   let rowTouch = $state(null);
   let suppressNextClick = $state(false);
   let swipeActionsOpen = $state(false);
+  let swipeActionsPeeking = $state(false);
+  let swipeReveal = $state(0);
 
   function clearRowTouchTimer() {
     if (rowTouch?.timer) clearTimeout(rowTouch.timer);
     if (rowTouch) rowTouch.timer = null;
-  }
-
-  function isCoarsePointer() {
-    return window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
   }
 
   function handleRowTouchStart(e) {
@@ -52,6 +50,13 @@
       rowTouch.moved = true;
       clearRowTouchTimer();
     }
+    if (dx < -10 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+      swipeActionsPeeking = true;
+      swipeReveal = Math.min(Math.round(Math.abs(dx)), 112);
+    } else if (swipeActionsPeeking) {
+      swipeActionsPeeking = false;
+      swipeReveal = 0;
+    }
   }
 
   function handleRowTouchEnd() {
@@ -65,10 +70,12 @@
       if (dx > 0) {
         swipeActionsOpen = false;
         ontoggle?.(task.id);
-      } else if (!isCoarsePointer()) {
+      } else {
         swipeActionsOpen = true;
       }
     }
+    swipeActionsPeeking = false;
+    swipeReveal = 0;
     rowTouch = null;
   }
 
@@ -206,9 +213,10 @@
   class:completed={task.status === "completed"}
   class:selected
   class:swipe-actions-open={swipeActionsOpen}
+  class:swipe-actions-peeking={swipeActionsPeeking}
   class:touch-dragging={touchDragging}
   class:dragging={isDragging}
-  style="padding-left: {task.depth * 1.5 + 0.5}rem"
+  style="padding-left: {task.depth * 1.5 + 0.5}rem; --swipe-reveal: {swipeReveal}px"
   onclick={handleRowClick}
   ontouchstart={handleRowTouchStart}
   ontouchmove={handleRowTouchMove}
@@ -342,7 +350,7 @@
   .task-widget.focused { background: var(--bg-active); }
   .task-widget.selected { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg-active); }
   .task-widget.selected.focused { background: var(--bg-active); }
-  .task-widget.swipe-actions-open { background: var(--bg-active); }
+  .task-widget.swipe-actions-open, .task-widget.swipe-actions-peeking { background: var(--bg-active); }
   .task-widget.completing { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completing .title { text-decoration: line-through; }
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }
@@ -375,7 +383,7 @@
   .title:hover { text-decoration: underline; text-decoration-color: var(--border-faint); }
 
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
-  .task-widget:hover .actions, .task-widget.focused .actions, .task-widget.swipe-actions-open .actions { display: flex; }
+  .task-widget:hover .actions, .task-widget.focused .actions, .task-widget.swipe-actions-open .actions, .task-widget.swipe-actions-peeking .actions { display: flex; }
   .actions button {
     background: var(--bg-elevated); border: none; color: var(--fg-muted); padding: 0.15rem 0.35rem;
     border-radius: 3px; font-size: 0.7rem; cursor: pointer; font-family: inherit;
@@ -383,9 +391,11 @@
   }
   .actions button:hover { background: var(--bg-active); color: var(--accent); }
 
-  /* Touch/mobile: always show actions, 44px min tap targets */
+  /* Touch/mobile: hide actions until the row is swiped left, then keep 44px tap targets. */
   @media (pointer: coarse) {
-    .actions { display: flex; }
+    .actions, .task-widget:hover .actions, .task-widget.focused .actions { display: none; }
+    .task-widget.swipe-actions-open .actions, .task-widget.swipe-actions-peeking .actions { display: flex; }
+    .task-widget.swipe-actions-peeking .main-row { transform: translateX(calc(var(--swipe-reveal) * -0.35)); }
     .actions button { min-width: 44px; min-height: 44px; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
     .checkbox { width: 1.3rem; height: 1.3rem; min-width: 44px; min-height: 44px; }
     .task-widget { padding: 0.6rem 0.5rem; min-height: 44px; }
@@ -398,6 +408,11 @@
     .actions { display: flex; }
     .main-row { flex-wrap: wrap; }
     .actions { width: 100%; padding-left: 2.4rem; margin-top: 0.2rem; }
+  }
+
+  @media (max-width: 600px) and (pointer: coarse) {
+    .actions, .task-widget:hover .actions, .task-widget.focused .actions { display: none; }
+    .task-widget.swipe-actions-open .actions, .task-widget.swipe-actions-peeking .actions { display: flex; }
   }
 
   /* Metadata row */
