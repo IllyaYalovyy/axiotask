@@ -8,6 +8,7 @@
   let isDragging = $state(false);
   let rowTouch = $state(null);
   let suppressNextClick = $state(false);
+  let swipeActionsOpen = $state(false);
 
   function clearRowTouchTimer() {
     if (rowTouch?.timer) clearTimeout(rowTouch.timer);
@@ -57,8 +58,12 @@
     const isHorizontalSwipe = Math.abs(dx) >= 80 && Math.abs(dx) > Math.abs(dy) * 1.5;
     if (isHorizontalSwipe) {
       suppressNextClick = true;
-      if (dx > 0) ontoggle?.(task.id);
-      else onsetdue?.(task.id, "Tomorrow");
+      if (dx > 0) {
+        swipeActionsOpen = false;
+        ontoggle?.(task.id);
+      } else {
+        swipeActionsOpen = true;
+      }
     }
     rowTouch = null;
   }
@@ -111,6 +116,10 @@
       return;
     }
     if (e.target.closest(".checkbox, .edit-input, .actions")) return;
+    if (swipeActionsOpen) {
+      swipeActionsOpen = false;
+      return;
+    }
     if (e.ctrlKey || e.metaKey) { onselect?.(task.id); return; }
     onclick?.(task.id);
   }
@@ -134,6 +143,7 @@
 
   function handleDateAction(e, mv) {
     e.stopPropagation();
+    swipeActionsOpen = false;
     onsetdue?.(task.id, mv);
   }
 
@@ -191,6 +201,7 @@
   class:completing
   class:completed={task.status === "completed"}
   class:selected
+  class:swipe-actions-open={swipeActionsOpen}
   class:touch-dragging={touchDragging}
   class:dragging={isDragging}
   style="padding-left: {task.depth * 1.5 + 0.5}rem"
@@ -264,7 +275,7 @@
     {/if}
 
     <!-- Quick actions (hover) -->
-    <span class="actions">
+    <span class="actions" aria-label="Task actions">
       <button onclick={(e) => { e.stopPropagation(); onaddsubtask?.(task.id); }} title="Add subtask">+</button>
       <button onclick={(e) => handleDateAction(e, "Today")} title="Today (o)">→o</button>
       <button onclick={(e) => handleDateAction(e, "Tomorrow")} title="Tomorrow (t)">→t</button>
@@ -327,6 +338,7 @@
   .task-widget.focused { background: var(--bg-active); }
   .task-widget.selected { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg-active); }
   .task-widget.selected.focused { background: var(--bg-active); }
+  .task-widget.swipe-actions-open { background: var(--bg-active); }
   .task-widget.completing { opacity: 0.5; transform: scale(0.98); }
   .task-widget.completing .title { text-decoration: line-through; }
   .task-widget.completed { opacity: 0.5; transform: scale(0.98); }
@@ -359,7 +371,7 @@
   .title:hover { text-decoration: underline; text-decoration-color: var(--border-faint); }
 
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
-  .task-widget:hover .actions, .task-widget.focused .actions { display: flex; }
+  .task-widget:hover .actions, .task-widget.focused .actions, .task-widget.swipe-actions-open .actions { display: flex; }
   .actions button {
     background: var(--bg-elevated); border: none; color: var(--fg-muted); padding: 0.15rem 0.35rem;
     border-radius: 3px; font-size: 0.7rem; cursor: pointer; font-family: inherit;
