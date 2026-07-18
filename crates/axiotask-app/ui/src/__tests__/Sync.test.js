@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { emitMockEvent } from "../test-setup.js";
 import App from "../App.svelte";
 
 /**
@@ -144,7 +145,15 @@ describe("GH#3: Sync Pull", () => {
     await waitFor(() => expect(screen.getByText("Inbox")).toBeInTheDocument());
     await fireEvent.click(screen.getByText("Inbox"));
 
-    // Auto-sync on startup reloads tasks — task appears after sync completes
+    syncDone = true;
+    emitMockEvent("sync-updated", {
+      last_synced: "2026-07-17T12:00:00Z",
+      last_error: null,
+      last_conflicts: 0,
+      needs_reauth: false,
+    });
+
+    // Backend startup sync events reload tasks.
     await waitFor(() => {
       expect(screen.getByText("Synced task")).toBeInTheDocument();
     });

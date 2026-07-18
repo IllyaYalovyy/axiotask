@@ -1,13 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { emitMockEvent } from "../test-setup.js";
 import App from "../App.svelte";
 
 /**
- * GH#33 — Auto-sync on startup when authenticated.
- * - One non-blocking sync on launch when user is authenticated
- * - Shows syncing indicator during auto-sync
- * - Failure shows toast but app remains usable
+ * GH#33 / GH#62 — Backend-owned auto-sync on startup when authenticated.
+ * - Frontend does not invoke sync_now during initial render
+ * - Backend startup sync events update status and refresh data
+ * - Failure events show toast but app remains usable
  * - No auto-sync when not authenticated
  */
 
@@ -32,28 +33,38 @@ function mockBackend({ authenticated = true, syncDelay = 50, syncFail = false, t
   });
 }
 
-describe("GH#33: Auto-sync on startup", () => {
+describe("GH#33/GH#62: Backend-owned auto-sync on startup", () => {
   beforeEach(() => {
     localStorage.clear();
     invoke.mockReset();
   });
 
-  it("automatically starts syncing on launch when authenticated", async () => {
+  it("does not call sync_now on launch when authenticated", async () => {
     mockBackend({ syncDelay: 150 });
     render(App);
 
-    // Should show syncing indicator automatically (no user click needed)
     await waitFor(() => {
-      expect(screen.getByText("Syncing...")).toBeInTheDocument();
+      expect(screen.getByText("Ready")).toBeInTheDocument();
     });
+
+    const syncCalls = invoke.mock.calls.filter(([cmd]) => cmd === "sync_now");
+    expect(syncCalls).toHaveLength(0);
   });
 
-  it("shows synced state after auto-sync completes", async () => {
-    mockBackend({ syncDelay: 10 });
+  it("shows synced state after backend startup sync event", async () => {
+    mockBackend();
     render(App);
 
+    await waitFor(() => expect(screen.getByText("Ready")).toBeInTheDocument());
+    emitMockEvent("sync-updated", {
+      last_synced: "2026-07-17T12:00:00Z",
+      last_error: null,
+      last_conflicts: 0,
+      needs_reauth: false,
+    });
+
     await waitFor(() => {
-      expect(screen.getByText(/Synced just now/)).toBeInTheDocument();
+      expect(screen.getByText(/Synced/)).toBeInTheDocument();
     });
   });
 
@@ -70,13 +81,20 @@ describe("GH#33: Auto-sync on startup", () => {
     expect(syncCalls).toHaveLength(0);
   });
 
-  it("shows toast on auto-sync failure but app remains usable", async () => {
-    mockBackend({ syncFail: true, syncDelay: 10 });
+  it("shows toast on backend startup sync failure but app remains usable", async () => {
+    mockBackend();
     render(App);
 
-    // Toast with error appears
+    await waitFor(() => expect(screen.getByText("Ready")).toBeInTheDocument());
+    emitMockEvent("sync-updated", {
+      last_synced: null,
+      last_error: "network error",
+      last_conflicts: 0,
+      needs_reauth: false,
+    });
+
     await waitFor(() => {
-      expect(screen.getByText(/Failed.*sync_now/)).toBeInTheDocument();
+      expect(screen.getByText(/Sync failed: network error/)).toBeInTheDocument();
     });
 
     // App is still usable — lists are loaded and visible
@@ -99,7 +117,7 @@ describe("GH#33: Auto-sync on startup", () => {
     await waitFor(() => {
       expect(screen.getByText("Cached task")).toBeInTheDocument();
     });
-    // Sync still in progress
-    expect(screen.getByText("Syncing...")).toBeInTheDocument();
+    const syncCalls = invoke.mock.calls.filter(([cmd]) => cmd === "sync_now");
+    expect(syncCalls).toHaveLength(0);
   });
 });

@@ -132,9 +132,6 @@
   async function init() {
     await checkAuth();
     await loadAll();
-    if (authenticated) {
-      doSync();
-    }
   }
 
   $effect(() => { init(); });
