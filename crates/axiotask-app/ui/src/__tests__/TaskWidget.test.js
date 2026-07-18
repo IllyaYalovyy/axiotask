@@ -386,7 +386,7 @@ describe("#50: touch task row interactions", () => {
     expect(ontoggle).toHaveBeenCalledWith("t1");
   });
 
-  it("swiping left defers the task to tomorrow", async () => {
+  it("swiping left reveals the action strip without rescheduling", async () => {
     const onsetdue = vi.fn();
     const { container } = render(TaskRow, {
       props: { ...defaultProps, task: makeTask(), onsetdue },
@@ -396,6 +396,27 @@ describe("#50: touch task row interactions", () => {
     await fireEvent.touchStart(row, { touches: [{ clientX: 140, clientY: 80 }] });
     await fireEvent.touchMove(row, { touches: [{ clientX: 36, clientY: 84 }] });
     await fireEvent.touchEnd(row);
+
+    expect(onsetdue).not.toHaveBeenCalled();
+    expect(row).toHaveClass("swipe-actions-open");
+    expect(row.querySelector(".actions")).toHaveAttribute("aria-label", "Task actions");
+  });
+
+  it("a revealed action strip still lets the user choose Tomorrow explicitly", async () => {
+    const onsetdue = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onsetdue },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 140, clientY: 80 }] });
+    await fireEvent.touchMove(row, { touches: [{ clientX: 36, clientY: 84 }] });
+    await fireEvent.touchEnd(row);
+
+    const tomorrow = [...row.querySelectorAll(".actions button")].find(
+      (b) => b.textContent === "→t"
+    );
+    await fireEvent.click(tomorrow);
 
     expect(onsetdue).toHaveBeenCalledWith("t1", "Tomorrow");
   });
