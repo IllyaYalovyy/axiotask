@@ -133,7 +133,7 @@
   }
 
   function handleKeydown(e) {
-    if (e.key === "Escape") { e.preventDefault(); close(); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
     if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
     if (e.key === "ArrowLeft" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); goPrev(); }
     if (e.key === "ArrowRight" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); goNext(); }
@@ -142,7 +142,7 @@
   function goToParent() { save(); onopenparent?.(parentTask); }
   function openSub(sub) { save(); onopensubtask?.(sub); }
   function detachFromParent() { save(); ondetach?.(task.id); }
-  function close() { save(); onclose(); }
+  function close() { save(); onclose({ ...task, title, notes, due: due ? `${due}T00:00:00.000Z` : null }); }
   function goPrev() { if (onprev) { save(); onprev(); } }
   function goNext() { if (onnext) { save(); onnext(); } }
 </script>
@@ -156,7 +156,6 @@
       <h3>{parentTask ? "Subtask" : "Task Details"}</h3>
     </div>
     <div class="panel-actions">
-      <button class="save-btn" onclick={save}>Save</button>
       <button class="close-btn" onclick={close}>✕</button>
     </div>
   </div>
@@ -310,7 +309,6 @@
   }
   .detach-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
   .panel-actions { display: flex; gap: 0.4rem; }
-  .save-btn { background: var(--bg-active); color: var(--accent); border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
   .open-google {
     display: block; width: 100%; box-sizing: border-box; margin: 0 0 1rem;
     background: none; border: 1px solid var(--border); color: var(--accent);
@@ -318,7 +316,6 @@
     font-size: 0.8rem; font-family: inherit; text-align: center;
   }
   .open-google:hover { background: var(--bg-hover); border-color: var(--accent); }
-  .save-btn:hover { background: var(--bg-active); }
   .close-btn { background: none; border: none; color: var(--fg-faint); cursor: pointer; font-size: 1.1rem; }
   .close-btn:hover { color: var(--fg); }
 
@@ -391,7 +388,7 @@
   @media (pointer: coarse) {
     .field input, .field textarea, .field select, .field .due-btn { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
     .quick-dates button { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
-    .save-btn, .close-btn, .detach-btn { min-height: 44px; min-width: 44px; }
+    .close-btn, .detach-btn { min-height: 44px; min-width: 44px; }
     .delete-btn { min-height: 44px; }
     .subtask-item { min-height: 44px; }
   }

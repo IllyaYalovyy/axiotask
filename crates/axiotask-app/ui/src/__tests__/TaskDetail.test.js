@@ -248,7 +248,7 @@ describe("TaskDetail Panel (GH#7)", () => {
       expect(invoke).toHaveBeenCalledWith("rename_task", { id: "t1", title: "Saved Title" });
     });
 
-    it("Save button saves without closing panel", async () => {
+    it("does not show a redundant Save button", async () => {
       mockBackend([task("t1", "Click Save")]);
       render(App);
       await waitFor(() => expect(screen.getByText("Click Save")).toBeInTheDocument());
@@ -256,9 +256,7 @@ describe("TaskDetail Panel (GH#7)", () => {
       await fireEvent.click(screen.getByText("Click Save"));
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByText("Save"));
-      // Panel stays open
-      expect(screen.getByText("Task Details")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     });
   });
 
@@ -393,7 +391,6 @@ describe("TaskDetail Panel (GH#7)", () => {
 
       const select = screen.getByLabelText("List");
       await fireEvent.change(select, { target: { value: "L2" } });
-      await fireEvent.click(screen.getByText("Save"));
 
       await waitFor(() =>
         expect(invoke).toHaveBeenCalledWith("move_to_list", { id: "t1", targetListId: "L2" })

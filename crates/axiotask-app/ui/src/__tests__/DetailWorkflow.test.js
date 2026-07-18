@@ -82,6 +82,24 @@ describe("Detail Panel Workflows", () => {
       await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
       await waitFor(() => expect(screen.getByLabelText("Title")).toHaveFocus());
     });
+
+    it("discarding a blank new subtask on close prevents Untitled debris", async () => {
+      mockBackend([task("t1", "Parent task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+      await fireEvent.click(container.querySelector(".add-subtask-btn"));
+      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("✕"));
+
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("delete_task", { id: "sub-200" });
+      });
+      await waitFor(() => expect(screen.queryByText("Untitled")).not.toBeInTheDocument());
+    });
   });
 
   describe("UT-36: Auto-save on close", () => {

@@ -438,6 +438,23 @@
   // pull) show up in the open panel instead of leaving it stale.
   let detailTask = $derived(detailId ? (allTasks.find(t => t.id === detailId) ?? null) : null);
 
+  function isEmptySubtask(task) {
+    return Boolean(
+      task?.parent_id &&
+      task.status !== "completed" &&
+      !(task.title || "").trim() &&
+      !(task.notes || "").trim() &&
+      !task.due
+    );
+  }
+
+  async function closeDetail(task = detailTask) {
+    detailId = null;
+    if (!isEmptySubtask(task)) return;
+    await cmd("delete_task", { id: task.id });
+    if (task.listId) await refreshLists([task.listId]);
+  }
+
   // Open the panel on a task and move the list's focus to it, so panel
   // navigation (‹ ›, breadcrumb, subtask links) and the list stay in sync.
   function openDetail(task) {
@@ -1185,7 +1202,7 @@
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
     if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
-    if (detailTask && e.key === "Escape") { detailId = null; e.preventDefault(); return; }
+    if (detailTask && e.key === "Escape") { await closeDetail(); e.preventDefault(); return; }
     if (notesTask || detailTask) return;
     // With an active selection, Esc clears it (when no panel intercepted above).
     if (selectedIds.size > 0 && e.key === "Escape") { clearSelection(); e.preventDefault(); return; }
@@ -1392,7 +1409,7 @@
       {lists}
       subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
       onsave={saveDetail}
-      onclose={() => detailId = null}
+      onclose={closeDetail}
       ondelete={deleteTask}
       onmovelist={moveToList}
       ondetach={promoteTask}
