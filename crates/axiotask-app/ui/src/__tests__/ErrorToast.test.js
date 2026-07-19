@@ -104,4 +104,21 @@ describe("GH#23: Error feedback toast", () => {
     expect(toast.textContent).toContain("delete_task");
     expect(toast.textContent).toContain("Permission denied");
   });
+
+  it("times out a hung startup command and returns control to the UI", async () => {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === "auth_status") return true;
+      if (cmd === "list_tasklists") return new Promise(() => {});
+      return null;
+    });
+
+    render(App);
+
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(12_000);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("alert").textContent).toContain("list_tasklists is taking too long");
+    expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
+  });
 });

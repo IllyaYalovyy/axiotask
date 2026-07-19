@@ -1,26 +1,27 @@
 import { mount } from "svelte";
 import "./theme.css";
 import { applyTheme } from "./theme.js";
+import { renderFatalError } from "./errorBoundary.js";
 
 // Apply the saved theme before the app renders, so there's no flash.
 applyTheme();
 
 // Capture all errors and write them visibly
 window.onerror = (msg, src, line, col, err) => {
-  document.getElementById("app").innerHTML = `<pre style="color:red;padding:2rem;font-size:14px;white-space:pre-wrap;">ERROR: ${msg}\nSource: ${src}:${line}:${col}\n${err?.stack || ""}</pre>`;
+  renderFatalError(document.getElementById("app"), "axiotask hit a UI error", err || `${msg}\nSource: ${src}:${line}:${col}`);
 };
 
 window.onunhandledrejection = (e) => {
-  document.getElementById("app").innerHTML += `<pre style="color:orange;padding:1rem;font-size:14px;white-space:pre-wrap;">UNHANDLED REJECTION: ${e.reason}\n${e.reason?.stack || ""}</pre>`;
+  renderFatalError(document.getElementById("app"), "axiotask hit an async UI error", e.reason);
 };
 
 async function start() {
-  const { default: App } = await import("./App.svelte");
+  const { default: AppBoundary } = await import("./AppBoundary.svelte");
   const target = document.getElementById("app");
   target.textContent = "";
-  mount(App, { target });
+  mount(AppBoundary, { target });
 }
 
 start().catch((e) => {
-  document.getElementById("app").innerHTML = `<pre style="color:red;padding:2rem;font-size:14px;white-space:pre-wrap;">STARTUP ERROR:\n${e.message}\n\n${e.stack}</pre>`;
+  renderFatalError(document.getElementById("app"), "axiotask could not start", e);
 });

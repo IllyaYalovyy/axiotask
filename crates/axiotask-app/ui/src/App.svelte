@@ -1,6 +1,5 @@
 <script>
   import { tick } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
@@ -20,6 +19,7 @@
   import BulkAdd from "./BulkAdd.svelte";
   import { storageKey } from "./storage.js";
   import { getThemePref, setThemePref } from "./theme.js";
+  import { friendlyError, invokeWithTimeout } from "./ipc.js";
 
   // --- State ---
   let lists = $state([]);
@@ -67,17 +67,8 @@
   let errorToast = $state(null);
   let infoToast = $state(null);
 
-  // Backend errors are developer-speak ("not authenticated"); translate the
-  // recurring ones into something a user can act on before toasting.
-  function friendlyError(name, e) {
-    const msg = String(e);
-    if (msg.includes("not authenticated")) return "Not signed in — use “Sign in with Google” to sync.";
-    if (msg.includes("session expired")) return "Google session expired — sign in again to resume sync.";
-    return `Failed: ${name} — ${msg}`;
-  }
-
   async function cmd(name, args = {}) {
-    try { return await invoke(name, args); }
+    try { return await invokeWithTimeout(name, args); }
     catch (e) {
       console.error(`[${name}]`, e);
       errorToast = { message: friendlyError(name, e), timer: setTimeout(() => errorToast = null, 5000) };
@@ -178,7 +169,7 @@
   // edited (RC3). Pull keeps running server-side.
   let editingActive = $derived(editingId != null || detailTask != null);
   $effect(() => {
-    invoke("set_editing", { editing: editingActive }).catch(() => {});
+    invokeWithTimeout("set_editing", { editing: editingActive }).catch(() => {});
   });
 
   // --- Window geometry persistence ---

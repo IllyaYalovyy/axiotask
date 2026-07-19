@@ -1,6 +1,6 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core";
   import Icon from "./Icon.svelte";
+  import { invokeWithTimeout } from "./ipc.js";
   let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
@@ -307,7 +307,7 @@
       </span>
     {/if}
     {#if urls.length > 0}
-      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invoke("open_url", { url: urls[0] }); }} title={urls[0]} aria-label="Open link">
+      <a class="badge link-badge" href={urls[0]} onclick={(e) => { e.preventDefault(); e.stopPropagation(); invokeWithTimeout("open_url", { url: urls[0] }).catch((err) => console.error("[open_url]", err)); }} title={urls[0]} aria-label="Open link">
         <Icon name="externalLink" size={13} />{#if urls.length > 1}<span class="link-count">{urls.length}</span>{/if}
       </a>
     {/if}

@@ -1,7 +1,7 @@
 <script>
   import { tick, untrack } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import DatePicker from "./DatePicker.svelte";
+  import { invokeWithTimeout } from "./ipc.js";
   let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
@@ -177,7 +177,7 @@
   {#if task.web_view_link}
     <button
       class="open-google"
-      onclick={() => invoke("open_url", { url: task.web_view_link })}
+      onclick={() => invokeWithTimeout("open_url", { url: task.web_view_link }).catch((err) => console.error("[open_url]", err))}
       title="Open this task in the Google Tasks web app (to set a repeat, etc.)"
     >
       ↗ Open in Google Tasks
@@ -226,7 +226,7 @@
       <span class="field-label">Links</span>
       <div class="links">
         {#each detectedLinks as url}
-          <button class="link-chip" title={url} onclick={() => invoke("open_url", { url })}>🔗 {url}</button>
+          <button class="link-chip" title={url} onclick={() => invokeWithTimeout("open_url", { url }).catch((err) => console.error("[open_url]", err))}>🔗 {url}</button>
         {/each}
       </div>
     </div>
