@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "bash ../e2e/run-smoke.sh"
+    "test:e2e": "bash ../e2e/run-smoke.sh",
+    "android:init": "cd .. && cargo tauri android init --skip-targets-install",
+    "android:dev": "cd .. && cargo tauri android dev",
+    "android:build": "cd .. && cargo tauri android build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2"

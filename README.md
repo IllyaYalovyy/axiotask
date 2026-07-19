@@ -56,6 +56,40 @@ Recurrence stays owned by Google, the single source of truth.
 | npm | 9+ | Comes with Node.js |
 | Tauri CLI | 2.x | `cargo install tauri-cli` |
 
+### Android on-device testing
+
+Android builds are available for validating the mobile touch UI: row swipe
+actions, pull-to-refresh, the navigation drawer, and the floating add button.
+
+Additional prerequisites:
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Android Studio / SDK | API 36 installed | Install SDK Platform 36 and Android SDK Build-Tools |
+| Android NDK | 29.x | Install through Android Studio's SDK Manager |
+| Java | 17+ | Android Gradle Plugin 8.11 supports current JDKs |
+| rustup | current | Required so Tauri can install Android Rust targets |
+
+Set `ANDROID_HOME` to your Android SDK path when it is not discoverable by the
+Tauri CLI. For a physical device, enable USB debugging and confirm the device
+appears in `adb devices`.
+
+```bash
+cd crates/axiotask-app/ui
+
+# One-time only when regenerating the checked-in Android project:
+npm run android:init
+
+# Hot-reload on a connected device or emulator:
+npm run android:dev
+
+# Produce Android release artifacts:
+npm run android:build
+```
+
+`cargo tauri android dev` sets `TAURI_DEV_HOST`; the Vite dev server binds to
+that host so an Android device can reach the desktop development server.
+
 ### Linux system dependencies
 
 Tauri requires system libraries for WebView and window management:
