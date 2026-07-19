@@ -64,7 +64,7 @@
   {#if tasks.length === 0}
     <div class="empty">
       <p>No tasks</p>
-      <p class="sub">Type in the box above and press Enter to create one.</p>
+      <p class="sub">Use quick add or press n to create one.</p>
     </div>
   {/if}
 </div>

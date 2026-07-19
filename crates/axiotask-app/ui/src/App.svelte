@@ -56,6 +56,7 @@
   let selectedIds = $state(new Set()); // multi-select for bulk operations
   let bulkMovePicker = $state(false); // bulk "move to list" picker open
   let showMobileDrawer = $state(false);
+  let showOnboarding = $state(false);
   let quickAddTitle = $state("");
   let quickAddInput = $state(null);
   let contentEl = $state(null);
@@ -138,6 +139,12 @@
   }
 
   $effect(() => { init(); });
+
+  $effect(() => {
+    if (!loading && lists.length === 0 && allTasks.length === 0 && localStorage.getItem(storageKey("onboardingSeen")) !== "true") {
+      showOnboarding = true;
+    }
+  });
 
   // Reflect background syncs, not just manual "Sync now": the backend emits a
   // `sync-updated` event after every run. Surface failures and refresh data so
@@ -531,29 +538,64 @@
     quickAddInput?.focus();
   }
 
+  function localDate(d = new Date()) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  function addMonthsClamped(d, months) {
+    const out = new Date(d);
+    const targetMonth = out.getMonth() + months;
+    const day = out.getDate();
+    out.setDate(1);
+    out.setMonth(targetMonth + 1, 0);
+    const lastDay = out.getDate();
+    out.setDate(Math.min(day, lastDay));
+    return out;
+  }
+
+  function parseQuickAddTitle(raw) {
+    const title = raw.trim();
+    const lowered = title.toLowerCase();
+    const date = new Date();
+    const patterns = [
+      { re: /\s+(?:on\s+)?(\d{4}-\d{2}-\d{2})$/i, due: (m) => m[1] },
+      { re: /\s+(?:due\s+)?today$/i, due: () => localDate() },
+      { re: /\s+(?:due\s+)?tomorrow$/i, due: () => { const d = new Date(); d.setDate(d.getDate() + 1); return localDate(d); } },
+      { re: /\s+(?:due\s+)?next week$/i, due: () => { const d = new Date(); d.setDate(d.getDate() + 7); return localDate(d); } },
+      { re: /\s+(?:due\s+)?next month$/i, due: () => localDate(addMonthsClamped(date, 1)) },
+    ];
+    for (const p of patterns) {
+      const m = lowered.match(p.re);
+      if (!m) continue;
+      const stripped = title.slice(0, title.length - m[0].length).trim();
+      if (!stripped) return { title, due: null };
+      return { title: stripped, due: p.due(m) };
+    }
+    return { title, due: null };
+  }
+
   // Due date a quick-added task needs to be VISIBLE in the current smart view
   // (no view switch, per #8): an undated task created from Focus would land in
   // the default list and silently vanish — typed, Enter, gone.
   function quickAddDueFor(view) {
-    const pad = (n) => String(n).padStart(2, "0");
-    const local = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     const d = new Date();
     switch (view) {
-      case "focus": return local(d);                                   // today
-      case "upcoming": d.setDate(d.getDate() + 7); return local(d);    // +1 week
-      case "missed": return local(d); // can't be born overdue — today is the honest default
+      case "focus": return localDate(d);                                   // today
+      case "upcoming": d.setDate(d.getDate() + 7); return localDate(d);    // +1 week
+      case "missed": return localDate(d); // can't be born overdue — today is the honest default
       default: return null; // unscheduled/all/lists: undated is visible as-is
     }
   }
 
-  async function createTask(title, listId) {
+  async function createTask(title, listId, explicitDue = null) {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
     const resolvedListId = isSmartView ? null : listId;
     const targetList = resolvedListId || (!isSmartView ? selectedView : lists[0]?.id);
     if (!targetList || !title.trim()) return;
     const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
     if (task) {
-      const due = isSmartView ? quickAddDueFor(selectedView) : null;
+      const due = explicitDue || (isSmartView ? quickAddDueFor(selectedView) : null);
       if (due) await cmd("set_due", { id: task.id, mv: "raw:" + due });
       newestTaskId = task.id;
       await refreshLists([targetList]);
@@ -563,10 +605,16 @@
 
   async function submitQuickAdd(e) {
     e.preventDefault();
-    const title = quickAddTitle.trim();
+    const parsed = parseQuickAddTitle(quickAddTitle);
+    const title = parsed.title;
     if (!title) return;
-    await createTask(title, selectedView);
+    await createTask(title, selectedView, parsed.due);
     quickAddTitle = "";
+  }
+
+  function closeOnboarding() {
+    localStorage.setItem(storageKey("onboardingSeen"), "true");
+    showOnboarding = false;
   }
 
   async function addSubtask(parentId) {
@@ -1173,6 +1221,7 @@
   }
 
   async function handleKeydown(e) {
+    if (showOnboarding) { closeOnboarding(); e.preventDefault(); return; }
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
     if (showMobileDrawer && e.key === "Escape") {
       showMobileDrawer = false;
@@ -1429,6 +1478,9 @@
 {/if}
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />
+{/if}
+{#if showOnboarding}
+  <Cheatsheet onboarding={true} onclose={closeOnboarding} />
 {/if}
 {#if showProperties && settings}
   <Properties

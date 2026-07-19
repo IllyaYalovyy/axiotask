@@ -153,6 +153,7 @@ describe("Properties dialog", () => {
     const dialog = screen.getByRole("dialog", { name: /properties/i });
     expect(dialog).toHaveTextContent(/signed in/i);
     expect(dialog).toHaveTextContent(/Google Tasks/i);
+    expect(dialog).toHaveTextContent(/Use an isolated instance to sign in with another Google account/i);
     expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument();
   });
 

@@ -10,6 +10,12 @@ const lists = [
 
 const today = new Date().toISOString().split("T")[0] + "T00:00:00Z";
 
+function localDate(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function task(id, title, listId = "L1", due = today) {
   return {
     id,
@@ -109,5 +115,49 @@ describe("Quick-add input", () => {
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(invoke.mock.calls.filter(call => call[0] === "create_task")).toHaveLength(0);
     expect(input).toHaveValue("   ");
+  });
+
+  it("parses a trailing natural-language due date and strips it from the created title", async () => {
+    localStorage.setItem("axiotask:view", "L1");
+    mockBackend();
+    render(App);
+    const input = await screen.findByRole("textbox", { name: /quick add task/i });
+
+    await fireEvent.input(input, { target: { value: "Send invoice tomorrow" } });
+    await fireEvent.submit(input.closest("form"));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "create_task",
+        expect.objectContaining({ listId: "L1", title: "Send invoice" }),
+      );
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "set_due",
+        expect.objectContaining({ mv: `raw:${localDate(1)}` }),
+      );
+    });
+  });
+
+  it("parses explicit YYYY-MM-DD quick-add dates", async () => {
+    localStorage.setItem("axiotask:view", "L1");
+    mockBackend();
+    render(App);
+    const input = await screen.findByRole("textbox", { name: /quick add task/i });
+
+    await fireEvent.input(input, { target: { value: "Book dentist on 2026-08-03" } });
+    await fireEvent.submit(input.closest("form"));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "create_task",
+        expect.objectContaining({ title: "Book dentist" }),
+      );
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      "set_due",
+      expect.objectContaining({ mv: "raw:2026-08-03" }),
+    );
   });
 });
