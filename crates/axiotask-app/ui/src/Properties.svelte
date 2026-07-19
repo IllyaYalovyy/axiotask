@@ -226,6 +226,11 @@
             {/each}
           </ul>
           <p class="hint">axiotask only requests access to your Google Tasks — nothing else.</p>
+          <h3>Multiple accounts</h3>
+          <p class="hint">
+            Use an isolated instance to sign in with another Google account. Each instance keeps its own tasks,
+            credentials, backups, and UI preferences.
+          </p>
           <div class="actions">
             {#if settings.needs_reauth}
               <button class="primary" onclick={onlogin}>Sign in again</button>

@@ -15,7 +15,8 @@ describe("ListView", () => {
   it("shows empty state when no tasks", () => {
     render(ListView, { props: baseProps });
     expect(screen.getByText("No tasks")).toBeInTheDocument();
-    expect(screen.getByText(/press Enter to create one/i)).toBeInTheDocument();
+    expect(screen.getByText("Use quick add or press n to create one.")).toBeInTheDocument();
+    expect(screen.queryByText(/box above/i)).not.toBeInTheDocument();
   });
 
   it("renders tasks when provided", () => {

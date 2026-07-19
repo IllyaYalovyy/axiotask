@@ -65,4 +65,17 @@ describe("Keyboard Cheatsheet", () => {
     await fireEvent.keyDown(window, { key: "a" });
     await waitFor(() => expect(screen.queryByText("Keyboard Shortcuts")).not.toBeInTheDocument());
   });
+
+  it("shows first-launch onboarding once when the workspace is empty", async () => {
+    localStorage.clear();
+    mockBackend([], []);
+    render(App);
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: /welcome to axiotask/i })).toBeInTheDocument());
+    expect(screen.getByText(/Press n or use the quick-add field/i)).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /start using axiotask/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /welcome to axiotask/i })).not.toBeInTheDocument());
+    expect(localStorage.getItem("axiotask:onboardingSeen")).toBe("true");
+  });
 });
