@@ -282,6 +282,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_status_reports_changed_task_lists_for_incremental_refresh() {
+        let (client, state) = setup().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_list("L2", "Work");
+        client.seed_task("L2", "RT1", "remote task", "00000000000001");
+
+        let outcome = state.run_sync().await.unwrap();
+        assert_eq!(outcome.changed_list_ids, vec!["L2"]);
+
+        let status = state.sync_status().await;
+        assert_eq!(status.changed_list_ids, vec!["L2"]);
+        assert!(
+            status.lists_changed,
+            "newly pulled list metadata still requires a sidebar refresh"
+        );
+    }
+
+    #[tokio::test]
     async fn expired_session_sets_needs_reauth_with_an_actionable_error() {
         // A permanently-denied token refresh (invalid_grant) must flip the
         // app into "sign in again" state — with a message that says what to

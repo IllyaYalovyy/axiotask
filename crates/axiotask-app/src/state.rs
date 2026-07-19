@@ -85,6 +85,11 @@ pub struct SyncStatus {
     pub last_pushed: u32,
     pub last_conflicts: u32,
     pub last_deleted: u32,
+    /// Task rows changed in these list ids during the most recent successful
+    /// sync. Lets the UI refresh affected lists instead of reloading all tasks.
+    pub changed_list_ids: Vec<String>,
+    /// List metadata or membership changed; the UI must reload list metadata.
+    pub lists_changed: bool,
     /// Number of successful syncs since the app started.
     pub total_syncs: u64,
     /// Message from the most recent sync failure, cleared on the next success.
@@ -538,6 +543,8 @@ impl AppState {
                     status.last_pushed = o.pushed;
                     status.last_conflicts = o.conflicts;
                     status.last_deleted = o.deleted;
+                    status.changed_list_ids.clone_from(&o.changed_list_ids);
+                    status.lists_changed = o.lists_changed;
                     status.total_syncs += 1;
                     // A row the server rejected stays dirty and would retry
                     // silently forever — tell the user instead of hiding it
@@ -552,6 +559,8 @@ impl AppState {
                 }
                 Err(e) => {
                     tracing::error!("sync failed: {e}");
+                    status.changed_list_ids.clear();
+                    status.lists_changed = false;
                     if matches!(
                         e,
                         axiotask_core::sync::SyncError::Api(

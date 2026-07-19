@@ -651,13 +651,24 @@ pub(crate) async fn clear_completed_inner(
     Ok(count)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncRunView {
+    pub summary: String,
+    pub changed_list_ids: Vec<String>,
+    pub lists_changed: bool,
+}
+
 #[tauri::command]
-pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<SyncRunView, String> {
     let outcome = state.run_sync_if_authed().await?;
-    Ok(format!(
-        "pulled={}, pushed={}, conflicts={}, deleted={}",
-        outcome.pulled, outcome.pushed, outcome.conflicts, outcome.deleted
-    ))
+    Ok(SyncRunView {
+        summary: format!(
+            "pulled={}, pushed={}, conflicts={}, deleted={}",
+            outcome.pulled, outcome.pushed, outcome.conflicts, outcome.deleted
+        ),
+        changed_list_ids: outcome.changed_list_ids,
+        lists_changed: outcome.lists_changed,
+    })
 }
 
 #[tauri::command]
@@ -794,6 +805,8 @@ pub struct SyncStatusView {
     pub last_pushed: u32,
     pub last_conflicts: u32,
     pub last_deleted: u32,
+    pub changed_list_ids: Vec<String>,
+    pub lists_changed: bool,
     /// Successful syncs since the app started.
     pub total_syncs: u64,
     /// Most recent sync error, cleared on the next success.
@@ -811,6 +824,8 @@ impl From<&crate::state::SyncStatus> for SyncStatusView {
             last_pushed: s.last_pushed,
             last_conflicts: s.last_conflicts,
             last_deleted: s.last_deleted,
+            changed_list_ids: s.changed_list_ids.clone(),
+            lists_changed: s.lists_changed,
             total_syncs: s.total_syncs,
             last_error: s.last_error.clone(),
             needs_reauth: s.needs_reauth,

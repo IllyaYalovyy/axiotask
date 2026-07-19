@@ -13,8 +13,8 @@ use crate::api::{ApiError, GoogleTasksClient};
 use crate::model::{NewTask, Task, TaskList, TaskPatch};
 use crate::store::{Store, StoredTask, StoredTaskList, SyncState};
 
-/// Counters from a single sync run.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+/// Counters and changed-data scope from a single sync run.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SyncOutcome {
     /// Tasks pulled from server (new or updated locally).
     pub pulled: u32,
@@ -28,6 +28,19 @@ pub struct SyncOutcome {
     /// dirty and the run continues — one poisoned row must not stop the other
     /// pushes, or the pull.
     pub errors: u32,
+    /// Task lists whose task rows changed locally during this run.
+    pub changed_list_ids: Vec<String>,
+    /// The task-list collection or list metadata changed, so callers must
+    /// refresh list metadata before replacing task rows.
+    pub lists_changed: bool,
+}
+
+impl SyncOutcome {
+    fn mark_list_changed(&mut self, list_id: &str) {
+        if !self.changed_list_ids.iter().any(|id| id == list_id) {
+            self.changed_list_ids.push(list_id.to_string());
+        }
+    }
 }
 
 /// Configuration for a sync engine instance.
@@ -253,6 +266,7 @@ impl SyncEngine {
                         &existing.updated,
                     )
                     .await?;
+                out.lists_changed = true;
                 debug!(local_id = %l.list.id, remote_id = %existing.id, "adopted existing list by title");
                 continue;
             }
@@ -267,6 +281,7 @@ impl SyncEngine {
                         )
                         .await?;
                     out.pushed += 1;
+                    out.lists_changed = true;
                     debug!(local_id = %l.list.id, remote_id = %remote_list.id, "pushed list create");
                 }
                 Err(e) => Self::row_push_failure(e, out, &l.list.id, "list create")?,
@@ -286,9 +301,11 @@ impl SyncEngine {
                             .mark_list_clean(&remote.id, remote.etag.as_deref(), &remote.updated)
                             .await?;
                         out.pushed += 1;
+                        out.lists_changed = true;
                     }
                     Err(ApiError::NotFound) => {
                         self.store.delete_list_hard(&l.list.id).await?;
+                        out.lists_changed = true;
                     }
                     Err(e) => Self::row_push_failure(e, out, &l.list.id, "list rename")?,
                 },
@@ -296,6 +313,7 @@ impl SyncEngine {
                     Ok(()) | Err(ApiError::NotFound) => {
                         self.store.delete_list_hard(&l.list.id).await?;
                         out.deleted += 1;
+                        out.lists_changed = true;
                     }
                     Err(e) if e.is_transient() => {
                         warn!(err = %e, "transient on list delete, retry");
@@ -315,6 +333,7 @@ impl SyncEngine {
                         revived.sync_state = SyncState::Clean;
                         revived.pending_op = None;
                         self.store.upsert_list(&revived).await?;
+                        out.lists_changed = true;
                     }
                 },
                 _ => {}
@@ -509,6 +528,7 @@ impl SyncEngine {
                     )
                     .await?;
                 out.pushed += 1;
+                out.mark_list_changed(&row.list_id);
                 debug!(local_id = %row.task.id, remote_id = %remote.id, "pushed create");
                 Ok(())
             }
@@ -556,6 +576,7 @@ impl SyncEngine {
                     .apply_pushed_task(&remote, &row.local_updated)
                     .await?;
                 out.pushed += 1;
+                out.mark_list_changed(&row.list_id);
                 debug!(id = %row.task.id, "pushed update");
                 Ok(())
             }
@@ -563,6 +584,7 @@ impl SyncEngine {
             Err(ApiError::NotFound) => {
                 debug!(id = %row.task.id, "task gone from server, deleting locally");
                 self.store.delete_task_hard(&row.task.id).await?;
+                out.mark_list_changed(&row.list_id);
                 Ok(())
             }
             Err(e) => Self::row_push_failure(e, out, &row.task.id, "update"),
@@ -599,6 +621,7 @@ impl SyncEngine {
             self.store
                 .apply_pushed_task(&remote, &local.local_updated)
                 .await?;
+            out.mark_list_changed(&local.list_id);
             return Ok(());
         }
 
@@ -635,6 +658,7 @@ impl SyncEngine {
             local_updated: remote.updated.clone(),
         };
         self.store.upsert_task(&copy).await?;
+        out.mark_list_changed(&local.list_id);
         Ok(())
     }
 
@@ -643,6 +667,7 @@ impl SyncEngine {
             Ok(()) | Err(ApiError::NotFound) => {
                 self.store.delete_task_hard(&row.task.id).await?;
                 out.deleted += 1;
+                out.mark_list_changed(&row.list_id);
                 debug!(id = %row.task.id, "pushed delete");
                 Ok(())
             }
@@ -664,7 +689,9 @@ impl SyncEngine {
         };
 
         for list in &lists {
-            self.upsert_list(list).await?;
+            if self.upsert_list(list).await? {
+                out.lists_changed = true;
+            }
         }
 
         // List ghost detection: a clean local list absent from the server was
@@ -679,6 +706,7 @@ impl SyncEngine {
             debug!(id = %ghost, "removing ghost list");
             self.store.delete_list_hard_if_clean(ghost).await?;
             out.deleted += 1;
+            out.lists_changed = true;
         }
 
         // Compute skip-set after push so remapped IDs are current.
@@ -766,6 +794,7 @@ impl SyncEngine {
             // Race-safe: won't clobber a row a live UI edit just dirtied.
             self.store.upsert_remote_task(&stored).await?;
             out.pulled += 1;
+            out.mark_list_changed(&list.id);
         }
 
         // Ghost detection: remove clean local rows absent from server.
@@ -843,12 +872,13 @@ impl SyncEngine {
             // ghost delete (the edit will push as a create/update next run).
             self.store.delete_task_hard_if_clean(ghost_id).await?;
             out.deleted += 1;
+            out.mark_list_changed(list_id);
         }
         Ok(())
     }
 
     /// Reconcile one remote list into the local store.
-    async fn upsert_list(&self, list: &TaskList) -> Result<(), SyncError> {
+    async fn upsert_list(&self, list: &TaskList) -> Result<bool, SyncError> {
         let locals = self.store.all_lists().await?;
 
         // Locally dirty list with the same id → preserve local intent (push will handle it).
@@ -856,7 +886,7 @@ impl SyncEngine {
             .iter()
             .any(|l| l.list.id == list.id && l.sync_state != SyncState::Clean)
         {
-            return Ok(());
+            return Ok(false);
         }
 
         // Adopt a local-only create (no etag) with the same title — covers the
@@ -874,8 +904,17 @@ impl SyncEngine {
                     &list.updated,
                 )
                 .await?;
-            return Ok(());
+            return Ok(true);
         }
+
+        let changed = !locals.iter().any(|l| {
+            l.list.id == list.id
+                && l.list.title == list.title
+                && l.list.etag == list.etag
+                && l.list.updated == list.updated
+                && !l.local_only
+                && l.sync_state == SyncState::Clean
+        });
 
         let stored = StoredTaskList {
             list: list.clone(),
@@ -886,7 +925,7 @@ impl SyncEngine {
         };
         // Race-safe: won't clobber a list a live rename just dirtied.
         self.store.upsert_remote_list(&stored).await?;
-        Ok(())
+        Ok(changed)
     }
 }
 

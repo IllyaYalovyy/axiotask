@@ -110,6 +110,18 @@
     allTasks = next;
   }
 
+  async function refreshAfterSyncPayload(payload) {
+    if (payload?.lists_changed) {
+      await loadAll();
+      return;
+    }
+    if (Array.isArray(payload?.changed_list_ids)) {
+      await refreshLists(payload.changed_list_ids);
+      return;
+    }
+    await loadAll();
+  }
+
   // The list a task currently belongs to (captured before a mutation).
   function taskListId(id) { return allTasks.find(t => t.id === id)?.listId; }
 
@@ -159,7 +171,7 @@
       // Don't reload while the user is typing a new/renamed task inline — a
       // reload unmounts the editor (and its id may have been remapped by the
       // push), losing the edit. The pending edit's own refresh will catch up.
-      if (editingId == null) loadAll();
+      if (editingId == null) refreshAfterSyncPayload(s);
     }).then((fn) => { unlisten = fn; });
     return () => { if (unlisten) unlisten(); };
   });
@@ -696,7 +708,7 @@
   async function doSync() {
     syncStatus = "syncing";
     const r = await cmd("sync_now");
-    if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await loadAll(); }
+    if (r !== null) { lastSynced = new Date(); syncStatus = "idle"; await refreshAfterSyncPayload(r); }
     // On failure: the toast (from cmd) and the sidebar status carry the
     // message. Never set `error` here — that template branch replaces the
     // entire task list, hiding perfectly good local data over a sync problem.
