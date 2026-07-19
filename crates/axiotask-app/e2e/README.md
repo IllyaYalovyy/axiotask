@@ -12,7 +12,10 @@ app actually works:
 1. renders and is not stuck on "Loading..." (catches startup/IPC wedges);
 2. clicking **+ New task** creates an editable task (catches dead clicks);
 3. typing a title + Enter round-trips through the backend and renders (catches
-   broken IPC / rendering).
+   broken IPC / rendering);
+4. the core task flows work in the packaged app: due-date actions, subtask tree
+   rendering, detail-panel edits, completion/show-completed, and search result
+   selection.
 
 It runs in a nested Xephyr X server with **software rendering (no GPU)**, so it is
 hardware-independent and CI-friendly. GPU/compositor-specific rendering problems
