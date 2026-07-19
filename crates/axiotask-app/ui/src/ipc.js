@@ -2,6 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 
 export const DEFAULT_INVOKE_TIMEOUT_MS = 12_000;
 
+// Commands that legitimately outlive the default watchdog. A uniform 12s
+// budget breaks them: auth_login is paced by the USER completing the browser
+// OAuth consent (minutes are normal — timing out mid-consent strands the UI
+// signed-out with nothing to correct it later), and sync commands are
+// network-bound with exponential rate-limit backoff.
+export const INVOKE_TIMEOUT_OVERRIDES_MS = {
+  auth_login: 10 * 60_000,
+  sync_now: 5 * 60_000,
+  fresh_sync: 5 * 60_000,
+  import_backup: 60_000,
+  export_backup: 60_000,
+};
+
+export function timeoutFor(name) {
+  return INVOKE_TIMEOUT_OVERRIDES_MS[name] ?? DEFAULT_INVOKE_TIMEOUT_MS;
+}
+
 export class InvokeTimeoutError extends Error {
   constructor(name, timeoutMs) {
     super(`${name} timed out after ${Math.round(timeoutMs / 1000)}s`);
@@ -19,7 +36,7 @@ export function friendlyError(name, e) {
   return `Failed: ${name} - ${msg}`;
 }
 
-export async function invokeWithTimeout(name, args = {}, timeoutMs = DEFAULT_INVOKE_TIMEOUT_MS) {
+export async function invokeWithTimeout(name, args = {}, timeoutMs = timeoutFor(name)) {
   let timer;
   try {
     return await Promise.race([
