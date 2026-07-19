@@ -529,14 +529,7 @@ impl AppState {
                         o.pushed,
                         o.conflicts
                     );
-                    // Real UTC instant (Timestamp is UTC). Zoned::now() would
-                    // format local time but label it "Z", making the UI read the
-                    // last-synced time as hours in the past off-UTC.
-                    status.last_synced = Some(
-                        jiff::Timestamp::now()
-                            .strftime("%Y-%m-%dT%H:%M:%SZ")
-                            .to_string(),
-                    );
+                    status.last_synced = Some(axiotask_core::dates::now_utc_string());
                     // A working sync proves the session is alive again (e.g.
                     // after re-login, or a mis-flagged transient).
                     self.needs_reauth.store(false, Ordering::Relaxed);
