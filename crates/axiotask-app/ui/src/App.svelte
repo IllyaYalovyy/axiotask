@@ -1541,7 +1541,6 @@
   .bulk-bar .bulk-clear { margin-left: auto; background: none; color: var(--fg-muted); }
   .bulk-bar .bulk-clear:hover { color: var(--fg); background: none; }
   .status { color: var(--fg-muted); text-align: center; margin-top: 4rem; }
-  .status.error { color: var(--danger); }
 
   /* Mobile (<700px): sidebar becomes a slide-in drawer. */
   @media (max-width: 700px) {

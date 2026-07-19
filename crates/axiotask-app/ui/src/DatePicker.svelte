@@ -17,10 +17,11 @@
   }
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const selected = parse(value);
+  const initialSelected = () => parse(value);
+  let selected = $derived(parse(value));
 
-  let view = $state(new Date((selected ?? today).getFullYear(), (selected ?? today).getMonth(), 1));
-  let focus = $state(new Date(selected ?? today));
+  let view = $state(new Date((initialSelected() ?? today).getFullYear(), (initialSelected() ?? today).getMonth(), 1));
+  let focus = $state(new Date(initialSelected() ?? today));
   let picker = $state(null);
   $effect(() => { if (picker) picker.focus(); });
 
@@ -61,12 +62,16 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={onclose} onkeydown={handleKeydown}>
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="datepicker" bind:this={picker} tabindex="-1" role="dialog" aria-label="Pick a date" onclick={(e) => e.stopPropagation()}>
+<div class="overlay" role="presentation" onclick={onclose}>
+  <div
+    class="datepicker"
+    bind:this={picker}
+    tabindex="-1"
+    role="dialog"
+    aria-label="Pick a date"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={handleKeydown}
+  >
     <div class="dp-header">
       <button class="dp-nav" onclick={prevMonth} aria-label="Previous month">‹</button>
       <span class="dp-title">{MONTHS[view.getMonth()]} {view.getFullYear()}</span>

@@ -1,11 +1,13 @@
 <script>
   let { initialText = "", lists = [], defaultListId = "", onsubmit, onclose } = $props();
+  const initialDialogText = () => initialText;
+  const initialListId = () => defaultListId;
 
-  let text = $state(initialText);
+  let text = $state(initialDialogText());
   // "perLine"  → one task per non-empty line
   // "titleNotes" → first line is the title, the rest become the notes
   let mode = $state("perLine");
-  let listId = $state(defaultListId);
+  let listId = $state(initialListId());
   let textarea = $state(null);
 
   $effect(() => {
@@ -32,8 +34,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="overlay"
   onclick={onclose}
@@ -43,7 +43,7 @@
   aria-label="Add multiple tasks"
   tabindex="-1"
 >
-  <div class="card" role="document" onclick={(e) => e.stopPropagation()}>
+  <div class="card" role="presentation" onclick={(e) => e.stopPropagation()}>
     <header class="head">
       <h2>Add multiple tasks</h2>
       <button class="x" onclick={onclose} aria-label="Close">×</button>

@@ -93,7 +93,7 @@
     </header>
 
     <div class="body">
-      <nav class="tabs" role="tablist" aria-label="Properties sections">
+      <div class="tabs" role="tablist" aria-label="Properties sections">
         {#each SECTIONS as s}
           <button
             class="tab"
@@ -105,7 +105,7 @@
             <span class="tab-icon" aria-hidden="true">{s.icon}</span>{s.label}
           </button>
         {/each}
-      </nav>
+      </div>
 
       <section class="pane" role="tabpanel">
         {#if section === "sync"}

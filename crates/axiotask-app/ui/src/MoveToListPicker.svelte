@@ -24,19 +24,27 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="overlay" onclick={onclose} onkeydown={handleKeydown}>
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="picker" bind:this={pickerEl} tabindex="-1" role="dialog" aria-label="Move to list" onclick={(e) => e.stopPropagation()}>
+<div class="overlay" role="presentation" onclick={onclose}>
+  <div
+    class="picker"
+    bind:this={pickerEl}
+    tabindex="-1"
+    role="dialog"
+    aria-label="Move to list"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={handleKeydown}
+  >
     <h3>Move to list</h3>
     {#each filteredLists as list, i}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="list-option" class:focused={i === focusIdx} onclick={() => handleClick(list)} onmouseenter={() => focusIdx = i}>
+      <button
+        class="list-option"
+        class:focused={i === focusIdx}
+        type="button"
+        onclick={() => handleClick(list)}
+        onmouseenter={() => focusIdx = i}
+      >
         {list.title}
-      </div>
+      </button>
     {/each}
   </div>
 </div>
@@ -52,6 +60,7 @@
   }
   h3 { margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--fg-secondary); }
   .list-option {
+    display: block; width: 100%; border: none; background: transparent; text-align: left; font-family: inherit;
     padding: 0.5rem 0.75rem; border-radius: 4px; cursor: pointer;
     font-size: 0.85rem; color: var(--fg);
   }

@@ -37,12 +37,12 @@ describe("DatePicker", () => {
   it("Enter picks the focused day; Escape closes", async () => {
     const onselect = vi.fn();
     const onclose = vi.fn();
-    const { container } = render(DatePicker, { props: { value: "2026-06-15", onselect, onclose } });
-    const overlay = container.querySelector(".overlay");
-    await fireEvent.keyDown(overlay, { key: "ArrowRight" }); // focus 2026-06-16
-    await fireEvent.keyDown(overlay, { key: "Enter" });
+    render(DatePicker, { props: { value: "2026-06-15", onselect, onclose } });
+    const dialog = screen.getByRole("dialog", { name: /pick a date/i });
+    await fireEvent.keyDown(dialog, { key: "ArrowRight" }); // focus 2026-06-16
+    await fireEvent.keyDown(dialog, { key: "Enter" });
     expect(onselect).toHaveBeenCalledWith("2026-06-16");
-    await fireEvent.keyDown(overlay, { key: "Escape" });
+    await fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onclose).toHaveBeenCalled();
   });
 });
