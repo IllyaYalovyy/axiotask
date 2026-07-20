@@ -31,7 +31,15 @@ function mockBackend(lists = [], tasks = []) {
 }
 
 const lists = [{ id: "L1", title: "Work" }];
-const today = new Date().toISOString().split("T")[0] + "T00:00:00Z";
+function localIsoDaysFromNow(n) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + n);
+  const pad = (v) => String(v).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T00:00:00Z`;
+}
+const today = localIsoDaysFromNow(0);
+const yesterday = localIsoDaysFromNow(-1);
 
 function makeTasks(n = 3) {
   return Array.from({ length: n }, (_, i) => ({
@@ -99,6 +107,30 @@ describe("Keyboard Navigation", () => {
       await pressKey("k"); // already at 0
       await waitFor(() => {
         expect(document.querySelectorAll(".task-widget")[0]).toHaveClass("focused");
+      });
+    });
+
+    it("Focus j follows the visual overdue-first order, including inherited-date child rows", async () => {
+      mockBackend(lists, [
+        { id: "today", parent_id: null, title: "Today card", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
+        { id: "parent", parent_id: null, title: "Inherited overdue parent", notes: null, status: "needsAction", due: null, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
+        { id: "child", parent_id: "parent", title: "Overdue child", notes: null, status: "needsAction", due: yesterday, position: "00000000000003", sync_state: "clean", listId: "L1", listTitle: "Work" },
+      ]);
+      localStorage.setItem("axiotask:view", "focus");
+      render(App);
+
+      await waitFor(() => expect(screen.getByText("Overdue child")).toBeInTheDocument());
+
+      let widgets = document.querySelectorAll(".task-widget");
+      expect(widgets[0].querySelector(".title")).toHaveTextContent("Inherited overdue parent");
+      expect(widgets[1].querySelector(".title")).toHaveTextContent("Overdue child");
+      expect(widgets[2].querySelector(".title")).toHaveTextContent("Today card");
+      expect(widgets[0]).toHaveClass("focused");
+
+      await pressKey("j");
+      await waitFor(() => {
+        widgets = document.querySelectorAll(".task-widget");
+        expect(widgets[1]).toHaveClass("focused");
       });
     });
   });

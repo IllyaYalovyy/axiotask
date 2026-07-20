@@ -445,7 +445,31 @@
     if (selectedView) localStorage.setItem(storageKey(`sort:${selectedView}`), sortMode);
   });
 
-  let flatTasks = $derived(buildFlatTree(applySortAndOrder(visibleTasks())));
+  function isOverdueByEffectiveDate(task) {
+    const due = task.due ? task.due.slice(0, 10) : task.inheritedDue;
+    if (!due) return false;
+    const now = new Date(); now.setHours(0,0,0,0);
+    return parseLocalDate(due) < now;
+  }
+
+  // Focus renders an Overdue section above the remaining cards. Keep the
+  // underlying keyboard/detail array in that same card order so j/k navigation
+  // moves through rows exactly as the user sees them.
+  function focusOverdueFirst(tasks) {
+    const overdue = [];
+    const rest = [];
+    let bucket = rest;
+    for (const task of tasks) {
+      if ((task.depth ?? 0) === 0) bucket = isOverdueByEffectiveDate(task) ? overdue : rest;
+      bucket.push(task);
+    }
+    return [...overdue, ...rest];
+  }
+
+  let flatTasks = $derived.by(() => {
+    const tasks = buildFlatTree(applySortAndOrder(visibleTasks()));
+    return selectedView === "focus" ? focusOverdueFirst(tasks) : tasks;
+  });
 
   // The detail panel reads the task live out of the store rather than holding a
   // snapshot, so renames/date changes made anywhere else (inline editor, a sync
