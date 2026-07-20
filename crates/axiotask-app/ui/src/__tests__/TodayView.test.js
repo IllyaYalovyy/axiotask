@@ -3,6 +3,13 @@ import { describe, it, expect } from "vitest";
 import TodayView from "../TodayView.svelte";
 
 describe("TodayView: empty states", () => {
+  function daysFromNow(n) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + n);
+    return d.toISOString();
+  }
+
   const baseProps = {
     tasks: [],
     focusIndex: 0,
@@ -38,5 +45,21 @@ describe("TodayView: empty states", () => {
     ];
     render(TodayView, { props: { ...baseProps, tasks, viewType: "focus" } });
     expect(screen.getByText("Buy milk")).toBeInTheDocument();
+  });
+
+  it("groups overdue Focus tasks under a counted section header", () => {
+    const tasks = [
+      { id: "t1", title: "Missed invoice", status: "needsAction", due: daysFromNow(-2), position: "1", parent_id: null, notes: null, sync_state: "clean" },
+      { id: "t2", title: "Missed follow-up", status: "needsAction", due: daysFromNow(-1), position: "2", parent_id: null, notes: null, sync_state: "clean" },
+      { id: "t3", title: "Today review", status: "needsAction", due: daysFromNow(0), position: "3", parent_id: null, notes: null, sync_state: "clean" },
+    ];
+
+    render(TodayView, { props: { ...baseProps, tasks, viewType: "focus" } });
+
+    const header = screen.getByRole("heading", { name: "Overdue (2)" });
+    const section = header.closest("section");
+    expect(section).toContainElement(screen.getByText("Missed invoice"));
+    expect(section).toContainElement(screen.getByText("Missed follow-up"));
+    expect(section).not.toContainElement(screen.getByText("Today review"));
   });
 });

@@ -33,6 +33,25 @@
     handleDragEnd();
   }
 
+  function parseDueDate(due) {
+    if (!due) return null;
+    const [year, month, day] = due.slice(0, 10).split("-").map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day);
+  }
+
+  function isOverdue(task) {
+    const due = parseDueDate(task.due);
+    if (!due) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return due < today;
+  }
+
+  let indexedTasks = $derived(tasks.map((task, i) => ({ task, i })));
+  let overdueItems = $derived(viewType === "focus" ? indexedTasks.filter(({ task }) => isOverdue(task)) : []);
+  let nonOverdueItems = $derived(viewType === "focus" ? indexedTasks.filter(({ task }) => !isOverdue(task)) : indexedTasks);
+
   const emptyStates = {
     focus: { icon: "✓", text: "All clear for this week", sub: "Nothing needs your attention right now." },
     upcoming: { icon: "📅", text: "Nothing upcoming", sub: "No tasks due in the next 14 days." },
@@ -43,7 +62,41 @@
 
 <div class="smart-view">
   {#if tasks.length > 0}
-    {#each tasks as task, i}
+    {#if overdueItems.length > 0}
+      <section class="task-section" aria-labelledby="overdue-heading">
+        <h2 id="overdue-heading" class="section-heading">Overdue ({overdueItems.length})</h2>
+        {#each overdueItems as { task, i }}
+          {#if dropTargetIdx === i && draggingId && tasks[i]?.id !== draggingId}
+            <div class="drop-indicator"></div>
+          {/if}
+          <TaskRow
+            {task}
+            focused={i === focusIndex}
+            editing={editingId === task.id}
+            completing={completingIds.has(task.id)}
+            selected={selectedIds.has(task.id)}
+            {onrename}
+            {oncanceledit}
+            onclick={(id, action) => action === "edit" ? onfocus?.(i, "edit") : onfocus?.(i)}
+            {onselect}
+            {ontoggle}
+            {onsetdue}
+            {onpickdate}
+            {oncontextmenu}
+            {onaddsubtask}
+            {ontogglecollapse}
+            subtaskProgress={getSubtaskProgress?.(task.id)}
+            showList={true}
+            draggable={sortMode === "manual"}
+            ondragstart={handleDragStart}
+            ondragend={handleDragEnd}
+            ondragover={handleDragOver}
+            ondrop={handleDrop}
+          />
+        {/each}
+      </section>
+    {/if}
+    {#each nonOverdueItems as { task, i }}
       {#if dropTargetIdx === i && draggingId && tasks[i]?.id !== draggingId}
         <div class="drop-indicator"></div>
       {/if}
@@ -87,5 +140,15 @@
   .empty .icon { font-size: 2rem; margin-bottom: 0.5rem; }
   .empty p { color: var(--fg-muted); font-size: 1.1rem; margin: 0.3rem; }
   .empty .sub { font-size: 0.85rem; color: var(--fg-faint); }
+  .task-section { margin-bottom: 0.75rem; }
+  .section-heading {
+    margin: 0.25rem 0 0.4rem;
+    padding: 0 0.5rem;
+    color: var(--danger, #b3261e);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.4;
+    text-transform: uppercase;
+  }
   .drop-indicator { height: 2px; background: var(--accent); margin: 0 0.5rem; border-radius: 1px; }
 </style>
