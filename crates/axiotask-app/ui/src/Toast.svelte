@@ -12,10 +12,10 @@
 
 <style>
   .toast {
-    position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
     background: var(--bg-elevated); border: 1px solid var(--border-faint); border-radius: 6px;
     padding: 0.6rem 1rem; display: flex; align-items: center; gap: 0.75rem;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 1000;
+    max-width: 100%;
   }
   .toast-error {
     background: var(--bg-danger); border-color: var(--danger);

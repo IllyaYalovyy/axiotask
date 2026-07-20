@@ -1508,14 +1508,18 @@
   {/if}
 </main>
 
-{#if undoItem}
-  <Toast message={undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
-{/if}
-{#if errorToast}
-  <Toast message={errorToast.message} variant="error" ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
-{/if}
-{#if infoToast}
-  <Toast message={infoToast.message} ondismiss={() => { clearTimeout(infoToast.timer); infoToast = null; }} />
+{#if undoItem || errorToast || infoToast}
+  <div class="toast-stack">
+    {#if undoItem}
+      <Toast message={undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
+    {/if}
+    {#if errorToast}
+      <Toast message={errorToast.message} variant="error" ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />
+    {/if}
+    {#if infoToast}
+      <Toast message={infoToast.message} ondismiss={() => { clearTimeout(infoToast.timer); infoToast = null; }} />
+    {/if}
+  </div>
 {/if}
 {#if showCheatsheet}
   <Cheatsheet onclose={() => showCheatsheet = false} />
@@ -1633,6 +1637,12 @@
     background: var(--accent); color: var(--bg); font-size: 2rem; line-height: 1;
     box-shadow: 0 8px 24px rgba(0,0,0,0.28); cursor: pointer;
   }
+  .toast-stack {
+    position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
+    z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    width: min(calc(100vw - 2rem), 36rem); pointer-events: none;
+  }
+  .toast-stack :global(.toast) { pointer-events: auto; }
   .mobile-fab:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
   .view-title { flex: 0 0 auto; font-size: 0.9rem; font-weight: 600; color: var(--fg); }
   .toggle { font-size: 0.8rem; color: var(--fg-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem; }
