@@ -3,7 +3,16 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
 
-const lists = [{ id: "L1", title: "Work" }];
+const lists = [
+  { id: "L1", title: "Work" },
+  { id: "L2", title: "Personal" },
+];
+
+function todayIso() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today.toISOString();
+}
 
 function task(id, title, opts = {}) {
   return {
@@ -15,8 +24,8 @@ function task(id, title, opts = {}) {
     due: opts.due ?? null,
     position: opts.position || "00001",
     sync_state: "clean",
-    listId: "L1",
-    listTitle: "Work",
+    listId: opts.list || "L1",
+    listTitle: opts.listTitle || "Work",
   };
 }
 
@@ -116,6 +125,46 @@ describe("Drag and Drop: Drag interactions", () => {
       const calls = invoke.mock.calls.filter(c => c[0] === "reorder_task");
       expect(calls.length).toBeGreaterThan(0);
     });
+  });
+
+  it("does not count other lists' smart-view cards as reorder siblings", async () => {
+    localStorage.setItem("axiotask:view", "focus");
+    localStorage.setItem("axiotask:sort:focus", "manual");
+    const due = todayIso();
+    const tasks = [
+      task("work-1", "Work first", { position: "00001", due }),
+      task("work-2", "Work second", { position: "00002", due }),
+      task("personal-1", "Personal visible", {
+        position: "00001",
+        due,
+        list: "L2",
+        listTitle: "Personal",
+      }),
+    ];
+    mockBackend(tasks);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Work first")).toBeInTheDocument());
+
+    const handles = screen.getAllByTestId("drag-handle");
+    const dropZones = screen.getAllByTestId("drop-zone");
+
+    await fireEvent.dragStart(handles[0], {
+      dataTransfer: { setData: () => {}, effectAllowed: "" },
+    });
+    const listOneFetchesBeforeDrop = invoke.mock.calls.filter(
+      c => c[0] === "list_tasks" && c[1]?.listId === "L1"
+    ).length;
+    await fireEvent.drop(dropZones[2], { dataTransfer: { getData: () => "work-1" } });
+
+    await waitFor(() => {
+      const listOneFetches = invoke.mock.calls.filter(
+        c => c[0] === "list_tasks" && c[1]?.listId === "L1"
+      );
+      expect(listOneFetches.length).toBeGreaterThan(listOneFetchesBeforeDrop);
+    });
+    const calls = invoke.mock.calls.filter(c => c[0] === "reorder_task");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual({ id: "work-1", direction: "down" });
   });
 
   it("removes dragging class and indicator on drag end", async () => {
