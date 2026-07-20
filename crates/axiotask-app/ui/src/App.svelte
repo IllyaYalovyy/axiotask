@@ -984,7 +984,8 @@
   async function moveToList(taskId, targetListId) {
     const task = allTasks.find(t => t.id === taskId);
     const targetList = lists.find(l => l.id === targetListId);
-    await cmd("move_to_list", { id: taskId, targetListId });
+    const movedId = await cmd("move_to_list", { id: taskId, targetListId });
+    if (detailId === taskId && movedId) detailId = movedId;
     await refreshLists([task?.listId, targetListId]);
     if (task && targetList) {
       undoItem = { id: taskId, title: `Moved "${task.title}" to ${targetList.title}`, isMoveToast: true, timer: setTimeout(() => { undoItem = null; }, 5000) };

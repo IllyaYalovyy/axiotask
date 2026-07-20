@@ -806,7 +806,8 @@ mod tests {
         seed_list(&state, "L2", "Personal").await;
         seed_task(&state, "T1", "L1", "Task to move").await; // has etag e1
 
-        state.move_task_to_list("T1", "L2").await.unwrap();
+        let new_id = state.move_task_to_list("T1", "L2").await.unwrap();
+        assert_ne!(new_id, "T1", "moved task gets a fresh id");
 
         // Old list: T1 is tombstoned (excluded from list_tasks but pending delete).
         let l1_tasks = state.store.list_tasks("L1").await.unwrap();
@@ -816,7 +817,7 @@ mod tests {
         let l2_tasks = state.store.list_tasks("L2").await.unwrap();
         assert_eq!(l2_tasks.len(), 1);
         assert_eq!(l2_tasks[0].task.title, "Task to move");
-        assert_ne!(l2_tasks[0].task.id, "T1", "moved task gets a fresh id");
+        assert_eq!(l2_tasks[0].task.id, new_id);
         assert_eq!(l2_tasks[0].pending_op.as_deref(), Some("create"));
 
         // drain_dirty sees both the delete tombstone and the create.
@@ -856,13 +857,15 @@ mod tests {
         };
         state.store.upsert_task(&local).await.unwrap();
 
-        state.move_task_to_list("local-1", "L2").await.unwrap();
+        let new_id = state.move_task_to_list("local-1", "L2").await.unwrap();
+        assert_ne!(new_id, "local-1", "moved local task gets a fresh id");
 
         // Old gone entirely (no tombstone — never synced).
         assert!(state.store.list_tasks("L1").await.unwrap().is_empty());
         // New exists in L2.
         let l2 = state.store.list_tasks("L2").await.unwrap();
         assert_eq!(l2.len(), 1);
+        assert_eq!(l2[0].task.id, new_id);
         assert_eq!(l2[0].task.title, "unsynced");
         // No delete tombstone should remain (only the create).
         let dirty = state.store.drain_dirty().await.unwrap();

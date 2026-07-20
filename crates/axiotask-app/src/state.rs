@@ -714,7 +714,11 @@ impl AppState {
     /// deletes its children too (verified against the live API), and the
     /// local FK cascade mirrors that — so leaving subtasks behind would
     /// silently destroy them the moment the parent's delete pushed.
-    pub async fn move_task_to_list(&self, id: &str, target_list_id: &str) -> Result<(), String> {
+    pub async fn move_task_to_list(
+        &self,
+        id: &str,
+        target_list_id: &str,
+    ) -> Result<String, String> {
         // Locate the task across all lists.
         let lists = self.store.all_lists().await.map_err(|e| e.to_string())?;
         let mut found: Option<axiotask_core::store::StoredTask> = None;
@@ -734,7 +738,7 @@ impl AppState {
         };
 
         if old.list_id == target_list_id {
-            return Ok(()); // already there
+            return Ok(id.to_string()); // already there
         }
 
         let now = axiotask_core::dates::now_utc_string();
@@ -770,6 +774,10 @@ impl AppState {
                 frontier.push((child.clone(), Some(copy.task.id.clone())));
             }
         }
+        let new_root_id = recreated
+            .iter()
+            .find_map(|(old_id, new_id)| (old_id == id).then(|| new_id.clone()))
+            .ok_or_else(|| format!("failed to recreate task {id}"))?;
 
         // Remove the old subtree: hard-delete descendants locally (the
         // server cascades them when the root's delete lands), then tombstone
@@ -799,7 +807,7 @@ impl AppState {
         }
 
         self.schedule_sync();
-        Ok(())
+        Ok(new_root_id)
     }
 
     /// Whether push is enabled (read-only mode if false).

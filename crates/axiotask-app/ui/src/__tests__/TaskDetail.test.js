@@ -49,7 +49,20 @@ function mockBackend(tasks = [], subtasks = []) {
         if (t) t.parent_id = args.parentId;
         return null;
       }
-      case "move_to_list": return null;
+      case "move_to_list": {
+        const t = taskStore.find((x) => x.id === args.id);
+        if (!t) return null;
+        const targetList = lists.find((l) => l.id === args.targetListId);
+        const moved = {
+          ...t,
+          id: `${args.id}-moved`,
+          listId: args.targetListId,
+          listTitle: targetList?.title || t.listTitle,
+        };
+        taskStore = taskStore.filter((x) => x.id !== args.id);
+        taskStore.push(moved);
+        return moved.id;
+      }
       case "sync_now": return "ok";
       default: return null;
     }
@@ -381,7 +394,7 @@ describe("TaskDetail Panel (GH#7)", () => {
   });
 
   describe("List dropdown", () => {
-    it("changing list calls move_to_list on save", async () => {
+    it("changing list keeps the detail panel open on the moved task", async () => {
       mockBackend([task("t1", "Move Task", { listId: "L1" })]);
       render(App);
       await waitFor(() => expect(screen.getByText("Move Task")).toBeInTheDocument());
@@ -395,6 +408,13 @@ describe("TaskDetail Panel (GH#7)", () => {
       await waitFor(() =>
         expect(invoke).toHaveBeenCalledWith("move_to_list", { id: "t1", targetListId: "L2" })
       );
+      await waitFor(() =>
+        expect(invoke.mock.calls.filter(([cmd, args]) => cmd === "list_tasks" && args?.listId === "L2").length)
+          .toBeGreaterThan(1)
+      );
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+      expect(screen.getByLabelText("Title")).toHaveValue("Move Task");
+      expect(screen.getByLabelText("List")).toHaveValue("L2");
     });
   });
 

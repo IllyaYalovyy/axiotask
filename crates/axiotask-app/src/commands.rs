@@ -576,7 +576,7 @@ pub async fn move_to_list(
     state: State<'_, Arc<AppState>>,
     id: String,
     target_list_id: String,
-) -> Result<(), String> {
+) -> Result<String, String> {
     state.move_task_to_list(&id, &target_list_id).await
 }
 
