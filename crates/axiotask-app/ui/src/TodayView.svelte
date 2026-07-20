@@ -41,7 +41,10 @@
   }
 
   function isOverdue(task) {
-    const due = parseDueDate(task.due);
+    // A card is overdue by its EFFECTIVE date: its own due, or the date
+    // inherited from its earliest unfinished subtask (that inheritance is
+    // exactly what pulled it into Focus, and the row shows "↳ overdue").
+    const due = parseDueDate(task.due || task.inheritedDue);
     if (!due) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -49,8 +52,24 @@
   }
 
   let indexedTasks = $derived(tasks.map((task, i) => ({ task, i })));
-  let overdueItems = $derived(viewType === "focus" ? indexedTasks.filter(({ task }) => isOverdue(task)) : []);
-  let nonOverdueItems = $derived(viewType === "focus" ? indexedTasks.filter(({ task }) => !isOverdue(task)) : indexedTasks);
+  // Partition by top-level CARD, carrying each card's subtree rows (depth > 0)
+  // with it — classifying row-by-row would tear an expanded parent's children
+  // into the other section, orphaning └-rows under the wrong heading.
+  function partitionByCard(items) {
+    const overdue = [];
+    const rest = [];
+    let bucket = rest;
+    for (const item of items) {
+      if ((item.task.depth ?? 0) === 0) bucket = isOverdue(item.task) ? overdue : rest;
+      bucket.push(item);
+    }
+    return { overdue, rest };
+  }
+  let sections = $derived(viewType === "focus" ? partitionByCard(indexedTasks) : { overdue: [], rest: indexedTasks });
+  let overdueItems = $derived(sections.overdue);
+  let nonOverdueItems = $derived(sections.rest);
+  // The heading counts cards, matching the sidebar badge semantics.
+  let overdueCardCount = $derived(overdueItems.filter(({ task }) => (task.depth ?? 0) === 0).length);
 
   const emptyStates = {
     focus: { icon: "✓", text: "All clear for this week", sub: "Nothing needs your attention right now." },
@@ -64,7 +83,7 @@
   {#if tasks.length > 0}
     {#if overdueItems.length > 0}
       <section class="task-section" aria-labelledby="overdue-heading">
-        <h2 id="overdue-heading" class="section-heading">Overdue ({overdueItems.length})</h2>
+        <h2 id="overdue-heading" class="section-heading">Overdue ({overdueCardCount})</h2>
         {#each overdueItems as { task, i }}
           {#if dropTargetIdx === i && draggingId && tasks[i]?.id !== draggingId}
             <div class="drop-indicator"></div>
