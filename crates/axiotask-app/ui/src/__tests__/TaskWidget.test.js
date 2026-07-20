@@ -359,6 +359,30 @@ describe("#50: touch task row interactions", () => {
     expect(onselect).toHaveBeenCalledWith("t1");
   });
 
+  it("does not let a long-press without a generated click suppress the next tap", async () => {
+    vi.useFakeTimers();
+    const onClick = vi.fn();
+    const onselect = vi.fn();
+    const { container } = render(TaskRow, {
+      props: { ...defaultProps, task: makeTask(), onclick: onClick, onselect },
+    });
+
+    const row = container.querySelector(".task-widget");
+    await fireEvent.touchStart(row, { touches: [{ clientX: 40, clientY: 80 }] });
+    vi.advanceTimersByTime(500);
+    await Promise.resolve();
+    await fireEvent.touchEnd(row);
+
+    expect(onselect).toHaveBeenCalledWith("t1");
+    expect(onClick).not.toHaveBeenCalled();
+
+    await fireEvent.touchStart(row, { touches: [{ clientX: 40, clientY: 80 }] });
+    await fireEvent.touchEnd(row);
+    await fireEvent.click(row);
+
+    expect(onClick).toHaveBeenCalledWith("t1");
+  });
+
   it("cancels long-press selection when the touch moves", async () => {
     vi.useFakeTimers();
     const onselect = vi.fn();

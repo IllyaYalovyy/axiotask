@@ -18,6 +18,7 @@
   }
 
   function handleRowTouchStart(e) {
+    suppressNextClick = false;
     if (e.target.closest(".drag-handle, .checkbox, .actions, .edit-input, a, button")) return;
     const touch = e.touches?.[0];
     if (!touch) return;
