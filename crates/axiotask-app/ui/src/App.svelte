@@ -17,6 +17,7 @@
   import DatePicker from "./DatePicker.svelte";
   import Properties from "./Properties.svelte";
   import BulkAdd from "./BulkAdd.svelte";
+  import Icon from "./Icon.svelte";
   import { storageKey } from "./storage.js";
   import { getThemePref, setThemePref } from "./theme.js";
   import { friendlyError, invokeWithTimeout } from "./ipc.js";
@@ -1394,6 +1395,15 @@
         />
       </form>
       <button class="new-task-btn" onclick={newTask}>+ New task</button>
+      <button
+        class="search-btn"
+        type="button"
+        title="Search (/)"
+        onclick={() => showSearch = true}
+      >
+        <Icon name="search" size={14} />
+        <span>Search</span>
+      </button>
       <SortDropdown value={sortMode} onchange={(v) => sortMode = v} />
       <label class="toggle">
         <input type="checkbox" bind:checked={showCompleted} /> Show completed
@@ -1566,6 +1576,12 @@
   .quick-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
   .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: var(--bg-hover); }
+  .search-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: none; border: 1px solid var(--border); color: var(--fg-secondary);
+    padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer;
+  }
+  .search-btn:hover { background: var(--bg-hover); color: var(--fg); }
   .mobile-fab {
     display: none; position: fixed; right: 1rem; bottom: 1rem; z-index: 950;
     width: 3.5rem; height: 3.5rem; border-radius: 50%; border: 0;
@@ -1619,6 +1635,7 @@
     .toggle { font-size: 0.9rem; padding: 0.3rem 0; min-height: 44px; }
     .toggle input { width: 1.5rem; height: 1.5rem; }
     .clear-btn { padding: 0.5rem 0.8rem; font-size: 0.85rem; min-height: 44px; }
+    .search-btn { padding: 0.5rem 0.8rem; min-height: 44px; font-size: 0.9rem; }
   }
 
   .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }

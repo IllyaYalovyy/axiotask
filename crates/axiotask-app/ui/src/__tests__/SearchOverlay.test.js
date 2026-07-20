@@ -56,6 +56,16 @@ describe("GH#17: Search overlay", () => {
     expect(screen.getByPlaceholderText("Search tasks...")).toBeInTheDocument();
   });
 
+  it("opens from the toolbar search button for touch users", async () => {
+    mockBackend([task("t1", "Buy milk")]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Buy milk")).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: /search/i }));
+
+    expect(screen.getByPlaceholderText("Search tasks...")).toBeInTheDocument();
+  });
+
   it("closes on Escape", async () => {
     mockBackend([task("t1", "Buy milk")]);
     render(App);
