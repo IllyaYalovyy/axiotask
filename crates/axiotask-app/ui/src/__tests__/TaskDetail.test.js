@@ -312,7 +312,7 @@ describe("TaskDetail Panel (GH#7)", () => {
       await fireEvent.click(screen.getByText("Delete Me"));
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByText("🗑️ Delete task"));
+      await fireEvent.click(screen.getByRole("button", { name: "Delete task" }));
       await waitFor(() => {
         expect(screen.queryByText("Task Details")).not.toBeInTheDocument();
       });

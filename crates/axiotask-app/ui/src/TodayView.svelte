@@ -1,4 +1,5 @@
 <script>
+  import Icon from "./Icon.svelte";
   import TaskRow from "./TaskRow.svelte";
 
   let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, getSubtaskProgress, showCompleted, viewType = "focus", sortMode = "manual", onreorder } = $props();
@@ -72,10 +73,10 @@
   let overdueCardCount = $derived(overdueItems.filter(({ task }) => (task.depth ?? 0) === 0).length);
 
   const emptyStates = {
-    focus: { icon: "✓", text: "All clear for this week", sub: "Nothing needs your attention right now." },
-    upcoming: { icon: "📅", text: "Nothing upcoming", sub: "No tasks due in the next 14 days." },
-    missed: { icon: "🎉", text: "Nothing overdue", sub: "You're all caught up!" },
-    unscheduled: { icon: "✓", text: "Everything is scheduled", sub: "All tasks have a due date." },
+    focus: { icon: "checkCircle", text: "All clear for this week", sub: "Nothing needs your attention right now." },
+    upcoming: { icon: "calendar", text: "Nothing upcoming", sub: "No tasks due in the next 14 days." },
+    missed: { icon: "checkCircle", text: "Nothing overdue", sub: "You're all caught up!" },
+    unscheduled: { icon: "checkCircle", text: "Everything is scheduled", sub: "All tasks have a due date." },
   };
 </script>
 
@@ -146,7 +147,7 @@
     {/each}
   {:else}
     <div class="empty">
-      <p class="icon">{emptyStates[viewType]?.icon || "✓"}</p>
+      <p class="icon"><Icon name={emptyStates[viewType]?.icon || "checkCircle"} size={32} /></p>
       <p>{emptyStates[viewType]?.text || "No tasks"}</p>
       <p class="sub">{emptyStates[viewType]?.sub || ""}</p>
     </div>

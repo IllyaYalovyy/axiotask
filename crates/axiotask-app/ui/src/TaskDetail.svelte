@@ -1,6 +1,7 @@
 <script>
   import { tick, untrack } from "svelte";
   import DatePicker from "./DatePicker.svelte";
+  import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
   let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
@@ -190,7 +191,8 @@
       onclick={() => invokeWithTimeout("open_url", { url: task.web_view_link }).catch((err) => console.error("[open_url]", err))}
       title="Open this task in the Google Tasks web app (to set a repeat, etc.)"
     >
-      ↗ Open in Google Tasks
+      <Icon name="externalLink" size={14} />
+      <span>Open in Google Tasks</span>
     </button>
   {/if}
 
@@ -236,7 +238,10 @@
       <span class="field-label">Links</span>
       <div class="links">
         {#each detectedLinks as url}
-          <button class="link-chip" title={url} onclick={() => invokeWithTimeout("open_url", { url }).catch((err) => console.error("[open_url]", err))}>🔗 {url}</button>
+          <button class="link-chip" title={url} onclick={() => invokeWithTimeout("open_url", { url }).catch((err) => console.error("[open_url]", err))}>
+            <Icon name="link" size={14} />
+            <span>{url}</span>
+          </button>
         {/each}
       </div>
     </div>
@@ -279,7 +284,10 @@
   {/if}
 
   <div class="danger-zone">
-    <button class="delete-btn" onclick={() => { ondelete(task.id); onclose(); }}>🗑️ Delete task</button>
+    <button class="delete-btn" onclick={() => { ondelete(task.id); onclose(); }}>
+      <Icon name="trash" size={14} />
+      <span>Delete task</span>
+    </button>
   </div>
 </aside>
 
@@ -320,7 +328,8 @@
   .detach-btn:hover { background: var(--bg-hover); border-color: var(--accent); }
   .panel-actions { display: flex; gap: 0.4rem; }
   .open-google {
-    display: block; width: 100%; box-sizing: border-box; margin: 0 0 1rem;
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+    width: 100%; box-sizing: border-box; margin: 0 0 1rem;
     background: none; border: 1px solid var(--border); color: var(--accent);
     padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer;
     font-size: 0.8rem; font-family: inherit; text-align: center;
@@ -334,11 +343,13 @@
   .field-label { display: block; font-size: 0.75rem; color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.3rem; }
   .links { display: flex; flex-direction: column; gap: 0.25rem; }
   .link-chip {
-    display: block; width: 100%; box-sizing: border-box; text-align: left;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    width: 100%; box-sizing: border-box; text-align: left;
     background: var(--bg-sidebar); border: 1px solid var(--bg-elevated); border-radius: 4px;
     color: var(--accent); padding: 0.35rem 0.5rem; cursor: pointer; font-size: 0.78rem;
     font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .link-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .link-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
   .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
   .add-subtask-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
@@ -370,7 +381,7 @@
   .quick-dates button:hover { background: var(--bg-active); color: var(--accent); }
 
   .danger-zone { margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--bg-elevated); }
-  .delete-btn { background: none; border: 1px solid var(--border-danger); color: var(--danger); padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
+  .delete-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; background: none; border: 1px solid var(--border-danger); color: var(--danger); padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
   .delete-btn:hover { background: var(--bg-danger); }
 
   .subtask-list { display: flex; flex-direction: column; gap: 0.3rem; }

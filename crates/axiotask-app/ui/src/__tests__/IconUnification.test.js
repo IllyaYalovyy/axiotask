@@ -30,4 +30,22 @@ describe("Icon unification", () => {
     expect(sidebar).not.toMatch(/[★☰⚠○▤⚙↻🔑☀🌙⠿]/u);
     expect(properties).not.toMatch(/[↻◐👤⌨ℹ⚙⚠⟳⭳⭱]/u);
   });
+
+  it("uses Icon.svelte for smart-view empty-state illustrations", () => {
+    const todayView = source("TodayView.svelte");
+
+    expect(todayView).toContain('import Icon from "./Icon.svelte"');
+    expect(todayView).toContain("<Icon");
+    expect(todayView).not.toMatch(/icon:\s*"[^"]*[✓📅🎉]/u);
+    expect(todayView).not.toMatch(/<p class="icon">[^<]*[✓📅🎉]/u);
+  });
+
+  it("does not render direct icon glyphs in App or TaskDetail controls", () => {
+    const app = source("App.svelte");
+    const detail = source("TaskDetail.svelte");
+
+    expect(app).not.toMatch(/[☰⚠↗🗑✓]/u);
+    expect(detail).toContain('import Icon from "./Icon.svelte"');
+    expect(detail).not.toMatch(/[↗🔗🗑]/u);
+  });
 });

@@ -1412,7 +1412,9 @@
         aria-controls="mobile-navigation"
         aria-expanded={showMobileDrawer}
         onclick={() => showMobileDrawer = true}
-      >☰</button>
+      >
+        <Icon name="menu" size={16} />
+      </button>
       <span class="view-title">{viewTitle()}</span>
       <form class="quick-add" class:has-date-chip={quickAddPreviewDue} onsubmit={submitQuickAdd}>
         <label class="sr-only" for="quick-add-input">Quick add task</label>
@@ -1458,20 +1460,20 @@
         <button class="clear-btn" onclick={clearCompleted}>Clear completed</button>
       {/if}
       {#if sortMode !== "manual"}
-        <span class="sort-notice">⚠ Reorder disabled</span>
+        <span class="sort-notice"><Icon name="alertTriangle" size={13} /> Reorder disabled</span>
       {/if}
     </div>
     {#if selectedIds.size > 0}
       <div class="bulk-bar" role="toolbar" aria-label="Bulk actions">
         <span class="bulk-count">{selectedIds.size} selected</span>
-        <button onclick={bulkComplete}>✓ Complete</button>
+        <button onclick={bulkComplete}><Icon name="check" size={14} /> Complete</button>
         <button onclick={() => bulkSetDue("Today")}>Today</button>
         <button onclick={() => bulkSetDue("Tomorrow")}>Tomorrow</button>
         <button onclick={() => bulkSetDue("NextWeek")}>Next week</button>
         <button onclick={() => bulkSetDue("Clear")}>Clear date</button>
-        <button onclick={() => bulkMovePicker = true}>↗ Move</button>
-        <button class="bulk-delete" onclick={bulkDelete}>🗑 Delete</button>
-        <button class="bulk-clear" onclick={clearSelection} title="Clear selection (Esc)">✕</button>
+        <button onclick={() => bulkMovePicker = true}><Icon name="moveUpRight" size={14} /> Move</button>
+        <button class="bulk-delete" onclick={bulkDelete}><Icon name="trash" size={14} /> Delete</button>
+        <button class="bulk-clear" onclick={clearSelection} title="Clear selection (Esc)" aria-label="Clear selection"><Icon name="x" size={14} /></button>
       </div>
     {/if}
     {#if loading}
@@ -1663,13 +1665,14 @@
   .toggle input { cursor: pointer; width: 1rem; height: 1rem; }
   .clear-btn { background: none; border: 1px solid var(--border-faint); color: var(--fg-muted); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; cursor: pointer; margin-left: auto; }
   .clear-btn:hover { background: var(--bg-elevated); color: var(--danger); }
-  .sort-notice { font-size: 0.7rem; color: var(--warning); margin-left: 0.5rem; }
+  .sort-notice { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.7rem; color: var(--warning); margin-left: 0.5rem; }
   .bulk-bar {
     display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
     padding: 0.4rem 1rem; background: var(--bg-active); border-bottom: 1px solid var(--bg-active);
   }
   .bulk-count { font-size: 0.8rem; color: var(--accent); font-weight: 600; margin-right: 0.3rem; }
   .bulk-bar button {
+    display: inline-flex; align-items: center; gap: 0.3rem;
     background: var(--bg-elevated); border: none; color: var(--fg-secondary); padding: 0.25rem 0.6rem;
     border-radius: 4px; cursor: pointer; font-size: 0.78rem; font-family: inherit;
   }
