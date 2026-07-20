@@ -6,7 +6,6 @@
   import Sidebar from "./Sidebar.svelte";
   import TodayView from "./TodayView.svelte";
   import ListView from "./ListView.svelte";
-  import NotesPanel from "./NotesPanel.svelte";
   import Toast from "./Toast.svelte";
   import Cheatsheet from "./Cheatsheet.svelte";
   import ContextMenu from "./ContextMenu.svelte";
@@ -34,7 +33,6 @@
   let showCompleted = $state(localStorage.getItem(storageKey("showCompleted")) === "true");
   let completedBottom = $state(true);
   let sortMode = $state("manual"); // per-view, restored from localStorage
-  let notesTask = $state(null);
   let undoItem = $state(null);
   let showCheatsheet = $state(false);
   let showProperties = $state(false);
@@ -45,6 +43,8 @@
   let editingId = $state(null);
   let contextMenu = $state(null); // { items, x, y }
   let detailId = $state(null); // id of the task shown in the detail panel
+  let detailFocusRequest = $state(null); // { id, field } consumed by TaskDetail
+  let detailFocusNonce = 0;
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
   let datePickerTask = $state(null); // task whose due date is being picked (#37)
@@ -498,9 +498,10 @@
 
   // Open the panel on a task and move the list's focus to it, so panel
   // navigation (‹ ›, breadcrumb, subtask links) and the list stay in sync.
-  function openDetail(task) {
+  function openDetail(task, field = null) {
     detailId = task?.id ?? null;
     if (!task) return;
+    detailFocusRequest = field ? { id: task.id, field, nonce: ++detailFocusNonce } : null;
     const i = flatTasks.findIndex(t => t.id === task.id);
     if (i >= 0) focusIndex = i;
   }
@@ -783,16 +784,6 @@
     await refreshLists([lid]);
   }
 
-  async function openNotes(id) {
-    notesTask = allTasks.find(t => t.id === id) || null;
-  }
-
-  async function saveNotes(id, notes) {
-    const listId = taskListId(id);
-    await cmd("set_notes", { id, notes });
-    await refreshLists([listId]);
-  }
-
   async function doSync() {
     syncStatus = "syncing";
     const r = await cmd("sync_now");
@@ -1060,7 +1051,7 @@
       x, y,
       items: [
         { id: "edit", icon: "edit", label: "Edit title", shortcut: "e", action: () => { editingId = task.id; } },
-        { id: "notes", icon: "notebookText", label: "Edit notes", shortcut: "n", action: () => { notesTask = allTasks.find(t => t.id === task.id); } },
+        { id: "notes", icon: "notebookText", label: "Edit notes", shortcut: "n", action: () => { openDetail(allTasks.find(t => t.id === task.id) ?? task, "notes"); } },
         "separator",
         { id: "due", icon: "calendar", label: "Set due date", submenu: [
           { label: "Today", action: () => setDue(task.id, "Today") },
@@ -1285,9 +1276,8 @@
     }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
-    if (notesTask && e.key === "Escape") { notesTask = null; e.preventDefault(); return; }
     if (detailTask && e.key === "Escape") { await closeDetail(); e.preventDefault(); return; }
-    if (notesTask || detailTask) return;
+    if (detailTask) return;
     // With an active selection, Esc clears it (when no panel intercepted above).
     if (selectedIds.size > 0 && e.key === "Escape") { clearSelection(); e.preventDefault(); return; }
 
@@ -1516,6 +1506,7 @@
       propagatedDue={propagatedDueOf(detailTask)}
       {lists}
       subtasks={allTasks.filter(t => t.parent_id === detailTask.id)}
+      focusRequest={detailFocusRequest}
       onsave={saveDetail}
       onclose={closeDetail}
       ondelete={deleteTask}
@@ -1528,8 +1519,6 @@
       onprev={si > 0 ? () => openDetail(siblings[si - 1]) : null}
       onnext={si >= 0 && si < siblings.length - 1 ? () => openDetail(siblings[si + 1]) : null}
     />
-  {:else if notesTask}
-    <NotesPanel taskId={notesTask.id} notes={notesTask.notes || ""} onsave={saveNotes} onclose={() => notesTask = null} />
   {/if}
 </main>
 

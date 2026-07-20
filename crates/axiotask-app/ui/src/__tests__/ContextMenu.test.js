@@ -406,6 +406,28 @@ describe("GH#19: Custom context menu", () => {
     });
   });
 
+  describe("Edit notes via context menu", () => {
+    it("opens the detail panel with the Notes field focused in a smart view", async () => {
+      localStorage.setItem("axiotask:view", "all");
+      mockBackend([
+        task("p1", "Parent task", { notes: "parent notes" }),
+        task("c1", "Child task", { parent: "p1" }),
+      ]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+      expect(screen.getByText("Child task")).toBeInTheDocument();
+
+      await openContextMenu(container);
+      await fireEvent.click(screen.getByText("Edit notes"));
+
+      const notes = await screen.findByLabelText("Notes");
+      expect(container.querySelector(".detail-panel")).toBeInTheDocument();
+      expect(notes).toHaveValue("parent notes");
+      await waitFor(() => expect(notes).toHaveFocus());
+      expect(container.querySelector(".notes-panel")).not.toBeInTheDocument();
+    });
+  });
+
   describe("Delete via context menu", () => {
     it("clicking Delete removes the task", async () => {
       mockBackend([task("t1", "Doomed task")]);

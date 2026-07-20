@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import DatePicker from "./DatePicker.svelte";
   import { invokeWithTimeout } from "./ipc.js";
-  let { task, parentTask, propagatedDue = null, lists, subtasks = [], onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
+  let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -17,6 +17,8 @@
 
   let prevTaskId = $state(null);
   let titleInput = $state(null);
+  let notesInput = $state(null);
+  let appliedFocusKey = $state(null);
   // The task's values when it was loaded, so we only save fields the user
   // actually changed. Saving unchanged fields would needlessly mark the task
   // dirty and trigger a push (and, if it races another push, a 412 conflict).
@@ -79,6 +81,14 @@
       }
       orig = { title: t, notes: n, due: d, list: l };
     });
+  });
+
+  $effect(() => {
+    if (!task || focusRequest?.id !== task.id || focusRequest.field !== "notes") return;
+    const key = `${focusRequest.id}:${focusRequest.field}:${focusRequest.nonce ?? ""}`;
+    if (appliedFocusKey === key) return;
+    appliedFocusKey = key;
+    tick().then(() => notesInput?.focus());
   });
 
   function save() {
@@ -218,7 +228,7 @@
 
   <div class="field">
     <label for="detail-notes">Notes</label>
-    <textarea id="detail-notes" bind:value={notes} onblur={saveNotes} placeholder="Add notes..." rows="6"></textarea>
+    <textarea id="detail-notes" bind:this={notesInput} bind:value={notes} onblur={saveNotes} placeholder="Add notes..." rows="6"></textarea>
   </div>
 
   {#if detectedLinks.length > 0}
