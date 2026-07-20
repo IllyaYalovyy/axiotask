@@ -87,6 +87,6 @@ describe("Quick-add task creation", () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ listId: "L1", title: "Smart capture" }));
     });
-    expect(screen.getByText("Focus")).toBeInTheDocument();
+    expect(document.querySelector(".view-title")).toHaveTextContent("Focus");
   });
 });

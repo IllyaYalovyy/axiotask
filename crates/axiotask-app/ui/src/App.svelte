@@ -1034,10 +1034,10 @@
     contextMenu = {
       x, y,
       items: [
-        { id: "edit", icon: "✏️", label: "Edit title", shortcut: "e", action: () => { editingId = task.id; } },
-        { id: "notes", icon: "📝", label: "Edit notes", shortcut: "n", action: () => { notesTask = allTasks.find(t => t.id === task.id); } },
+        { id: "edit", icon: "edit", label: "Edit title", shortcut: "e", action: () => { editingId = task.id; } },
+        { id: "notes", icon: "notebookText", label: "Edit notes", shortcut: "n", action: () => { notesTask = allTasks.find(t => t.id === task.id); } },
         "separator",
-        { id: "due", icon: "📅", label: "Set due date", submenu: [
+        { id: "due", icon: "calendar", label: "Set due date", submenu: [
           { label: "Today", action: () => setDue(task.id, "Today") },
           { label: "Tomorrow", action: () => setDue(task.id, "Tomorrow") },
           { label: "Next week", action: () => setDue(task.id, "NextWeek") },
@@ -1045,30 +1045,30 @@
           { label: "Pick a date…", action: () => openDatePicker(task.id) },
           { label: "Clear", action: () => setDue(task.id, "Clear") },
         ]},
-        { id: "move", icon: "↗️", label: "Move to list", submenu: lists.map(l => ({
+        { id: "move", icon: "moveUpRight", label: "Move to list", submenu: lists.map(l => ({
           label: l.title, action: () => moveToList(task.id, l.id)
         }))},
         "separator",
         ...(task.parent_id ? [{
-          id: "detach-subtask", icon: "↤", label: "Detach subtask", shortcut: "Shift+Tab", action: () => promoteTask(task.id),
+          id: "detach-subtask", icon: "cornerUpLeft", label: "Detach subtask", shortcut: "Shift+Tab", action: () => promoteTask(task.id),
         }] : []),
-        { id: "subtask", icon: "⬆️", label: "Add subtask", action: async () => {
+        { id: "subtask", icon: "plus", label: "Add subtask", action: async () => {
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
           if (t) { await refreshLists([task.listId]); editingId = t.id; }
         }},
-        { id: "duplicate", icon: "📋", label: "Duplicate", shortcut: "Ctrl+D", action: async () => {
+        { id: "duplicate", icon: "clipboard", label: "Duplicate", shortcut: "Ctrl+D", action: async () => {
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
           await refreshLists([task.listId]);
         }},
-        { id: "details", icon: "ℹ️", label: "Details", shortcut: "Enter", action: () => {
+        { id: "details", icon: "info", label: "Details", shortcut: "Enter", action: () => {
           openDetail(task);
         }},
         ...(task.web_view_link ? [{
-          id: "open-google", icon: "↗", label: "Open in Google Tasks",
+          id: "open-google", icon: "externalLink", label: "Open in Google Tasks",
           action: () => cmd("open_url", { url: task.web_view_link }),
         }] : []),
         "separator",
-        { id: "delete", icon: "🗑️", label: "Delete", shortcut: "d", action: () => deleteTask(task.id) },
+        { id: "delete", icon: "trash", label: "Delete", shortcut: "d", action: () => deleteTask(task.id) },
       ]
     };
   }
@@ -1180,12 +1180,12 @@
     contextMenu = {
       x, y,
       items: [
-        { id: "rename", icon: "✏️", label: "Rename", action: async () => {
+        { id: "rename", icon: "edit", label: "Rename", action: async () => {
           renamingListId = list.id;
         }},
-        { id: "exclude", icon: isExcl ? "✅" : "🚫", label: isExcl ? "Include in smart views" : "Exclude from smart views", action: () => toggleExclude(list.id) },
+        { id: "exclude", icon: isExcl ? "check" : "ban", label: isExcl ? "Include in smart views" : "Exclude from smart views", action: () => toggleExclude(list.id) },
         "separator",
-        { id: "delete", icon: "🗑️", label: "Delete list", action: async () => {
+        { id: "delete", icon: "trash", label: "Delete list", action: async () => {
           requestConfirm({
             title: "Delete list",
             message: `Delete "${list.title}" and all its tasks? This cannot be undone.`,

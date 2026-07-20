@@ -201,7 +201,7 @@ describe("GH#15: List Exclusion from Smart Views", () => {
       // Check Focus
       localStorage.setItem("axiotask:view", "focus");
       const { unmount } = render(App);
-      await waitFor(() => expect(screen.getByRole("button", { name: /★ Focus/i })).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole("button", { name: /focus/i })).toBeInTheDocument());
       expect(screen.queryByText("Excluded overdue")).not.toBeInTheDocument();
       unmount();
     });

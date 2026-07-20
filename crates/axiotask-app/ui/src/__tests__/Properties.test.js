@@ -252,7 +252,7 @@ describe("Properties dialog", () => {
     expect(alert).toHaveTextContent(/drop local data/i);
     expect(invoke.mock.calls.some((c) => c[0] === "fresh_sync")).toBe(false);
 
-    await fireEvent.click(screen.getByRole("button", { name: /^fresh sync$/i }));
+    await fireEvent.click(within(alert).getByRole("button", { name: /^fresh sync$/i }));
 
     await waitFor(() =>
       expect(invoke.mock.calls.some((c) => c[0] === "fresh_sync")).toBe(true),

@@ -70,7 +70,7 @@ describe("Smart Views: Focus", () => {
   it("does NOT show tasks due beyond this week", async () => {
     mockBackend([task("t1", "Far away", { due: daysFromNow(10) })]);
     render(App);
-    await waitFor(() => expect(screen.getByText("★ Focus")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /focus/i })).toBeInTheDocument());
     expect(screen.queryByText("Far away")).not.toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe("Smart Views: Focus", () => {
     expect(subRow.querySelector(".tree-icon.sub")).not.toBeNull();
     expect(screen.queryByText("Unrelated no due")).not.toBeInTheDocument();
     // The Focus badge counts the one parent card, not the subtask separately.
-    expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /focus/i })).toHaveTextContent("1");
   });
 });
 
@@ -120,7 +120,7 @@ describe("Smart Views: Upcoming", () => {
   it("does NOT show tasks due beyond 14 days", async () => {
     mockBackend([task("t1", "Far future", { due: daysFromNow(20) })]);
     render(App);
-    await waitFor(() => expect(screen.getByText("☰ Upcoming")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /upcoming/i })).toBeInTheDocument());
     expect(screen.queryByText("Far future")).not.toBeInTheDocument();
   });
 
@@ -213,7 +213,7 @@ describe("List Exclusion", () => {
     localStorage.setItem("axiotask:view", "focus");
     mockBackend([task("t1", "Hidden", { due: daysFromNow(0), list: "L3", listTitle: "Someday" })]);
     render(App);
-    await waitFor(() => expect(screen.getByText("★ Focus")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /focus/i })).toBeInTheDocument());
     expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
   });
 });

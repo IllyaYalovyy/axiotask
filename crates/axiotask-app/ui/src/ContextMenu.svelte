@@ -1,4 +1,6 @@
 <script>
+  import Icon from "./Icon.svelte";
+
   let { items, x, y, onclose } = $props();
   let menuEl = $state(null);
   let activeSubmenu = $state(null);
@@ -63,13 +65,13 @@
         onclick={() => handleItemClick(item)}
         onmouseenter={() => { focusIdx = actionIdx; if (item.submenu) activeSubmenu = item.id; }}
       >
-        <span class="icon">{item.icon || ""}</span>
+        <span class="icon">{#if item.icon}<Icon name={item.icon} size={14} />{/if}</span>
         <span class="label">{item.label}</span>
         {#if item.shortcut}
           <span class="shortcut">{item.shortcut}</span>
         {/if}
         {#if item.submenu}
-          <span class="arrow">▸</span>
+          <span class="arrow"><Icon name="chevronRight" size={12} /></span>
         {/if}
       </div>
       {#if item.submenu && activeSubmenu === item.id}

@@ -79,7 +79,7 @@ describe("Quick-add input", () => {
       );
     });
     await waitFor(() => expect(input).toHaveValue(""));
-    expect(screen.getByText("Focus")).toBeInTheDocument();
+    expect(document.querySelector(".view-title")).toHaveTextContent("Focus");
   });
 
   it("a task quick-added from Focus is VISIBLE in Focus (due date pre-filled, no view switch)", async () => {
@@ -97,7 +97,7 @@ describe("Quick-add input", () => {
 
     // Still in Focus, and the new task is rendered there.
     await waitFor(() => expect(screen.getByText("Visible immediately")).toBeInTheDocument());
-    expect(screen.getByText("Focus")).toBeInTheDocument();
+    expect(document.querySelector(".view-title")).toHaveTextContent("Focus");
     // It was made visible by dating it today, not by switching views.
     const dueCall = invoke.mock.calls.find((c) => c[0] === "set_due");
     expect(dueCall?.[1]?.mv).toMatch(/^raw:\d{4}-\d{2}-\d{2}$/);
@@ -116,7 +116,7 @@ describe("Quick-add input", () => {
     await waitFor(() => {
       expect(screen.getByText('Added "Call vendor" to Focus')).toBeInTheDocument();
     });
-    expect(screen.getByText("Missed")).toBeInTheDocument();
+    expect(document.querySelector(".view-title")).toHaveTextContent("Missed");
   });
 
   it("does not create an empty task when submitted blank", async () => {

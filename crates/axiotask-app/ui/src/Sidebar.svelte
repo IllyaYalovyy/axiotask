@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import Icon from "./Icon.svelte";
 
   let { lists, selectedView, onselect, onlogin, onlogout, onsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
@@ -15,6 +16,14 @@
   let draggingListId = $state(null);
   let dropTargetId = $state(null);
   let nowTick = $state(Date.now());
+
+  const SMART_VIEWS = [
+    { id: "focus", label: "Focus", icon: "star" },
+    { id: "upcoming", label: "Upcoming", icon: "list" },
+    { id: "missed", label: "Missed", icon: "alertTriangle" },
+    { id: "unscheduled", label: "Unscheduled", icon: "circle" },
+    { id: "all", label: "All Tasks", icon: "listTodo" },
+  ];
 
   onMount(() => {
     const timer = setInterval(() => {
@@ -106,11 +115,12 @@
   <div class="header"><h1>axiotask</h1></div>
 
   <nav class="views">
-    <button class:active={selectedView === "focus"} onclick={() => onselect("focus")}>★ Focus {#if counts.focus}<span class="count">{counts.focus}</span>{/if}</button>
-    <button class:active={selectedView === "upcoming"} onclick={() => onselect("upcoming")}>☰ Upcoming {#if counts.upcoming}<span class="count">{counts.upcoming}</span>{/if}</button>
-    <button class:active={selectedView === "missed"} onclick={() => onselect("missed")}>⚠ Missed {#if counts.missed}<span class="count">{counts.missed}</span>{/if}</button>
-    <button class:active={selectedView === "unscheduled"} onclick={() => onselect("unscheduled")}>○ Unscheduled {#if counts.unscheduled}<span class="count">{counts.unscheduled}</span>{/if}</button>
-    <button class:active={selectedView === "all"} onclick={() => onselect("all")}>▤ All Tasks {#if counts.all}<span class="count">{counts.all}</span>{/if}</button>
+    {#each SMART_VIEWS as view}
+      <button class:active={selectedView === view.id} onclick={() => onselect(view.id)}>
+        <Icon name={view.icon} size={14} /> {view.label}
+        {#if counts[view.id]}<span class="count">{counts[view.id]}</span>{/if}
+      </button>
+    {/each}
   </nav>
 
   <div class="section-header">
@@ -149,7 +159,7 @@
             ondragend={handleListDragEnd}
             title="Drag to reorder"
             aria-label="Drag to reorder {list.title}"
-          >⠿</span>
+          ><Icon name="gripVertical" size={14} /></span>
           <button
             class="list-btn"
             class:active={selectedView === list.id}
@@ -185,11 +195,11 @@
            revoked): either way the one useful action is re-running the OAuth
            flow — never a Sync button that can only fail. -->
       <button class="action-btn reauth-btn" class:reauth={needsReauth} onclick={onlogin} disabled={syncStatus === "syncing"}>
-        {syncStatus === "syncing" ? "Signing in..." : needsReauth ? "🔑 Sign in again" : "Sign in with Google"}
+        {#if syncStatus === "syncing"}Signing in...{:else if needsReauth}<Icon name="keyRound" size={14} /> Sign in again{:else}Sign in with Google{/if}
       </button>
     {:else}
       <button class="action-btn sync-btn" onclick={onsync} disabled={syncStatus === "syncing"}>
-        {syncStatus === "syncing" ? "Syncing..." : "↻ Sync now"}
+        {#if syncStatus === "syncing"}Syncing...{:else}<Icon name="refreshCw" size={14} /> Sync now{/if}
       </button>
     {/if}
     <div class="sync-info">
@@ -209,8 +219,10 @@
       {/if}
     </div>
     <div class="footer-row">
-      <button class="about-btn" onclick={onproperties} title="Properties (,)">⚙ Properties</button>
-      <button class="theme-btn" onclick={ontoggletheme} title="Toggle light/dark theme" aria-label="Toggle theme">{theme === "light" ? "🌙" : "☀"}</button>
+      <button class="about-btn" onclick={onproperties} title="Properties (,)"><Icon name="settings" size={13} /> Properties</button>
+      <button class="theme-btn" onclick={ontoggletheme} title="Toggle light/dark theme" aria-label="Toggle theme">
+        <Icon name={theme === "light" ? "moon" : "sun"} size={15} />
+      </button>
     </div>
   </div>
 </aside>

@@ -51,7 +51,7 @@ describe("Subtask date propagation → effective date", () => {
     expect(subRow.querySelector(".tree-icon.sub")).not.toBeNull();
     expect(screen.queryByText("Unrelated undated")).not.toBeInTheDocument();
     // Badge counts the one parent card.
-    expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /focus/i })).toHaveTextContent("1");
   });
 
   it("the parent row shows the inherited date, marked with ↳", async () => {
@@ -77,7 +77,7 @@ describe("Subtask date propagation → effective date", () => {
     render(App);
     // Parent has no effective date (only a completed subtask carried one).
     await waitFor(() => expect(screen.getByText("Parent undated")).toBeInTheDocument());
-    expect(screen.getByText("○ Unscheduled").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /unscheduled/i })).toHaveTextContent("1");
   });
 
   it("an explicit parent date LATER than the subtask still filters by the earlier effective date", async () => {
@@ -89,7 +89,7 @@ describe("Subtask date propagation → effective date", () => {
     const { container } = render(App);
     await waitFor(() => expect(screen.getByText("Parent far")).toBeInTheDocument());
     // Effective date (tomorrow) puts it in Focus even though its own date is far off.
-    expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /focus/i })).toHaveTextContent("1");
     // It has its OWN due date, so the row shows that — no inherited (↳) marker.
     expect(container.querySelector(".due")).toBeTruthy();
     expect(container.querySelector(".due.inherited")).toBeNull();
@@ -140,7 +140,7 @@ describe("Subtask date propagation → effective date", () => {
     ]);
     render(App);
     await waitFor(() => expect(screen.getByText("Root")).toBeInTheDocument());
-    expect(screen.getByText("★ Focus").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /focus/i })).toHaveTextContent("1");
   });
 
   it("recursion: a COMPLETED middle cuts off its subtree", async () => {
@@ -153,6 +153,6 @@ describe("Subtask date propagation → effective date", () => {
     render(App);
     await waitFor(() => expect(screen.getByText("Root")).toBeInTheDocument());
     // Root's only dated descendant sits under a completed middle → no effective date.
-    expect(screen.getByText("○ Unscheduled").closest("button")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: /unscheduled/i })).toHaveTextContent("1");
   });
 });

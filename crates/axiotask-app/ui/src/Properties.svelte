@@ -1,5 +1,6 @@
 <script>
   import pkg from "../package.json";
+  import Icon from "./Icon.svelte";
   import { SHORTCUT_CATEGORIES, formatKeys } from "./shortcuts.js";
 
   let {
@@ -38,11 +39,11 @@
   }
 
   const SECTIONS = [
-    { id: "sync", label: "Sync", icon: "↻" },
-    { id: "appearance", label: "Appearance", icon: "◐" },
-    { id: "account", label: "Account", icon: "👤" },
-    { id: "shortcuts", label: "Shortcuts", icon: "⌨" },
-    { id: "about", label: "About", icon: "ℹ" },
+    { id: "sync", label: "Sync", icon: "refreshCw" },
+    { id: "appearance", label: "Appearance", icon: "sun" },
+    { id: "account", label: "Account", icon: "user" },
+    { id: "shortcuts", label: "Shortcuts", icon: "keyboard" },
+    { id: "about", label: "About", icon: "info" },
   ];
 
   const THEMES = [
@@ -88,8 +89,8 @@
 >
   <div class="card" role="document" onclick={(e) => e.stopPropagation()}>
     <header class="head">
-      <h2>⚙ Properties{#if settings.instance}<span class="instance-badge">{settings.instance}</span>{/if}</h2>
-      <button class="x" onclick={onclose} aria-label="Close">×</button>
+      <h2><Icon name="settings" size={18} /> Properties{#if settings.instance}<span class="instance-badge">{settings.instance}</span>{/if}</h2>
+      <button class="x" onclick={onclose} aria-label="Close"><Icon name="x" size={15} /></button>
     </header>
 
     <div class="body">
@@ -102,7 +103,7 @@
             aria-selected={section === s.id}
             onclick={() => (section = s.id)}
           >
-            <span class="tab-icon" aria-hidden="true">{s.icon}</span>{s.label}
+            <span class="tab-icon" aria-hidden="true"><Icon name={s.icon} size={15} /></span>{s.label}
           </button>
         {/each}
       </div>
@@ -150,7 +151,7 @@
 
           <h3>Status</h3>
           {#if settings.sync.last_error}
-            <p class="error" role="alert">⚠ Last sync failed: {settings.sync.last_error}</p>
+            <p class="error" role="alert"><Icon name="alertTriangle" size={14} /> Last sync failed: {settings.sync.last_error}</p>
           {/if}
           <dl class="stats">
             <dt>Last synced</dt>
@@ -167,8 +168,8 @@
             <dd>{settings.sync.total_syncs}</dd>
           </dl>
           <div class="actions">
-            <button onclick={onsync} disabled={busy || !settings.authenticated}>↻ Sync now</button>
-            <button onclick={onfreshsync} disabled={busy || !settings.authenticated}>⟳ Fresh sync</button>
+            <button onclick={onsync} disabled={busy || !settings.authenticated}><Icon name="refreshCw" size={14} /> Sync now</button>
+            <button onclick={onfreshsync} disabled={busy || !settings.authenticated}><Icon name="refreshCcw" size={14} /> Fresh sync</button>
           </div>
           {#if !settings.authenticated}
             <p class="hint">Sign in on the Account tab to enable syncing.</p>
@@ -180,8 +181,8 @@
             Restore is non-destructive — it adds or refreshes, never deletes.
           </p>
           <div class="actions">
-            <button onclick={onexport} disabled={busy}>⭳ Export backup…</button>
-            <button onclick={onimport} disabled={busy}>⭱ Restore latest…</button>
+            <button onclick={onexport} disabled={busy}><Icon name="download" size={14} /> Export backup…</button>
+            <button onclick={onimport} disabled={busy}><Icon name="upload" size={14} /> Restore latest…</button>
           </div>
 
         {:else if section === "appearance"}

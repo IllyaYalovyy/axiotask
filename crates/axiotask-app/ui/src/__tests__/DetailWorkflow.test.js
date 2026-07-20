@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
@@ -266,7 +266,7 @@ describe("UT-04: Sign out", () => {
   it("clicking Sign out calls auth_logout and shows Sign in button", async () => {
     mockBackend([task("t1", "Test")]);
     render(App);
-    await waitFor(() => expect(screen.getByText("↻ Sync now")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /sync now/i })).toBeInTheDocument());
 
     // Click sign out
     await fireEvent.click(screen.getByText("Sign out"));
@@ -291,10 +291,11 @@ describe("UT-03: Fresh sync", () => {
     await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
     const dialog = await screen.findByRole("dialog", { name: /properties/i });
 
-    await fireEvent.click(screen.getByRole("button", { name: /fresh sync/i }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: /fresh sync/i }));
     expect(confirmSpy).not.toHaveBeenCalled();
-    expect(await screen.findByRole("alertdialog", { name: /fresh sync/i })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /^fresh sync$/i }));
+    const alert = await screen.findByRole("alertdialog", { name: /fresh sync/i });
+    expect(alert).toBeInTheDocument();
+    await fireEvent.click(within(alert).getByRole("button", { name: /^fresh sync$/i }));
 
     await waitFor(() => {
       const freshCalls = invoke.mock.calls.filter(c => c[0] === "fresh_sync");

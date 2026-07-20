@@ -45,7 +45,7 @@ describe("Smart View Counts in Sidebar", () => {
     render(App);
     // Wait for tasks to load and counts to render
     await waitFor(() => {
-      const btn = screen.getByRole("button", { name: /★ Focus/i });
+      const btn = screen.getByRole("button", { name: /focus/i });
       expect(btn.textContent).toMatch(/3/);
     });
   });
@@ -58,7 +58,7 @@ describe("Smart View Counts in Sidebar", () => {
     ]);
     render(App);
     await waitFor(() => {
-      const btn = screen.getByRole("button", { name: /⚠ Missed/i });
+      const btn = screen.getByRole("button", { name: /missed/i });
       expect(btn.textContent).toMatch(/2/);
     });
   });
@@ -70,7 +70,7 @@ describe("Smart View Counts in Sidebar", () => {
     ]);
     render(App);
     await waitFor(() => {
-      const btn = screen.getByRole("button", { name: /○ Unscheduled/i });
+      const btn = screen.getByRole("button", { name: /unscheduled/i });
       expect(btn.textContent).toMatch(/1/);
     });
   });
@@ -82,7 +82,7 @@ describe("Smart View Counts in Sidebar", () => {
     ]);
     render(App);
     await waitFor(() => {
-      const btn = screen.getByRole("button", { name: /★ Focus/i });
+      const btn = screen.getByRole("button", { name: /focus/i });
       expect(btn.textContent).toMatch(/1/);
     });
   });
@@ -95,7 +95,7 @@ describe("Smart View Counts in Sidebar", () => {
     ]);
     render(App);
     await waitFor(() => {
-      const btn = screen.getByRole("button", { name: /★ Focus/i });
+      const btn = screen.getByRole("button", { name: /focus/i });
       expect(btn.textContent).toMatch(/1/);
     });
   });

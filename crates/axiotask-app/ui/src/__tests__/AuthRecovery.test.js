@@ -27,7 +27,7 @@ describe("Auth recovery UX", () => {
     mockInvoke("auth_status", () => true);
     render(App);
     await waitFor(() => expect(screen.getByText("local task")).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByText(/↻ Sync now/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /sync now/i })).toBeInTheDocument());
 
     // Background sync reports the session is dead (invalid_grant).
     emitMockEvent("sync-updated", {
@@ -36,7 +36,7 @@ describe("Auth recovery UX", () => {
     });
 
     await waitFor(() => expect(screen.getByText(/Sign in again/)).toBeInTheDocument());
-    expect(screen.queryByText(/↻ Sync now/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
     expect(screen.getByText("Session expired")).toBeInTheDocument();
 
     // The action actually starts the OAuth flow.
@@ -59,7 +59,7 @@ describe("Auth recovery UX", () => {
 
     await fireEvent.click(screen.getByText(/Sign in with Google/));
 
-    await waitFor(() => expect(screen.getByText(/↻ Sync now/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /sync now/i })).toBeInTheDocument());
     expect(screen.queryByText(/Sign in with Google/)).not.toBeInTheDocument();
   });
 
@@ -72,7 +72,7 @@ describe("Auth recovery UX", () => {
 
     // The startup auto-sync already hits the failure; exercise the manual
     // button as well once it settles.
-    const syncBtn = await screen.findByText(/↻ Sync now/);
+    const syncBtn = await screen.findByRole("button", { name: /sync now/i });
     await fireEvent.click(syncBtn);
 
     // Friendly toast, and the local data stays on screen.
@@ -90,7 +90,7 @@ describe("Auth recovery UX", () => {
     await waitFor(() => expect(screen.getByText(/Sign in again/)).toBeInTheDocument());
 
     emitMockEvent("sync-updated", { last_error: null, last_synced: "2026-07-17T10:00:00Z", needs_reauth: false });
-    await waitFor(() => expect(screen.getByText(/↻ Sync now/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /sync now/i })).toBeInTheDocument());
     expect(screen.queryByText(/Sign in again/)).not.toBeInTheDocument();
   });
 });
