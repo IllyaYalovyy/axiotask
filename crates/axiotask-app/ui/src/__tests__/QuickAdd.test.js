@@ -133,19 +133,20 @@ describe("Quick-add input", () => {
     expect(input).toHaveValue("   ");
   });
 
-  it("parses a trailing natural-language due date and strips it from the created title", async () => {
+  it("previews a trailing natural-language due date and preserves the typed title", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
     const input = await screen.findByRole("textbox", { name: /quick add task/i });
 
     await fireEvent.input(input, { target: { value: "Send invoice tomorrow" } });
+    expect(screen.getByText(`Due ${localDate(1)}`)).toBeInTheDocument();
     await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         "create_task",
-        expect.objectContaining({ listId: "L1", title: "Send invoice" }),
+        expect.objectContaining({ listId: "L1", title: "Send invoice tomorrow" }),
       );
     });
     await waitFor(() => {
@@ -156,24 +157,41 @@ describe("Quick-add input", () => {
     });
   });
 
-  it("parses explicit YYYY-MM-DD quick-add dates", async () => {
+  it("can keep the parsed date phrase as title text without applying a due date", async () => {
+    localStorage.setItem("axiotask:view", "L1");
+    mockBackend();
+    render(App);
+    const input = await screen.findByRole("textbox", { name: /quick add task/i });
+
+    await fireEvent.input(input, { target: { value: "Discuss tomorrow" } });
+    await fireEvent.click(screen.getByRole("button", { name: /keep date text in title/i }));
+    await fireEvent.submit(input.closest("form"));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "create_task",
+        expect.objectContaining({ title: "Discuss tomorrow" }),
+      );
+    });
+    expect(invoke.mock.calls.filter(call => call[0] === "set_due")).toHaveLength(0);
+  });
+
+  it("previews and applies explicit YYYY-MM-DD quick-add dates without rewriting the title", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
     render(App);
     const input = await screen.findByRole("textbox", { name: /quick add task/i });
 
     await fireEvent.input(input, { target: { value: "Book dentist on 2026-08-03" } });
+    expect(screen.getByText("Due 2026-08-03")).toBeInTheDocument();
     await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith(
         "create_task",
-        expect.objectContaining({ title: "Book dentist" }),
+        expect.objectContaining({ title: "Book dentist on 2026-08-03" }),
       );
     });
-    expect(invoke).toHaveBeenCalledWith(
-      "set_due",
-      expect.objectContaining({ mv: "raw:2026-08-03" }),
-    );
+    expect(invoke).toHaveBeenCalledWith("set_due", expect.objectContaining({ mv: "raw:2026-08-03" }));
   });
 });

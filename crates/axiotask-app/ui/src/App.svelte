@@ -59,6 +59,7 @@
   let showMobileDrawer = $state(false);
   let showOnboarding = $state(false);
   let quickAddTitle = $state("");
+  let quickAddDateIgnoredFor = $state("");
   let quickAddInput = $state(null);
   let contentEl = $state(null);
   let pullTouch = $state(null);
@@ -560,7 +561,7 @@
     return out;
   }
 
-  function parseQuickAddTitle(raw) {
+  function parseQuickAddDue(raw) {
     const title = raw.trim();
     const lowered = title.toLowerCase();
     const date = new Date();
@@ -575,11 +576,15 @@
       const m = lowered.match(p.re);
       if (!m) continue;
       const stripped = title.slice(0, title.length - m[0].length).trim();
-      if (!stripped) return { title, due: null };
-      return { title: stripped, due: p.due(m) };
+      if (!stripped) return null;
+      return p.due(m);
     }
-    return { title, due: null };
+    return null;
   }
+
+  let quickAddPreviewDue = $derived(
+    quickAddTitle === quickAddDateIgnoredFor ? null : parseQuickAddDue(quickAddTitle),
+  );
 
   // Due date a quick-added task needs to be VISIBLE in the current smart view
   // (no view switch, per #8): an undated task created from Focus would land in
@@ -616,11 +621,11 @@
 
   async function submitQuickAdd(e) {
     e.preventDefault();
-    const parsed = parseQuickAddTitle(quickAddTitle);
-    const title = parsed.title;
+    const title = quickAddTitle.trim();
     if (!title) return;
-    await createTask(title, selectedView, parsed.due);
+    await createTask(title, selectedView, quickAddPreviewDue);
     quickAddTitle = "";
+    quickAddDateIgnoredFor = "";
   }
 
   function closeOnboarding() {
@@ -1394,15 +1399,31 @@
         onclick={() => showMobileDrawer = true}
       >☰</button>
       <span class="view-title">{viewTitle()}</span>
-      <form class="quick-add" onsubmit={submitQuickAdd}>
+      <form class="quick-add" class:has-date-chip={quickAddPreviewDue} onsubmit={submitQuickAdd}>
         <label class="sr-only" for="quick-add-input">Quick add task</label>
-        <input
-          id="quick-add-input"
-          aria-label="Quick add task"
-          bind:value={quickAddTitle}
-          bind:this={quickAddInput}
-          placeholder={`Add a task${quickAddTargetName() ? ` to ${quickAddTargetName()}` : ""}...`}
-        />
+        <div class="quick-add-box">
+          <input
+            id="quick-add-input"
+            aria-label="Quick add task"
+            bind:value={quickAddTitle}
+            bind:this={quickAddInput}
+            placeholder={`Add a task${quickAddTargetName() ? ` to ${quickAddTargetName()}` : ""}...`}
+          />
+          {#if quickAddPreviewDue}
+            <span class="quick-add-date-chip" role="status">
+              Due {quickAddPreviewDue}
+              <button
+                type="button"
+                aria-label="Keep date text in title"
+                title="Keep date text in title"
+                onclick={() => {
+                  quickAddDateIgnoredFor = quickAddTitle;
+                  quickAddInput?.focus();
+                }}
+              >×</button>
+            </span>
+          {/if}
+        </div>
       </form>
       <button class="new-task-btn" onclick={newTask}>+ New task</button>
       <button
@@ -1577,13 +1598,27 @@
   .mobile-nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .quick-add { flex: 1 1 18rem; min-width: min(18rem, 100%); max-width: 34rem; }
+  .quick-add-box { position: relative; display: flex; align-items: center; width: 100%; }
   .quick-add input {
     width: 100%; height: 2rem; border: 1px solid var(--border); border-radius: 4px;
     background: var(--bg-elevated); color: var(--fg); padding: 0 0.65rem;
     font: inherit; font-size: 0.85rem;
   }
+  .quick-add.has-date-chip input { padding-right: 8.5rem; }
   .quick-add input::placeholder { color: var(--fg-muted); }
   .quick-add input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .quick-add-date-chip {
+    position: absolute; right: 0.25rem; max-width: 7.9rem; height: 1.45rem;
+    display: inline-flex; align-items: center; gap: 0.25rem; padding: 0 0.25rem 0 0.45rem;
+    border: 1px solid var(--border-faint); border-radius: 4px; background: var(--bg-panel);
+    color: var(--fg-secondary); font-size: 0.72rem; white-space: nowrap; overflow: hidden;
+  }
+  .quick-add-date-chip button {
+    width: 1rem; height: 1rem; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    border: none; border-radius: 3px; background: transparent; color: var(--fg-muted); padding: 0; cursor: pointer;
+    font-size: 0.9rem; line-height: 1;
+  }
+  .quick-add-date-chip button:hover { background: var(--bg-hover); color: var(--fg); }
   .new-task-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
   .new-task-btn:hover { background: var(--bg-hover); }
   .search-btn {
