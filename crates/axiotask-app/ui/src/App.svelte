@@ -78,6 +78,11 @@
     }
   }
 
+  function showInfoToast(message, ms = 5000) {
+    if (infoToast) clearTimeout(infoToast.timer);
+    infoToast = { message, timer: setTimeout(() => { infoToast = null; }, ms) };
+  }
+
   // --- Data loading ---
   async function loadAll() {
     const result = await cmd("list_tasklists");
@@ -591,16 +596,21 @@
 
   async function createTask(title, listId, explicitDue = null) {
     const isSmartView = ["focus", "upcoming", "missed", "unscheduled", "all"].includes(selectedView);
+    const sourceView = selectedView;
     const resolvedListId = isSmartView ? null : listId;
     const targetList = resolvedListId || (!isSmartView ? selectedView : lists[0]?.id);
     if (!targetList || !title.trim()) return;
-    const task = await cmd("create_task", { listId: targetList, parentId: null, title: title.trim() });
+    const trimmedTitle = title.trim();
+    const task = await cmd("create_task", { listId: targetList, parentId: null, title: trimmedTitle });
     if (task) {
-      const due = explicitDue || (isSmartView ? quickAddDueFor(selectedView) : null);
+      const due = explicitDue || (isSmartView ? quickAddDueFor(sourceView) : null);
       if (due) await cmd("set_due", { id: task.id, mv: "raw:" + due });
       newestTaskId = task.id;
       await refreshLists([targetList]);
       focusIndex = 0;
+      if (sourceView === "missed" && !explicitDue) {
+        showInfoToast(`Added "${trimmedTitle}" to Focus`);
+      }
     }
   }
 

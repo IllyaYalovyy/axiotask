@@ -103,6 +103,22 @@ describe("Quick-add input", () => {
     expect(dueCall?.[1]?.mv).toMatch(/^raw:\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("toasts that a task quick-added from Missed was added to Focus", async () => {
+    localStorage.setItem("axiotask:view", "missed");
+    mockBackend([task("t1", "Overdue", "L1", `${localDate(-1)}T00:00:00Z`)]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Overdue")).toBeInTheDocument());
+
+    const input = screen.getByRole("textbox", { name: /quick add task/i });
+    await fireEvent.input(input, { target: { value: "Call vendor" } });
+    await fireEvent.submit(input.closest("form"));
+
+    await waitFor(() => {
+      expect(screen.getByText('Added "Call vendor" to Focus')).toBeInTheDocument();
+    });
+    expect(screen.getByText("Missed")).toBeInTheDocument();
+  });
+
   it("does not create an empty task when submitted blank", async () => {
     localStorage.setItem("axiotask:view", "L1");
     mockBackend();
