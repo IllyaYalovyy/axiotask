@@ -18,14 +18,17 @@
     const toIdx = tasks.findIndex(t => t.id === taskId);
     if (fromIdx < 0 || toIdx < 0) { handleDragEnd(); return; }
     const direction = toIdx > fromIdx ? "down" : "up";
-    // The backend reorders among SIBLINGS, but the rendered rows interleave
-    // subtask rows — counting raw row distance overshoots by every expanded
-    // child crossed. Count only siblings of the dragged task.
+    // The backend reorders among SIBLINGS, but rendered rows can interleave
+    // subtask rows and, in cross-list views, cards from other lists. Count only
+    // siblings of the dragged task in the same list.
     const parentOf = (t) => t.parent_id ?? null;
     const dragParent = parentOf(tasks[fromIdx]);
+    const dragListId = tasks[fromIdx].listId;
     const [lo, hi] = fromIdx < toIdx ? [fromIdx + 1, toIdx] : [toIdx, fromIdx - 1];
     let steps = 0;
-    for (let i = lo; i <= hi; i++) if (parentOf(tasks[i]) === dragParent) steps++;
+    for (let i = lo; i <= hi; i++) {
+      if (parentOf(tasks[i]) === dragParent && tasks[i].listId === dragListId) steps++;
+    }
     if (steps > 0) onreorder?.(draggingId, direction, steps);
     handleDragEnd();
   }
