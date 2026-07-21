@@ -3,6 +3,7 @@
   import DatePicker from "./DatePicker.svelte";
   import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
+  import { formatDue } from "./dateFormat.js";
   let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
@@ -274,7 +275,7 @@
                 title="Pick subtask due date"
                 onclick={(e) => { e.stopPropagation(); openSubtaskDatePicker(sub); }}
               >
-                {subtaskDue(sub) || "no date"}
+                {formatDue(sub.due) || "no date"}
               </button>
             </div>
           {/each}

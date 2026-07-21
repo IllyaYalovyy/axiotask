@@ -218,6 +218,30 @@ describe("TaskDetail Panel (GH#7)", () => {
       });
     });
 
+    it("renders subtask due dates in the friendly relative format, not raw ISO", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-06-08T12:00:00Z"));
+      try {
+        const parent = task("t1", "Parent");
+        const sub = task("s1", "Dated Sub", { parent: "t1", due: "2026-06-10T00:00:00.000Z" });
+        mockBackend([parent], [sub]);
+        render(App);
+        await waitFor(() => expect(screen.getByText("Parent")).toBeInTheDocument());
+
+        await fireEvent.click(screen.getByText("Parent"));
+        await waitFor(() => expect(screen.getAllByText("Dated Sub").length).toBeGreaterThanOrEqual(1));
+
+        // The button's accessible name stays the precise ISO date (deterministic,
+        // used to open the picker), but the visible label is the friendly form
+        // shared with the list rows — "in 2d", never "2026-06-10".
+        const dueBtn = screen.getByRole("button", { name: "Subtask due date: 2026-06-10" });
+        expect(dueBtn.textContent.trim()).toBe("in 2d");
+        expect(dueBtn.textContent).not.toContain("2026-06-10");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("lets a subtask detach from its parent in the detail panel", async () => {
       const parent = task("p1", "Parent");
       const sub = task("s1", "Nested Child", { parent: "p1" });
