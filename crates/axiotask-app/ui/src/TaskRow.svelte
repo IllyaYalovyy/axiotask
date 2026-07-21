@@ -1,6 +1,7 @@
 <script>
   import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
+  import { formatDue, dueClass } from "./dateFormat.js";
   let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
@@ -175,33 +176,6 @@
   let urls = $derived([...extractUrls(task.title), ...extractUrls(task.notes || "")]);
   let hasVisibleNotes = $derived((task.notes || "").length > 0);
 
-  function parseLocalDate(due) {
-    // Due dates are date-only. Parse YYYY-MM-DD portion to avoid timezone shift.
-    const [y, m, d] = due.slice(0, 10).split("-").map(Number);
-    return new Date(y, m - 1, d);
-  }
-
-  function formatDue(due) {
-    if (!due) return "";
-    const d = parseLocalDate(due);
-    const now = new Date(); now.setHours(0,0,0,0);
-    const diff = Math.round((d - now) / 86400000);
-    if (diff < -1) return `${-diff}d overdue`;
-    if (diff === -1) return "yesterday";
-    if (diff === 0) return "today";
-    if (diff === 1) return "tomorrow";
-    if (diff < 7) return `in ${diff}d`;
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  }
-
-  function dueClass(due) {
-    if (!due) return "";
-    const d = parseLocalDate(due);
-    const now = new Date(); now.setHours(0,0,0,0);
-    if (d < now) return "overdue";
-    if (d.getTime() === now.getTime()) return "due-today";
-    return "";
-  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
