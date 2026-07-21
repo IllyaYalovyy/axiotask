@@ -178,6 +178,65 @@ describe("GH#17: Search overlay", () => {
     expect(document.querySelectorAll(".result")[0].classList.contains("selected")).toBe(true);
   });
 
+  it("resets selection to the first result when the query narrows results", async () => {
+    render(SearchOverlay, {
+      props: {
+        tasks: [
+          task("t1", "Alpha one"),
+          task("t2", "Alpha two"),
+          task("t3", "Alpha three beta"),
+        ],
+        onselect: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+    await waitFor(() => expect(document.querySelectorAll(".result")).toHaveLength(3));
+
+    // Move selection down to the last row.
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(document.querySelectorAll(".result")[2].classList.contains("selected")).toBe(true);
+
+    // Narrow the query so the previously-selected index is out of range.
+    await fireEvent.input(input, { target: { value: "beta" } });
+    await waitFor(() => expect(document.querySelectorAll(".result")).toHaveLength(1));
+
+    const results = document.querySelectorAll(".result");
+    expect(results[0].classList.contains("selected")).toBe(true);
+  });
+
+  it("selects the sole narrowed result on Enter after selection was out of range", async () => {
+    const onselect = vi.fn();
+    render(SearchOverlay, {
+      props: {
+        tasks: [
+          task("t1", "Alpha one"),
+          task("t2", "Alpha two"),
+          task("t3", "Alpha three beta"),
+        ],
+        onselect,
+        onclose: vi.fn(),
+      },
+    });
+
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha" } });
+    await waitFor(() => expect(document.querySelectorAll(".result")).toHaveLength(3));
+
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+    await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+    await fireEvent.input(input, { target: { value: "beta" } });
+    await waitFor(() => expect(document.querySelectorAll(".result")).toHaveLength(1));
+
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(onselect).toHaveBeenCalledTimes(1);
+    expect(onselect.mock.calls[0][0].id).toBe("t3");
+  });
+
   it("ranks open results before completed results", async () => {
     render(SearchOverlay, {
       props: {
