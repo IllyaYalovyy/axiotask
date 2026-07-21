@@ -208,6 +208,46 @@ describe("GH#17: Search overlay", () => {
     expect(document.querySelectorAll(".result")[0].classList.contains("selected")).toBe(true);
   });
 
+  it("GH#77: scrolls the keyboard-selected result into view", async () => {
+    // jsdom does not implement scrollIntoView; stub it so we can assert the
+    // selected row is scrolled into view (mirroring TaskRow's focus behavior).
+    const scrollSpy = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      render(SearchOverlay, {
+        props: {
+          tasks: [
+            task("t1", "Alpha one"),
+            task("t2", "Alpha two"),
+            task("t3", "Alpha three"),
+          ],
+          onselect: vi.fn(),
+          onclose: vi.fn(),
+        },
+      });
+
+      const input = screen.getByPlaceholderText("Search tasks...");
+      await fireEvent.input(input, { target: { value: "alpha" } });
+      await waitFor(() => expect(document.querySelectorAll(".result")).toHaveLength(3));
+
+      scrollSpy.mockClear();
+
+      // Arrowing down to a lower result must scroll that row into view.
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+      await fireEvent.keyDown(input, { key: "ArrowDown" });
+
+      const rows = document.querySelectorAll(".result");
+      expect(rows[2].classList.contains("selected")).toBe(true);
+      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+      // The last invocation must target the currently-selected row.
+      const lastCallThis = scrollSpy.mock.contexts[scrollSpy.mock.contexts.length - 1];
+      expect(lastCallThis).toBe(rows[2]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("resets selection to the first result when the query narrows results", async () => {
     render(SearchOverlay, {
       props: {
