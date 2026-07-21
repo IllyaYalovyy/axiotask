@@ -9,6 +9,15 @@
 
   let tasksById = $derived(new Map(tasks.map(task => [task.id, task])));
 
+  function formatDue(due) {
+    // Due values are date-only (Google sends midnight UTC, e.g.
+    // "2026-06-15T00:00:00.000Z"). Parsing the whole string with `new Date`
+    // and formatting in local time shifts to the previous day in negative-UTC
+    // zones. Parse the YYYY-MM-DD portion into local components instead.
+    const [y, m, d] = due.slice(0, 10).split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString();
+  }
+
   function matchesQuery(task, normalizedQuery) {
     return task.title?.toLowerCase().includes(normalizedQuery) ||
       task.notes?.toLowerCase().includes(normalizedQuery);
@@ -70,7 +79,7 @@
               <span class="result-list">{task.listTitle}</span>
             {/if}
             {#if task.due}
-              <span class="result-due">{new Date(task.due).toLocaleDateString()}</span>
+              <span class="result-due">{formatDue(task.due)}</span>
             {/if}
           </div>
         {/each}

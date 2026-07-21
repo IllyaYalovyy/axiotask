@@ -152,6 +152,36 @@ describe("GH#17: Search overlay", () => {
     });
   });
 
+  it("GH#76: shows the correct due date in negative-UTC zones", async () => {
+    // Google sends date-only due values as midnight UTC. In a zone west of
+    // UTC, `new Date(due).toLocaleDateString()` shifts to the previous day.
+    const originalTZ = process.env.TZ;
+    process.env.TZ = "America/New_York"; // UTC-5/-4
+    try {
+      render(SearchOverlay, {
+        props: {
+          tasks: [task("t1", "Deadline task", { due: "2026-06-15T00:00:00.000Z" })],
+          onselect: vi.fn(),
+          onclose: vi.fn(),
+        },
+      });
+
+      const input = screen.getByPlaceholderText("Search tasks...");
+      await fireEvent.input(input, { target: { value: "deadline" } });
+
+      await waitFor(() => {
+        const dueEl = document.querySelector(".result-due");
+        expect(dueEl).toBeTruthy();
+        // The user must see June 15, not June 14.
+        expect(dueEl.textContent).toBe(new Date(2026, 5, 15).toLocaleDateString());
+        expect(dueEl.textContent).toContain("15");
+        expect(dueEl.textContent).not.toContain("14");
+      });
+    } finally {
+      process.env.TZ = originalTZ;
+    }
+  });
+
   it("supports arrow key navigation", async () => {
     mockBackend([
       task("t1", "Alpha task"),
