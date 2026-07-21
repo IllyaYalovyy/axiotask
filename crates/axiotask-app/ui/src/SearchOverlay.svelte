@@ -41,6 +41,14 @@
   // can't leave selectedIdx pointing past the end of the list.
   $effect(() => { results; selectedIdx = 0; });
 
+  // Keep the keyboard-selected row visible as it moves out of the scroll
+  // viewport, mirroring TaskRow's `block: "nearest"` focus behavior.
+  let rowEls = $state([]);
+  $effect(() => {
+    const el = rowEls[selectedIdx];
+    if (el) el.scrollIntoView({ block: "nearest" });
+  });
+
   function handleKeydown(e) {
     if (e.key === "Escape") { e.preventDefault(); onclose(); }
     else if (e.key === "ArrowDown") { e.preventDefault(); selectedIdx = Math.min(selectedIdx + 1, results.length - 1); }
@@ -67,7 +75,7 @@
         {#each results as task, i}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="result" class:selected={i === selectedIdx} onclick={() => { onselect(task); onclose(); }}>
+          <div bind:this={rowEls[i]} class="result" class:selected={i === selectedIdx} onclick={() => { onselect(task); onclose(); }}>
             <span class="result-title" class:completed={task.status === "completed"}>{task.title}</span>
             {#if task.parent_id}
               <span class="result-kind">Subtask</span>
