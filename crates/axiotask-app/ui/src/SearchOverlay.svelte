@@ -27,7 +27,10 @@
       : []
   );
 
-  $effect(() => { selectedIdx = 0; }); // reset on query change
+  // Reset selection whenever the result set changes. Reading `results`
+  // establishes the reactive dependency so narrowing/widening the query
+  // can't leave selectedIdx pointing past the end of the list.
+  $effect(() => { results; selectedIdx = 0; });
 
   function handleKeydown(e) {
     if (e.key === "Escape") { e.preventDefault(); onclose(); }
