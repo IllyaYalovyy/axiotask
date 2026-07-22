@@ -200,19 +200,21 @@ describe("GH#19: Custom context menu", () => {
   });
 
   describe("Detach subtask", () => {
-    it("shows a detach action for subtasks only", async () => {
+    it("detaches a subtask from its parent via the detail panel", async () => {
+      // Subtasks are never list rows (#82) — they live in the parent's detail
+      // panel, and "Detach from parent" is where promotion happens.
       mockBackend([
         task("p1", "Parent task"),
         task("s1", "Child task", { parent: "p1" }),
       ]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
-
-      const childRow = screen.getByText("Child task").closest(".task-widget");
-      await fireEvent.contextMenu(childRow);
-      await waitFor(() => expect(screen.getByText("Detach subtask")).toBeInTheDocument());
-
-      await fireEvent.click(screen.getByText("Detach subtask"));
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
+      // Open the subtask's own detail, then detach it.
+      await fireEvent.click(screen.getByText("Child task"));
+      await waitFor(() => expect(screen.getByText("Detach from parent")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Detach from parent"));
       expect(invoke).toHaveBeenCalledWith("move_task", { id: "s1", parentId: null, previousId: "p1" });
     });
 
@@ -415,7 +417,8 @@ describe("GH#19: Custom context menu", () => {
       ]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
-      expect(screen.getByText("Child task")).toBeInTheDocument();
+      // The subtask is not a row in the smart view (#82) — only the parent card.
+      expect(screen.queryByText("Child task")).not.toBeInTheDocument();
 
       await openContextMenu(container);
       await fireEvent.click(screen.getByText("Edit notes"));

@@ -29,8 +29,11 @@ first-class backend while providing the frontend it deserves.
 2. **Keyboard-driven** — Every action is reachable without a mouse. Navigation, creation,
    editing, completion, reordering — all from the keyboard. Mouse is supported but never required. "Single click" - to add a new task. "Single click" to move task to tomorrow, next week, next month. 
 
-3. **Hierarchy is visible** — Task lists, tasks, and subtasks are displayed in a clear tree
-   structure. Collapse, expand, drag, indent, outdent — the structure is always apparent. Subtasks are never separated from parent. No visual orphans. 
+3. **One level of subtasks, always clear** — Google Tasks allows exactly one level of nesting,
+   and so do we — permanently. Lists and smart views show top-level tasks only; a parent card
+   surfaces its subtask progress ("2/5"), and the subtasks themselves live in the task's detail
+   panel where they can be added, checked off, dated, and detached. A subtask is never a
+   standalone row and never a visual orphan.
 
 4. **Fast and native** — Built in Rust. Starts instantly. Uses minimal resources. Feels like
    a system application, not a web page in a wrapper.

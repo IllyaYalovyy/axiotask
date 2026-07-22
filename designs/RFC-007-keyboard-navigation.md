@@ -80,14 +80,12 @@ Transitions are an exhaustive `match` — easy to unit-test.
 
 | Key | Action |
 |---|---|
-| `j` / `↓` | next sibling or descend |
-| `k` / `↑` | previous |
-| `h` / `←` | collapse / move to parent |
-| `l` / `→` | expand / first child |
-| `Enter` | new sibling below |
-| `Shift-Enter` | new child |
+| `j` / `↓` | next task |
+| `k` / `↑` | previous task |
+| `Enter` | open / close the detail panel |
+| `s` | add a subtask (opens it in the detail panel) |
 | `Space` | toggle complete |
-| `Tab` / `Shift-Tab` | indent / outdent |
+| `Tab` | indent (make the focused task a subtask of the one above) |
 | `Alt-↑` / `Alt-↓` | reorder among siblings |
 | `e` | edit title inline |
 | `n` | open notes panel |
@@ -100,8 +98,11 @@ Transitions are an exhaustive `match` — easy to unit-test.
 
 ### Reorder / indent / outdent semantics
 
-These map to Google's `tasks.move` endpoint. Indent makes the task a child
-of its previous sibling; outdent makes it a sibling of its parent.
+These map to Google's `tasks.move` endpoint. Indent (`Tab`) makes the focused
+top-level task a subtask of its previous sibling — the one permitted level of
+nesting. Outdent is reached from the task's detail panel ("Detach from parent"),
+not the list, because subtasks are never rows in the list or smart views
+(they live only in the detail panel). Reorder (`Alt-↑/↓`) moves among siblings.
 
 ### Command palette
 

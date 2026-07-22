@@ -211,47 +211,40 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(container.querySelector(".progress")).not.toBeInTheDocument();
     });
 
-    it("clicking progress toggles the subtask tree without selecting the row", async () => {
-      const onToggleCollapse = vi.fn();
+    it("clicking progress opens the row's detail (bubbles to the row)", async () => {
+      // Subtasks live in the detail panel (#82); the progress badge no longer
+      // toggles an inline tree — clicking it (like the rest of the row) opens
+      // the panel where the subtasks are.
       const onClick = vi.fn();
       const { container } = render(TaskRow, {
         props: {
           ...defaultProps,
-          task: makeTask({ hasChildren: true }),
+          task: makeTask(),
           onclick: onClick,
-          ontogglecollapse: onToggleCollapse,
           subtaskProgress: { done: 1, total: 2 },
         },
       });
       await fireEvent.click(container.querySelector(".progress"));
-      expect(onToggleCollapse).toHaveBeenCalledWith("t1");
-      expect(onClick).not.toHaveBeenCalled();
+      expect(onClick).toHaveBeenCalledWith("t1");
     });
   });
 
-  describe("Inline tree affordance", () => {
-    it("renders an accessible expand/collapse button for parent tasks", () => {
-      render(TaskRow, {
-        props: { ...defaultProps, task: makeTask({ hasChildren: true, isCollapsed: false, title: "Parent" }) },
+  describe("No inline tree — one level only (#82)", () => {
+    it("renders no expand/collapse toggle even for a task with children", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ hasChildren: true, title: "Parent" }) },
       });
-      const toggle = screen.getByRole("button", { name: "Collapse Parent" });
-      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(screen.queryByRole("button", { name: /collapse|expand/i })).not.toBeInTheDocument();
+      expect(container.querySelector(".tree-toggle")).toBeNull();
     });
 
-    it("clicking the tree toggle does not open the row", async () => {
-      const onToggleCollapse = vi.fn();
-      const onClick = vi.fn();
-      render(TaskRow, {
-        props: {
-          ...defaultProps,
-          task: makeTask({ hasChildren: true, isCollapsed: true, title: "Parent" }),
-          onclick: onClick,
-          ontogglecollapse: onToggleCollapse,
-        },
+    it("renders no subtask connector or indent for a task with a parent", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ parent_id: "p1", title: "Child" }) },
       });
-      await fireEvent.click(screen.getByRole("button", { name: "Expand Parent" }));
-      expect(onToggleCollapse).toHaveBeenCalledWith("t1");
-      expect(onClick).not.toHaveBeenCalled();
+      expect(container.querySelector(".tree-icon.sub")).toBeNull();
+      // No depth-based indent — every rendered row sits at the top level.
+      expect(container.querySelector(".task-widget").style.paddingLeft).toBe("0.5rem");
     });
   });
 

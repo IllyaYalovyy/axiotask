@@ -104,7 +104,6 @@ async function main() {
       checked: row.querySelector(".checkbox")?.checked ?? false,
       due: row.querySelector(".due")?.textContent || "",
       progress: row.querySelector(".progress-text")?.textContent || "",
-      isSubtask: !!row.querySelector(".tree-icon.sub"),
     };`, [title]);
   const clickRowControl = async (title, selector, label) => {
     const element = await waitFor(label, () => exec(`
@@ -213,18 +212,31 @@ async function main() {
     if (!dueInfo.due.trim()) throw new Error("FAIL: due date action did not render a dated chip");
     console.log("ok 4 - due date action persisted and rendered");
 
+    // Subtasks are one level and live ONLY in the detail panel (#82): adding one
+    // opens its panel; after naming it, the parent shows a progress badge, and
+    // the subtask must NOT appear as a row in the list.
     await clickRowControl(parent, "button[title='Add subtask']", "Add subtask action");
     await waitFor("detail panel for new subtask", () => findMaybe(".detail-panel #detail-title"));
     await setInputValue("#detail-title", child, { blur: true });
-    await waitFor(`renamed subtask ${child}`, () => textShown(child));
+    await waitFor(`renamed subtask ${child}`, async () =>
+      (await exec(`return document.querySelector(".detail-panel #detail-title")?.value || "";`)) === child);
     await clickSelector(".detail-panel .close-btn", "detail close");
     await waitFor("parent subtask progress", async () => {
       const info = await rowInfo(parent);
       return info?.progress === "0/1" ? info : null;
     });
-    const childRow = await waitFor("child row under parent", () => rowInfo(child));
-    if (!childRow.isSubtask) throw new Error("FAIL: created child did not render as an indented subtask row");
-    console.log("ok 5 - subtask tree renders child row and parent progress");
+    const childIsRow = await exec(`
+      return [...document.querySelectorAll(".task-widget .title")]
+        .some((el) => (el.textContent || "").includes(arguments[0]));`, [child]);
+    if (childIsRow) throw new Error("FAIL: subtask rendered as a list row — it must live only in the detail panel");
+    // Reopen the parent and confirm the subtask is reachable in its checklist.
+    await clickText(".task-widget .title", parent);
+    await waitFor("parent detail for subtask check", () => findMaybe(".detail-panel #detail-title"));
+    await waitFor(`subtask ${child} listed in detail panel`, () => exec(`
+      return [...document.querySelectorAll(".detail-panel .subtask-title")]
+        .some((el) => (el.textContent || "").includes(arguments[0]));`, [child]));
+    await clickSelector(".detail-panel .close-btn", "detail close after subtask check");
+    console.log("ok 5 - subtask lives in the detail panel (not the list); parent shows progress");
 
     await clickText(".task-widget .title", parent);
     await waitFor("parent detail panel", () => findMaybe(".detail-panel #detail-title"));

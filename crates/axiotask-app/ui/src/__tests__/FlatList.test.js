@@ -38,11 +38,11 @@ function task(id, title, opts = {}) {
   return { id, parent_id: opts.parent || null, title, notes: opts.notes || null, status: opts.status || "needsAction", due: opts.due || today, position: opts.pos || id, sync_state: "clean", listId: "L1", listTitle: "Work" };
 }
 
-describe("Inline expandable task tree", () => {
+describe("Top-level-only list (one-level subtasks, #82)", () => {
   beforeEach(() => { localStorage.clear(); localStorage.setItem("axiotask:view", "L1"); invoke.mockReset(); });
 
-  describe("Main list shows the task hierarchy inline", () => {
-    it("renders subtasks directly under their parent", async () => {
+  describe("Main list shows top-level tasks only", () => {
+    it("never renders a subtask as a row — only its top-level parent", async () => {
       mockBackend([
         task("t1", "Parent task"),
         task("t2", "Subtask one", { parent: "t1" }),
@@ -52,36 +52,32 @@ describe("Inline expandable task tree", () => {
       render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
       expect(screen.getByText("Another top-level")).toBeInTheDocument();
-      expect(screen.getByText("Subtask one")).toBeInTheDocument();
-      expect(screen.getByText("Subtask two")).toBeInTheDocument();
+      // Subtasks live in the detail panel, never as list rows.
+      expect(screen.queryByText("Subtask one")).not.toBeInTheDocument();
+      expect(screen.queryByText("Subtask two")).not.toBeInTheDocument();
     });
 
-    it("indents subtasks in the main list", async () => {
+    it("renders every row flush at the top level with no indent", async () => {
       mockBackend([
         task("t1", "Parent task"),
-        task("t2", "Child task", { parent: "t1" }),
+        task("t2", "Another task"),
       ]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
       const widgets = container.querySelectorAll(".task-widget");
-      expect(widgets[0].style.paddingLeft).toBe("0.5rem");
-      expect(widgets[1].style.paddingLeft).toBe("2rem");
+      expect(widgets).toHaveLength(2);
+      for (const w of widgets) expect(w.style.paddingLeft).toBe("0.5rem");
     });
 
-    it("collapses and expands subtasks from the inline tree button without opening detail", async () => {
+    it("shows no expand/collapse toggle on a parent row", async () => {
       mockBackend([
         task("t1", "Parent task"),
         task("t2", "Child task", { parent: "t1" }),
       ]);
       render(App);
-      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
-
-      await fireEvent.click(screen.getByRole("button", { name: "Collapse Parent task" }));
-      await waitFor(() => expect(screen.queryByText("Child task")).not.toBeInTheDocument());
-      expect(screen.queryByText("Task Details")).not.toBeInTheDocument();
-
-      await fireEvent.click(screen.getByRole("button", { name: "Expand Parent task" }));
-      await waitFor(() => expect(screen.getByText("Child task")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /collapse|expand/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("Child task")).not.toBeInTheDocument();
     });
   });
 
@@ -155,11 +151,11 @@ describe("Inline expandable task tree", () => {
     });
   });
 
-  describe("Smart views expand the tree too", () => {
-    it("Focus: the expand toggle actually shows and hides subtask rows", async () => {
-      // Regression: smart views fed only top-level cards to the tree builder,
-      // so the ▾ toggle rendered, flipped its glyph, and did nothing — the
-      // dead-affordance bug all over again, in the most-used views.
+  describe("Smart views are top-level only too", () => {
+    it("Focus: a subtask never renders as a row, but its parent card does", async () => {
+      // A subtask due soon pulls its parent into Focus (date propagation),
+      // yet the subtask itself is never a standalone row — only the parent
+      // card, and the badge counts that one card.
       localStorage.clear();
       localStorage.setItem("axiotask:view", "focus");
       mockBackend([
@@ -168,23 +164,15 @@ describe("Inline expandable task tree", () => {
       ]);
       render(App);
       await waitFor(() => expect(screen.getByText("Parent card")).toBeInTheDocument());
-      // Children render (expanded by default)…
-      expect(screen.getByText("Child row")).toBeInTheDocument();
-      // …but the sidebar badge still counts top-level cards only.
-      expect(screen.getByRole("button", { name: /Focus 1/ })).toBeInTheDocument();
-
-      await fireEvent.click(screen.getByRole("button", { name: /collapse parent card/i }));
       expect(screen.queryByText("Child row")).not.toBeInTheDocument();
-      await fireEvent.click(screen.getByRole("button", { name: /expand parent card/i }));
-      expect(screen.getByText("Child row")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /collapse|expand/i })).not.toBeInTheDocument();
+      // The sidebar badge counts the one top-level card.
+      expect(screen.getByRole("button", { name: /Focus 1/ })).toBeInTheDocument();
     });
   });
 
-  describe("Drag reorder with an expanded tree", () => {
-    it("counts sibling rows crossed, not subtask rows", async () => {
-      // Regression: steps were raw row distance, so dragging across a parent
-      // with expanded children issued one reorder_task per CHILD row too and
-      // the task landed far past the drop point.
+  describe("Drag reorder is over top-level rows only", () => {
+    it("reorders a top-level task without any subtask rows in the way", async () => {
       localStorage.clear();
       localStorage.setItem("axiotask:view", "L1");
       localStorage.setItem("axiotask:sort:L1", "manual");
@@ -195,11 +183,13 @@ describe("Inline expandable task tree", () => {
       ]);
       render(App);
       await waitFor(() => expect(screen.getByText("Beta")).toBeInTheDocument());
-      // Rows: Alpha, Alpha sub, Beta. Drag Beta up onto Alpha — that crosses
-      // two rows but only ONE sibling (Alpha).
+      // Only Alpha and Beta render (the subtask is not a row). Drag Beta up
+      // onto Alpha — one sibling crossed, one reorder.
+      expect(screen.queryByText("Alpha sub")).not.toBeInTheDocument();
       const handles = screen.getAllByTestId("drag-handle");
       const zones = screen.getAllByTestId("drop-zone");
-      await fireEvent.dragStart(handles[2], { dataTransfer: { setData: () => {}, effectAllowed: "" } });
+      expect(handles).toHaveLength(2);
+      await fireEvent.dragStart(handles[1], { dataTransfer: { setData: () => {}, effectAllowed: "" } });
       await fireEvent.drop(zones[0], {});
       await waitFor(() => {
         const calls = invoke.mock.calls.filter((call) => call[0] === "reorder_task");

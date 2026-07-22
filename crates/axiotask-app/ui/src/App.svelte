@@ -51,7 +51,6 @@
   let datePickerTask = $state(null); // task whose due date is being picked (#37)
   let themePref = $state(getThemePref()); // "dark" | "light" | "system" (#46)
   let renamingListId = $state(null); // triggers inline rename in sidebar
-  let collapsed = $state(new Set());
   let completingIds = $state(new Set());
   let confirmDialog = $state(null); // { title, message, confirmLabel, danger, onconfirm }
   let bulkAdd = $state(null); // { text } when the bulk-add dialog is open
@@ -377,27 +376,20 @@
   }
 
   function listTasks(listId) {
-    return allTasks.filter(t => t.listId === listId && (showCompleted || t.status !== "completed"));
+    return allTasks.filter(t => t.listId === listId && !t.parent_id && (showCompleted || t.status !== "completed"));
   }
 
-  // Smart views select top-level CARDS (that's what the sidebar badges count),
-  // but the tree builder needs the children too or the row's expand toggle is
-  // a dead control. Completed children follow the "Show completed" toggle.
-  function withDescendants(tops) {
-    const out = [...tops];
-    for (const t of tops) {
-      out.push(...descendantsOf(t.id).filter(d => showCompleted || d.status !== "completed"));
-    }
-    return out;
-  }
-
+  // Every list and smart view renders TOP-LEVEL tasks only (#82). Subtasks are
+  // one level deep, permanently, and live SOLELY in the detail panel — a
+  // subtask is never a row here. Smart-view helpers already return top-level
+  // cards; the list/"all" views filter `!parent_id` explicitly.
   function visibleTasks() {
     switch (selectedView) {
-      case "focus": return withDescendants(focusTasks());
-      case "upcoming": return withDescendants(upcomingTasks());
-      case "missed": return withDescendants(missedTasks());
-      case "unscheduled": return withDescendants(unscheduledTasks());
-      case "all": return allTasks.filter(t => showCompleted || t.status !== "completed");
+      case "focus": return focusTasks();
+      case "upcoming": return upcomingTasks();
+      case "missed": return missedTasks();
+      case "unscheduled": return unscheduledTasks();
+      case "all": return allTasks.filter(t => !t.parent_id && (showCompleted || t.status !== "completed"));
       default: return listTasks(selectedView);
     }
   }
@@ -468,7 +460,7 @@
   }
 
   let flatTasks = $derived.by(() => {
-    const tasks = buildFlatTree(applySortAndOrder(visibleTasks()));
+    const tasks = decorateRows(applySortAndOrder(visibleTasks()));
     return selectedView === "focus" ? focusOverdueFirst(tasks) : tasks;
   });
 
@@ -525,45 +517,16 @@
     return c;
   });
 
-  function buildFlatTree(tasks) {
-    const taskIds = new Set(tasks.map(t => t.id));
-    const childrenByParent = new Map();
-    for (const t of tasks) {
-      if (!t.parent_id || !taskIds.has(t.parent_id)) continue;
-      (childrenByParent.get(t.parent_id) ?? childrenByParent.set(t.parent_id, []).get(t.parent_id)).push(t);
-    }
-
-    const out = [];
-    const seen = new Set();
-    const decorate = (t, depth) => ({
+  // Rows are always top-level (subtasks live in the detail panel), so there is
+  // no tree to build — just decorate each card. `depth` stays 0 for the few
+  // consumers that still read it; `inheritedDue` carries the read-only date
+  // borrowed from the earliest unfinished subtask for the ↳ marker.
+  function decorateRows(tasks) {
+    return tasks.map(t => ({
       ...t,
-      depth,
-      // Only claim children when child ROWS can actually render (they are in
-      // this view's task set) — otherwise the expand toggle is a dead control
-      // (e.g. every child completed while "Show completed" is off).
-      hasChildren: (childrenByParent.get(t.id) ?? []).length > 0,
-      isCollapsed: collapsed.has(t.id),
+      depth: 0,
       inheritedDue: !t.due ? propagatedDueOf(t) : null,
-    });
-    const visit = (t, depth) => {
-      if (seen.has(t.id)) return;
-      seen.add(t.id);
-      out.push(decorate(t, depth));
-      if (collapsed.has(t.id)) return;
-      for (const child of childrenByParent.get(t.id) ?? []) visit(child, depth + 1);
-    };
-
-    for (const t of tasks) {
-      if (!t.parent_id || !taskIds.has(t.parent_id)) visit(t, 0);
-    }
-    return out;
-  }
-
-  function toggleCollapse(id) {
-    const next = new Set(collapsed);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    collapsed = next;
+    }));
   }
 
   // --- Actions ---
@@ -1323,21 +1286,6 @@
         else if (len > 0) focusIndex = Math.max(focusIndex - 1, 0);
         break;
       case " ": e.preventDefault(); if (selectedIds.size > 0) await bulkComplete(); else if (f) await toggleComplete(f.id); break;
-      case "h": case "ArrowLeft":
-        e.preventDefault();
-        if (f?.hasChildren && !collapsed.has(f.id)) {
-          collapsed = new Set([...collapsed, f.id]);
-        } else if (f?.parent_id) {
-          const pi = flatTasks.findIndex(t => t.id === f.parent_id);
-          if (pi >= 0) focusIndex = pi;
-        }
-        break;
-      case "l": case "ArrowRight":
-        e.preventDefault();
-        if (f && collapsed.has(f.id)) {
-          const next = new Set(collapsed); next.delete(f.id); collapsed = next;
-        }
-        break;
       case "Enter":
         e.preventDefault();
         if (f) {
@@ -1355,13 +1303,15 @@
       case "w": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("NextWeek"); else if (f) await setDue(f.id, "NextWeek"); break;
       case "r": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Clear"); else if (f) await setDue(f.id, "Clear"); break;
       case "Tab":
+        // Tab indents the focused top-level task under the one above it,
+        // creating a one-level subtask (which then lives in the detail panel).
+        // Shift+Tab (outdent) is unreachable from the list — every row is
+        // top-level — so promotion is done via "Detach from parent" in detail.
         e.preventDefault();
-        if (!f) break;
-        if (e.shiftKey) {
-          if (f.parent_id) await promoteTask(f.id);
-        } else {
+        if (!f || e.shiftKey) break;
+        {
           const prev = flatTasks[focusIndex - 1];
-          if (prev && f.depth === 0 && prev.depth === 0) await moveTask(f.id, prev.id);
+          if (prev && !prev.parent_id) await moveTask(f.id, prev.id);
         }
         break;
     }
@@ -1488,15 +1438,15 @@
     {#if loading}
       <p class="status">Loading...</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} ontogglecollapse={toggleCollapse} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   <button class="mobile-fab" type="button" aria-label="New task" onclick={newTask}>+</button>

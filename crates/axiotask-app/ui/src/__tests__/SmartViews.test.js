@@ -92,12 +92,12 @@ describe("Smart Views: Focus", () => {
     ]);
     render(App);
     await waitFor(() => expect(screen.getByText("Parent no due")).toBeInTheDocument());
-    // The subtask renders as a NESTED row under its parent card (expandable
-    // tree), never as a standalone card; unrelated undated task isn't in Focus.
-    const subRow = screen.getByText("Subtask due tomorrow").closest(".task-widget");
-    expect(subRow.querySelector(".tree-icon.sub")).not.toBeNull();
+    // The parent card is pulled in by its subtask's date, but the subtask is
+    // never a row here (#82) — it lives in the detail panel. The unrelated
+    // undated task isn't in Focus.
+    expect(screen.queryByText("Subtask due tomorrow")).not.toBeInTheDocument();
     expect(screen.queryByText("Unrelated no due")).not.toBeInTheDocument();
-    // The Focus badge counts the one parent card, not the subtask separately.
+    // The Focus badge counts the one parent card.
     expect(screen.getByRole("button", { name: /focus/i })).toHaveTextContent("1");
   });
 });

@@ -1,7 +1,7 @@
 <script>
   import TaskRow from "./TaskRow.svelte";
 
-  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, getSubtaskProgress, isCrossList, sortMode = "manual", onreorder } = $props();
+  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, getSubtaskProgress, isCrossList, sortMode = "manual", onreorder } = $props();
 
   let draggingId = $state(null);
   let dropTargetIdx = $state(null);
@@ -18,9 +18,9 @@
     const toIdx = tasks.findIndex(t => t.id === taskId);
     if (fromIdx < 0 || toIdx < 0) { handleDragEnd(); return; }
     const direction = toIdx > fromIdx ? "down" : "up";
-    // The backend reorders among SIBLINGS, but rendered rows can interleave
-    // subtask rows and, in cross-list views, cards from other lists. Count only
-    // siblings of the dragged task in the same list.
+    // The backend reorders among SIBLINGS, and in cross-list views ("all")
+    // rendered rows can interleave cards from other lists. Count only
+    // top-level siblings of the dragged task in the same list.
     const parentOf = (t) => t.parent_id ?? null;
     const dragParent = parentOf(tasks[fromIdx]);
     const dragListId = tasks[fromIdx].listId;
@@ -54,7 +54,6 @@
       {onpickdate}
       {oncontextmenu}
       {onaddsubtask}
-      {ontogglecollapse}
       subtaskProgress={getSubtaskProgress?.(task.id)}
       showList={isCrossList}
       draggable={sortMode === "manual"}

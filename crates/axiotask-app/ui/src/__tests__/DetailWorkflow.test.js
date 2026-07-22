@@ -144,7 +144,11 @@ describe("Detail Panel Workflows", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(invoke).not.toHaveBeenCalledWith("delete_task", expect.anything());
-      expect(screen.getByText("Grandchild work")).toBeInTheDocument();
+      // Reopen the parent — the untitled middle subtask (which has a child of
+      // its own) survived and is still listed in the parent's checklist.
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
+      expect(container.querySelector(".detail-panel .subtask-title")).toBeInTheDocument();
     });
   });
 

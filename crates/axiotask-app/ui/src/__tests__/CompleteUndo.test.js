@@ -245,31 +245,35 @@ describe("GH#11: Complete/uncomplete with undo", () => {
 
     it("completing a subtask offers an undo toast", async () => {
       // #79: completing a non-top-level task must also offer Undo. Previously
-      // only top-level completions built the toast.
+      // only top-level completions built the toast. Subtasks live in the detail
+      // panel (#82), so we complete one from its checklist there.
       mockBackend([
         task("p1", "Parent task", { pos: "00001" }),
         task("s1", "Open sub", { parent: "p1", pos: "00002" }),
       ]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Open sub")).toBeInTheDocument());
-      const subRow = screen.getByText("Open sub").closest(".task-widget");
-      await fireEvent.click(subRow.querySelector(".checkbox"));
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
+      await fireEvent.click(screen.getByLabelText("Mark Open sub complete"));
       await waitFor(() => expect(screen.getByText(/Completed "Open sub"/)).toBeInTheDocument());
       expect(screen.getByText("Undo")).toBeInTheDocument();
     });
 
     it("undo of a mid-level subtask completion reopens it and its cascaded children", async () => {
       // #79: a mid-level subtask cascades completion to its own children; Undo
-      // must reverse that whole subtree, not just the clicked row.
+      // must reverse that whole subtree, not just the clicked row. Completed
+      // from the parent's detail-panel checklist (#82).
       const { taskStore } = mockBackend([
         task("p1", "Parent task", { pos: "00001" }),
         task("s1", "Mid sub", { parent: "p1", pos: "00002" }),
         task("g1", "Open grandchild", { parent: "s1", pos: "00003" }),
       ]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Mid sub")).toBeInTheDocument());
-      const subRow = screen.getByText("Mid sub").closest(".task-widget");
-      await fireEvent.click(subRow.querySelector(".checkbox"));
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Subtasks")).toBeInTheDocument());
+      await fireEvent.click(screen.getByLabelText("Mark Mid sub complete"));
       await waitFor(() => expect(screen.getByText("Undo")).toBeInTheDocument());
       // Both the subtask and its grandchild are completed by the cascade.
       expect(taskStore.find(t => t.id === "s1").status).toBe("completed");
