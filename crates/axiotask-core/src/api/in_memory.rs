@@ -291,6 +291,16 @@ impl InMemoryClient {
             .retain(|(lid, t)| !(lid == list_id && t.id == task_id));
     }
 
+    /// Remove a list (and its tasks) from internal state, simulating a list
+    /// deleted server-side by another client. Single-task/list methods against
+    /// it then naturally return [`ApiError::NotFound`], and a pull will not
+    /// resurrect it.
+    pub fn delete_list_from_state(&self, list_id: &str) {
+        let mut s = self.inner.lock().unwrap();
+        s.lists.retain(|l| l.id != list_id);
+        s.tasks.retain(|(lid, _)| lid != list_id);
+    }
+
     /// How many times `m` has been invoked.
     pub fn call_count(&self, m: Method) -> u32 {
         self.inner.lock().unwrap().calls[m as usize]
