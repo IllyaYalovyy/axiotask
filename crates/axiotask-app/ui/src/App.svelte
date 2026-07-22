@@ -18,6 +18,7 @@
   import BulkAdd from "./BulkAdd.svelte";
   import Icon from "./Icon.svelte";
   import { storageKey } from "./storage.js";
+  import { formatDue } from "./dateFormat.js";
   import { getThemePref, setThemePref } from "./theme.js";
   import { friendlyError, invokeWithTimeout } from "./ipc.js";
 
@@ -1436,7 +1437,7 @@
           />
           {#if quickAddPreviewDue}
             <span class="quick-add-date-chip" role="status">
-              Due {quickAddPreviewDue}
+              Due {formatDue(quickAddPreviewDue)}
               <button
                 type="button"
                 aria-label="Keep date text in title"
