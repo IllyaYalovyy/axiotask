@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
+import { formatDue } from "../dateFormat.js";
 
 const lists = [
   { id: "L1", title: "Work" },
@@ -140,7 +141,9 @@ describe("Quick-add input", () => {
     const input = await screen.findByRole("textbox", { name: /quick add task/i });
 
     await fireEvent.input(input, { target: { value: "Send invoice tomorrow" } });
-    expect(screen.getByText(`Due ${localDate(1)}`)).toBeInTheDocument();
+    // Chip renders the friendly relative form, not the raw ISO date (#78b).
+    expect(screen.getByText("Due tomorrow")).toBeInTheDocument();
+    expect(screen.queryByText(`Due ${localDate(1)}`)).not.toBeInTheDocument();
     await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
@@ -183,7 +186,9 @@ describe("Quick-add input", () => {
     const input = await screen.findByRole("textbox", { name: /quick add task/i });
 
     await fireEvent.input(input, { target: { value: "Book dentist on 2026-08-03" } });
-    expect(screen.getByText("Due 2026-08-03")).toBeInTheDocument();
+    // The chip shows the friendly form; the raw ISO still flows to set_due.
+    expect(screen.getByText(`Due ${formatDue("2026-08-03")}`)).toBeInTheDocument();
+    expect(screen.queryByText("Due 2026-08-03")).not.toBeInTheDocument();
     await fireEvent.submit(input.closest("form"));
 
     await waitFor(() => {
@@ -193,5 +198,19 @@ describe("Quick-add input", () => {
       );
     });
     expect(invoke).toHaveBeenCalledWith("set_due", expect.objectContaining({ mv: "raw:2026-08-03" }));
+  });
+
+  it("renders the preview chip as a friendly relative date, never the raw ISO (#78b)", async () => {
+    localStorage.setItem("axiotask:view", "L1");
+    mockBackend();
+    render(App);
+    const input = await screen.findByRole("textbox", { name: /quick add task/i });
+
+    await fireEvent.input(input, { target: { value: "Water plants today" } });
+    // "today" is its own formatDue branch — the chip must read "Due today",
+    // not the raw ISO the value carries into set_due.
+    const chip = await screen.findByRole("status");
+    expect(chip).toHaveTextContent("Due today");
+    expect(chip).not.toHaveTextContent(localDate(0));
   });
 });
