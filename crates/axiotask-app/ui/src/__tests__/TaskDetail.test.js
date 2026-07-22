@@ -242,6 +242,65 @@ describe("TaskDetail Panel (GH#7)", () => {
       }
     });
 
+    it("hides completed subtasks when 'Hide completed' is toggled on", async () => {
+      const parent = task("t1", "Parent Task");
+      const openSub = task("s1", "Open Sub", { parent: "t1" });
+      const doneSub = task("s2", "Done Sub", { parent: "t1", status: "completed" });
+      mockBackend([parent], [openSub, doneSub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByText("Done Sub")).toBeInTheDocument());
+      expect(screen.getByText("Open Sub")).toBeInTheDocument();
+
+      // Toggle appears because at least one subtask is completed.
+      const toggle = screen.getByRole("checkbox", { name: /hide completed subtasks/i });
+      await fireEvent.click(toggle);
+
+      // Completed subtask row disappears; the open one stays.
+      await waitFor(() => expect(screen.queryByText("Done Sub")).not.toBeInTheDocument());
+      expect(screen.getByText("Open Sub")).toBeInTheDocument();
+    });
+
+    it("does not show the 'Hide completed' toggle when no subtask is completed", async () => {
+      const parent = task("t1", "Parent Task");
+      const openSub = task("s1", "Open Sub", { parent: "t1" });
+      mockBackend([parent], [openSub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByText("Open Sub")).toBeInTheDocument());
+
+      // An affordance that would do nothing must not render.
+      expect(screen.queryByRole("checkbox", { name: /hide completed subtasks/i })).not.toBeInTheDocument();
+    });
+
+    it("remembers the 'Hide completed' preference across panel reopen", async () => {
+      const parent = task("t1", "Parent Task");
+      const openSub = task("s1", "Open Sub", { parent: "t1" });
+      const doneSub = task("s2", "Done Sub", { parent: "t1", status: "completed" });
+      mockBackend([parent], [openSub, doneSub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByText("Done Sub")).toBeInTheDocument());
+      await fireEvent.click(screen.getByRole("checkbox", { name: /hide completed subtasks/i }));
+      await waitFor(() => expect(screen.queryByText("Done Sub")).not.toBeInTheDocument());
+
+      // Close and reopen — the preference sticks.
+      await fireEvent.keyDown(window, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByText("Task Details")).not.toBeInTheDocument());
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+
+      expect(screen.getByText("Open Sub")).toBeInTheDocument();
+      expect(screen.queryByText("Done Sub")).not.toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: /hide completed subtasks/i })).toBeChecked();
+    });
+
     it("lets a subtask detach from its parent in the detail panel", async () => {
       const parent = task("p1", "Parent");
       const sub = task("s1", "Nested Child", { parent: "p1" });
