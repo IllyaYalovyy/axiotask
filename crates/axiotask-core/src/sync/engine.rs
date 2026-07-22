@@ -1360,6 +1360,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn push_update_412_transient_get_task_stays_dirty_then_resolves() {
+        // A 412 sends us to fetch the authoritative remote copy, but that GET
+        // fails transiently (5xx / network). We must NOT lose the local edit,
+        // NOT fabricate a conflicted copy, and NOT count a conflict — the row
+        // stays dirty so the *next* run retries and resolves it.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "server-version", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "local-edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into()); // patch → 412
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // The 412 conflict-fetch GET fails transiently.
+        client.fail_next(Method::GetTask, || ApiError::Server { status: 503 });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(
+            out.conflicts, 0,
+            "a failed fetch is not a resolved conflict"
+        );
+
+        // The local edit is intact: exactly one row, still dirty/update, no copy.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "no conflicted copy fabricated");
+        assert_eq!(tasks[0].task.title, "local-edit", "local edit preserved");
+        assert_eq!(tasks[0].sync_state, SyncState::Dirty, "row stays dirty");
+        assert_eq!(tasks[0].pending_op.as_deref(), Some("update"));
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.ends_with("(conflicted copy)")),
+            "no (conflicted copy) created while the fetch was still failing"
+        );
+
+        // Next run: the GET succeeds, so the 412 finally resolves into the
+        // canonical remote + a conflicted copy of the preserved edit.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 1, "retry resolves the deferred conflict");
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2, "remote + conflicted copy after retry");
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean)
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "local-edit (conflicted copy)")
+        );
+    }
+
+    #[tokio::test]
+    async fn push_update_412_non_transient_get_task_aborts_preserving_edit() {
+        // A 412 whose conflict-fetch GET fails with a NON-transient error
+        // (not NotFound, not transient) aborts the run — the caller can't
+        // safely decide the conflict without the remote copy. The local edit
+        // must survive untouched: no clean, no copy, no lost data.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "server-version", "1");
+        eng.run().await.unwrap();
+
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "local-edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into()); // patch → 412
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // The 412 conflict-fetch GET fails with a hard, non-transient error.
+        client.fail_next(Method::GetTask, || ApiError::Other("boom".into()));
+
+        let err = eng.run().await.expect_err("non-transient fetch aborts run");
+        assert!(matches!(err, SyncError::Api(ApiError::Other(_))));
+
+        // Nothing was lost or forked: the edit is still dirty and pushable.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "no conflicted copy fabricated");
+        assert_eq!(tasks[0].task.title, "local-edit", "local edit preserved");
+        assert_eq!(tasks[0].sync_state, SyncState::Dirty, "row stays dirty");
+        assert_eq!(tasks[0].pending_op.as_deref(), Some("update"));
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.ends_with("(conflicted copy)")),
+            "aborted fetch must not fork a conflicted copy"
+        );
+    }
+
+    #[tokio::test]
     async fn push_update_not_found_deletes_local() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
