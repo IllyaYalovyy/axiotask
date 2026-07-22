@@ -287,14 +287,18 @@
     </div>
   {/if}
 
-  <div class="field">
-    <label for="detail-list">List</label>
-    <select id="detail-list" value={selectedList} onchange={(e) => { selectedList = e.currentTarget.value; saveList(); }}>
-      {#each lists as list}
-        <option value={list.id}>{list.title}</option>
-      {/each}
-    </select>
-  </div>
+  <!-- A subtask has no independent list — it always belongs to its parent's
+       list (#93). Only top-level tasks expose the list-change affordance. -->
+  {#if !parentTask}
+    <div class="field">
+      <label for="detail-list">List</label>
+      <select id="detail-list" value={selectedList} onchange={(e) => { selectedList = e.currentTarget.value; saveList(); }}>
+        {#each lists as list}
+          <option value={list.id}>{list.title}</option>
+        {/each}
+      </select>
+    </div>
+  {/if}
 
   <div class="field">
     <label for="detail-notes">Notes</label>

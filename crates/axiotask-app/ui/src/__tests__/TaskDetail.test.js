@@ -545,6 +545,23 @@ describe("TaskDetail Panel (GH#7)", () => {
       expect(screen.getByLabelText("Title")).toHaveValue("Move Task");
       expect(screen.getByLabelText("List")).toHaveValue("L2");
     });
+
+    it("hides the List dropdown for a subtask (a subtask always lives in its parent's list, #93)", async () => {
+      const parent = task("t1", "Parent Task");
+      const sub = task("s1", "Subtask", { parent: "t1" });
+      mockBackend([parent], [sub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      // Parent panel: the List dropdown is present (parent is top-level).
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByLabelText("List")).toBeInTheDocument());
+
+      // Open the subtask's own panel: no List affordance — it can't move lists.
+      await fireEvent.click(screen.getByText("Subtask"));
+      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Subtask"));
+      expect(screen.queryByLabelText("List")).not.toBeInTheDocument();
+    });
   });
 
   describe("No spurious saves (#4 regression)", () => {
