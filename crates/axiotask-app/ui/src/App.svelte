@@ -190,12 +190,14 @@
     return () => { if (unlisten) unlisten(); };
   });
 
-  // Pause background pushes while the user is actively editing (inline editor
-  // or detail panel open), so a create's id remap can't invalidate the id being
-  // edited (RC3). Pull keeps running server-side.
-  let editingActive = $derived(editingId != null || detailTask != null);
+  // Tell the backend which ONE task the UI is holding — the inline editor's
+  // row, or the open detail panel's task. Only that task's create push is held,
+  // so its id remap can't invalidate the id being edited (RC3). Every other
+  // create still syncs, so a subtask added inside the open detail panel (#85)
+  // pushes: its own id remap never touches the parent id the panel holds.
+  let heldTaskId = $derived(editingId ?? detailTask?.id ?? null);
   $effect(() => {
-    invokeWithTimeout("set_editing", { editing: editingActive }).catch(() => {});
+    invokeWithTimeout("set_editing", { editingTaskId: heldTaskId }).catch(() => {});
   });
 
   // --- Window geometry persistence ---

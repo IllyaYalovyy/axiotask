@@ -441,11 +441,11 @@ mod tests {
         };
         state.store.upsert_task(&task).await.unwrap();
 
-        // While editing, the CREATE is held — the local id must NOT be remapped,
-        // so the UI can keep operating on it (fixes create-then-edit failures).
-        state.set_editing(true);
+        // Editing THIS row — its CREATE is held, so the local id is NOT remapped
+        // and the UI can keep operating on it (fixes create-then-edit failures).
+        state.set_editing_task(Some("local-uuid".into()));
         let out = state.run_sync().await.unwrap();
-        assert_eq!(out.pushed, 0, "create held while editing");
+        assert_eq!(out.pushed, 0, "create held while its own row is edited");
         assert!(
             state
                 .store
@@ -458,7 +458,7 @@ mod tests {
         );
 
         // After editing ends, it pushes and remaps as usual.
-        state.set_editing(false);
+        state.set_editing_task(None);
         let out = state.run_sync().await.unwrap();
         assert!(out.pushed >= 1, "pushes after editing ends");
         assert!(
@@ -504,8 +504,9 @@ mod tests {
         sub.pending_op = Some("update".into());
         state.store.upsert_task(&sub).await.unwrap();
 
-        // With the detail panel open (editing), the completion must still push.
-        state.set_editing(true);
+        // With the detail panel open on the parent, the subtask completion
+        // (an update) must still push.
+        state.set_editing_task(Some("parent-1".into()));
         let out = state.run_sync().await.unwrap();
         assert!(out.pushed >= 1, "update pushes while editing");
         let cleared = state
@@ -523,6 +524,69 @@ mod tests {
         );
         assert_eq!(cleared.task.status, TaskStatus::Completed);
         let _ = (parent, child);
+    }
+
+    #[tokio::test]
+    async fn subtask_created_in_open_detail_panel_syncs() {
+        // #85: subtasks are BORN in the detail panel — the inline "add a subtask"
+        // field keeps the panel open to add more. The open panel marks the PARENT
+        // as the held id; a subtask has its own id, so its create must still push
+        // (remapping it never touches the parent id the panel holds). The old
+        // coarse hold suppressed EVERY create while the panel was open, so newly
+        // created subtasks never reached the server.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "Parent", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap(); // pull the list + parent (parent now synced)
+
+        // Detail panel open on the parent → the parent is the held id.
+        state.set_editing_task(Some("P".into()));
+
+        // User types a subtask into the inline field.
+        let sub = crate::commands::create_task_inner(
+            &state,
+            "L1".into(),
+            Some("P".into()),
+            "buy milk".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(sub.parent_id.as_deref(), Some("P"));
+
+        // Sync runs while the panel is still open (schedule_sync fires on create).
+        let out = state.run_sync().await.unwrap();
+        assert!(out.pushed >= 1, "subtask pushed even with the panel open");
+
+        // It reached the server, under the parent.
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let landed = remote
+            .items
+            .iter()
+            .find(|t| t.title == "buy milk")
+            .expect("subtask reached the server");
+        assert_eq!(
+            landed.parent.as_deref(),
+            Some("P"),
+            "subtask landed under its parent"
+        );
+
+        // Locally, the subtask's id was remapped and it is clean now.
+        let local = state.store.list_tasks("L1").await.unwrap();
+        let stored = local
+            .iter()
+            .find(|t| t.task.title == "buy milk")
+            .expect("subtask still present locally");
+        assert!(
+            stored.task.id.starts_with("remote-"),
+            "subtask id remapped to the server id"
+        );
+        assert_eq!(stored.sync_state, SyncState::Clean, "subtask is synced");
+        assert_eq!(stored.task.parent.as_deref(), Some("P"));
     }
 
     #[tokio::test]
