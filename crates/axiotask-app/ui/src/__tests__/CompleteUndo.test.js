@@ -20,7 +20,22 @@ function mockBackend(initialTasks = []) {
       }
       case "toggle_complete": {
         const t = taskStore.find(x => x.id === args.id);
-        if (t) t.status = t.status === "needsAction" ? "completed" : "needsAction";
+        if (t) {
+          if (t.status === "needsAction") {
+            // Completing cascades to open descendants (mirrors Google).
+            t.status = "completed";
+            const closeChildren = (pid) => {
+              for (const c of taskStore.filter(x => x.parent_id === pid)) {
+                if (c.status === "needsAction") c.status = "completed";
+                closeChildren(c.id);
+              }
+            };
+            closeChildren(t.id);
+          } else {
+            // Un-completing does NOT cascade.
+            t.status = "needsAction";
+          }
+        }
         return null;
       }
       case "delete_task": { taskStore = taskStore.filter(t => t.id !== args.id); return null; }
@@ -226,6 +241,46 @@ describe("GH#11: Complete/uncomplete with undo", () => {
       const s2Toggles = invoke.mock.calls.filter(c => c[0] === "toggle_complete" && c[1].id === "s2");
       expect(s2Toggles).toHaveLength(0);
       expect(taskStore.find(t => t.id === "s2").status).toBe("completed");
+    });
+
+    it("completing a subtask offers an undo toast", async () => {
+      // #79: completing a non-top-level task must also offer Undo. Previously
+      // only top-level completions built the toast.
+      mockBackend([
+        task("p1", "Parent task", { pos: "00001" }),
+        task("s1", "Open sub", { parent: "p1", pos: "00002" }),
+      ]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Open sub")).toBeInTheDocument());
+      const subRow = screen.getByText("Open sub").closest(".task-widget");
+      await fireEvent.click(subRow.querySelector(".checkbox"));
+      await waitFor(() => expect(screen.getByText(/Completed "Open sub"/)).toBeInTheDocument());
+      expect(screen.getByText("Undo")).toBeInTheDocument();
+    });
+
+    it("undo of a mid-level subtask completion reopens it and its cascaded children", async () => {
+      // #79: a mid-level subtask cascades completion to its own children; Undo
+      // must reverse that whole subtree, not just the clicked row.
+      const { taskStore } = mockBackend([
+        task("p1", "Parent task", { pos: "00001" }),
+        task("s1", "Mid sub", { parent: "p1", pos: "00002" }),
+        task("g1", "Open grandchild", { parent: "s1", pos: "00003" }),
+      ]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Mid sub")).toBeInTheDocument());
+      const subRow = screen.getByText("Mid sub").closest(".task-widget");
+      await fireEvent.click(subRow.querySelector(".checkbox"));
+      await waitFor(() => expect(screen.getByText("Undo")).toBeInTheDocument());
+      // Both the subtask and its grandchild are completed by the cascade.
+      expect(taskStore.find(t => t.id === "s1").status).toBe("completed");
+      expect(taskStore.find(t => t.id === "g1").status).toBe("completed");
+      await fireEvent.click(screen.getByText("Undo"));
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s1" });
+        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "g1" });
+      });
+      expect(taskStore.find(t => t.id === "s1").status).toBe("needsAction");
+      expect(taskStore.find(t => t.id === "g1").status).toBe("needsAction");
     });
 
     it("dismiss button removes undo toast immediately", async () => {
