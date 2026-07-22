@@ -707,6 +707,66 @@ mod tests {
         assert_eq!(after[1].task.title, first_title);
     }
 
+    // #90: reordering subtasks in the detail panel. The panel measures drag
+    // distance against the FULL sibling list, so with "Hide completed" on it
+    // asks for as many single-step swaps as needed to cross hidden completed
+    // rows. This proves reorder_task walks a subtask across a completed sibling.
+    #[tokio::test]
+    async fn reorder_moves_subtask_across_completed_sibling() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task(&state, "P1", "L1", "parent").await;
+
+        // Three subtasks of P1: active, completed, active.
+        for (id, title, pos, status) in [
+            ("s1", "alpha", "00000000000001", TaskStatus::NeedsAction),
+            ("s2", "beta", "00000000000002", TaskStatus::Completed),
+            ("s3", "gamma", "00000000000003", TaskStatus::NeedsAction),
+        ] {
+            let sub = StoredTask {
+                task: axiotask_core::model::Task {
+                    id: id.into(),
+                    parent: Some("P1".into()),
+                    position: pos.into(),
+                    title: title.into(),
+                    notes: None,
+                    status,
+                    due: None,
+                    completed: None,
+                    etag: Some("e1".into()),
+                    updated: "2026-01-01T00:00:00Z".into(),
+                    web_view_link: None,
+                },
+                list_id: "L1".into(),
+                sync_state: SyncState::Clean,
+                local_updated: "2026-01-01T00:00:00Z".into(),
+                pending_op: None,
+            };
+            state.store.upsert_task(&sub).await.unwrap();
+        }
+
+        // Drag "gamma" above "alpha": the panel emits two single-step "up"
+        // swaps (across the hidden completed "beta").
+        crate::commands::reorder_task_inner(&state, "s3".into(), "up".into())
+            .await
+            .unwrap();
+        crate::commands::reorder_task_inner(&state, "s3".into(), "up".into())
+            .await
+            .unwrap();
+
+        let all = state.store.list_tasks("L1").await.unwrap();
+        let subs: Vec<_> = all
+            .iter()
+            .filter(|s| s.task.parent.as_deref() == Some("P1"))
+            .map(|s| s.task.title.as_str())
+            .collect();
+        assert_eq!(
+            subs,
+            vec!["gamma", "alpha", "beta"],
+            "gamma should land first, alpha second, completed beta retained last"
+        );
+    }
+
     #[tokio::test]
     async fn auto_creates_default_list_on_first_launch() {
         // When no lists exist and user is not authenticated,
