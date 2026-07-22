@@ -85,32 +85,15 @@ mod tests {
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Inbox").await;
 
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = "2026-05-23T00:00:00Z".to_string();
-        let stored = StoredTask {
-            task: axiotask_core::model::Task {
-                id: id.clone(),
-                parent: None,
-                position: "99999999999999".into(),
-                title: "new task".into(),
-                notes: None,
-                status: TaskStatus::NeedsAction,
-                due: None,
-                completed: None,
-                etag: None,
-                updated: now.clone(),
-                web_view_link: None,
-            },
-            list_id: "L1".into(),
-            sync_state: SyncState::Dirty,
-            local_updated: now,
-            pending_op: Some("create".into()),
-        };
-        state.store.upsert_task(&stored).await.unwrap();
+        crate::commands::create_task_inner(&state, "L1".into(), None, "new task".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task.title, "new task");
+        // Never-synced create → no etag, queued as a dirty "create" for push.
+        assert!(tasks[0].task.etag.is_none());
         assert_eq!(tasks[0].sync_state, SyncState::Dirty);
         assert_eq!(tasks[0].pending_op.as_deref(), Some("create"));
     }
@@ -122,23 +105,19 @@ mod tests {
         seed_task(&state, "T1", "L1", "buy milk").await;
 
         // Toggle to completed
-        let mut tasks = state.store.list_tasks("L1").await.unwrap();
-        let mut t = tasks.remove(0);
-        t.task.status = TaskStatus::Completed;
-        t.task.completed = Some("2026-05-23T00:00:00Z".into());
-        t.sync_state = SyncState::Dirty;
-        t.pending_op = Some("update".into());
-        state.store.upsert_task(&t).await.unwrap();
+        crate::commands::toggle_complete_inner(&state, "T1".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks[0].task.status, TaskStatus::Completed);
         assert!(tasks[0].task.completed.is_some());
+        assert_eq!(tasks[0].sync_state, SyncState::Dirty);
 
         // Toggle back
-        let mut t = tasks[0].clone();
-        t.task.status = TaskStatus::NeedsAction;
-        t.task.completed = None;
-        state.store.upsert_task(&t).await.unwrap();
+        crate::commands::toggle_complete_inner(&state, "T1".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks[0].task.status, TaskStatus::NeedsAction);
@@ -151,18 +130,18 @@ mod tests {
         seed_list(&state, "L1", "Inbox").await;
         seed_task(&state, "T1", "L1", "doomed").await;
 
-        let mut tasks = state.store.list_tasks("L1").await.unwrap();
-        let mut t = tasks.remove(0);
-        // Has etag → soft delete
-        t.sync_state = SyncState::Deleted;
-        t.pending_op = Some("delete".into());
-        state.store.upsert_task(&t).await.unwrap();
+        // Task has an etag (already pushed) → soft delete (tombstone kept so the
+        // delete can be pushed to Google).
+        let token = crate::commands::delete_task_inner(&state, "T1".into())
+            .await
+            .unwrap();
+        assert!(token.had_etag);
 
-        // list_tasks excludes deleted
+        // list_tasks excludes the tombstoned task.
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert!(tasks.is_empty());
 
-        // But drain_dirty still sees it
+        // But drain_dirty still sees the pending delete.
         let dirty = state.store.drain_dirty().await.unwrap();
         assert_eq!(dirty.len(), 1);
         assert_eq!(dirty[0].pending_op.as_deref(), Some("delete"));
@@ -173,28 +152,17 @@ mod tests {
         let (_client, state) = setup().await;
         seed_list(&state, "L1", "Inbox").await;
 
-        // Task with no etag (never pushed)
-        let task = StoredTask {
-            task: axiotask_core::model::Task {
-                id: "local-only".into(),
-                parent: None,
-                position: "1".into(),
-                title: "ephemeral".into(),
-                notes: None,
-                status: TaskStatus::NeedsAction,
-                due: None,
-                completed: None,
-                etag: None,
-                updated: "2026-01-01T00:00:00Z".into(),
-                web_view_link: None,
-            },
-            list_id: "L1".into(),
-            sync_state: SyncState::Dirty,
-            local_updated: "2026-01-01T00:00:00Z".into(),
-            pending_op: Some("create".into()),
-        };
-        state.store.upsert_task(&task).await.unwrap();
-        state.store.delete_task_hard("local-only").await.unwrap();
+        // A never-pushed task (create_task leaves it with no etag).
+        let created =
+            crate::commands::create_task_inner(&state, "L1".into(), None, "ephemeral".into())
+                .await
+                .unwrap();
+
+        // No etag → hard delete locally, leaving nothing to push.
+        let token = crate::commands::delete_task_inner(&state, created.id.clone())
+            .await
+            .unwrap();
+        assert!(!token.had_etag);
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert!(tasks.is_empty());
@@ -208,19 +176,14 @@ mod tests {
         seed_list(&state, "L1", "Inbox").await;
         seed_task(&state, "T1", "L1", "task with due").await;
 
-        let mut tasks = state.store.list_tasks("L1").await.unwrap();
-        let mut t = tasks.remove(0);
-        // Simulate set_due with Tomorrow
         let today = jiff::Zoned::now().date();
-        let new_due =
-            axiotask_core::dates::apply_date_move(today, axiotask_core::dates::DateMove::Tomorrow);
-        t.task.due = new_due.map(|d| format!("{d}T00:00:00.000Z"));
-        t.sync_state = SyncState::Dirty;
-        t.pending_op = Some("update".into());
-        state.store.upsert_task(&t).await.unwrap();
+        crate::commands::set_due_inner(&state, "T1".into(), "Tomorrow".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert!(tasks[0].task.due.is_some());
+        assert_eq!(tasks[0].sync_state, SyncState::Dirty);
         let due = tasks[0].task.due.as_ref().unwrap();
         let tomorrow = today.tomorrow().unwrap();
         assert!(due.starts_with(&tomorrow.to_string()));
@@ -232,16 +195,16 @@ mod tests {
         seed_list(&state, "L1", "Inbox").await;
         seed_task(&state, "T1", "L1", "old title").await;
 
-        let mut tasks = state.store.list_tasks("L1").await.unwrap();
-        let mut t = tasks.remove(0);
-        t.task.title = "new title".into();
-        t.sync_state = SyncState::Dirty;
-        t.pending_op = Some("update".into());
-        state.store.upsert_task(&t).await.unwrap();
+        crate::commands::rename_task_inner(&state, "T1".into(), "new title".into())
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks[0].task.title, "new title");
         assert_eq!(tasks[0].sync_state, SyncState::Dirty);
+        // Already pushed (seeded with an etag) → queued as an "update", not a
+        // duplicate "create".
+        assert_eq!(tasks[0].pending_op.as_deref(), Some("update"));
     }
 
     #[tokio::test]
@@ -251,17 +214,23 @@ mod tests {
         seed_task(&state, "T1", "L1", "parent").await;
         seed_task(&state, "T2", "L1", "child-to-be").await;
 
-        let tasks = state.store.list_tasks("L1").await.unwrap();
-        let mut child = tasks.iter().find(|t| t.task.id == "T2").unwrap().clone();
-        child.task.parent = Some("T1".into());
-        child.task.position = "00000000000001".into();
-        child.sync_state = SyncState::Dirty;
-        child.pending_op = Some("update".into());
-        state.store.upsert_task(&child).await.unwrap();
+        // Reparent T2 under T1 (one level of nesting — invariant #1).
+        crate::commands::move_task_inner(&state, "T2".into(), Some("T1".into()), None)
+            .await
+            .unwrap();
 
         let tasks = state.store.list_tasks("L1").await.unwrap();
         let moved = tasks.iter().find(|t| t.task.id == "T2").unwrap();
         assert_eq!(moved.task.parent.as_deref(), Some("T1"));
+
+        // move_task records a pending reorder so the new parent/position is
+        // pushed via the move API on the next sync.
+        let moves = state.store.pending_moves().await.unwrap();
+        assert!(
+            moves
+                .iter()
+                .any(|m| m.task_id == "T2" && m.parent_id.as_deref() == Some("T1"))
+        );
     }
 
     #[tokio::test]

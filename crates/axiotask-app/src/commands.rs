@@ -161,15 +161,20 @@ pub async fn rename_task(
     id: String,
     title: String,
 ) -> Result<(), String> {
-    let tasks = find_task(&state, &id).await?;
-    let mut t = tasks;
+    rename_task_inner(&state, id, title).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn rename_task_inner(
+    state: &AppState,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    let mut t = find_task(state, &id).await?;
     t.task.title = title;
     t.sync_state = SyncState::Dirty;
-    t.pending_op = Some(if t.task.etag.is_none() {
-        "create".into()
-    } else {
-        "update".into()
-    });
+    t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
     state
         .store
@@ -553,7 +558,18 @@ pub async fn move_task(
     parent_id: Option<String>,
     previous_id: Option<String>,
 ) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
+    move_task_inner(&state, id, parent_id, previous_id).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn move_task_inner(
+    state: &AppState,
+    id: String,
+    parent_id: Option<String>,
+    previous_id: Option<String>,
+) -> Result<(), String> {
+    let mut t = find_task(state, &id).await?;
     t.task.parent = parent_id.clone();
     if let Some(ref prev) = previous_id {
         t.task.position = format!("after-{prev}");
