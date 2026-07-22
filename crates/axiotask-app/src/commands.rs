@@ -114,13 +114,24 @@ pub async fn create_task(
     parent_id: Option<String>,
     title: String,
 ) -> Result<TaskView, String> {
+    create_task_inner(&state, list_id, parent_id, title).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn create_task_inner(
+    state: &AppState,
+    list_id: String,
+    parent_id: Option<String>,
+    title: String,
+) -> Result<TaskView, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_str();
     let stored = StoredTask {
         task: axiotask_core::model::Task {
             id: id.clone(),
             parent: parent_id,
-            position: "00000000000000000000".into(),
+            position: next_local_position(),
             title,
             notes: None,
             status: TaskStatus::NeedsAction,
@@ -713,7 +724,17 @@ pub async fn reorder_task(
     id: String,
     direction: String,
 ) -> Result<(), String> {
-    let t = find_task(&state, &id).await?;
+    reorder_task_inner(&state, id, direction).await
+}
+
+/// The command's logic, callable without a Tauri runtime so tests exercise the
+/// real behavior instead of a re-implementation.
+pub(crate) async fn reorder_task_inner(
+    state: &AppState,
+    id: String,
+    direction: String,
+) -> Result<(), String> {
+    let t = find_task(state, &id).await?;
     let all = state
         .store
         .list_tasks(&t.list_id)
@@ -1032,6 +1053,37 @@ async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
 
 fn now_str() -> String {
     axiotask_core::dates::now_utc_string()
+}
+
+/// A distinct, ordered placeholder position for a freshly created row.
+///
+/// A local task has no server-assigned position until it syncs (and a
+/// local-only list never syncs at all). Handing every new row the *same*
+/// constant made `reorder_task`'s position-swap a no-op — swapping two equal
+/// strings changes nothing — so drag-reorder silently did nothing on unsynced
+/// tasks (#80).
+///
+/// The value mirrors the server's top-slot placeholder (`!`-prefixed, so it
+/// sorts before numeric positions and new rows land at the top, matching how
+/// Google inserts new tasks). A strictly monotonic tick — wall-clock nanos,
+/// bumped past the last value so same-instant creates never collide —
+/// guarantees each row gets a distinct, ordered position, with newer rows
+/// sorting ahead of older ones.
+fn next_local_position() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static LAST_TICK: AtomicU64 = AtomicU64::new(0);
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let tick = LAST_TICK
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
+            Some(now_nanos.max(prev.saturating_add(1)))
+        })
+        .expect("closure always returns Some");
+    format!("!{:019}", u64::MAX - tick)
 }
 
 /// Pending op for a field edit. A row that was never pushed (no etag) must
