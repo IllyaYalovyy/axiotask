@@ -1060,10 +1060,21 @@
   }
 
   async function handleSearchSelect(task) {
-    // Navigate to the task's list and focus it
-    selectedView = task.listId;
+    const target = allTasks.find(t => t.id === task.id) ?? task;
+    // A found subtask is only ever reached THROUGH its parent, never as a loose
+    // standalone item (subtasks are not rows in any list). Navigate to the
+    // parent's list and focus the parent row so the list is anchored to the
+    // parent; opening the subtask's detail then shows it within its parent's
+    // context (Subtask header, breadcrumb, sibling nav) and closing lands back
+    // on the parent. Top-level tasks anchor on themselves as before.
+    const anchor = target.parent_id
+      ? (allTasks.find(t => t.id === target.parent_id) ?? target)
+      : target;
+    selectedView = anchor.listId;
     await tick();
-    openDetail(allTasks.find(t => t.id === task.id) ?? task);
+    const ai = flatTasks.findIndex(t => t.id === anchor.id);
+    if (ai >= 0) focusIndex = ai;
+    openDetail(target);
   }
 
   // Context menu for tasks

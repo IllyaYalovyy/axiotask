@@ -385,6 +385,37 @@ describe("GH#17: Search overlay", () => {
     });
   });
 
+  it("GH#92: opening a found subtask anchors it to its parent, never loose", async () => {
+    // A decoy top-level task sits at index 0, so the list starts focused on it.
+    mockBackend([
+      task("decoy", "Aaa decoy"),
+      task("parent", "Launch plan"),
+      task("sub", "Alpha child", { parent_id: "parent" }),
+    ]);
+    render(App);
+    await waitFor(() => expect(screen.getByText("Launch plan")).toBeInTheDocument());
+
+    await openSearch();
+    const input = screen.getByPlaceholderText("Search tasks...");
+    await fireEvent.input(input, { target: { value: "alpha child" } });
+    await waitFor(() => expect(screen.getByText("Alpha child")).toBeInTheDocument());
+    await fireEvent.keyDown(input, { key: "Enter" });
+
+    // The subtask opens WITHIN its parent's context: the panel shows the
+    // "Subtask" header and a breadcrumb back to the parent, not a loose item.
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Subtask" })).toBeInTheDocument();
+    });
+    expect(document.querySelector(".breadcrumb").textContent).toContain("Launch plan");
+
+    // The underlying list is anchored to the PARENT row (focused), so the
+    // subtask was reached through its parent — focus left the decoy row.
+    const parentRow = screen.getByText("Launch plan").closest(".task-widget");
+    expect(parentRow).toHaveClass("focused");
+    const decoyRow = screen.getByText("Aaa decoy").closest(".task-widget");
+    expect(decoyRow).not.toHaveClass("focused");
+  });
+
   it("selects task on Enter and closes overlay", async () => {
     mockBackend([
       task("t1", "Alpha task"),
