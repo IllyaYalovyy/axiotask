@@ -2296,4 +2296,190 @@ mod tests {
         assert_eq!(calls.len(), 1, "failure still notifies the observer");
         assert!(calls[0].last_error.is_some(), "failure surfaces last_error");
     }
+
+    // ─── Reorder / move end-to-end (command → record_move → move endpoint) ─────
+
+    #[tokio::test]
+    async fn reorder_command_pushes_via_move_endpoint_end_to_end() {
+        // The full path a user drags trigger: reorder_task records a pending
+        // move, and the next sync pushes it through the Tasks *move* endpoint
+        // (not a patch), landing the new order on the server.
+        use axiotask_core::api::in_memory::Method;
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "first", "1");
+        client.seed_task("L1", "T2", "second", "2");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+
+        // Pull so both tasks are local and carry server etags.
+        state.run_sync().await.unwrap();
+
+        // User drags T1 down past T2.
+        crate::commands::reorder_task_inner(&state, "T1".into(), "down".into())
+            .await
+            .unwrap();
+
+        // Locally the order flipped immediately (what the user sees).
+        let local = state.store.list_tasks("L1").await.unwrap();
+        let lt1 = local.iter().find(|t| t.task.id == "T1").unwrap();
+        let lt2 = local.iter().find(|t| t.task.id == "T2").unwrap();
+        assert!(
+            lt1.task.position > lt2.task.position,
+            "T1 now sorts after T2 locally"
+        );
+
+        // A pending move was recorded, not a content patch.
+        assert_eq!(state.store.pending_moves().await.unwrap().len(), 1);
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            0,
+            "nothing pushed until the sync runs"
+        );
+
+        // Sync pushes the reorder through the move endpoint.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            1,
+            "reorder went via move, once"
+        );
+        assert_eq!(
+            client.call_count(Method::PatchTask),
+            0,
+            "a reorder is a move, never a patch"
+        );
+
+        // The new order reached the server, and the intent is consumed.
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let rt1 = remote.items.iter().find(|t| t.id == "T1").unwrap();
+        let rt2 = remote.items.iter().find(|t| t.id == "T2").unwrap();
+        assert!(
+            rt1.position > rt2.position,
+            "reorder reached the server: T1 sorts after T2 ({} > {})",
+            rt1.position,
+            rt2.position
+        );
+        assert!(
+            state.store.pending_moves().await.unwrap().is_empty(),
+            "pending move cleared after a successful push"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_command_reparents_via_move_endpoint_end_to_end() {
+        // Non-happy path: reparenting a task (making it a one-level subtask —
+        // invariant #1) also flows command → record_move → move endpoint, and
+        // the new parent lands on the server.
+        use axiotask_core::api::in_memory::Method;
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task("L1", "C", "child-to-be", "2");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // Reparent C under P.
+        crate::commands::move_task_inner(&state, "C".into(), Some("P".into()), None)
+            .await
+            .unwrap();
+
+        // Locally C is now a subtask (rendered only in the detail panel).
+        let local = state.store.list_tasks("L1").await.unwrap();
+        let c = local.iter().find(|t| t.task.id == "C").unwrap();
+        assert_eq!(c.task.parent.as_deref(), Some("P"));
+
+        state.run_sync().await.unwrap();
+        assert_eq!(client.call_count(Method::MoveTask), 1);
+
+        // The reparent reached the server.
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let rc = remote.items.iter().find(|t| t.id == "C").unwrap();
+        assert_eq!(
+            rc.parent.as_deref(),
+            Some("P"),
+            "new parent pushed to server"
+        );
+        assert!(state.store.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn move_recorded_mid_sync_keeps_the_latest_intent() {
+        // A move that a still-in-flight sync hasn't landed yet (its push failed
+        // transiently and will retry) can be superseded by the user reordering
+        // again. The re-record must win and nothing may be lost or applied
+        // twice: record_move upserts, and clear_move only runs after a real
+        // success — so the queue always converges on the newest intent.
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "mover", "1");
+        client.seed_task("L1", "T2", "second", "2");
+        client.seed_task("L1", "T3", "third", "3");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // First reorder: T1 should follow T2.
+        crate::commands::move_task_inner(&state, "T1".into(), None, Some("T2".into()))
+            .await
+            .unwrap();
+
+        // The sync fires but the move push fails transiently — intent retained,
+        // sync still in flight from the user's perspective.
+        client.fail_next(Method::MoveTask, || ApiError::Server { status: 503 });
+        state.run_sync().await.unwrap();
+        assert_eq!(client.call_count(Method::MoveTask), 1, "attempted once");
+        assert_eq!(
+            state.store.pending_moves().await.unwrap().len(),
+            1,
+            "transient failure keeps the intent queued"
+        );
+
+        // Mid-sync the user reorders T1 again, now to follow T3. This upserts
+        // the same task's pending move to the newer target.
+        crate::commands::move_task_inner(&state, "T1".into(), None, Some("T3".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            state.store.pending_moves().await.unwrap().len(),
+            1,
+            "still one intent for T1, not two racing rows"
+        );
+
+        // Next sync lands the LATEST intent.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            2,
+            "one failed attempt + one success, never double-applied"
+        );
+
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let rt1 = remote.items.iter().find(|t| t.id == "T1").unwrap();
+        let rt3 = remote.items.iter().find(|t| t.id == "T3").unwrap();
+        assert!(
+            rt1.position > rt3.position,
+            "the newest reorder won: T1 follows T3 ({} > {}), not the stale T2 target",
+            rt1.position,
+            rt3.position
+        );
+        assert!(
+            state.store.pending_moves().await.unwrap().is_empty(),
+            "intent consumed once it truly lands"
+        );
+    }
 }
