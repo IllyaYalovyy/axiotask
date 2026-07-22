@@ -277,6 +277,52 @@ describe("TaskDetail Panel (GH#7)", () => {
       expect(screen.queryByRole("checkbox", { name: /hide completed subtasks/i })).not.toBeInTheDocument();
     });
 
+    it("un-completes every completed subtask from the parent's explicit action", async () => {
+      // The #89 scenario: the parent was un-completed (now open) but its
+      // subtasks stayed completed, because un-completing never cascades.
+      const parent = task("t1", "Parent Task");
+      const doneA = task("s1", "Done A", { parent: "t1", status: "completed" });
+      const doneB = task("s2", "Done B", { parent: "t1", status: "completed" });
+      const openSub = task("s3", "Still Open", { parent: "t1" });
+      mockBackend([parent], [doneA, doneB, openSub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() =>
+        expect(screen.getByText("Done A").closest(".subtask-item")).toHaveClass("completed")
+      );
+
+      await fireEvent.click(screen.getByRole("button", { name: /un-complete all subtasks/i }));
+
+      // User-visible outcome: both completed subtasks are now open (no strikethrough),
+      // and the already-open one is untouched.
+      await waitFor(() => {
+        expect(screen.getByText("Done A").closest(".subtask-item")).not.toHaveClass("completed");
+        expect(screen.getByText("Done B").closest(".subtask-item")).not.toHaveClass("completed");
+      });
+      expect(screen.getByText("Still Open").closest(".subtask-item")).not.toHaveClass("completed");
+
+      // Only the two completed subtasks were toggled — the open one was left alone.
+      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s1" });
+      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s2" });
+      expect(invoke).not.toHaveBeenCalledWith("toggle_complete", { id: "s3" });
+    });
+
+    it("does not show the 'Un-complete all subtasks' action when no subtask is completed", async () => {
+      const parent = task("t1", "Parent Task");
+      const openSub = task("s1", "Open Sub", { parent: "t1" });
+      mockBackend([parent], [openSub]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent Task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent Task"));
+      await waitFor(() => expect(screen.getByText("Open Sub")).toBeInTheDocument());
+
+      // An affordance that would do nothing must not render.
+      expect(screen.queryByRole("button", { name: /un-complete all subtasks/i })).not.toBeInTheDocument();
+    });
+
     it("remembers the 'Hide completed' preference across panel reopen", async () => {
       const parent = task("t1", "Parent Task");
       const openSub = task("s1", "Open Sub", { parent: "t1" });
