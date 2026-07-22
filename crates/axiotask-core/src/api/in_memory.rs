@@ -12,6 +12,11 @@
 //!   `YYYY-MM-DDT00:00:00.000Z` in responses. An empty string clears it.
 //! - inserting under a nonexistent `parent` is a permanent 400.
 //! - deleting a parent task deletes its descendants server-side.
+//! - completing a parent task auto-completes its whole subtree server-side,
+//!   and re-opening a subtask whose parent is still completed returns 200 but
+//!   is silently ignored (the subtask stays completed). Re-opening the parent
+//!   does NOT reopen its children. All verified against the live service; see
+//!   the `live_api_probe` example for the reproducible probe harness.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -357,11 +362,11 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         let new_etag = s.fresh_etag();
-        let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == id) else {
+        let Some(idx) = s.tasks.iter().position(|(_, t)| t.id == id) else {
             return Err(ApiError::NotFound);
         };
         if let Some(want) = etag
-            && t.etag.as_deref() != Some(want)
+            && s.tasks[idx].1.etag.as_deref() != Some(want)
         {
             return Err(ApiError::PreconditionFailed);
         }
@@ -369,6 +374,19 @@ impl GoogleTasksClient for InMemoryClient {
             Some(due) => Some(validate_due(Some(due))?),
             None => None,
         };
+        // Live-API rule: re-opening a subtask whose parent is still completed
+        // returns 200 but is silently ignored server-side. Evaluate before we
+        // mutate anything (the parent's status may itself be about to change).
+        let parent_completed = s.tasks[idx]
+            .1
+            .parent
+            .clone()
+            .and_then(|p| s.tasks.iter().find(|(_, t)| t.id == p))
+            .is_some_and(|(_, p)| p.status == TaskStatus::Completed);
+        let silently_ignore_reopen =
+            patch.status == Some(TaskStatus::NeedsAction) && parent_completed;
+
+        let t = &mut s.tasks[idx].1;
         if let Some(title) = patch.title {
             t.title = title;
         }
@@ -378,16 +396,61 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(due) = patched_due {
             t.due = due;
         }
-        if let Some(status) = patch.status {
+        let mut cascade_complete = false;
+        if let Some(status) = patch.status
+            && !silently_ignore_reopen
+        {
             t.status = status;
             t.completed = if status == TaskStatus::Completed {
                 Some("2026-01-01T00:00:00Z".into())
             } else {
                 None
             };
+            cascade_complete = status == TaskStatus::Completed;
         }
         t.etag = Some(new_etag);
-        Ok(t.clone())
+        let result = t.clone();
+
+        // Live-API cascade: completing a parent auto-completes its whole
+        // subtree server-side, each descendant getting a fresh etag + completed
+        // timestamp. Un-completing a parent does NOT reopen children, so this
+        // only runs on completion.
+        if cascade_complete {
+            let mut subtree: std::collections::HashSet<String> =
+                std::collections::HashSet::from([result.id.clone()]);
+            loop {
+                let n = subtree.len();
+                let more: Vec<String> = s
+                    .tasks
+                    .iter()
+                    .filter(|(_, t)| t.parent.as_deref().is_some_and(|p| subtree.contains(p)))
+                    .map(|(_, t)| t.id.clone())
+                    .collect();
+                subtree.extend(more);
+                if subtree.len() == n {
+                    break;
+                }
+            }
+            let to_complete: Vec<String> = s
+                .tasks
+                .iter()
+                .filter(|(_, t)| {
+                    t.id != result.id
+                        && subtree.contains(&t.id)
+                        && t.status != TaskStatus::Completed
+                })
+                .map(|(_, t)| t.id.clone())
+                .collect();
+            for cid in to_complete {
+                let e = s.fresh_etag();
+                if let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == cid) {
+                    t.status = TaskStatus::Completed;
+                    t.completed = Some("2026-01-01T00:00:00Z".into());
+                    t.etag = Some(e);
+                }
+            }
+        }
+        Ok(result)
     }
 
     async fn delete_task(&self, list_id: &str, id: &str) -> Result<(), ApiError> {
@@ -594,6 +657,129 @@ mod tests {
         let err = c.move_task("L1", "nope", None, None).await.unwrap_err();
         assert!(matches!(err, ApiError::Other(_)));
         assert!(!err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn completing_a_parent_completes_its_subtree_server_side() {
+        // Live-API behavior (verified via the throwaway account): completing a
+        // parent auto-completes its descendants server-side, each with a fresh
+        // etag. The fake must mirror this or the sync engine's cascade logic is
+        // tested against a fiction.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "parent", "1");
+        c.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        c.seed_task_with_parent("L1", "C2", "grandkid", "3", Some("C1"));
+
+        c.patch_task(
+            "L1",
+            &p.id,
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            p.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+
+        let all = c.list_tasks("L1", None).await.unwrap().items;
+        assert!(
+            all.iter().all(|t| t.status == TaskStatus::Completed),
+            "parent and every descendant are completed"
+        );
+        assert!(
+            all.iter()
+                .all(|t| t.completed.as_deref() == Some("2026-01-01T00:00:00Z")),
+            "each cascaded task carries a completed timestamp"
+        );
+    }
+
+    #[tokio::test]
+    async fn reopening_a_child_of_a_completed_parent_is_silently_ignored() {
+        // Live-API behavior: patching a subtask back to needsAction while its
+        // parent is still completed returns 200 but is a no-op server-side.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "parent", "1");
+        c.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+
+        c.patch_task(
+            "L1",
+            &p.id,
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            p.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+
+        // Try to reopen the child while the parent stays completed → 200, no-op.
+        let child = c.get_task("L1", "C1").await.unwrap();
+        let resp = c
+            .patch_task(
+                "L1",
+                "C1",
+                TaskPatch {
+                    status: Some(TaskStatus::NeedsAction),
+                    ..Default::default()
+                },
+                child.etag.as_deref(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status,
+            TaskStatus::Completed,
+            "reopen of a completed parent's child is silently ignored"
+        );
+        let refetched = c.get_task("L1", "C1").await.unwrap();
+        assert_eq!(refetched.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn reopening_a_parent_does_not_reopen_its_children() {
+        // Live-API behavior: un-completing a parent leaves its children done.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "parent", "1");
+        c.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        c.patch_task(
+            "L1",
+            &p.id,
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            p.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+
+        let parent = c.get_task("L1", "P").await.unwrap();
+        c.patch_task(
+            "L1",
+            "P",
+            TaskPatch {
+                status: Some(TaskStatus::NeedsAction),
+                ..Default::default()
+            },
+            parent.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            c.get_task("L1", "P").await.unwrap().status,
+            TaskStatus::NeedsAction
+        );
+        assert_eq!(
+            c.get_task("L1", "C1").await.unwrap().status,
+            TaskStatus::Completed,
+            "child stays completed after the parent reopens"
+        );
     }
 
     #[tokio::test]
