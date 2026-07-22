@@ -591,6 +591,58 @@ mod tests {
         assert_eq!(tasks[1].task.id, "T1");
     }
 
+    // Regression for #80: create_task once handed every row the same constant
+    // position, so reorder_task's position-swap swapped two equal strings and
+    // did nothing on local-only / unsynced tasks. Reorder must actually change
+    // the rendered order.
+    #[tokio::test]
+    async fn reorder_moves_freshly_created_task() {
+        let (_client, state) = setup().await;
+        // A local-only list never syncs, so its rows keep their create-time
+        // positions forever — exactly where the bug bit.
+        let list = StoredTaskList {
+            list: axiotask_core::model::TaskList {
+                id: "L1".into(),
+                title: "Local".into(),
+                etag: None,
+                updated: "2026-01-01T00:00:00Z".into(),
+            },
+            sync_state: SyncState::Clean,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
+            local_only: true,
+        };
+        state.store.upsert_list(&list).await.unwrap();
+
+        // Two tasks created through the real command path.
+        crate::commands::create_task_inner(&state, "L1".into(), None, "first".into())
+            .await
+            .unwrap();
+        crate::commands::create_task_inner(&state, "L1".into(), None, "second".into())
+            .await
+            .unwrap();
+
+        // Whatever the initial rendered order is, moving the last row up must
+        // land it first.
+        let before = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(before.len(), 2);
+        let last_id = before[1].task.id.clone();
+        let last_title = before[1].task.title.clone();
+        let first_title = before[0].task.title.clone();
+        assert_ne!(last_title, first_title);
+
+        crate::commands::reorder_task_inner(&state, last_id, "up".into())
+            .await
+            .unwrap();
+
+        let after = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(
+            after[0].task.title, last_title,
+            "reorder should move the last task to the top"
+        );
+        assert_eq!(after[1].task.title, first_title);
+    }
+
     #[tokio::test]
     async fn auto_creates_default_list_on_first_launch() {
         // When no lists exist and user is not authenticated,
