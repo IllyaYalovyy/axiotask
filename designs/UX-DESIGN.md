@@ -146,7 +146,9 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
   checklist checks them off, each subtask has its own due date, and "Detach from parent"
   promotes one back to top level
 - `s` on a focused list task → adds a subtask and opens it in the detail panel
-- `Tab` on a focused list task → makes it a subtask of the task above it
+- "Make subtask of…" in a top-level task's context menu → demote it into a subtask by
+  choosing the parent from a searchable picker (never a one-key gesture). Offered only on
+  a childless task with another top-level task to nest under
 - A parent card shows a subtask progress badge ("2/5"); subtasks are not rows in the list
 
 **Constraints:**

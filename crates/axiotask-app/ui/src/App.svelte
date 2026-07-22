@@ -13,6 +13,7 @@
   import TaskDetail from "./TaskDetail.svelte";
   import SearchOverlay from "./SearchOverlay.svelte";
   import MoveToListPicker from "./MoveToListPicker.svelte";
+  import ParentPicker from "./ParentPicker.svelte";
   import DatePicker from "./DatePicker.svelte";
   import Properties from "./Properties.svelte";
   import BulkAdd from "./BulkAdd.svelte";
@@ -49,6 +50,7 @@
   let detailFocusNonce = 0;
   let showSearch = $state(false);
   let movePickerTask = $state(null); // task to move via Ctrl+M picker
+  let demoteTask = $state(null); // top-level task being demoted into a subtask (#88)
   let datePickerTask = $state(null); // task whose due date is being picked (#37)
   let themePref = $state(getThemePref()); // "dark" | "light" | "system" (#46)
   let renamingListId = $state(null); // triggers inline rename in sidebar
@@ -736,6 +738,28 @@
     await moveTask(id, parent.parent_id || null, parent.id);
   }
 
+  // #88: the legal parents a task could be demoted under — every OTHER top-level
+  // task in the SAME list (a subtask lives in its parent's list, and Google has
+  // no cross-list nesting). canNestUnder is the single source of truth for the
+  // two-level rule, so a task that already has subtasks yields no candidates.
+  function demoteCandidates(task) {
+    if (!task) return [];
+    return allTasks.filter(t => t.listId === task.listId && canNestUnder(task.id, t, allTasks));
+  }
+
+  // Demotion is offered only on a childless top-level task that actually has
+  // somewhere to go — an item that opened an empty picker would be a dead
+  // affordance.
+  function canDemote(task) {
+    return !!task && !task.parent_id && demoteCandidates(task).length > 0;
+  }
+
+  async function handleDemoteSelect(parent) {
+    const task = demoteTask;
+    demoteTask = null;
+    if (task && parent) await moveTask(task.id, parent.id);
+  }
+
   async function reorderTask(id, direction) {
     const listId = taskListId(id);
     await cmd("reorder_task", { id, direction });
@@ -1061,6 +1085,10 @@
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
           if (t) { await refreshLists([task.listId]); editingId = t.id; }
         }}] : []),
+        ...(canDemote(task) ? [{
+          id: "demote", icon: "cornerDownRight", label: "Make subtask of…",
+          action: () => { demoteTask = allTasks.find(t => t.id === task.id) ?? task; },
+        }] : []),
         { id: "duplicate", icon: "clipboard", label: "Duplicate", shortcut: "Ctrl+D", action: async () => {
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
           await refreshLists([task.listId]);
@@ -1265,6 +1293,7 @@
     }
     if (editingId || e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
     if (movePickerTask && e.key === "Escape") { movePickerTask = null; e.preventDefault(); return; }
+    if (demoteTask && e.key === "Escape") { demoteTask = null; e.preventDefault(); return; }
     if (detailTask && e.key === "Escape") { await closeDetail(); e.preventDefault(); return; }
     if (detailTask) return;
     // With an active selection, Esc clears it (when no panel intercepted above).
@@ -1541,6 +1570,9 @@
 {/if}
 {#if movePickerTask}
   <MoveToListPicker {lists} currentListId={movePickerTask.listId} onselect={handleMovePickerSelect} onclose={() => movePickerTask = null} />
+{/if}
+{#if demoteTask}
+  <ParentPicker candidates={demoteCandidates(demoteTask)} onselect={handleDemoteSelect} onclose={() => demoteTask = null} />
 {/if}
 {#if bulkMovePicker}
   <MoveToListPicker {lists} currentListId={null} onselect={(list) => bulkMove(list.id)} onclose={() => bulkMovePicker = false} />
