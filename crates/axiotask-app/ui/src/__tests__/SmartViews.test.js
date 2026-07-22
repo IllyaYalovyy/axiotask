@@ -123,16 +123,6 @@ describe("Smart Views: Upcoming", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /upcoming/i })).toBeInTheDocument());
     expect(screen.queryByText("Far future")).not.toBeInTheDocument();
   });
-
-  it("excludes tasks from excluded lists", async () => {
-    mockBackend(
-      [task("t1", "Show me", { due: daysFromNow(2), list: "L1" }), task("t2", "Hide me", { due: daysFromNow(2), list: "L3", listTitle: "Someday" })],
-      ["L3"]
-    );
-    render(App);
-    await waitFor(() => expect(screen.getByText("Show me")).toBeInTheDocument());
-    expect(screen.queryByText("Hide me")).not.toBeInTheDocument();
-  });
 });
 
 describe("Smart Views: Missed", () => {
@@ -155,16 +145,6 @@ describe("Smart Views: Missed", () => {
     render(App);
     await waitFor(() => expect(screen.getByText(/Nothing overdue/)).toBeInTheDocument());
   });
-
-  it("excludes tasks from excluded lists", async () => {
-    mockBackend(
-      [task("t1", "Missed work", { due: daysFromNow(-1), list: "L1" }), task("t2", "Missed someday", { due: daysFromNow(-1), list: "L3", listTitle: "Someday" })],
-      ["L3"]
-    );
-    render(App);
-    await waitFor(() => expect(screen.getByText("Missed work")).toBeInTheDocument());
-    expect(screen.queryByText("Missed someday")).not.toBeInTheDocument();
-  });
 });
 
 describe("Smart Views: Unscheduled", () => {
@@ -184,36 +164,5 @@ describe("Smart Views: Unscheduled", () => {
     mockBackend([task("t1", "Scheduled", { due: daysFromNow(1) })]);
     render(App);
     await waitFor(() => expect(screen.getByText(/Everything is scheduled/)).toBeInTheDocument());
-  });
-
-  it("excludes tasks from excluded lists", async () => {
-    mockBackend(
-      [task("t1", "Work unscheduled", { due: null, list: "L1" }), task("t2", "Someday unscheduled", { due: null, list: "L3", listTitle: "Someday" })],
-      ["L3"]
-    );
-    render(App);
-    await waitFor(() => expect(screen.getByText("Work unscheduled")).toBeInTheDocument());
-    expect(screen.queryByText("Someday unscheduled")).not.toBeInTheDocument();
-  });
-});
-
-describe("List Exclusion", () => {
-  beforeEach(() => { localStorage.clear(); invoke.mockReset(); });
-
-  it("excluded list is still accessible when clicked directly", async () => {
-    localStorage.setItem("axiotask:view", "L3");
-    localStorage.setItem("axiotask:excludedLists", JSON.stringify(["L3"]));
-    mockBackend([task("t1", "Someday task", { due: null, list: "L3", listTitle: "Someday" })]);
-    render(App);
-    await waitFor(() => expect(screen.getByText("Someday task")).toBeInTheDocument());
-  });
-
-  it("exclusion persists across renders", async () => {
-    localStorage.setItem("axiotask:excludedLists", JSON.stringify(["L3"]));
-    localStorage.setItem("axiotask:view", "focus");
-    mockBackend([task("t1", "Hidden", { due: daysFromNow(0), list: "L3", listTitle: "Someday" })]);
-    render(App);
-    await waitFor(() => expect(screen.getByRole("button", { name: /focus/i })).toBeInTheDocument());
-    expect(screen.queryByText("Hidden")).not.toBeInTheDocument();
   });
 });

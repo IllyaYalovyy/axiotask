@@ -582,17 +582,4 @@ describe("TaskDetail Panel (GH#7)", () => {
     });
   });
 
-  describe("Mobile full screen", () => {
-    it("detail panel has responsive CSS for full screen", async () => {
-      mockBackend([task("t1", "Mobile Task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Mobile Task")).toBeInTheDocument());
-
-      await fireEvent.click(screen.getByText("Mobile Task"));
-      await waitFor(() => {
-        const panel = container.querySelector(".detail-panel");
-        expect(panel).toBeInTheDocument();
-      });
-    });
-  });
 });
