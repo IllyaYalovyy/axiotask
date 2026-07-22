@@ -1547,6 +1547,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn push_delete_not_found_hard_deletes_local_without_error() {
+        // Server no longer has the row (someone else deleted it, or it never
+        // reached the server). A delete that 404s is a SUCCESS, not a failure:
+        // the local tombstone is hard-deleted and counted as deleted, and the
+        // run reports zero errors — the desired end state was already reached.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "already gone on server", "1");
+        eng.run().await.unwrap();
+
+        let mut row = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        row.sync_state = SyncState::Deleted;
+        row.pending_op = Some("delete".into());
+        eng.store.upsert_task(&row).await.unwrap();
+
+        // Row is already gone on the server (deleted by another client), so the
+        // delete naturally 404s — and a subsequent pull won't resurrect it.
+        client.delete_task_from_state("L1", "T1");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1, "404-on-delete counts as a completed delete");
+        assert_eq!(out.errors, 0, "a 404 delete is not an error");
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "local row is hard-deleted, not left as a dangling tombstone"
+        );
+    }
+
+    #[tokio::test]
+    async fn unauthorized_aborts_the_run_leaving_rows_dirty() {
+        // A 401 (missing/expired/revoked access token) fails every call the
+        // same way this run. Like AuthExpired it must abort on first sight
+        // instead of grinding row-by-row and mis-counting each pending change
+        // as a server rejection. Nothing is lost: rows stay dirty and push
+        // after the token is refreshed.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut first = dirty_task("local-a", "L1", "create");
+        first.local_updated = "2026-06-01T00:00:00Z".into();
+        eng.store.upsert_task(&first).await.unwrap();
+        let mut second = dirty_task("local-b", "L1", "create");
+        second.local_updated = "2026-06-01T00:00:01Z".into();
+        eng.store.upsert_task(&second).await.unwrap();
+        client.fail_next(crate::api::in_memory::Method::InsertTask, || {
+            ApiError::Unauthorized
+        });
+
+        let err = eng.run().await.unwrap_err();
+        assert!(
+            matches!(err, SyncError::Api(ApiError::Unauthorized)),
+            "got {err:?}"
+        );
+        assert_eq!(
+            client.call_count(crate::api::in_memory::Method::InsertTask),
+            1,
+            "aborted after the first failing call, not once per row"
+        );
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(
+            tasks.iter().all(|t| t.sync_state == SyncState::Dirty),
+            "both rows stay dirty for retry after re-auth"
+        );
+    }
+
+    #[tokio::test]
     async fn push_to_unknown_list_is_counted_not_fatal() {
         // A row that the server permanently rejects must not abort the run —
         // it stays dirty (and keeps being reported) while everything else
@@ -2849,6 +2917,210 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|l| l.list.id != "L1")
+        );
+    }
+
+    #[tokio::test]
+    async fn push_list_rename_not_found_hard_deletes_local() {
+        // Renaming a list the server no longer has (deleted elsewhere) 404s.
+        // The rename is meaningless against a gone list, so the local row is
+        // hard-deleted to converge with the server — not left dirty to 404
+        // forever. No error is surfaced.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Old Name");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "New Name".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        // The list is gone on the server (deleted by another client), so the
+        // rename naturally 404s — and a pull won't resurrect it.
+        client.delete_list_from_state("L1");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a 404 rename is not a server rejection");
+        assert!(
+            eng.store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L1"),
+            "the gone list is hard-deleted locally, not left dirty forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_list_rename_transient_stays_dirty_then_converges() {
+        // A transient (503) on a list rename must leave the row dirty and the
+        // server untouched — no error surfaced — then succeed on the next run.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Old Name");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "New Name".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        client.fail_next(crate::api::in_memory::Method::PatchTaskList, || {
+            ApiError::Server { status: 503 }
+        });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "transient is not counted as an error");
+        let l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        assert_eq!(l.sync_state, SyncState::Dirty, "stays dirty for retry");
+        assert_eq!(l.list.title, "New Name", "local rename intent preserved");
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.id == "L1" && r.title == "Old Name"),
+            "server unchanged while the retry is pending"
+        );
+
+        // Next run (no fault): the rename lands and the row goes clean.
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.id == "L1" && r.title == "New Name")
+        );
+        let l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        assert_eq!(l.sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn push_list_delete_transient_leaves_tombstone() {
+        // A transient on a list delete must NOT hard-delete locally (that would
+        // strand the list on the server) — it stays a tombstone and retries.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Doomed");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        client.fail_next(crate::api::in_memory::Method::DeleteTaskList, || {
+            ApiError::Server { status: 503 }
+        });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 0, "nothing deleted on a transient");
+        assert_eq!(out.errors, 0, "transient is not counted as an error");
+        // Deleted tombstones are excluded from all_lists; they live in the
+        // dirty-list queue awaiting push.
+        let pending = eng.store.drain_dirty_lists().await.unwrap();
+        assert!(
+            pending
+                .iter()
+                .any(|l| l.list.id == "L1" && l.sync_state == SyncState::Deleted),
+            "tombstone survives for the next run's retry"
+        );
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.id == "L1"),
+            "server list untouched while delete retries"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_list_delete_auth_abort_leaves_tombstone() {
+        // A 401 on a list delete aborts the run (every call would fail the same
+        // way) instead of being swallowed. The tombstone survives so the delete
+        // pushes after re-auth, and the server list is untouched.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Doomed");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+        eng.store.upsert_list(&l).await.unwrap();
+
+        client.fail_next(crate::api::in_memory::Method::DeleteTaskList, || {
+            ApiError::Unauthorized
+        });
+
+        let err = eng.run().await.unwrap_err();
+        assert!(
+            matches!(err, SyncError::Api(ApiError::Unauthorized)),
+            "auth failure aborts the run; got {err:?}"
+        );
+        let pending = eng.store.drain_dirty_lists().await.unwrap();
+        assert!(
+            pending
+                .iter()
+                .any(|l| l.list.id == "L1" && l.sync_state == SyncState::Deleted),
+            "tombstone survives for retry after re-auth"
+        );
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.id == "L1"),
+            "server list untouched by the aborted delete"
         );
     }
 
