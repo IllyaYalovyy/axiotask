@@ -68,7 +68,6 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 
 **Interactions:**
 - `Enter` → open / close the detail panel for the focused task
-- `Tab` → indent (make the focused task a subtask of the one above it)
 - `Alt+↑/↓` → reorder among siblings
 - `Space` → toggle complete
 - `e` → edit title inline
@@ -284,7 +283,7 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 | 2.5 | Due date picker (click date badge) | 2.4 |
 | 2.6 | Notes panel (n key, side panel) | 1.3 |
 | 2.7 | Create subtask (`s` / detail panel "+") | 1.3 |
-| 2.8 | Indent to subtask (`Tab`) / detach in detail panel | 2.7 |
+| 2.8 | Detach subtask in detail panel ("Detach from parent") | 2.7 |
 | 2.9 | Reorder (Alt+↑/↓) | 1.3 |
 
 ### Phase 3: Organization

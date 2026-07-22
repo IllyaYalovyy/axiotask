@@ -53,7 +53,6 @@ When sort is "My order":
 | Keyboard | Shift+Enter on parent → new subtask in edit mode |
 | Mouse | Click "+" button that appears on hover next to parent tasks |
 | Context menu | Right-click → "Add subtask" |
-| Indent | Tab on a task → becomes child of task above |
 
 ### Editing Subtasks
 

@@ -20,7 +20,7 @@ for everything that doesn't earn a one-key binding.
 
 ## Goals
 
-- **G1** — Navigate, create, complete, edit, delete, reorder, indent/outdent — all from the keyboard.
+- **G1** — Navigate, create, complete, edit, delete, reorder — all from the keyboard. (Subtask create/detach is a detail-panel action, not a list gesture.)
 - **G2** — Bindings are testable as pure functions of focus state + key event.
 - **G3** — Command palette (`Ctrl-K`) exposes every command with fuzzy search.
 - **G4** — A discoverable "?" shortcut shows the cheatsheet.
@@ -85,7 +85,6 @@ Transitions are an exhaustive `match` — easy to unit-test.
 | `Enter` | open / close the detail panel |
 | `s` | add a subtask (opens it in the detail panel) |
 | `Space` | toggle complete |
-| `Tab` | indent (make the focused task a subtask of the one above) |
 | `Alt-↑` / `Alt-↓` | reorder among siblings |
 | `e` | edit title inline |
 | `n` | open notes panel |
@@ -96,13 +95,14 @@ Transitions are an exhaustive `match` — easy to unit-test.
 | `?` | cheatsheet |
 | `Esc` | exit current focus to next-outer |
 
-### Reorder / indent / outdent semantics
+### Reorder / detach semantics
 
-These map to Google's `tasks.move` endpoint. Indent (`Tab`) makes the focused
-top-level task a subtask of its previous sibling — the one permitted level of
-nesting. Outdent is reached from the task's detail panel ("Detach from parent"),
-not the list, because subtasks are never rows in the list or smart views
-(they live only in the detail panel). Reorder (`Alt-↑/↓`) moves among siblings.
+These map to Google's `tasks.move` endpoint. The list is flat and top-level
+only, with no tree-editing gestures: there is no `Tab` indent and no
+`Shift+Tab` outdent. Subtasks are created and detached ("Detach from parent")
+solely from the detail panel, because subtasks are never rows in the list or
+smart views (they live only in the detail panel). Reorder (`Alt-↑/↓`) moves
+among siblings.
 
 ### Command palette
 
@@ -115,7 +115,7 @@ the cheatsheet generator, so they can never diverge.
 
 - **Pure keymap function tests** — given `(Focus, KeyEvent)` produce expected `Action`. Exhaustive table.
 - **Focus state machine tests** — Esc unwinds correctly from every depth.
-- **Integration** (Playwright): scripted sequence "create → indent → complete → delete" via keyboard only; assert final tree.
+- **Integration** (Playwright): scripted sequence "create → complete → reorder → delete" via keyboard only; assert final order.
 - **Acceptance** — VISION criterion: "create, complete, and reorganize tasks entirely from the keyboard."
 
 ---
@@ -126,7 +126,7 @@ the cheatsheet generator, so they can never diverge.
 - [ ] **Step 2** — Command registry + dispatcher *(prerequisite: Step 1)*
 - [ ] **Step 3** — Tree navigation keys (j/k/h/l/arrows) + tests *(prerequisite: Step 2)*
 - [ ] **Step 4** — Mutation keys (Enter, Space, e, d) hooked to RFC-006 commands *(prerequisite: Step 3)*
-- [ ] **Step 5** — Indent/outdent/reorder via `tasks.move` *(prerequisite: Step 4)*
+- [ ] **Step 5** — Reorder via `tasks.move` *(prerequisite: Step 4)*
 - [ ] **Step 6** — Command palette UI *(prerequisite: Step 2)*
 - [ ] **Step 7** — Cheatsheet overlay + `?` binding *(prerequisite: Step 2)*
 

@@ -242,20 +242,19 @@ describe("Keyboard Navigation", () => {
     });
   });
 
-  describe("Tab — indent (make subtask)", () => {
-    it("Tab indents under previous sibling", async () => {
+  describe("Tab — no tree-editing gesture in the list (#86)", () => {
+    it("Tab does not indent the focused task under the one above it", async () => {
+      // The main list is flat and top-level only; there are no tree-editing
+      // gestures. Subtasks are created solely from the detail panel, so Tab
+      // must never issue a move_task.
       await renderWithTasks();
       await pressKey("j"); // focus Task 2
       await pressKey("Tab");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("move_task", { id: "t2", parentId: "t1", previousId: null });
-      });
+      const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
+      expect(moveCalls).toHaveLength(0);
     });
 
-    it("Shift+Tab does nothing from the list (rows are all top-level)", async () => {
-      // Outdent is unreachable from the list now (#82) — every row is a
-      // top-level task with no parent. Promotion is done via the detail
-      // panel's "Detach from parent". Shift+Tab must not move anything.
+    it("Shift+Tab does nothing from the list either", async () => {
       await renderWithTasks();
       await pressKey("Tab", { shiftKey: true });
       const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
