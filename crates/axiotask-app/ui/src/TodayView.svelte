@@ -2,7 +2,7 @@
   import Icon from "./Icon.svelte";
   import TaskRow from "./TaskRow.svelte";
 
-  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, getSubtaskProgress, showCompleted, viewType = "focus", sortMode = "manual", onreorder } = $props();
+  let { tasks, focusIndex, editingId, completingIds = new Set(), selectedIds = new Set(), onrename, oncanceledit, onfocus, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, getSubtaskProgress, showCompleted, viewType = "focus", sortMode = "manual", onreorder } = $props();
 
   let draggingId = $state(null);
   let dropTargetIdx = $state(null);
@@ -53,9 +53,8 @@
   }
 
   let indexedTasks = $derived(tasks.map((task, i) => ({ task, i })));
-  // Partition by top-level CARD, carrying each card's subtree rows (depth > 0)
-  // with it — classifying row-by-row would tear an expanded parent's children
-  // into the other section, orphaning └-rows under the wrong heading.
+  // Every row is a top-level card (subtasks live in the detail panel), so this
+  // just splits the cards into Overdue vs. the rest by their effective date.
   function partitionByCard(items) {
     const overdue = [];
     const rest = [];
@@ -104,7 +103,6 @@
             {onpickdate}
             {oncontextmenu}
             {onaddsubtask}
-            {ontogglecollapse}
             subtaskProgress={getSubtaskProgress?.(task.id)}
             showList={true}
             draggable={sortMode === "manual"}
@@ -135,7 +133,6 @@
         {onpickdate}
         {oncontextmenu}
         {onaddsubtask}
-        {ontogglecollapse}
         subtaskProgress={getSubtaskProgress?.(task.id)}
         showList={true}
         draggable={sortMode === "manual"}

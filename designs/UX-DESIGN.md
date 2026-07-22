@@ -9,7 +9,7 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 2. **Zero-click for awareness** — what's due today, what's overdue, what's next — visible at a glance without navigating
 3. **Keyboard-first, mouse-friendly** — every action has a key binding, but clickable affordances exist for discoverability
 4. **Context without switching** — see tasks across all lists in one view; never lose context by navigating away
-5. **Hierarchy is structure, not clutter** — subtasks nest visually but don't overwhelm; collapse what you don't need now
+5. **One level of subtasks, kept out of the way** — lists show top-level tasks only; a card's subtasks live in its detail panel, so the list never becomes clutter
 
 ---
 
@@ -22,7 +22,7 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 | Task title + notes | ✅ Title inline, notes in side panel |
 | Due dates | ✅ One-key date moves + date picker |
 | Mark complete/incomplete | ✅ One-click/key toggle |
-| Subtasks (one level) | ✅ Indent/outdent, visual nesting |
+| Subtasks (one level) | ✅ Managed in the detail panel (add / check / date / detach) |
 | Reorder tasks | ✅ Drag or Alt+Arrow |
 | Move task between lists | ✅ Command palette or right-click |
 | Show/hide completed | ✅ Toggle in toolbar |
@@ -60,23 +60,20 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 
 **UI:**
 - Selected from sidebar or keyboard shortcut (1-9 for first 9 lists)
-- Shows full task tree with hierarchy
+- Shows **top-level tasks only** — subtasks live in the detail panel, never as rows
 - Toolbar: "+ New task" | "Show completed" toggle | Sort dropdown
 - Tasks ordered by: position (manual), with completed at bottom (when shown)
-- Subtasks indented with visual connector line
-- Parent tasks show child count badge when collapsed
+- A parent card shows a subtask progress badge ("2/5"); no indent, connector, or collapse
+- Opening a card (click / `Enter`) reveals its subtasks in the detail panel
 
 **Interactions:**
-- `Enter` → new task as sibling of focused task
-- `Shift+Enter` → new subtask under focused task
-- `Tab` → indent (make subtask of previous sibling)
-- `Shift+Tab` → outdent
+- `Enter` → open / close the detail panel for the focused task
+- `Tab` → indent (make the focused task a subtask of the one above it)
 - `Alt+↑/↓` → reorder among siblings
-- `h/l` → collapse/expand
 - `Space` → toggle complete
 - `e` → edit title inline
-- `n` → open notes panel
-- `d` → delete (with 30s undo toast)
+- `s` → add a subtask (opens it in the detail panel)
+- `d` → delete (with undo toast)
 - `t/w/m/r` → set due tomorrow/week/month/remove
 
 ---
@@ -146,15 +143,17 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 **Scenario:** User breaks a task into steps.
 
 **UI:**
-- `Shift+Enter` on a task → creates a child task below it, indented
-- `Tab` on a task → makes it a child of the task above
-- `Shift+Tab` → promotes it back to parent level
-- Parent shows "▾" collapse indicator + child count when collapsed
-- Dragging a task onto another indents it (mouse users)
+- Open a task's detail panel, then use the Subtasks section: "+" adds a subtask, the
+  checklist checks them off, each subtask has its own due date, and "Detach from parent"
+  promotes one back to top level
+- `s` on a focused list task → adds a subtask and opens it in the detail panel
+- `Tab` on a focused list task → makes it a subtask of the task above it
+- A parent card shows a subtask progress badge ("2/5"); subtasks are not rows in the list
 
 **Constraints:**
-- Google Tasks supports one level of nesting only
-- UI enforces this: Tab on a subtask is a no-op
+- Google Tasks supports one level of nesting only — this is permanent
+- Subtasks are only ever shown in the detail panel, never as list/smart-view rows
+- Tab only ever nests a top-level task under another top-level task; there is no second level
 
 ---
 
@@ -284,8 +283,8 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 | 2.4 | Due date one-key moves (t/w/m/r) | 1.3 |
 | 2.5 | Due date picker (click date badge) | 2.4 |
 | 2.6 | Notes panel (n key, side panel) | 1.3 |
-| 2.7 | Create subtask (Shift+Enter) | 1.3 |
-| 2.8 | Indent/outdent (Tab/Shift+Tab) | 2.7 |
+| 2.7 | Create subtask (`s` / detail panel "+") | 1.3 |
+| 2.8 | Indent to subtask (`Tab`) / detach in detail panel | 2.7 |
 | 2.9 | Reorder (Alt+↑/↓) | 1.3 |
 
 ### Phase 3: Organization
@@ -306,7 +305,7 @@ Google Tasks is a powerful backend crippled by a lazy frontend. The official app
 | 4.3 | Drag-and-drop reorder (mouse) | 2.9 |
 | 4.4 | Context menu (right-click) | 3.1 |
 | 4.5 | Completion animation (fade + slide) | 2.2 |
-| 4.6 | Persist UI state (selected list, collapse state, scroll position) | 1.5 |
+| 4.6 | Persist UI state (selected list, scroll position) | 1.5 |
 
 ### Phase 5: Sync & Reliability
 

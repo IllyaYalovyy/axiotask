@@ -1,11 +1,12 @@
 // Regression for #81: dark-theme (and light-theme) unreadable text.
 //
-// `.no-due` ("no date") and the `.tree-icon.sub` subtask connector (└) used
-// --border-faint as a *text* color, giving ~1:1 contrast (invisible). The
-// focused-row `.actions button` used --fg-muted on --bg-elevated (~4.2:1), too
-// dim. This test resolves the CSS-variable token each rule uses against the
-// theme.css palette (both themes) and asserts real contrast, so a regression
-// back to a border/near-invisible token fails deterministically.
+// `.no-due` ("no date") used --border-faint as a *text* color, giving ~1:1
+// contrast (invisible). The focused-row `.actions button` used --fg-muted on
+// --bg-elevated (~4.2:1), too dim. This test resolves the CSS-variable token
+// each rule uses against the theme.css palette (both themes) and asserts real
+// contrast, so a regression back to a border/near-invisible token fails
+// deterministically. (The list's subtask connector was removed in #82 —
+// subtasks render only in the detail panel now.)
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -63,11 +64,10 @@ function colorTokenOf(selector) {
 
 describe("theme contrast (#81)", () => {
   const noDueTok = colorTokenOf(".no-due");
-  const subTok = colorTokenOf(".tree-icon.sub");
   const actionTok = colorTokenOf(".actions button");
 
   it("does not use a border token as a text color", () => {
-    for (const tok of [noDueTok, subTok, actionTok]) {
+    for (const tok of [noDueTok, actionTok]) {
       expect(tok).not.toMatch(/border/);
     }
   });
@@ -78,10 +78,6 @@ describe("theme contrast (#81)", () => {
         // Line-2 metadata shows on focused (--bg-active) / base (--bg) rows.
         expect(contrast(tokens[noDueTok], tokens["--bg"])).toBeGreaterThanOrEqual(4.5);
         expect(contrast(tokens[noDueTok], tokens["--bg-active"])).toBeGreaterThanOrEqual(3.0);
-      });
-
-      it("subtask connector is visible in the detail panel", () => {
-        expect(contrast(tokens[subTok], tokens["--bg-panel"])).toBeGreaterThanOrEqual(2.0);
       });
 
       it("focused-row action button is readable on --bg-elevated", () => {

@@ -110,7 +110,7 @@ describe("Keyboard Navigation", () => {
       });
     });
 
-    it("Focus j follows the visual overdue-first order, including inherited-date child rows", async () => {
+    it("Focus j follows the visual overdue-first order (top-level cards only)", async () => {
       mockBackend(lists, [
         { id: "today", parent_id: null, title: "Today card", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
         { id: "parent", parent_id: null, title: "Inherited overdue parent", notes: null, status: "needsAction", due: null, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
@@ -119,12 +119,16 @@ describe("Keyboard Navigation", () => {
       localStorage.setItem("axiotask:view", "focus");
       render(App);
 
-      await waitFor(() => expect(screen.getByText("Overdue child")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("Inherited overdue parent")).toBeInTheDocument());
 
+      // The subtask is not a row (#82); only the two top-level cards render.
+      // The parent is overdue via its subtask's inherited date, so it sorts
+      // above the Today card.
+      expect(screen.queryByText("Overdue child")).not.toBeInTheDocument();
       let widgets = document.querySelectorAll(".task-widget");
+      expect(widgets).toHaveLength(2);
       expect(widgets[0].querySelector(".title")).toHaveTextContent("Inherited overdue parent");
-      expect(widgets[1].querySelector(".title")).toHaveTextContent("Overdue child");
-      expect(widgets[2].querySelector(".title")).toHaveTextContent("Today card");
+      expect(widgets[1].querySelector(".title")).toHaveTextContent("Today card");
       expect(widgets[0]).toHaveClass("focused");
 
       await pressKey("j");
@@ -238,7 +242,7 @@ describe("Keyboard Navigation", () => {
     });
   });
 
-  describe("Tab — indent/outdent", () => {
+  describe("Tab — indent (make subtask)", () => {
     it("Tab indents under previous sibling", async () => {
       await renderWithTasks();
       await pressKey("j"); // focus Task 2
@@ -248,36 +252,12 @@ describe("Keyboard Navigation", () => {
       });
     });
 
-    it("Shift+Tab on root task does nothing", async () => {
+    it("Shift+Tab does nothing from the list (rows are all top-level)", async () => {
+      // Outdent is unreachable from the list now (#82) — every row is a
+      // top-level task with no parent. Promotion is done via the detail
+      // panel's "Detach from parent". Shift+Tab must not move anything.
       await renderWithTasks();
       await pressKey("Tab", { shiftKey: true });
-      const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
-      expect(moveCalls).toHaveLength(0);
-    });
-
-    it("Shift+Tab promotes a subtask after its parent", async () => {
-      await renderWithTasks([
-        { id: "t1", parent_id: null, title: "Parent", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
-        { id: "t2", parent_id: "t1", title: "Child", notes: null, status: "needsAction", due: today, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
-      ]);
-      await waitFor(() => expect(screen.getByText("Child")).toBeInTheDocument());
-      await pressKey("j"); // focus child
-      await pressKey("Tab", { shiftKey: true });
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("move_task", { id: "t2", parentId: null, previousId: "t1" });
-      });
-    });
-
-    it("Tab on an existing subtask does not create a nested subtask", async () => {
-      await renderWithTasks([
-        { id: "t1", parent_id: null, title: "Parent", notes: null, status: "needsAction", due: today, position: "00000000000001", sync_state: "clean", listId: "L1", listTitle: "Work" },
-        { id: "t2", parent_id: "t1", title: "Child A", notes: null, status: "needsAction", due: today, position: "00000000000002", sync_state: "clean", listId: "L1", listTitle: "Work" },
-        { id: "t3", parent_id: "t1", title: "Child B", notes: null, status: "needsAction", due: today, position: "00000000000003", sync_state: "clean", listId: "L1", listTitle: "Work" },
-      ]);
-      await waitFor(() => expect(screen.getByText("Child A")).toBeInTheDocument());
-      await pressKey("j"); // focus Child A
-      await pressKey("j"); // focus Child B
-      await pressKey("Tab");
       const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
       expect(moveCalls).toHaveLength(0);
     });

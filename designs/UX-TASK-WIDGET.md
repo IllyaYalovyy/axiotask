@@ -37,7 +37,8 @@ Shows only what's relevant (no empty placeholders):
 - Shows `completed / total` count
 - Mini horizontal bar (CSS only, no canvas)
 - Green fill for progress
-- Clicking it expands/collapses the subtask list
+- Clicking the card (including the badge) opens the detail panel, where the
+  subtasks live — subtasks are never rows in the list itself (#82, one level only)
 - Only visible on parent tasks
 
 ### Quick Access Links

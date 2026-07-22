@@ -2,7 +2,7 @@
   import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
   import { formatDue, dueClass } from "./dateFormat.js";
-  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, ontogglecollapse, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
   let touchDragging = $state(false);
@@ -160,12 +160,6 @@
     onsetdue?.(task.id, mv);
   }
 
-  function handleToggleCollapse(e) {
-    e.preventDefault();
-    e.stopPropagation();
-    ontogglecollapse?.(task.id);
-  }
-
   // URL detection
   function extractUrls(text) {
     if (!text) return [];
@@ -191,7 +185,7 @@
   class:swipe-actions-peeking={swipeActionsPeeking}
   class:touch-dragging={touchDragging}
   class:dragging={isDragging}
-  style="padding-left: {task.depth * 1.5 + 0.5}rem; --swipe-reveal: {swipeReveal}px"
+  style="padding-left: 0.5rem; --swipe-reveal: {swipeReveal}px"
   onclick={handleRowClick}
   ontouchstart={handleRowTouchStart}
   ontouchmove={handleRowTouchMove}
@@ -217,21 +211,9 @@
         ontouchend={handleTouchEnd}
       >⠿</span>
     {/if}
-    {#if task.hasChildren}
-      <button
-        class="tree-icon tree-toggle"
-        type="button"
-        aria-label={task.isCollapsed ? `Expand ${task.title || "task"}` : `Collapse ${task.title || "task"}`}
-        aria-expanded={!task.isCollapsed}
-        onclick={handleToggleCollapse}
-      >
-        {task.isCollapsed ? "▸" : "▾"}
-      </button>
-    {:else if task.parent_id}
-      <span class="tree-icon sub">└</span>
-    {:else}
-      <span class="tree-icon"></span>
-    {/if}
+    <!-- Fixed alignment gutter. Rows are always top-level (subtasks live in the
+         detail panel), so there is no expand toggle, connector, or indent. -->
+    <span class="tree-icon"></span>
 
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -303,9 +285,9 @@
       <span class="no-due pickable" title="Pick a date" onclick={(e) => { e.stopPropagation(); onpickdate?.(task.id); }}>no date</span>
     {/if}
     {#if subtaskProgress}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks" onclick={handleToggleCollapse}>
+      <!-- Subtask progress indicator. Clicking anywhere on the row (including
+           here) opens the detail panel, where the subtasks live. -->
+      <span class="progress" title="{subtaskProgress.done}/{subtaskProgress.total} subtasks">
         <span class="progress-bar"><span class="progress-fill" style="width: {(subtaskProgress.done / subtaskProgress.total) * 100}%"></span></span>
         <span class="progress-text">{subtaskProgress.done}/{subtaskProgress.total}</span>
       </span>
@@ -340,13 +322,7 @@
 
   .main-row { display: flex; align-items: center; gap: 0.4rem; }
 
-  .tree-icon { flex-shrink: 0; width: 1rem; text-align: center; font-size: 0.7rem; color: var(--fg-faint); }
-  .tree-toggle {
-    border: 0; background: transparent; padding: 0; height: 1.25rem; cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center; font-family: inherit;
-  }
-  .tree-toggle:hover { color: var(--accent); }
-  .tree-icon.sub { color: var(--fg-faint); font-size: 0.75rem; }
+  .tree-icon { flex-shrink: 0; width: 1rem; }
 
   .checkbox {
     flex-shrink: 0; width: 1rem; height: 1rem; margin: 0; cursor: pointer;
