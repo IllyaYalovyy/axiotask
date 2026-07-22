@@ -2029,7 +2029,13 @@ mod tests {
             .iter()
             .find(|t| t.title == "task local-1")
             .unwrap();
-        assert_eq!(moved.position, "after-T-prev", "reorder reached the server");
+        let anchor = remote.items.iter().find(|t| t.title == "anchor").unwrap();
+        assert!(
+            moved.position > anchor.position,
+            "reorder reached the server: task sorts after its anchor ({} > {})",
+            moved.position,
+            anchor.position
+        );
     }
 
     #[tokio::test]
