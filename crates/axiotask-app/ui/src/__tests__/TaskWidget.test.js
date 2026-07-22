@@ -32,7 +32,6 @@ const defaultProps = {
   ontoggle: noop,
   onsetdue: noop,
   oncontextmenu: noop,
-  onaddsubtask: noop,
   showList: false,
   subtaskProgress: null,
 };
@@ -245,6 +244,20 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(container.querySelector(".tree-icon.sub")).toBeNull();
       // No depth-based indent — every rendered row sits at the top level.
       expect(container.querySelector(".task-widget").style.paddingLeft).toBe("0.5rem");
+    });
+
+    it("offers no add-subtask affordance on the row (#91) — subtasks live in the panel", () => {
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ title: "Parent" }) },
+      });
+      // The list row must not carry the '+' quick action; subtasks are added
+      // solely from the detail panel.
+      expect(screen.queryByRole("button", { name: /add subtask/i })).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Add subtask")).not.toBeInTheDocument();
+      const plus = [...container.querySelectorAll(".actions button")].find(
+        (b) => b.textContent.trim() === "+",
+      );
+      expect(plus).toBeUndefined();
     });
   });
 

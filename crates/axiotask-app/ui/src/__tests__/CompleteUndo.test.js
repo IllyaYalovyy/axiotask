@@ -128,7 +128,7 @@ describe("GH#11: Complete/uncomplete with undo", () => {
           task: completedTask, focused: false, editing: false,
           onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
           ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          onaddsubtask: () => {}, showList: false, subtaskProgress: null,
+          showList: false, subtaskProgress: null,
         },
       });
       const widget = container.querySelector(".task-widget");
@@ -151,7 +151,7 @@ describe("GH#11: Complete/uncomplete with undo", () => {
           task: completedTask, focused: false, editing: false,
           onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
           ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          onaddsubtask: () => {}, showList: false, subtaskProgress: null,
+          showList: false, subtaskProgress: null,
         },
       });
       const widget = container.querySelector(".task-widget");
@@ -169,7 +169,7 @@ describe("GH#11: Complete/uncomplete with undo", () => {
           task: openTask, focused: false, editing: false,
           onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
           ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          onaddsubtask: () => {}, showList: false, subtaskProgress: null,
+          showList: false, subtaskProgress: null,
         },
       });
       const widget = container.querySelector(".task-widget");

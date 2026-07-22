@@ -32,7 +32,6 @@ function props(task) {
     ontogglesubtask: vi.fn(),
     onopensubtask: vi.fn(),
     onopenparent: vi.fn(),
-    onaddsubtask: vi.fn(),
     onprev: null,
     onnext: null,
   };

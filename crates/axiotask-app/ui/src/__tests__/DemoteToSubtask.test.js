@@ -98,8 +98,9 @@ describe("#88 demote a top-level task into a subtask via a parent picker", () =>
     await waitFor(() => expect(screen.getByText("Has children")).toBeInTheDocument());
 
     await openMenu(container, "Has children");
-    // It can gain subtasks but can never itself become one (would be 3 levels).
-    expect(screen.getByText("Add subtask")).toBeInTheDocument();
+    // The menu opened (Duplicate is always present), but a task that already
+    // has subtasks can never itself become one (would be 3 levels).
+    expect(screen.getByText("Duplicate")).toBeInTheDocument();
     expect(screen.queryByText("Make subtask of…")).not.toBeInTheDocument();
   });
 
