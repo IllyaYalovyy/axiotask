@@ -1202,6 +1202,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_push_interleaved_with_reedit_keeps_edit_as_update_no_dup() {
+        // The create is in flight — the engine holds its DRAINED snapshot
+        // across the insert await — while the user re-edits the same row. The
+        // insert lands under a fresh remote id; finish_create must remap the id
+        // AND keep the row dirty as an UPDATE (not clean, not a second create),
+        // so the newer edit pushes against the remote id. If push_create passed
+        // a fresh read instead of the snapshot, finish_create would mark the row
+        // clean and the re-edit would be silently lost; if it re-ran as a
+        // create, the server would gain a duplicate. Neither may happen.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        // The dirty create as the push drains it (old content, old timestamp).
+        let mut snapshot = dirty_task("local-1", "L1", "create");
+        snapshot.task.title = "buy milk".into();
+        snapshot.local_updated = "2026-06-01T00:00:00Z".into();
+        eng.store.upsert_task(&snapshot).await.unwrap();
+
+        // Concurrent re-edit commits to the store: newer content and timestamp,
+        // still a dirty create under the local id (its id is not yet remapped).
+        let mut reedited = snapshot.clone();
+        reedited.task.title = "buy oat milk".into();
+        reedited.local_updated = "2026-06-01T00:05:00Z".into();
+        eng.store.upsert_task(&reedited).await.unwrap();
+
+        // Push the ORIGINAL snapshot, exactly as the engine holds it across the
+        // insert await while the re-edit lands underneath.
+        let mut out = SyncOutcome::default();
+        eng.push_create(&snapshot, &mut out).await.unwrap();
+        assert_eq!(out.pushed, 1);
+
+        // No duplicate: exactly one insert, one task on the server.
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+        assert_eq!(
+            client.list_tasks("L1", None).await.unwrap().items.len(),
+            1,
+            "one task on the server, not a duplicate"
+        );
+
+        // The local row: remapped to the remote id, still dirty but flipped to
+        // an UPDATE, carrying the re-edited content — the edit survives.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        let row = &tasks[0];
+        assert!(row.task.id.starts_with("remote-"), "id remapped to remote");
+        assert_eq!(
+            row.sync_state,
+            SyncState::Dirty,
+            "the mid-flight edit stays queued"
+        );
+        assert_eq!(
+            row.pending_op.as_deref(),
+            Some("update"),
+            "flipped create→update; re-running as a create would duplicate"
+        );
+        assert_eq!(
+            row.task.title, "buy oat milk",
+            "the re-edited content is preserved, not lost"
+        );
+        assert!(row.task.etag.is_some(), "adopted the server etag");
+        assert!(
+            eng.store.inflight_creates().await.unwrap().is_empty(),
+            "in-flight marker cleared by the remap"
+        );
+    }
+
+    #[tokio::test]
     async fn push_create_parent_before_child() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
@@ -2845,6 +2914,64 @@ mod tests {
         let tasks = eng.store.list_tasks(&work.list.id).await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert!(tasks[0].task.id.starts_with("remote-"));
+    }
+
+    #[tokio::test]
+    async fn held_edit_holds_list_create_then_pushes_on_release() {
+        // A held edit (the UI is actively holding a row's id) freezes ALL list
+        // creates for that run: a list-id remap would invalidate the id the UI
+        // holds. The pending list create must WAIT — not push, not remap, not
+        // get ghosted by the pull — and then push on the next unheld run.
+        let (client, eng0) = engine_with_push().await;
+        eng0.store
+            .upsert_list(&dirty_list("local-list", "Work", "create"))
+            .await
+            .unwrap();
+
+        // Run 1: an edit is held. The list create must be deferred.
+        let eng_hold = SyncEngine::with_push(client.clone(), eng0.store.clone(), true)
+            .hold_create_id(Some("held-task".into()));
+        let out = eng_hold.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "nothing pushed while the edit is held");
+        let lists = eng0.store.all_lists().await.unwrap();
+        let work = lists
+            .iter()
+            .find(|l| l.list.title == "Work")
+            .expect("pending list survives the held run, not ghosted");
+        assert_eq!(
+            work.list.id, "local-list",
+            "id not remapped while the edit is held"
+        );
+        assert_eq!(work.sync_state, SyncState::Dirty, "create still queued");
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.title != "Work"),
+            "server has no such list yet"
+        );
+
+        // Run 2: the edit is released. The deferred create now pushes and remaps.
+        let out = eng0.run().await.unwrap();
+        assert_eq!(out.pushed, 1, "the deferred list create pushes on release");
+        let lists = eng0.store.all_lists().await.unwrap();
+        let work = lists.iter().find(|l| l.list.title == "Work").unwrap();
+        assert!(
+            work.list.id.starts_with("remote-list-"),
+            "remapped to a remote id on release"
+        );
+        assert_eq!(work.sync_state, SyncState::Clean);
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .any(|l| l.title == "Work"),
+            "list now exists on the server"
+        );
     }
 
     #[tokio::test]
