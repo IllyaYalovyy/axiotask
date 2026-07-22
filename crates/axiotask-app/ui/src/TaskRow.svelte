@@ -346,7 +346,7 @@
     display: inline-flex; align-items: center; justify-content: center; font-family: inherit;
   }
   .tree-toggle:hover { color: var(--accent); }
-  .tree-icon.sub { color: var(--border-faint); font-size: 0.75rem; }
+  .tree-icon.sub { color: var(--fg-faint); font-size: 0.75rem; }
 
   .checkbox {
     flex-shrink: 0; width: 1rem; height: 1rem; margin: 0; cursor: pointer;
@@ -360,7 +360,7 @@
   .actions { display: none; gap: 0.2rem; flex-shrink: 0; }
   .task-widget:hover .actions, .task-widget.focused .actions, .task-widget.swipe-actions-open .actions, .task-widget.swipe-actions-peeking .actions { display: flex; }
   .actions button {
-    background: var(--bg-elevated); border: none; color: var(--fg-muted); padding: 0.15rem 0.35rem;
+    background: var(--bg-elevated); border: none; color: var(--fg-secondary); padding: 0.15rem 0.35rem;
     border-radius: 3px; font-size: 0.7rem; cursor: pointer; font-family: inherit;
     min-width: 2rem; min-height: 1.5rem; display: flex; align-items: center; justify-content: center;
   }
@@ -416,7 +416,7 @@
   /* Inherited (propagated from a subtask): dimmer + italic so it reads as
      borrowed, not set on this task. */
   .due.inherited { font-style: italic; opacity: 0.8; }
-  .no-due { color: var(--border-faint); }
+  .no-due { color: var(--fg-muted); }
   .pickable { cursor: pointer; }
   .pickable:hover { text-decoration: underline; }
   .list-tag { color: var(--fg-faint); background: var(--bg-elevated); padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.65rem; }
