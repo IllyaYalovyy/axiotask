@@ -2366,8 +2366,46 @@ mod tests {
                 &format!("{i:014}"),
             );
         }
+        // Force real multi-page fetching: 10 tasks at 3 per page = 4 pages.
+        client.set_page_size(3);
         let out = eng.run().await.unwrap();
         assert_eq!(out.pulled, 10);
+        assert!(
+            client.call_count(crate::api::in_memory::Method::ListTasks) >= 4,
+            "must iterate every page, not just the first"
+        );
+        assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 10);
+    }
+
+    #[tokio::test]
+    async fn pull_incomplete_pagination_never_ghosts_real_rows() {
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        for i in 0..6 {
+            client.seed_task(
+                "L1",
+                &format!("T{i}"),
+                &format!("task {i}"),
+                &format!("{i:014}"),
+            );
+        }
+        // 6 tasks at 2 per page = 3 pages. First full sync stores every row.
+        client.set_page_size(2);
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pulled, 6);
+        assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 6);
+
+        // Second sync: page 0 returns real rows, but page 1 drops mid-scroll.
+        // The view is now incomplete, so the tasks that live on the un-fetched
+        // pages must NOT be mistaken for server-side deletions (ghosts).
+        client.fail_list_tasks_page(1, || ApiError::Server { status: 503 });
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 0, "incomplete page fetch must not ghost rows");
+        assert_eq!(
+            eng.store.list_tasks("L1").await.unwrap().len(),
+            6,
+            "every synced row must survive an interrupted paginated pull"
+        );
     }
 
     // ─── Ghost detection ─────────────────────────────────────────────────────
