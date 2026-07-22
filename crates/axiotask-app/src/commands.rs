@@ -922,11 +922,16 @@ pub async fn set_push_enabled(
     build_settings(&state).await
 }
 
-/// Mark whether the user is actively editing a task, so background pushes are
-/// held until they finish (prevents a create's id remap mid-edit).
+/// Record which task the UI is actively holding (inline editor row or open
+/// detail panel), or `null` when nothing is being edited. Only that one task's
+/// create push is held (prevents its id remap mid-edit); every other create —
+/// including subtasks born inside the open panel (#85) — keeps syncing.
 #[tauri::command]
-pub async fn set_editing(state: State<'_, Arc<AppState>>, editing: bool) -> Result<(), String> {
-    state.set_editing(editing);
+pub async fn set_editing(
+    state: State<'_, Arc<AppState>>,
+    editing_task_id: Option<String>,
+) -> Result<(), String> {
+    state.set_editing_task(editing_task_id);
     Ok(())
 }
 

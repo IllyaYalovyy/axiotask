@@ -48,12 +48,14 @@ impl SyncOutcome {
 pub struct SyncConfig {
     /// Whether to push local changes to the server.
     pub push_enabled: bool,
-    /// Hold CREATE pushes this run (lists + tasks), while still pushing
-    /// updates/deletes/moves. A create remaps a local id to the server id, which
-    /// would invalidate the id the UI is still holding for a row being edited.
-    /// Committed edits (completing a subtask, renaming a synced task) reuse the
-    /// existing id and must keep syncing, so only creates are held.
-    pub hold_creates: bool,
+    /// Hold the CREATE push of exactly this one task this run: the id of the row
+    /// the UI is actively holding (the inline editor's row, or the open detail
+    /// panel's task). A create remaps a local id to the server id, which would
+    /// invalidate the id the UI holds — so that ONE create waits. Every OTHER
+    /// create still pushes: a subtask created inside an open detail panel (#85)
+    /// has its own id, and remapping it never touches the parent id the panel
+    /// holds. Updates/deletes/moves reuse existing ids and always push.
+    pub held_create_id: Option<String>,
 }
 
 /// The sync engine. Stateless — each [`run`](SyncEngine::run) is independent.
@@ -80,14 +82,15 @@ impl SyncEngine {
             store,
             config: SyncConfig {
                 push_enabled,
-                hold_creates: false,
+                held_create_id: None,
             },
         }
     }
 
-    /// Hold CREATE pushes this run (see [`SyncConfig::hold_creates`]).
-    pub fn hold_creates(mut self, hold: bool) -> Self {
-        self.config.hold_creates = hold;
+    /// Hold the CREATE push of this one task id this run (see
+    /// [`SyncConfig::held_create_id`]). `None` holds nothing.
+    pub fn hold_create_id(mut self, id: Option<String>) -> Self {
+        self.config.held_create_id = id;
         self
     }
 
@@ -125,8 +128,10 @@ impl SyncEngine {
         self.recover_inflight_creates().await?;
 
         // List CREATES first — tasks reference lists, so the list must exist
-        // (with its remote id) before we push tasks into it. Held while editing.
-        if !self.config.hold_creates {
+        // (with its remote id) before we push tasks into it. Held while the user
+        // is editing (a list-id remap would disrupt the row the UI holds), but
+        // never blocks the task creates below.
+        if self.config.held_create_id.is_none() {
             self.push_list_creates(out).await?;
         }
 
@@ -137,9 +142,11 @@ impl SyncEngine {
         // task ID", verified live). Each finish_create remaps children's
         // parent_id in the DB, so looping until no progress resolves arbitrary
         // nesting depth; anything left (parent itself unpushable this run)
-        // stays dirty for the next run. Held entirely while editing so an id
-        // remap can't invalidate the id the UI is holding.
-        if !self.config.hold_creates {
+        // stays dirty for the next run. The one create the UI is holding (the
+        // row being edited) waits so its id remap can't invalidate the id the UI
+        // holds; every other create — including subtasks born inside an open
+        // detail panel (#85) — still pushes.
+        {
             // Attempt each create at most once per run: a create whose
             // response times out after the server committed would otherwise be
             // double-inserted (in-flight orphan recovery only runs at the
@@ -150,6 +157,7 @@ impl SyncEngine {
                 for row in &self.store.drain_dirty().await? {
                     if row.pending_op.as_deref() != Some("create")
                         || attempted.contains(&row.task.id)
+                        || self.config.held_create_id.as_deref() == Some(row.task.id.as_str())
                     {
                         continue;
                     }
@@ -1993,9 +2001,10 @@ mod tests {
             .await
             .unwrap();
 
-        // Run 1: creates held (user editing). The move must wait, not error.
-        let eng_hold =
-            SyncEngine::with_push(client.clone(), eng0.store.clone(), true).hold_creates(true);
+        // Run 1: this task's create is held (user editing it). The move must
+        // wait, not error.
+        let eng_hold = SyncEngine::with_push(client.clone(), eng0.store.clone(), true)
+            .hold_create_id(Some("local-1".into()));
         let out = eng_hold.run().await.unwrap();
         assert_eq!(
             out.errors, 0,

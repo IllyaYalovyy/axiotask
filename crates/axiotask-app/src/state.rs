@@ -132,10 +132,13 @@ pub struct AppState {
     /// Properties dialog (read-only vs. read-write sync) and persisted to the
     /// config file. Read on every sync run.
     push_enabled: AtomicBool,
-    /// True while the user is actively editing a task in the UI. Pushes are
-    /// held during editing so a create's id remap can't invalidate the id the
-    /// UI is operating on (pull is unaffected — it skips locally-dirty rows).
-    editing: AtomicBool,
+    /// The id of the one task the UI is actively holding — the inline editor's
+    /// row, or the open detail panel's task. Its CREATE push is held so an id
+    /// remap can't invalidate the id the UI operates on. Every OTHER create
+    /// still pushes, so a subtask created inside an open detail panel syncs
+    /// (its own id remap never touches the parent id the panel holds). `None`
+    /// when nothing is being edited. Pull is unaffected — it skips dirty rows.
+    held_create_id: std::sync::Mutex<Option<String>>,
     /// Whether to sync automatically on startup. Persisted; display-only after
     /// launch (it only governs the startup sync).
     auto_sync_on_start: AtomicBool,
@@ -204,7 +207,7 @@ impl AppState {
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
             push_enabled: AtomicBool::new(config.sync.push_enabled),
-            editing: AtomicBool::new(false),
+            held_create_id: std::sync::Mutex::new(None),
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
             needs_reauth: AtomicBool::new(false),
             config_path: axiotask_core::config::AppConfig::default_path(),
@@ -254,7 +257,7 @@ impl AppState {
             sync_notify: Arc::new(Notify::new()),
             sync_guard: Arc::new(Mutex::new(())),
             push_enabled: AtomicBool::new(push_enabled),
-            editing: AtomicBool::new(false),
+            held_create_id: std::sync::Mutex::new(None),
             auto_sync_on_start: AtomicBool::new(true),
             needs_reauth: AtomicBool::new(false),
             // A throwaway temp path so settings writes in tests never touch the
@@ -510,18 +513,21 @@ impl AppState {
     /// waits for it to finish before running. Prevents double-push races.
     pub async fn run_sync(&self) -> Result<SyncOutcome, axiotask_core::sync::SyncError> {
         let _guard = self.sync_guard.lock().await;
-        // While the user is mid-edit, hold only CREATE pushes: a create remaps a
-        // local id to the server id, which would invalidate the id the UI is
-        // holding for the row being edited. Committed edits (completing a
-        // subtask, renaming a synced task) reuse the existing id and MUST keep
-        // pushing — otherwise anything changed with the detail panel open would
-        // never sync. Pull always runs.
-        let editing = self.editing.load(Ordering::Relaxed);
+        // While the user is mid-edit, hold ONLY the create of the exact row the
+        // UI is holding: a create remaps a local id to the server id, which
+        // would invalidate that id. Every other create still pushes — including
+        // a subtask created inside an open detail panel (#85), whose own id
+        // remap never touches the parent id the panel holds. Committed edits
+        // (completing a subtask, renaming a synced task) reuse the existing id
+        // and MUST keep pushing. Pull always runs.
+        let held_create_id = self.held_create_id.lock().unwrap().clone();
         let push_enabled = self.push_enabled.load(Ordering::Relaxed);
-        tracing::info!("running sync (push_enabled={push_enabled}, hold_creates={editing})...");
+        tracing::info!(
+            "running sync (push_enabled={push_enabled}, held_create_id={held_create_id:?})..."
+        );
         let client = self.client.lock().await.clone();
-        let engine =
-            SyncEngine::with_push(client, self.store.clone(), push_enabled).hold_creates(editing);
+        let engine = SyncEngine::with_push(client, self.store.clone(), push_enabled)
+            .hold_create_id(held_create_id);
         let result = engine.run().await;
         // Record status/stats and notify the UI of the outcome.
         let snapshot = {
@@ -592,9 +598,11 @@ impl AppState {
         self.sync_status.lock().await.clone()
     }
 
-    /// Mark whether the user is actively editing a task (pauses pushes).
-    pub fn set_editing(&self, editing: bool) {
-        self.editing.store(editing, Ordering::Relaxed);
+    /// Record the id of the task the UI is holding (inline editor row or open
+    /// detail panel), or `None` when nothing is being edited. Only that one
+    /// task's create push is held; every other create still syncs.
+    pub fn set_editing_task(&self, id: Option<String>) {
+        *self.held_create_id.lock().unwrap() = id;
     }
 
     /// Run sync only if the user is authenticated. Returns an error if not signed in.
