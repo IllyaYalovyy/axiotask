@@ -1,8 +1,17 @@
 //! Deterministic in-memory implementation of [`GoogleTasksClient`].
 //!
 //! Used as a test double for the sync engine and command handlers. Etags are
-//! a monotonic counter so conflict scenarios are deterministic. Faults can
-//! be queued via [`InMemoryClient::fail_next`].
+//! a monotonic counter so conflict scenarios are deterministic. Faults can be
+//! queued via [`InMemoryClient::fail_next`] (untargeted, FIFO per method),
+//! [`InMemoryClient::fail_next_for_id`] (a single-task method against one id),
+//! or [`InMemoryClient::fail_list_tasks_page`] (a specific `list_tasks` page).
+//!
+//! `list_tasks` mirrors the live API's pagination and ordering: it returns a
+//! list's tasks sorted by their opaque lexicographic `position` string, and
+//! [`InMemoryClient::set_page_size`] splits the result into pages with real
+//! `next_page_token`s so multi-page scroll + resume can be exercised. `move`
+//! and `insert` share one positioning rule, so a moved task sorts into its
+//! requested slot on the next `list_tasks`.
 //!
 //! The fake models the REAL Google Tasks API's strictness, verified against
 //! the live service — a permissive fake lets the whole test suite pass while
@@ -51,12 +60,37 @@ pub enum Method {
     MoveTask,
 }
 
+/// What a targeted fault is scoped to. `Id` matches a single-task method
+/// (`get`/`patch`/`delete`/`move`) invoked against that task id; `Page` matches
+/// a specific `list_tasks` page (0-based) so a fault can be injected mid-scroll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FaultTarget {
+    Id(String),
+    Page(usize),
+}
+
+/// A fault scoped to a specific target, fired the first time a matching call is
+/// made and removed on fire. Order-independent (unlike the untargeted queue) so
+/// a test can arm "fail patch of T2" without caring what else is patched first.
+#[derive(Debug, Clone)]
+struct TargetedFault {
+    method: Method,
+    target: FaultTarget,
+    err: fn() -> ApiError,
+}
+
 #[derive(Debug, Default)]
 struct State {
     lists: Vec<TaskList>,
     tasks: Vec<(String, Task)>, // (list_id, task)
     etag_counter: u64,
     faults: VecDeque<(Method, fn() -> ApiError)>,
+    /// Faults scoped to a specific task id or `list_tasks` page.
+    targeted_faults: Vec<TargetedFault>,
+    /// `list_tasks` page size. `None` returns the whole list in one page (the
+    /// historic behavior); `Some(n)` splits it into `n`-item pages with real
+    /// `next_page_token`s so multi-page scroll + resume can be exercised.
+    page_size: Option<usize>,
     /// Number of recorded calls per method.
     calls: [u32; 10],
     /// When set, the next `insert_task` commits the task server-side but then
@@ -85,8 +119,36 @@ impl State {
         None
     }
 
+    /// Fire and consume a targeted fault whose method and target match, if any.
+    fn next_targeted_fault(&mut self, m: Method, target: &FaultTarget) -> Option<ApiError> {
+        let idx = self
+            .targeted_faults
+            .iter()
+            .position(|f| f.method == m && &f.target == target)?;
+        Some((self.targeted_faults.remove(idx).err)())
+    }
+
     fn record(&mut self, m: Method) {
         self.calls[m as usize] += 1;
+    }
+
+    /// Compute the opaque, lexicographically-sortable `position` for a task
+    /// placed after `previous` among its siblings — the same rule the live API
+    /// applies for both `insert` and `move`. With `previous`, we append `'+'`
+    /// (0x2B, below every digit) to the anchor's position, which sorts strictly
+    /// after the anchor and before the anchor's original successor (whose
+    /// position starts with a digit). With no `previous`, the task goes to the
+    /// very top: `'!'` (0x21) sorts before any digit, and a descending counter
+    /// keeps successive top inserts above one another. Call `fresh_etag` first
+    /// so the counter has advanced.
+    fn position_after(&self, previous: Option<&str>) -> Result<String, ApiError> {
+        match previous {
+            Some(prev) => match self.tasks.iter().find(|(_, t)| t.id == prev) {
+                Some((_, p)) => Ok(format!("{}+", p.position)),
+                None => Err(ApiError::Other("400: Invalid task ID (previous)".into())),
+            },
+            None => Ok(format!("!{:019}", u64::MAX - self.etag_counter)),
+        }
     }
 }
 
@@ -180,6 +242,42 @@ impl InMemoryClient {
         self.inner.lock().unwrap().faults.push_back((m, err));
     }
 
+    /// Schedule a fault that fires only when `m` (`get`/`patch`/`delete`/`move`)
+    /// is invoked against `id`. Order-independent: unrelated tasks touched first
+    /// pass through untouched. Consumed on the first matching call.
+    pub fn fail_next_for_id(&self, m: Method, id: &str, err: fn() -> ApiError) {
+        self.inner
+            .lock()
+            .unwrap()
+            .targeted_faults
+            .push(TargetedFault {
+                method: m,
+                target: FaultTarget::Id(id.into()),
+                err,
+            });
+    }
+
+    /// Schedule a fault that fires only when `list_tasks` is called for the
+    /// given 0-based page. Models a network drop partway through a paged scroll.
+    pub fn fail_list_tasks_page(&self, page: usize, err: fn() -> ApiError) {
+        self.inner
+            .lock()
+            .unwrap()
+            .targeted_faults
+            .push(TargetedFault {
+                method: Method::ListTasks,
+                target: FaultTarget::Page(page),
+                err,
+            });
+    }
+
+    /// Split `list_tasks` responses into pages of at most `size` items, with a
+    /// real `next_page_token` between them. Default (unset) returns everything
+    /// in a single page.
+    pub fn set_page_size(&self, size: usize) {
+        self.inner.lock().unwrap().page_size = Some(size);
+    }
+
     /// Make the next `insert_task` commit the task server-side but return a
     /// network error — models a response timeout after the server committed.
     pub fn commit_then_fail_next_insert(&self) {
@@ -261,22 +359,55 @@ impl GoogleTasksClient for InMemoryClient {
     async fn list_tasks(
         &self,
         list_id: &str,
-        _page_token: Option<&str>,
+        page_token: Option<&str>,
     ) -> Result<Page<Task>, ApiError> {
         let mut s = self.inner.lock().unwrap();
         s.record(Method::ListTasks);
+        // Decode the page cursor first — it identifies which page a per-page
+        // fault targets. Tokens are our own opaque `page-N` strings; anything
+        // else is a client bug the live API would reject with a 400.
+        let page_index = match page_token {
+            None => 0,
+            Some(tok) => match tok
+                .strip_prefix("page-")
+                .and_then(|n| n.parse::<usize>().ok())
+            {
+                Some(i) => i,
+                None => return Err(ApiError::Other("400: Invalid page token".into())),
+            },
+        };
         if let Some(e) = s.next_fault(Method::ListTasks) {
             return Err(e);
         }
-        let items: Vec<Task> = s
+        if let Some(e) = s.next_targeted_fault(Method::ListTasks, &FaultTarget::Page(page_index)) {
+            return Err(e);
+        }
+        // Google returns a list's tasks ordered by their opaque, lexicographic
+        // `position` string; mirror that so ordering tests see a real order.
+        let mut items: Vec<Task> = s
             .tasks
             .iter()
             .filter(|(lid, _)| lid == list_id)
             .map(|(_, t)| t.clone())
             .collect();
+        items.sort_by(|a, b| a.position.cmp(&b.position));
+
+        let page_size = s.page_size.unwrap_or(items.len().max(1));
+        let start = page_index.saturating_mul(page_size);
+        let end = start.saturating_add(page_size).min(items.len());
+        let page_items = if start < items.len() {
+            items[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        let next_page_token = if end < items.len() {
+            Some(format!("page-{}", page_index + 1))
+        } else {
+            None
+        };
         Ok(Page {
-            items,
-            next_page_token: None,
+            items: page_items,
+            next_page_token,
         })
     }
 
@@ -299,17 +430,8 @@ impl GoogleTasksClient for InMemoryClient {
         let due = validate_due(new.due)?;
         let etag = s.fresh_etag();
         // Live-API positioning: with `previous`, insert right after it; with
-        // none, insert FIRST. Positions are opaque lexicographically-sortable
-        // strings. '+' sorts before digits, so "P+" lands between P and the
-        // next sibling, and '!' sorts before everything numeric (top slot,
-        // successive top-inserts each land above the previous).
-        let position = match new.previous.as_deref() {
-            Some(prev) => match s.tasks.iter().find(|(_, t)| t.id == prev) {
-                Some((_, p)) => format!("{}+", p.position),
-                None => return Err(ApiError::Other("400: Invalid task ID (previous)".into())),
-            },
-            None => format!("!{:019}", u64::MAX - s.etag_counter),
-        };
+        // none, insert FIRST. See `State::position_after`.
+        let position = s.position_after(new.previous.as_deref())?;
         let id = format!("remote-{}", s.etag_counter);
         let web_view_link = Some(format!("https://tasks.google.com/task/{id}"));
         let task = Task {
@@ -339,6 +461,9 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_fault(Method::GetTask) {
             return Err(e);
         }
+        if let Some(e) = s.next_targeted_fault(Method::GetTask, &FaultTarget::Id(id.into())) {
+            return Err(e);
+        }
         s.tasks
             .iter()
             .find(|(lid, t)| lid == list_id && t.id == id)
@@ -356,6 +481,9 @@ impl GoogleTasksClient for InMemoryClient {
         let mut s = self.inner.lock().unwrap();
         s.record(Method::PatchTask);
         if let Some(e) = s.next_fault(Method::PatchTask) {
+            return Err(e);
+        }
+        if let Some(e) = s.next_targeted_fault(Method::PatchTask, &FaultTarget::Id(id.into())) {
             return Err(e);
         }
         if !s.lists.iter().any(|l| l.id == list_id) {
@@ -459,6 +587,9 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_fault(Method::DeleteTask) {
             return Err(e);
         }
+        if let Some(e) = s.next_targeted_fault(Method::DeleteTask, &FaultTarget::Id(id.into())) {
+            return Err(e);
+        }
         if !s.lists.iter().any(|l| l.id == list_id) {
             return Err(ApiError::NotFound);
         }
@@ -493,20 +624,26 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_fault(Method::MoveTask) {
             return Err(e);
         }
+        if let Some(e) = s.next_targeted_fault(Method::MoveTask, &FaultTarget::Id(id.into())) {
+            return Err(e);
+        }
         if !s.lists.iter().any(|l| l.id == list_id) {
             return Err(ApiError::NotFound);
         }
-        let new_etag = s.fresh_etag();
-        let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == id) else {
+        if !s.tasks.iter().any(|(_, t)| t.id == id) {
             // Live-API behavior: an unknown task id in a move is a permanent
             // 400 "Invalid task ID" (verified live), NOT a 404.
             return Err(ApiError::Other("400: Invalid task ID".into()));
-        };
+        }
+        let new_etag = s.fresh_etag();
+        // Real lexicographic placement: derive a `position` that sorts the task
+        // into the requested slot among its siblings, exactly like `insert`.
+        // An unknown `previous` is a permanent 400 (same as the live API).
+        let position = s.position_after(previous)?;
+        let t = s.tasks.iter_mut().find(|(_, t)| t.id == id).map(|(_, t)| t);
+        let t = t.expect("presence checked above");
         t.parent = parent.map(String::from);
-        t.position = match previous {
-            Some(p) => format!("after-{p}"),
-            None => "00000000000001".into(),
-        };
+        t.position = position;
         t.etag = Some(new_etag);
         Ok(t.clone())
     }
@@ -634,7 +771,13 @@ mod tests {
         c.seed_task("L1", "T2", "child", "00000000000002");
         let moved = c.move_task("L1", "T2", Some("T1"), None).await.unwrap();
         assert_eq!(moved.parent.as_deref(), Some("T1"));
-        assert_eq!(moved.position, "00000000000001");
+        // No `previous` → placed at the top of its siblings; `'!'` sorts below
+        // every digit-led seeded position.
+        assert!(
+            moved.position < "00000000000001".to_string(),
+            "top slot sorts before existing positions, got {}",
+            moved.position
+        );
     }
 
     #[tokio::test]
@@ -644,8 +787,168 @@ mod tests {
         c.seed_task("L1", "T1", "first", "00000000000001");
         c.seed_task("L1", "T2", "second", "00000000000002");
         let moved = c.move_task("L1", "T2", None, Some("T1")).await.unwrap();
-        assert_eq!(moved.position, "after-T1");
+        // Placed immediately after T1: sorts after T1 and before T2's original slot.
+        assert!(moved.position > "00000000000001".to_string());
+        assert!(moved.position < "00000000000002".to_string());
         assert!(moved.parent.is_none());
+    }
+
+    #[tokio::test]
+    async fn move_task_unknown_previous_is_permanent_400() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "only", "00000000000001");
+        let err = c
+            .move_task("L1", "T1", None, Some("ghost"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApiError::Other(_)));
+        assert!(!err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn list_tasks_returns_position_order_not_insertion_order() {
+        // Seed out of position order; list_tasks must sort by position.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T-c", "third", "00000000000003");
+        c.seed_task("L1", "T-a", "first", "00000000000001");
+        c.seed_task("L1", "T-b", "second", "00000000000002");
+        let ids: Vec<String> = c
+            .list_tasks("L1", None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, vec!["T-a", "T-b", "T-c"]);
+    }
+
+    #[tokio::test]
+    async fn move_reorders_task_in_subsequent_list() {
+        // A real lexicographic move must change where the task appears on the
+        // NEXT list_tasks, not just stamp an opaque field.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "A", "a", "00000000000001");
+        c.seed_task("L1", "B", "b", "00000000000002");
+        c.seed_task("L1", "C", "c", "00000000000003");
+        // Move C to sit right after A → order becomes A, C, B.
+        c.move_task("L1", "C", None, Some("A")).await.unwrap();
+        let ids: Vec<String> = c
+            .list_tasks("L1", None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, vec!["A", "C", "B"]);
+    }
+
+    #[tokio::test]
+    async fn list_tasks_paginates_with_real_tokens() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        for i in 1..=5 {
+            c.seed_task("L1", &format!("T{i}"), "t", &format!("{i:014}"));
+        }
+        c.set_page_size(2);
+
+        let p0 = c.list_tasks("L1", None).await.unwrap();
+        assert_eq!(p0.items.len(), 2);
+        let tok0 = p0.next_page_token.expect("more pages after page 0");
+
+        let p1 = c.list_tasks("L1", Some(&tok0)).await.unwrap();
+        assert_eq!(p1.items.len(), 2);
+        let tok1 = p1.next_page_token.expect("more pages after page 1");
+
+        let p2 = c.list_tasks("L1", Some(&tok1)).await.unwrap();
+        assert_eq!(p2.items.len(), 1);
+        assert!(p2.next_page_token.is_none(), "last page has no token");
+
+        // Pages concatenate to the full list, in position order, no dupes.
+        let mut ids: Vec<String> = p0
+            .items
+            .into_iter()
+            .chain(p1.items)
+            .chain(p2.items)
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, vec!["T1", "T2", "T3", "T4", "T5"]);
+        ids.dedup();
+        assert_eq!(ids.len(), 5, "no task appears on two pages");
+    }
+
+    #[tokio::test]
+    async fn fail_list_tasks_page_targets_one_page_only() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        for i in 1..=4 {
+            c.seed_task("L1", &format!("T{i}"), "t", &format!("{i:014}"));
+        }
+        c.set_page_size(2);
+        // Drop the network on the SECOND page (index 1); page 0 must still load.
+        c.fail_list_tasks_page(1, || ApiError::Server { status: 503 });
+
+        let p0 = c.list_tasks("L1", None).await.unwrap();
+        let tok0 = p0.next_page_token.unwrap();
+        let err = c.list_tasks("L1", Some(&tok0)).await.unwrap_err();
+        assert!(matches!(err, ApiError::Server { status: 503 }));
+        // The fault is consumed: a retry of page 1 now succeeds.
+        assert!(c.list_tasks("L1", Some(&tok0)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fail_next_for_id_targets_only_that_task() {
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "one", "00000000000001");
+        c.seed_task("L1", "T2", "two", "00000000000002");
+        // Arm a fault for patching T2; patching T1 first must pass through.
+        c.fail_next_for_id(Method::PatchTask, "T2", || ApiError::Server { status: 500 });
+
+        let ok = c
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("edited".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await;
+        assert!(ok.is_ok(), "unrelated task is unaffected by the id fault");
+
+        let err = c
+            .patch_task(
+                "L1",
+                "T2",
+                TaskPatch {
+                    title: Some("edited".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ApiError::Server { status: 500 }));
+        // Consumed on fire: the next patch of T2 succeeds.
+        assert!(
+            c.patch_task(
+                "L1",
+                "T2",
+                TaskPatch {
+                    title: Some("again".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .is_ok()
+        );
     }
 
     #[tokio::test]
