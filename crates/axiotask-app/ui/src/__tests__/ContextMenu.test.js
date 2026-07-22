@@ -71,44 +71,15 @@ describe("GH#19: Custom context menu", () => {
   });
 
   describe("Right-click shows menu with all items", () => {
-    it("shows context menu on right-click", async () => {
+    it("shows every action item on right-click", async () => {
       mockBackend([task("t1", "Test task")]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
       await openContextMenu(container);
       expect(container.querySelector(".context-menu")).toBeInTheDocument();
-    });
-
-    it("displays Edit title option", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Edit title")).toBeInTheDocument();
-    });
-
-    it("displays Edit notes option", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Edit notes")).toBeInTheDocument();
-    });
-
-    it("displays Set due date submenu", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Set due date")).toBeInTheDocument();
-    });
-
-    it("displays Move to list submenu", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Move to list")).toBeInTheDocument();
+      for (const label of ["Edit title", "Edit notes", "Set due date", "Move to list", "Duplicate", "Details", "Delete"]) {
+        expect(screen.getByText(label)).toBeInTheDocument();
+      }
     });
 
     it("offers no Add subtask option (#91) — subtasks added only in the detail panel", async () => {
@@ -117,22 +88,6 @@ describe("GH#19: Custom context menu", () => {
       await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
       await openContextMenu(container);
       expect(screen.queryByText("Add subtask")).not.toBeInTheDocument();
-    });
-
-    it("displays Duplicate option", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Duplicate")).toBeInTheDocument();
-    });
-
-    it("displays Delete option", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Delete")).toBeInTheDocument();
     });
   });
 
@@ -239,14 +194,6 @@ describe("GH#19: Custom context menu", () => {
   });
 
   describe("Details", () => {
-    it("displays Details option", async () => {
-      mockBackend([task("t1", "Test task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
-      await openContextMenu(container);
-      expect(screen.getByText("Details")).toBeInTheDocument();
-    });
-
     it("clicking Details opens the task detail panel", async () => {
       mockBackend([task("t1", "Test task", { notes: "some notes" })]);
       const { container } = render(App);

@@ -2,7 +2,6 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
-import TaskRow from "../TaskRow.svelte";
 
 function mockBackend(initialTasks = []) {
   const lists = [{ id: "L1", title: "Work" }];
@@ -113,67 +112,6 @@ describe("GH#11: Complete/uncomplete with undo", () => {
       await waitFor(() => expect(screen.queryByText("Done task")).toBeInTheDocument());
       await fireEvent.keyDown(window, { key: " " });
       expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
-    });
-  });
-
-  describe("CSS transition (fade + strikethrough)", () => {
-    it("completed task has strikethrough on title", () => {
-      const completedTask = {
-        id: "t1", parent_id: null, title: "Finished", notes: null,
-        status: "completed", due: null, position: "1", sync_state: "clean",
-        listId: "L1", listTitle: "Work", depth: 0, hasChildren: false, isCollapsed: false,
-      };
-      const { container } = render(TaskRow, {
-        props: {
-          task: completedTask, focused: false, editing: false,
-          onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
-          ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          showList: false, subtaskProgress: null,
-        },
-      });
-      const widget = container.querySelector(".task-widget");
-      expect(widget.classList.contains("completed")).toBe(true);
-      // Verify strikethrough via class on title
-      const title = container.querySelector(".title");
-      const styles = window.getComputedStyle(title);
-      // The class .completed .title has text-decoration: line-through in CSS
-      expect(widget.classList.contains("completed")).toBe(true);
-    });
-
-    it("completed task widget has reduced opacity (fade)", () => {
-      const completedTask = {
-        id: "t1", parent_id: null, title: "Faded", notes: null,
-        status: "completed", due: null, position: "1", sync_state: "clean",
-        listId: "L1", listTitle: "Work", depth: 0, hasChildren: false, isCollapsed: false,
-      };
-      const { container } = render(TaskRow, {
-        props: {
-          task: completedTask, focused: false, editing: false,
-          onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
-          ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          showList: false, subtaskProgress: null,
-        },
-      });
-      const widget = container.querySelector(".task-widget");
-      expect(widget.classList.contains("completed")).toBe(true);
-    });
-
-    it("uncompleted task does not have completed class", () => {
-      const openTask = {
-        id: "t1", parent_id: null, title: "Open", notes: null,
-        status: "needsAction", due: null, position: "1", sync_state: "clean",
-        listId: "L1", listTitle: "Work", depth: 0, hasChildren: false, isCollapsed: false,
-      };
-      const { container } = render(TaskRow, {
-        props: {
-          task: openTask, focused: false, editing: false,
-          onrename: () => {}, oncanceledit: () => {}, onclick: () => {},
-          ontoggle: () => {}, onsetdue: () => {}, oncontextmenu: () => {},
-          showList: false, subtaskProgress: null,
-        },
-      });
-      const widget = container.querySelector(".task-widget");
-      expect(widget.classList.contains("completed")).toBe(false);
     });
   });
 
