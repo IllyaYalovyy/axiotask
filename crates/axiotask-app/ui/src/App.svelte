@@ -679,16 +679,24 @@
       ? descendantsOf(id).filter(d => d.status === "needsAction").map(d => d.id)
       : [];
     await cmd("toggle_complete", { id });
+    // Offer Undo for any completion, top-level or subtask (#79). Un-completing
+    // does not cascade, so it needs no undo.
+    const offerUndo = () => {
+      if (wasOpen && task) {
+        undoItem = { id, title: task.title, listId: task.listId, isComplete: true, reopenIds, timer: setTimeout(() => { undoItem = null; }, 10000) };
+      }
+    };
     if (wasOpen && !task?.parent_id) {
       // Animate only top-level tasks in the list
       completingIds = new Set([...completingIds, id]);
       setTimeout(async () => {
         completingIds = new Set([...completingIds].filter(x => x !== id));
         await refreshLists([task.listId]);
-        undoItem = { id, title: task.title, listId: task.listId, isComplete: true, reopenIds, timer: setTimeout(() => { undoItem = null; }, 10000) };
+        offerUndo();
       }, 300);
     } else {
       await refreshLists([task.listId]);
+      offerUndo();
     }
   }
 
