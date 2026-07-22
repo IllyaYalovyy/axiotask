@@ -188,21 +188,13 @@ describe("Keyboard Navigation", () => {
     });
   });
 
-  describe("s — create subtask", () => {
-    it("pressing s creates a subtask of the focused task", async () => {
+  describe("s — no longer a subtask shortcut (#91)", () => {
+    it("pressing s over the focused task creates nothing", async () => {
       await renderWithTasks();
       await pressKey("s");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("create_task", { listId: "L1", parentId: "t1", title: "" });
-      });
-    });
-
-    it("pressing s with no focused task does not create a subtask", async () => {
-      mockBackend(lists, []);
-      localStorage.setItem("axiotask:view", "L1");
-      render(App);
-      await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_tasks", expect.anything()));
-      await pressKey("s");
+      // Subtasks are added only from the detail panel; the list-level 's'
+      // shortcut was removed, so nothing is created.
+      await new Promise((resolve) => setTimeout(resolve, 30));
       const createCalls = invoke.mock.calls.filter(c => c[0] === "create_task");
       expect(createCalls).toHaveLength(0);
     });

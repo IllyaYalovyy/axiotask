@@ -142,25 +142,22 @@ describe("Detail Panel Workflows", () => {
       expect(screen.queryByText("Untitled")).not.toBeInTheDocument();
     });
 
-    it("a list row's + still creates a blank subtask, opens it, and discards it if left blank", async () => {
-      // The detail-panel inline field is new; the list-row quick action keeps
-      // its create-blank-then-name flow, guarded by auto-discard on close.
+    it("the list row exposes no add-subtask affordance (#91)", async () => {
+      // Subtasks are added ONLY from the detail panel now; the list-row '+'
+      // quick action and its blank-create flow are gone.
       mockBackend([task("t1", "Parent task")]);
-      render(App);
+      const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByTitle("Add subtask"));
-      await waitFor(() => expect(screen.getByText("Subtask", { exact: true })).toBeInTheDocument());
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1", title: "" }));
-      });
-
-      // Closing the blank subtask discards it — no Untitled debris.
-      await fireEvent.click(screen.getByText("✕"));
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("delete_task", { id: "sub-200" });
-      });
-      await waitFor(() => expect(screen.queryByText("Untitled")).not.toBeInTheDocument());
+      // No '+' quick action anywhere in the row's action strip.
+      expect(screen.queryByTitle("Add subtask")).not.toBeInTheDocument();
+      const plus = [...container.querySelectorAll(".task-widget .actions button")].find(
+        (b) => b.textContent.trim() === "+",
+      );
+      expect(plus).toBeUndefined();
+      // And nothing was created by merely rendering the list.
+      const created = invoke.mock.calls.filter((c) => c[0] === "create_task");
+      expect(created).toHaveLength(0);
     });
 
     it("never auto-discards an untitled subtask that has children of its own", async () => {

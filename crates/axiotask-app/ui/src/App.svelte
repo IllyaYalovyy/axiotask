@@ -627,24 +627,17 @@
     showOnboarding = false;
   }
 
-  // Two callers, two shapes:
-  //  - A list row's "+" passes no title. There is no inline field there, so we
-  //    create a blank subtask and open its detail panel to be named (and the
-  //    auto-discard-on-close path cleans it up if it is left blank).
-  //  - The detail panel's inline "Add a subtask" field passes the typed title.
-  //    We create it named and STAY on the parent so the user can keep adding
-  //    more — no navigation, and no blank debris to discard.
-  async function addSubtask(parentId, title = null) {
+  // Subtasks are added ONLY from the detail panel's inline "Add a subtask"
+  // field (#91), which passes the typed title. We create it named and STAY on
+  // the parent so the user can keep adding more — no navigation, no blank debris.
+  async function addSubtask(parentId, title) {
     const parent = allTasks.find(t => t.id === parentId);
     // Strict two-level tree (invariant #1): a subtask can't gain a subtask.
     // No affordance offers this today, but centralize the rule so no future
     // caller can create a third level.
     if (!canAddSubtask(parent)) return;
-    const task = await cmd("create_task", { listId: parent.listId, parentId, title: title ?? "" });
-    if (task) {
-      await refreshLists([parent.listId]);
-      if (title == null) openDetail(task);
-    }
+    const task = await cmd("create_task", { listId: parent.listId, parentId, title });
+    if (task) await refreshLists([parent.listId]);
   }
 
   async function toggleComplete(id) {
@@ -1096,10 +1089,6 @@
         ...(task.parent_id ? [{
           id: "detach-subtask", icon: "cornerUpLeft", label: "Detach subtask", action: () => promoteTask(task.id),
         }] : []),
-        ...(canAddSubtask(task) ? [{ id: "subtask", icon: "plus", label: "Add subtask", action: async () => {
-          const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
-          if (t) { await refreshLists([task.listId]); editingId = t.id; }
-        }}] : []),
         ...(canDemote(task) ? [{
           id: "demote", icon: "cornerDownRight", label: "Make subtask of…",
           action: () => { demoteTask = allTasks.find(t => t.id === task.id) ?? task; },
@@ -1357,7 +1346,6 @@
         }
         break;
       case "n": e.preventDefault(); await newTask(); break;
-      case "s": e.preventDefault(); if (f) await addSubtask(f.id); break;
       case "d": e.preventDefault(); if (selectedIds.size > 0) await bulkDelete(); else if (f) await deleteTask(f.id); break;
       case "o": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Today"); else if (f) await setDue(f.id, "Today"); break;
       case "t": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Tomorrow"); else if (f) await setDue(f.id, "Tomorrow"); break;
@@ -1487,15 +1475,15 @@
     {#if loading}
       <p class="status">Loading...</p>
     {:else if selectedView === "focus"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="focus" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "upcoming"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="upcoming" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "missed"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="missed" {sortMode} onreorder={handleDragReorder} />
     {:else if selectedView === "unscheduled"}
-      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
+      <TodayView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} {showCompleted} viewType="unscheduled" {sortMode} onreorder={handleDragReorder} />
     {:else}
-      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} onaddsubtask={addSubtask} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
+      <ListView tasks={flatTasks} {focusIndex} {editingId} {completingIds} onrename={renameTask} oncanceledit={() => editingId = null} onfocus={handleFocus} ontoggle={toggleComplete} onsetdue={setDue} onpickdate={openDatePicker} oncontextmenu={openTaskContextMenu} {selectedIds} onselect={toggleSelect} {getSubtaskProgress} isCrossList={selectedView === "all"} {sortMode} onreorder={handleDragReorder} />
     {/if}
   </section>
   <button class="mobile-fab" type="button" aria-label="New task" onclick={newTask}>+</button>

@@ -32,7 +32,6 @@ const defaultProps = {
   ontoggle: noop,
   onsetdue: noop,
   oncontextmenu: noop,
-  onaddsubtask: noop,
   showList: false,
   subtaskProgress: null,
 };

@@ -111,12 +111,12 @@ describe("GH#19: Custom context menu", () => {
       expect(screen.getByText("Move to list")).toBeInTheDocument();
     });
 
-    it("displays Add subtask option", async () => {
+    it("offers no Add subtask option (#91) — subtasks added only in the detail panel", async () => {
       mockBackend([task("t1", "Test task")]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
       await openContextMenu(container);
-      expect(screen.getByText("Add subtask")).toBeInTheDocument();
+      expect(screen.queryByText("Add subtask")).not.toBeInTheDocument();
     });
 
     it("displays Duplicate option", async () => {
@@ -224,17 +224,6 @@ describe("GH#19: Custom context menu", () => {
       await waitFor(() => expect(screen.getByText("Top-level task")).toBeInTheDocument());
       await openContextMenu(container);
       expect(screen.queryByText("Detach subtask")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("Add subtask", () => {
-    it("clicking Add subtask creates a child task", async () => {
-      mockBackend([task("t1", "Parent task")]);
-      const { container } = render(App);
-      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
-      await openContextMenu(container);
-      await fireEvent.click(screen.getByText("Add subtask"));
-      expect(invoke).toHaveBeenCalledWith("create_task", { listId: "L1", parentId: "t1", title: "" });
     });
   });
 

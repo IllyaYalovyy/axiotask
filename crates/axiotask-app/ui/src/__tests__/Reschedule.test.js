@@ -37,7 +37,6 @@ function renderRow(overrides = {}, taskOverrides = {}) {
     ontoggle: noop,
     onsetdue,
     oncontextmenu: noop,
-    onaddsubtask: noop,
     showList: false,
     subtaskProgress: null,
     ...overrides,
@@ -177,8 +176,7 @@ describe("GH#10: One-click reschedule buttons", () => {
           ontoggle: noop,
           onsetdue: noop,
           oncontextmenu: noop,
-          onaddsubtask: noop,
-          showList: false,
+                showList: false,
           subtaskProgress: null,
         },
       });

@@ -18,7 +18,7 @@ const noop = () => {};
 const defaultProps = {
   focused: false, editing: false, onrename: noop, oncanceledit: noop,
   onclick: noop, ontoggle: noop, onsetdue: noop, oncontextmenu: noop,
-  onaddsubtask: noop, showList: false, subtaskProgress: null,
+  showList: false, subtaskProgress: null,
 };
 
 function mockBackend(tasks = []) {

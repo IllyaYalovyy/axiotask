@@ -34,7 +34,6 @@ export const SHORTCUT_CATEGORIES = [
       { keys: ["Enter"], description: "Open / close detail panel" },
       { keys: ["e"], description: "Edit title" },
       { keys: ["Space"], description: "Toggle complete" },
-      { keys: ["s"], description: "Add subtask" },
       { keys: ["d"], description: "Delete" },
       { keys: ["x"], description: "Select / deselect (bulk)" },
     ],

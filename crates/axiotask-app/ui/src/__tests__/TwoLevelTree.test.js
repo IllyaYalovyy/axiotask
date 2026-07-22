@@ -61,14 +61,21 @@ describe("#87 strict two-level tree", () => {
     expect(screen.queryByText("Subtasks")).not.toBeInTheDocument();
   });
 
-  it("a top-level task that has subtasks can still gain more (Add subtask offered)", async () => {
+  it("a top-level task that has subtasks can still gain more (add field in the panel)", async () => {
     mockBackend([task("t1", "Parent task"), task("s1", "A subtask", { parent: "t1" })]);
     const { container } = render(App);
     await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
 
+    // Subtasks are added only from the detail panel (#91): a parent that
+    // already has one still exposes the inline "add a subtask" field there.
+    await fireEvent.click(screen.getByText("Parent task"));
+    await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+    expect(screen.getByLabelText("New subtask")).toBeInTheDocument();
+
+    // The list-level context menu no longer offers an add-subtask entry point.
     await fireEvent.contextMenu(container.querySelector(".task-widget"));
     await waitFor(() => expect(container.querySelector(".context-menu")).toBeInTheDocument());
-    expect(screen.getByText("Add subtask")).toBeInTheDocument();
+    expect(screen.queryByText("Add subtask")).not.toBeInTheDocument();
     // It is top-level, so there is nothing to detach from.
     expect(screen.queryByText("Detach subtask")).not.toBeInTheDocument();
   });

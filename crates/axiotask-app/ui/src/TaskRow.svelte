@@ -2,7 +2,7 @@
   import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
   import { formatDue, dueClass } from "./dateFormat.js";
-  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, onaddsubtask, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
+  let { task, focused, editing, completing = false, selected = false, onrename, oncanceledit, onclick, onselect, ontoggle, onsetdue, onpickdate, oncontextmenu, showList = false, subtaskProgress = null, draggable = false, ondragstart, ondragend, ondragover, ondrop } = $props();
 
   let touchTimer = $state(null);
   let touchDragging = $state(false);
@@ -245,7 +245,6 @@
 
     <!-- Quick actions (hover) -->
     <span class="actions" aria-label="Task actions">
-      <button onclick={(e) => { e.stopPropagation(); onaddsubtask?.(task.id); }} title="Add subtask">+</button>
       <button onclick={(e) => handleDateAction(e, "Today")} title="Today (o)">→o</button>
       <button onclick={(e) => handleDateAction(e, "Tomorrow")} title="Tomorrow (t)">→t</button>
       <button onclick={(e) => handleDateAction(e, "NextWeek")} title="Next week (w)">→w</button>
