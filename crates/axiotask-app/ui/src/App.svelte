@@ -1527,6 +1527,7 @@
       onopensubtask={openDetail}
       onopenparent={openDetail}
       onaddsubtask={addSubtask}
+      onreordersubtask={handleDragReorder}
       onprev={si > 0 ? () => openDetail(siblings[si - 1]) : null}
       onnext={si >= 0 && si < siblings.length - 1 ? () => openDetail(siblings[si + 1]) : null}
     />

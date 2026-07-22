@@ -5,7 +5,7 @@
   import { invokeWithTimeout } from "./ipc.js";
   import { formatDue } from "./dateFormat.js";
   import { storageKey } from "./storage.js";
-  let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onuncompletesubtasks, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
+  let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onuncompletesubtasks, onopensubtask, onopenparent, onaddsubtask, onreordersubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -33,6 +33,43 @@
   $effect(() => { localStorage.setItem(storageKey("hideCompletedSubtasks"), String(hideCompletedSubtasks)); });
   let completedSubtaskCount = $derived(subtasks.filter((s) => s.status === "completed").length);
   let visibleSubtasks = $derived(hideCompletedSubtasks ? subtasks.filter((s) => s.status !== "completed") : subtasks);
+
+  // Drag-reorder subtasks within the parent. The backend swaps ADJACENT
+  // siblings, so the number of steps is always measured against the FULL
+  // `subtasks` list (position order) — never the filtered `visibleSubtasks`.
+  // That keeps a drop correct when "Hide completed" is on and one or more
+  // hidden completed rows sit between the two visible rows being reordered.
+  let draggingSubId = $state(null);
+  let dropTargetSubId = $state(null);
+
+  function subDragStart(id) { draggingSubId = id; }
+  function subDragEnd() { draggingSubId = null; dropTargetSubId = null; }
+  function subDragOver(id, e) {
+    e.preventDefault();
+    if (draggingSubId && draggingSubId !== id) dropTargetSubId = id;
+  }
+  function reorderSubtask(dragId, targetId) {
+    if (!dragId || !targetId || dragId === targetId) return;
+    const fromIdx = subtasks.findIndex((s) => s.id === dragId);
+    const toIdx = subtasks.findIndex((s) => s.id === targetId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const direction = toIdx > fromIdx ? "down" : "up";
+    const steps = Math.abs(toIdx - fromIdx);
+    if (steps > 0) onreordersubtask?.(dragId, direction, steps);
+  }
+  function subDrop(targetId) {
+    const dragId = draggingSubId;
+    subDragEnd();
+    reorderSubtask(dragId, targetId);
+  }
+  // Touch/keyboard path (HTML5 drag is pointer-fine only): nudge a subtask past
+  // its nearest VISIBLE neighbor, translated back into full-list steps so it
+  // still works with completed rows hidden.
+  function moveSubtask(sub, direction) {
+    const vi = visibleSubtasks.findIndex((s) => s.id === sub.id);
+    const neighbor = direction === "up" ? visibleSubtasks[vi - 1] : visibleSubtasks[vi + 1];
+    if (neighbor) reorderSubtask(sub.id, neighbor.id);
+  }
 
   let prevTaskId = $state(null);
   let titleInput = $state(null);
@@ -302,8 +339,22 @@
       {/if}
       {#if visibleSubtasks.length > 0}
         <div class="subtask-list">
-          {#each visibleSubtasks as sub}
-            <div class="subtask-item" class:completed={sub.status === "completed"}>
+          {#each visibleSubtasks as sub, vi (sub.id)}
+            {#if dropTargetSubId === sub.id && draggingSubId && draggingSubId !== sub.id}
+              <div class="subtask-drop-indicator"></div>
+            {/if}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="subtask-item"
+              class:completed={sub.status === "completed"}
+              class:dragging={draggingSubId === sub.id}
+              draggable="true"
+              ondragstart={() => subDragStart(sub.id)}
+              ondragend={subDragEnd}
+              ondragover={(e) => subDragOver(sub.id, e)}
+              ondrop={() => subDrop(sub.id)}
+            >
+              <span class="subtask-grip" aria-hidden="true" title="Drag to reorder"><Icon name="gripVertical" size={14} /></span>
               <input
                 class="subtask-check"
                 type="checkbox"
@@ -314,6 +365,22 @@
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <span class="subtask-title clickable" onclick={() => openSub(sub)}>{sub.title || "Untitled"}</span>
+              <span class="subtask-move" role="group" aria-label="Reorder subtask">
+                <button
+                  class="subtask-move-btn up"
+                  aria-label={`Move ${sub.title || "subtask"} up`}
+                  title="Move up"
+                  disabled={vi === 0}
+                  onclick={(e) => { e.stopPropagation(); moveSubtask(sub, "up"); }}
+                ><Icon name="chevronDown" size={12} /></button>
+                <button
+                  class="subtask-move-btn"
+                  aria-label={`Move ${sub.title || "subtask"} down`}
+                  title="Move down"
+                  disabled={vi === visibleSubtasks.length - 1}
+                  onclick={(e) => { e.stopPropagation(); moveSubtask(sub, "down"); }}
+                ><Icon name="chevronDown" size={12} /></button>
+              </span>
               <button
                 class="subtask-due"
                 class:empty={!subtaskDue(sub)}
@@ -466,6 +533,18 @@
   .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
   .subtask-item:hover { background: var(--bg-hover); }
   .subtask-item.completed .subtask-title { text-decoration: line-through; opacity: 0.5; }
+  .subtask-item.dragging { opacity: 0.5; }
+  .subtask-drop-indicator { height: 2px; background: var(--accent); border-radius: 1px; margin: 0 0.4rem; }
+  /* Drag handle: a fine-pointer affordance (the whole row is draggable). Hidden
+     on touch, where the reorder buttons take over instead. */
+  .subtask-grip { display: inline-flex; align-items: center; flex: 0 0 auto; color: var(--fg-faint); cursor: grab; }
+  .subtask-item:hover .subtask-grip { color: var(--fg-muted); }
+  .subtask-item:active .subtask-grip { cursor: grabbing; }
+  .subtask-move { display: none; }
+  .subtask-move-btn { display: inline-flex; align-items: center; justify-content: center; background: none; border: 1px solid var(--border); color: var(--fg-muted); border-radius: 3px; cursor: pointer; padding: 0; }
+  .subtask-move-btn.up { transform: rotate(180deg); }
+  .subtask-move-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .subtask-move-btn:disabled { opacity: 0.3; cursor: default; }
   .subtask-check {
     cursor: pointer; width: 0.95rem; height: 0.95rem; margin: 0;
     accent-color: var(--accent); flex-shrink: 0;
@@ -492,5 +571,9 @@
     .subtask-item { min-height: 44px; }
     .subtask-add { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
     .add-subtask-btn { min-height: 44px; min-width: 44px; }
+    /* HTML5 drag doesn't fire on touch, so swap the grip cue for tap targets. */
+    .subtask-grip { display: none; }
+    .subtask-move { display: inline-flex; flex: 0 0 auto; gap: 0.2rem; }
+    .subtask-move-btn { min-height: 36px; min-width: 30px; }
   }
 </style>
