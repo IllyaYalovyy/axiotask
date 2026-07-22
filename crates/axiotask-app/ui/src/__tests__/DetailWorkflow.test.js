@@ -72,51 +72,91 @@ describe("Detail Panel Workflows", () => {
   beforeEach(() => { localStorage.clear(); localStorage.setItem("axiotask:view", "L1"); invoke.mockReset(); });
 
   describe("UT-14: Create subtask from detail panel", () => {
-    it("clicking + in subtasks section calls create_task with parentId", async () => {
+    it("typing a subtask title and pressing Enter creates it named under the parent", async () => {
       mockBackend([task("t1", "Parent task")]);
-      const { container } = render(App);
+      render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
 
       // Open detail panel
       await fireEvent.click(screen.getByText("Parent task"));
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
-      // Click + button in subtasks section
-      const addBtn = container.querySelector(".add-subtask-btn");
-      expect(addBtn).toBeInTheDocument();
-      await fireEvent.click(addBtn);
+      // Type a name into the inline field and press Enter.
+      const input = screen.getByLabelText("New subtask");
+      await fireEvent.input(input, { target: { value: "Buy milk" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      // The subtask is created already named — no blank task, no debris.
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1", title: "Buy milk" }));
+      });
+      // The panel stays on the parent (we did NOT navigate into a Subtask panel)…
+      expect(screen.getByText("Task Details")).toBeInTheDocument();
+      expect(screen.queryByText("Subtask", { exact: true })).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Title")).toHaveValue("Parent task");
+      // …the new subtask shows up in the parent's checklist…
+      await waitFor(() => expect(screen.getByText("Buy milk")).toBeInTheDocument());
+      // …and the field is cleared and refocused for the next one.
+      await waitFor(() => expect(screen.getByLabelText("New subtask")).toHaveValue(""));
+      await waitFor(() => expect(screen.getByLabelText("New subtask")).toHaveFocus());
+    });
+
+    it("the + button adds the typed subtask", async () => {
+      mockBackend([task("t1", "Parent task")]);
+      render(App);
+      await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByText("Parent task"));
+      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
+
+      const input = screen.getByLabelText("New subtask");
+      await fireEvent.input(input, { target: { value: "Walk dog" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Add subtask" }));
 
       await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1" }));
+        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1", title: "Walk dog" }));
       });
+      await waitFor(() => expect(screen.getByText("Walk dog")).toBeInTheDocument());
     });
 
-    it("focuses the new subtask title field after creating it", async () => {
+    it("an empty or whitespace-only field creates nothing (no Untitled debris)", async () => {
       mockBackend([task("t1", "Parent task")]);
-      const { container } = render(App);
+      render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByText("Parent task"));
       await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
 
-      await fireEvent.click(container.querySelector(".add-subtask-btn"));
+      const input = screen.getByLabelText("New subtask");
+      // Empty Enter.
+      await fireEvent.keyDown(input, { key: "Enter" });
+      // Whitespace + Enter.
+      await fireEvent.input(input, { target: { value: "   " } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      // The + button is disabled with no real text, so it cannot create either.
+      expect(screen.getByRole("button", { name: "Add subtask" })).toBeDisabled();
 
-      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
-      await waitFor(() => expect(screen.getByLabelText("Title")).toHaveFocus());
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const created = invoke.mock.calls.filter((c) => c[0] === "create_task");
+      expect(created).toHaveLength(0);
+      expect(screen.queryByText("Untitled")).not.toBeInTheDocument();
     });
 
-    it("discarding a blank new subtask on close prevents Untitled debris", async () => {
+    it("a list row's + still creates a blank subtask, opens it, and discards it if left blank", async () => {
+      // The detail-panel inline field is new; the list-row quick action keeps
+      // its create-blank-then-name flow, guarded by auto-discard on close.
       mockBackend([task("t1", "Parent task")]);
-      const { container } = render(App);
+      render(App);
       await waitFor(() => expect(screen.getByText("Parent task")).toBeInTheDocument());
 
-      await fireEvent.click(screen.getByText("Parent task"));
-      await waitFor(() => expect(screen.getByText("Task Details")).toBeInTheDocument());
-      await fireEvent.click(container.querySelector(".add-subtask-btn"));
-      await waitFor(() => expect(screen.getByText("Subtask")).toBeInTheDocument());
+      await fireEvent.click(screen.getByTitle("Add subtask"));
+      await waitFor(() => expect(screen.getByText("Subtask", { exact: true })).toBeInTheDocument());
+      await waitFor(() => {
+        expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ parentId: "t1", title: "" }));
+      });
 
+      // Closing the blank subtask discards it — no Untitled debris.
       await fireEvent.click(screen.getByText("✕"));
-
       await waitFor(() => {
         expect(invoke).toHaveBeenCalledWith("delete_task", { id: "sub-200" });
       });

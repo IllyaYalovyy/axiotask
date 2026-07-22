@@ -622,14 +622,20 @@
     showOnboarding = false;
   }
 
-  async function addSubtask(parentId) {
+  // Two callers, two shapes:
+  //  - A list row's "+" passes no title. There is no inline field there, so we
+  //    create a blank subtask and open its detail panel to be named (and the
+  //    auto-discard-on-close path cleans it up if it is left blank).
+  //  - The detail panel's inline "Add a subtask" field passes the typed title.
+  //    We create it named and STAY on the parent so the user can keep adding
+  //    more — no navigation, and no blank debris to discard.
+  async function addSubtask(parentId, title = null) {
     const parent = allTasks.find(t => t.id === parentId);
     if (!parent) return;
-    const task = await cmd("create_task", { listId: parent.listId, parentId, title: "" });
+    const task = await cmd("create_task", { listId: parent.listId, parentId, title: title ?? "" });
     if (task) {
       await refreshLists([parent.listId]);
-      // Open the new subtask in detail panel so user can name it immediately
-      openDetail(task);
+      if (title == null) openDetail(task);
     }
   }
 

@@ -17,6 +17,13 @@
   let showDatePicker = $state(false);
   let subtaskDatePickerTask = $state(null);
 
+  // Inline "add a subtask" field. Creating a subtask no longer means spawning a
+  // blank task and navigating into it — the user types a name here and presses
+  // Enter (or taps +), the subtask appears in the list below, and the panel
+  // stays on the parent so several can be added in a row.
+  let newSubtaskTitle = $state("");
+  let newSubtaskInput = $state(null);
+
   let prevTaskId = $state(null);
   let titleInput = $state(null);
   let notesInput = $state(null);
@@ -144,6 +151,19 @@
     if (sub) onsave(sub.id, { due: date || null });
   }
 
+  function submitNewSubtask() {
+    const t = newSubtaskTitle.trim();
+    if (!t) return;
+    onaddsubtask?.(task.id, t);
+    newSubtaskTitle = "";
+    // Keep focus for rapid entry of several subtasks in a row.
+    tick().then(() => newSubtaskInput?.focus());
+  }
+
+  function newSubtaskKeydown(e) {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); submitNewSubtask(); }
+  }
+
   function handleKeydown(e) {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
     if (e.key === "s" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
@@ -250,10 +270,7 @@
 
   {#if !parentTask}
     <div class="field">
-      <div class="field-header">
-        <span class="field-label">Subtasks</span>
-        <button class="add-subtask-btn" onclick={() => onaddsubtask?.(task.id)}>+</button>
-      </div>
+      <span class="field-label">Subtasks</span>
       {#if subtasks.length > 0}
         <div class="subtask-list">
           {#each subtasks as sub}
@@ -281,6 +298,24 @@
           {/each}
         </div>
       {/if}
+      <div class="subtask-add-row">
+        <input
+          class="subtask-add"
+          type="text"
+          bind:this={newSubtaskInput}
+          bind:value={newSubtaskTitle}
+          onkeydown={newSubtaskKeydown}
+          placeholder="Add a subtask"
+          aria-label="New subtask"
+        />
+        <button
+          class="add-subtask-btn"
+          title="Add subtask"
+          aria-label="Add subtask"
+          disabled={!newSubtaskTitle.trim()}
+          onclick={submitNewSubtask}
+        >+</button>
+      </div>
     </div>
   {/if}
 
@@ -352,9 +387,17 @@
   }
   .link-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .link-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
-  .field-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
-  .add-subtask-btn { background: none; border: 1px solid var(--border); color: var(--accent); width: 1.4rem; height: 1.4rem; border-radius: 3px; cursor: pointer; font-size: 0.9rem; line-height: 1; }
-  .add-subtask-btn:hover { background: var(--bg-hover); }
+  .subtask-add-row { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; }
+  .subtask-add {
+    flex: 1; min-width: 0; background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 4px; color: var(--fg); padding: 0.4rem 0.5rem; font-size: 0.85rem;
+    font-family: inherit; outline: none; box-sizing: border-box;
+  }
+  .subtask-add::placeholder { color: var(--fg-faint); }
+  .subtask-add:focus { border-color: var(--accent); }
+  .add-subtask-btn { flex: 0 0 auto; background: none; border: 1px solid var(--border); color: var(--accent); width: 1.9rem; height: 1.9rem; border-radius: 3px; cursor: pointer; font-size: 1rem; line-height: 1; }
+  .add-subtask-btn:hover:not(:disabled) { background: var(--bg-hover); }
+  .add-subtask-btn:disabled { opacity: 0.4; cursor: default; }
   .field input[type="text"], .field .due-btn, .field textarea, .field select {
     width: 100%; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
     color: var(--fg); padding: 0.5rem; font-size: 0.9rem; font-family: inherit; outline: none;
@@ -413,5 +456,7 @@
     .close-btn, .detach-btn { min-height: 44px; min-width: 44px; }
     .delete-btn { min-height: 44px; }
     .subtask-item { min-height: 44px; }
+    .subtask-add { padding: 0.6rem; font-size: 1rem; min-height: 44px; }
+    .add-subtask-btn { min-height: 44px; min-width: 44px; }
   }
 </style>
