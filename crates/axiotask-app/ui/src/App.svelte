@@ -1046,7 +1046,7 @@
         }))},
         "separator",
         ...(task.parent_id ? [{
-          id: "detach-subtask", icon: "cornerUpLeft", label: "Detach subtask", shortcut: "Shift+Tab", action: () => promoteTask(task.id),
+          id: "detach-subtask", icon: "cornerUpLeft", label: "Detach subtask", action: () => promoteTask(task.id),
         }] : []),
         { id: "subtask", icon: "plus", label: "Add subtask", action: async () => {
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
@@ -1310,18 +1310,6 @@
       case "t": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Tomorrow"); else if (f) await setDue(f.id, "Tomorrow"); break;
       case "w": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("NextWeek"); else if (f) await setDue(f.id, "NextWeek"); break;
       case "r": e.preventDefault(); if (selectedIds.size > 0) await bulkSetDue("Clear"); else if (f) await setDue(f.id, "Clear"); break;
-      case "Tab":
-        // Tab indents the focused top-level task under the one above it,
-        // creating a one-level subtask (which then lives in the detail panel).
-        // Shift+Tab (outdent) is unreachable from the list — every row is
-        // top-level — so promotion is done via "Detach from parent" in detail.
-        e.preventDefault();
-        if (!f || e.shiftKey) break;
-        {
-          const prev = flatTasks[focusIndex - 1];
-          if (prev && !prev.parent_id) await moveTask(f.id, prev.id);
-        }
-        break;
     }
   }
 </script>

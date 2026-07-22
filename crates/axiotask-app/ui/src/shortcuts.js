@@ -52,7 +52,6 @@ export const SHORTCUT_CATEGORIES = [
   {
     name: "Organize",
     shortcuts: [
-      { keys: ["Tab"], description: "Indent (make subtask)" },
       { keys: ["Alt+↑"], description: "Move up" },
       { keys: ["Alt+↓"], description: "Move down" },
       { keys: ["Ctrl+M"], description: "Move to list" },
