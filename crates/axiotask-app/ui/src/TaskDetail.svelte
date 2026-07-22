@@ -4,6 +4,7 @@
   import Icon from "./Icon.svelte";
   import { invokeWithTimeout } from "./ipc.js";
   import { formatDue } from "./dateFormat.js";
+  import { storageKey } from "./storage.js";
   let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
@@ -23,6 +24,15 @@
   // stays on the parent so several can be added in a row.
   let newSubtaskTitle = $state("");
   let newSubtaskInput = $state(null);
+
+  // Optionally collapse finished subtasks out of the checklist. UX only — this
+  // never touches the tasks themselves (no delete, no status change) or the
+  // date rollup; completed subtasks still exist and still count. The choice is
+  // remembered per user so a busy checklist stays tidy across panels/sessions.
+  let hideCompletedSubtasks = $state(localStorage.getItem(storageKey("hideCompletedSubtasks")) === "true");
+  $effect(() => { localStorage.setItem(storageKey("hideCompletedSubtasks"), String(hideCompletedSubtasks)); });
+  let completedSubtaskCount = $derived(subtasks.filter((s) => s.status === "completed").length);
+  let visibleSubtasks = $derived(hideCompletedSubtasks ? subtasks.filter((s) => s.status !== "completed") : subtasks);
 
   let prevTaskId = $state(null);
   let titleInput = $state(null);
@@ -270,10 +280,18 @@
 
   {#if !parentTask}
     <div class="field">
-      <span class="field-label">Subtasks</span>
-      {#if subtasks.length > 0}
+      <div class="subtask-header">
+        <span class="field-label">Subtasks</span>
+        {#if completedSubtaskCount > 0}
+          <label class="hide-completed-toggle">
+            <input type="checkbox" bind:checked={hideCompletedSubtasks} aria-label="Hide completed subtasks" />
+            Hide completed
+          </label>
+        {/if}
+      </div>
+      {#if visibleSubtasks.length > 0}
         <div class="subtask-list">
-          {#each subtasks as sub}
+          {#each visibleSubtasks as sub}
             <div class="subtask-item" class:completed={sub.status === "completed"}>
               <input
                 class="subtask-check"
@@ -428,6 +446,9 @@
   .delete-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; background: none; border: 1px solid var(--border-danger); color: var(--danger); padding: 0.4rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%; }
   .delete-btn:hover { background: var(--bg-danger); }
 
+  .subtask-header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+  .hide-completed-toggle { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: var(--fg-muted); cursor: pointer; user-select: none; }
+  .hide-completed-toggle input { cursor: pointer; }
   .subtask-list { display: flex; flex-direction: column; gap: 0.3rem; }
   .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
   .subtask-item:hover { background: var(--bg-hover); }
