@@ -21,6 +21,7 @@
   import { formatDue } from "./dateFormat.js";
   import { getThemePref, setThemePref } from "./theme.js";
   import { friendlyError, invokeWithTimeout } from "./ipc.js";
+  import { canAddSubtask, canNestUnder } from "./taskTree.js";
 
   // --- State ---
   let lists = $state([]);
@@ -633,7 +634,10 @@
   //    more — no navigation, and no blank debris to discard.
   async function addSubtask(parentId, title = null) {
     const parent = allTasks.find(t => t.id === parentId);
-    if (!parent) return;
+    // Strict two-level tree (invariant #1): a subtask can't gain a subtask.
+    // No affordance offers this today, but centralize the rule so no future
+    // caller can create a third level.
+    if (!canAddSubtask(parent)) return;
     const task = await cmd("create_task", { listId: parent.listId, parentId, title: title ?? "" });
     if (task) {
       await refreshLists([parent.listId]);
@@ -715,6 +719,11 @@
   }
 
   async function moveTask(id, parentId, previousId = null) {
+    // Strict two-level tree (invariant #1): never nest under a subtask (would
+    // be a 3rd level) and never turn a task that already has subtasks into a
+    // subtask (its children would be). Detach passes parentId=null, which is
+    // always allowed.
+    if (parentId != null && !canNestUnder(id, allTasks.find(t => t.id === parentId), allTasks)) return;
     const listId = taskListId(id);
     await cmd("move_task", { id, parentId, previousId });
     await refreshLists([listId]);
@@ -1048,10 +1057,10 @@
         ...(task.parent_id ? [{
           id: "detach-subtask", icon: "cornerUpLeft", label: "Detach subtask", action: () => promoteTask(task.id),
         }] : []),
-        { id: "subtask", icon: "plus", label: "Add subtask", action: async () => {
+        ...(canAddSubtask(task) ? [{ id: "subtask", icon: "plus", label: "Add subtask", action: async () => {
           const t = await cmd("create_task", { listId: task.listId, parentId: task.id, title: "" });
           if (t) { await refreshLists([task.listId]); editingId = t.id; }
-        }},
+        }}] : []),
         { id: "duplicate", icon: "clipboard", label: "Duplicate", shortcut: "Ctrl+D", action: async () => {
           await cmd("create_task", { listId: task.listId, parentId: task.parent_id, title: task.title + " (copy)" });
           await refreshLists([task.listId]);
