@@ -5,7 +5,7 @@
   import { invokeWithTimeout } from "./ipc.js";
   import { formatDue } from "./dateFormat.js";
   import { storageKey } from "./storage.js";
-  let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
+  let { task, parentTask, propagatedDue = null, lists, subtasks = [], focusRequest = null, onsave, onclose, ondelete, onmovelist, ondetach, ontogglesubtask, onuncompletesubtasks, onopensubtask, onopenparent, onaddsubtask, onprev, onnext } = $props();
 
   let title = $state("");
   let notes = $state("");
@@ -289,6 +289,17 @@
           </label>
         {/if}
       </div>
+      {#if completedSubtaskCount > 0}
+        <!-- Un-completing this parent left its subtasks completed (that never
+             cascades — #89). This explicit action reopens the whole checklist. -->
+        <button
+          class="uncomplete-subtasks-btn"
+          title="Reopen every completed subtask of this task"
+          onclick={() => onuncompletesubtasks?.(task.id)}
+        >
+          Un-complete all subtasks
+        </button>
+      {/if}
       {#if visibleSubtasks.length > 0}
         <div class="subtask-list">
           {#each visibleSubtasks as sub}
@@ -449,6 +460,8 @@
   .subtask-header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
   .hide-completed-toggle { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: var(--fg-muted); cursor: pointer; user-select: none; }
   .hide-completed-toggle input { cursor: pointer; }
+  .uncomplete-subtasks-btn { align-self: flex-start; margin: 0.2rem 0 0.1rem; padding: 0.25rem 0.5rem; background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--accent); font-size: 0.78rem; cursor: pointer; }
+  .uncomplete-subtasks-btn:hover { background: var(--bg-hover); }
   .subtask-list { display: flex; flex-direction: column; gap: 0.3rem; }
   .subtask-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.4rem; border-radius: 3px; }
   .subtask-item:hover { background: var(--bg-hover); }

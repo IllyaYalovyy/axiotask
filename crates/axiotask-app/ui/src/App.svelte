@@ -678,6 +678,21 @@
     }
   }
 
+  // Un-completing a parent deliberately does NOT reopen its subtasks (#89) —
+  // mirrors Google, which leaves children completed. This explicit action lets
+  // the user reopen the whole checklist in one gesture from the parent panel.
+  // Each subtask is a leaf, so toggling it just flips it open (no cascade).
+  async function uncompleteAllSubtasks(parentId) {
+    const done = allTasks.filter(t => t.parent_id === parentId && t.status === "completed");
+    if (done.length === 0) return;
+    const listIds = new Set();
+    for (const s of done) {
+      await cmd("toggle_complete", { id: s.id });
+      listIds.add(s.listId);
+    }
+    await refreshLists([...listIds]);
+  }
+
   async function deleteTask(id) {
     const task = allTasks.find(t => t.id === id);
     if (!task) return;
@@ -1508,6 +1523,7 @@
       onmovelist={moveToList}
       ondetach={promoteTask}
       ontogglesubtask={toggleComplete}
+      onuncompletesubtasks={uncompleteAllSubtasks}
       onopensubtask={openDetail}
       onopenparent={openDetail}
       onaddsubtask={addSubtask}
