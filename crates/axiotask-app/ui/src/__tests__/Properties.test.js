@@ -224,19 +224,21 @@ describe("Properties dialog", () => {
     expect(screen.getByRole("button", { name: /restore latest/i })).toBeInTheDocument();
   });
 
-  it("Export backup invokes export_backup", async () => {
+  it("Export backup confirms with a toast naming the counts and file", async () => {
     await openProperties();
     await fireEvent.click(screen.getByRole("button", { name: /export backup/i }));
+    // mock export_backup returns { lists: 1, tasks: 2, path: "/tmp/b.json" }.
     await waitFor(() =>
-      expect(invoke.mock.calls.some((c) => c[0] === "export_backup")).toBe(true),
+      expect(screen.getByText(/Backed up 2 tasks in 1 list → \/tmp\/b\.json/)).toBeInTheDocument(),
     );
   });
 
-  it("Restore latest invokes import_backup", async () => {
+  it("Restore latest confirms with a toast naming the counts and file", async () => {
     await openProperties();
     await fireEvent.click(screen.getByRole("button", { name: /restore latest/i }));
+    // mock import_backup returns { lists: 1, tasks: 2, path: "/tmp/b.json" }.
     await waitFor(() =>
-      expect(invoke.mock.calls.some((c) => c[0] === "import_backup")).toBe(true),
+      expect(screen.getByText(/Restored 2 tasks in 1 list ← \/tmp\/b\.json/)).toBeInTheDocument(),
     );
   });
 

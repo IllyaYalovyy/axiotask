@@ -2,6 +2,33 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../App.svelte";
+import { formatDue } from "../dateFormat.js";
+
+const pad = (v) => String(v).padStart(2, "0");
+function isoDay(d) {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T00:00:00.000Z`;
+}
+
+// Mirror of the backend's apply_date_move (axiotask-core/src/dates.rs) so a
+// stateful set_due updates a task's due to exactly what the real command would
+// produce — the row can then be asserted on its RENDERED date label.
+function dueFromMove(mv) {
+  if (mv === "Clear") return null;
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  if (mv === "Tomorrow") d.setDate(d.getDate() + 1);
+  else if (mv === "NextWeek") d.setDate(d.getDate() + 7);
+  else if (mv === "NextMonth") {
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, lastDay));
+  }
+  return isoDay(d);
+}
+// The human label a row will render for a given date shortcut.
+const dueLabelFor = (mv) => formatDue(dueFromMove(mv));
 
 function mockBackend(lists = [], tasks = []) {
   let taskStore = [...tasks];
@@ -19,10 +46,24 @@ function mockBackend(lists = [], tasks = []) {
       case "toggle_complete": { const t = taskStore.find(x => x.id === args.id); if (t) t.status = t.status === "needsAction" ? "completed" : "needsAction"; return null; }
       case "delete_task": { taskStore = taskStore.filter(t => t.id !== args.id); return "token-1"; }
       case "rename_task": { const t = taskStore.find(x => x.id === args.id); if (t) t.title = args.title; return null; }
-      case "set_due": return null;
+      case "set_due": { const t = taskStore.find(x => x.id === args.id); if (t) t.due = dueFromMove(args.mv); return null; }
       case "set_notes": return null;
       case "move_task": return null;
-      case "reorder_task": return null;
+      case "reorder_task": {
+        // Swap the task with its top-level sibling in the given direction so
+        // list_tasks (which preserves store order) reflects the new order.
+        const t = taskStore.find(x => x.id === args.id);
+        if (t) {
+          const sibs = taskStore.filter(x => x.listId === t.listId && x.parent_id === t.parent_id);
+          const si = sibs.indexOf(t);
+          const neighbor = args.direction === "down" ? sibs[si + 1] : sibs[si - 1];
+          if (neighbor) {
+            const ai = taskStore.indexOf(t), bi = taskStore.indexOf(neighbor);
+            [taskStore[ai], taskStore[bi]] = [taskStore[bi], taskStore[ai]];
+          }
+        }
+        return null;
+      }
       case "move_to_list": return null;
       case "sync_now": return "ok";
       default: return null;
@@ -52,8 +93,9 @@ function makeTasks(n = 3) {
 async function renderWithTasks(tasks = makeTasks()) {
   mockBackend(lists, tasks);
   localStorage.setItem("axiotask:view", "L1");
-  render(App);
+  const result = render(App);
   await waitFor(() => expect(screen.getByText(tasks[0]?.title || "Task 1")).toBeInTheDocument());
+  return result;
 }
 
 function pressKey(key, opts = {}) {
@@ -140,12 +182,16 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("Space — toggle complete", () => {
-    it("pressing Space completes the focused task", async () => {
+    it("pressing Space completes the focused task (it leaves the open list)", async () => {
       await renderWithTasks();
+      expect(screen.getByText("Task 1")).toBeInTheDocument();
       await pressKey(" ");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
-      });
+      // Completed tasks are hidden by default, so the row leaves the list and
+      // an Undo toast appears — the user-visible result of the completion.
+      await waitFor(() => expect(screen.queryByText("Task 1")).not.toBeInTheDocument());
+      expect(screen.getByText(/Completed "Task 1"/)).toBeInTheDocument();
+      // The other cards stay put.
+      expect(screen.getByText("Task 2")).toBeInTheDocument();
     });
   });
 
@@ -170,12 +216,14 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("d — delete task", () => {
-    it("pressing d deletes the focused task", async () => {
+    it("pressing d removes the focused task's row from the list", async () => {
       await renderWithTasks();
+      expect(screen.getByText("Task 1")).toBeInTheDocument();
       await pressKey("d");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("delete_task", { id: "t1" });
-      });
+      await waitFor(() => expect(screen.queryByText("Task 1")).not.toBeInTheDocument());
+      // Only the focused task goes; the rest remain rendered.
+      expect(screen.getByText("Task 2")).toBeInTheDocument();
+      expect(screen.getByText("Task 3")).toBeInTheDocument();
     });
   });
 
@@ -189,68 +237,74 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("s — no longer a subtask shortcut (#91)", () => {
-    it("pressing s over the focused task creates nothing", async () => {
-      await renderWithTasks();
+    it("pressing s over the focused task adds no new row", async () => {
+      const { container } = await renderWithTasks();
+      const before = container.querySelectorAll(".task-widget").length;
       await pressKey("s");
       // Subtasks are added only from the detail panel; the list-level 's'
-      // shortcut was removed, so nothing is created.
+      // shortcut was removed, so no new card appears in the list.
       await new Promise((resolve) => setTimeout(resolve, 30));
-      const createCalls = invoke.mock.calls.filter(c => c[0] === "create_task");
-      expect(createCalls).toHaveLength(0);
+      expect(container.querySelectorAll(".task-widget")).toHaveLength(before);
+      expect(screen.queryByText("Untitled")).not.toBeInTheDocument();
     });
   });
 
   describe("t/w/m/r — date shortcuts", () => {
-    it("t sets due to Tomorrow", async () => {
-      await renderWithTasks();
+    // The focused row (Task 1) starts due today; each shortcut re-labels its
+    // rendered date badge to what the move actually produces.
+    const focusedDue = (container) =>
+      container.querySelector(".task-widget.focused .due")?.textContent?.trim();
+
+    it("t re-dates the focused row to tomorrow", async () => {
+      const { container } = await renderWithTasks();
+      expect(focusedDue(container)).toBe("today");
       await pressKey("t");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("set_due", { id: "t1", mv: "Tomorrow" });
-      });
+      await waitFor(() => expect(focusedDue(container)).toBe(dueLabelFor("Tomorrow")));
+      expect(dueLabelFor("Tomorrow")).toBe("tomorrow");
     });
 
-    it("w sets due to NextWeek", async () => {
-      await renderWithTasks();
+    it("w re-dates the focused row a week out", async () => {
+      const { container } = await renderWithTasks();
       await pressKey("w");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("set_due", { id: "t1", mv: "NextWeek" });
-      });
+      await waitFor(() => expect(focusedDue(container)).toBe(dueLabelFor("NextWeek")));
     });
 
-    it("m sets due to NextMonth", async () => {
-      await renderWithTasks();
+    it("m re-dates the focused row a month out", async () => {
+      const { container } = await renderWithTasks();
       await pressKey("m");
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("set_due", { id: "t1", mv: "NextMonth" });
-      });
+      await waitFor(() => expect(focusedDue(container)).toBe(dueLabelFor("NextMonth")));
     });
 
-    it("r clears due date", async () => {
-      await renderWithTasks();
+    it("r clears the focused row's date (row shows 'no date')", async () => {
+      const { container } = await renderWithTasks();
       await pressKey("r");
       await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("set_due", { id: "t1", mv: "Clear" });
+        const focused = container.querySelector(".task-widget.focused");
+        expect(focused.querySelector(".due")).toBeNull();
+        expect(focused.querySelector(".no-due")).toHaveTextContent("no date");
       });
     });
   });
 
   describe("Tab — no tree-editing gesture in the list (#86)", () => {
-    it("Tab does not indent the focused task under the one above it", async () => {
+    it("Tab leaves every task a top-level row (no indent, no nesting)", async () => {
       // The main list is flat and top-level only; there are no tree-editing
       // gestures. Subtasks are created solely from the detail panel, so Tab
-      // must never issue a move_task.
-      await renderWithTasks();
+      // must leave the list exactly as it was — all three cards still rows.
+      const { container } = await renderWithTasks();
       await pressKey("j"); // focus Task 2
       await pressKey("Tab");
-      const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
-      expect(moveCalls).toHaveLength(0);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const titles = [...container.querySelectorAll(".task-widget .title")].map(el => el.textContent);
+      expect(titles).toEqual(["Task 1", "Task 2", "Task 3"]);
     });
 
-    it("Shift+Tab does nothing from the list either", async () => {
-      await renderWithTasks();
+    it("Shift+Tab leaves the flat list unchanged too", async () => {
+      const { container } = await renderWithTasks();
       await pressKey("Tab", { shiftKey: true });
-      const moveCalls = invoke.mock.calls.filter(c => c[0] === "move_task");
-      expect(moveCalls).toHaveLength(0);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const titles = [...container.querySelectorAll(".task-widget .title")].map(el => el.textContent);
+      expect(titles).toEqual(["Task 1", "Task 2", "Task 3"]);
     });
   });
 
@@ -265,21 +319,21 @@ describe("Keyboard Navigation", () => {
   });
 
   describe("Alt+↑↓ — reorder", () => {
-    it("Alt+Down reorders task down", async () => {
-      await renderWithTasks();
+    const titles = (container) =>
+      [...container.querySelectorAll(".task-widget .title")].map(el => el.textContent);
+
+    it("Alt+Down moves the focused card below its neighbor", async () => {
+      const { container } = await renderWithTasks();
+      expect(titles(container)).toEqual(["Task 1", "Task 2", "Task 3"]);
       await pressKey("ArrowDown", { altKey: true });
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("reorder_task", { id: "t1", direction: "down" });
-      });
+      await waitFor(() => expect(titles(container)).toEqual(["Task 2", "Task 1", "Task 3"]));
     });
 
-    it("Alt+Up reorders task up", async () => {
-      await renderWithTasks();
-      await pressKey("j"); // move to index 1
+    it("Alt+Up moves the focused card above its neighbor", async () => {
+      const { container } = await renderWithTasks();
+      await pressKey("j"); // focus Task 2
       await pressKey("ArrowUp", { altKey: true });
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("reorder_task", { id: "t2", direction: "up" });
-      });
+      await waitFor(() => expect(titles(container)).toEqual(["Task 2", "Task 1", "Task 3"]));
     });
   });
 

@@ -80,7 +80,7 @@ describe("GH#26: Offline-First", () => {
     });
   });
 
-  it("can create tasks without authentication", async () => {
+  it("can create tasks without authentication (the new row appears in the list)", async () => {
     mockOfflineBackend();
     render(App);
 
@@ -95,8 +95,12 @@ describe("GH#26: Offline-First", () => {
     await fireEvent.input(input, { target: { value: "Offline capture" } });
     await fireEvent.submit(input.closest("form"));
 
+    // The captured task renders as a row in the active list — offline, locally.
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("create_task", expect.objectContaining({ title: "Offline capture" }));
+      const row = screen.getByText("Offline capture").closest(".task-widget");
+      expect(row).toBeInTheDocument();
+      // It carries the not-yet-synced marker (sync_state: "dirty").
+      expect(row.querySelector(".sync-pending")).toBeInTheDocument();
     });
   });
 

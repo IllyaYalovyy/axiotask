@@ -71,47 +71,35 @@ describe("GH#11: Complete/uncomplete with undo", () => {
   });
 
   describe("Checkbox toggle", () => {
-    it("clicking checkbox calls toggle_complete", async () => {
+    it("clicking the checkbox completes the task, so its row leaves the open list", async () => {
       mockBackend([task("t1", "My task")]);
       const { container } = render(App);
       await waitFor(() => expect(screen.getByText("My task")).toBeInTheDocument());
-      const checkbox = container.querySelector(".checkbox");
-      await fireEvent.click(checkbox);
-      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
+      await fireEvent.click(container.querySelector(".checkbox"));
+      // Completed rows are hidden by default, so the row disappears and an Undo
+      // toast confirms the completion — the visible result.
+      await waitFor(() => expect(screen.queryByText("My task")).not.toBeInTheDocument());
+      expect(screen.getByText(/Completed "My task"/)).toBeInTheDocument();
     });
 
-    it("Space key on focused task calls toggle_complete", async () => {
-      mockBackend([task("t1", "Spacebar task")]);
-      render(App);
-      await waitFor(() => expect(screen.getByText("Spacebar task")).toBeInTheDocument());
-      await fireEvent.keyDown(window, { key: " " });
-      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
-    });
+    // (The Space-key completion path is covered by KeyboardNav's Space test,
+    // which asserts the same visible outcome; no duplicate here.)
 
-    it("uncompleting a completed task calls toggle_complete", async () => {
+    it("Space on a completed task reopens it (row loses its completed state)", async () => {
+      // Non-happy path: the focused task is already completed. Reveal completed
+      // rows so it's visible, then Space must flip it back to open.
       mockBackend([task("t1", "Done task", { status: "completed" })]);
-      render(App);
-      // Need to show completed to see it
-      localStorage.setItem("axiotask:view", "L1");
       const { container } = render(App);
-      // Check show completed
-      const toggle = screen.getAllByLabelText ? null : container.querySelector('input[type="checkbox"]');
-      if (toggle) await fireEvent.click(toggle);
-      // The task won't be visible unless showCompleted is true; use Space after enabling
-      // Test via direct invoke verification
-      invoke.mockClear();
-      mockBackend([task("t1", "Done task", { status: "completed" })]);
-      const { container: c2 } = render(App);
-      await waitFor(() => {
-        const cb = c2.querySelector('input[type="checkbox"]');
-        return cb;
-      });
-      // Enable show completed
-      const showCb = c2.querySelector('.toggle input[type="checkbox"]');
-      if (showCb) await fireEvent.click(showCb);
-      await waitFor(() => expect(screen.queryByText("Done task")).toBeInTheDocument());
+      await waitFor(() =>
+        expect(container.querySelector('.toggle input[type="checkbox"]')).toBeTruthy());
+      await fireEvent.click(container.querySelector('.toggle input[type="checkbox"]'));
+      await waitFor(() => expect(screen.getByText("Done task")).toBeInTheDocument());
+      expect(container.querySelector(".task-widget")).toHaveClass("completed");
       await fireEvent.keyDown(window, { key: " " });
-      expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "t1" });
+      await waitFor(() =>
+        expect(container.querySelector(".task-widget")).not.toHaveClass("completed"));
+      // Still shown (show-completed is on), now presented as an open task.
+      expect(screen.getByLabelText("Mark Done task complete")).toBeInTheDocument();
     });
   });
 
@@ -217,10 +205,12 @@ describe("GH#11: Complete/uncomplete with undo", () => {
       expect(taskStore.find(t => t.id === "s1").status).toBe("completed");
       expect(taskStore.find(t => t.id === "g1").status).toBe("completed");
       await fireEvent.click(screen.getByText("Undo"));
-      await waitFor(() => {
-        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "s1" });
-        expect(invoke).toHaveBeenCalledWith("toggle_complete", { id: "g1" });
-      });
+      // The clicked subtask is visible again as OPEN in the parent's panel
+      // (its checkbox offers "Mark ... complete", i.e. it is unchecked)...
+      await waitFor(() =>
+        expect(screen.getByLabelText("Mark Mid sub complete")).toBeInTheDocument());
+      // ...and the cascade reversal reaches its grandchild too — g1 isn't a row
+      // in this panel, so its reopened state is verified on the stateful store.
       expect(taskStore.find(t => t.id === "s1").status).toBe("needsAction");
       expect(taskStore.find(t => t.id === "g1").status).toBe("needsAction");
     });
