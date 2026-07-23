@@ -284,6 +284,17 @@ impl InMemoryClient {
         self.inner.lock().unwrap().commit_then_fail_insert = true;
     }
 
+    /// Disarm every queued fault — untargeted, targeted, and the pending
+    /// commit-then-fail insert. Lets a test switch from a chaotic phase to a
+    /// provably healthy one: an armed-but-never-fired fault would otherwise
+    /// still be waiting in the queue and fire during the recovery phase.
+    pub fn clear_faults(&self) {
+        let mut s = self.inner.lock().unwrap();
+        s.faults.clear();
+        s.targeted_faults.clear();
+        s.commit_then_fail_insert = false;
+    }
+
     /// Remove a task from internal state (simulates server-side deletion by another client).
     pub fn delete_task_from_state(&self, list_id: &str, task_id: &str) {
         let mut s = self.inner.lock().unwrap();
@@ -784,7 +795,7 @@ mod tests {
         // No `previous` → placed at the top of its siblings; `'!'` sorts below
         // every digit-led seeded position.
         assert!(
-            moved.position < "00000000000001".to_string(),
+            moved.position.as_str() < "00000000000001",
             "top slot sorts before existing positions, got {}",
             moved.position
         );
@@ -798,8 +809,8 @@ mod tests {
         c.seed_task("L1", "T2", "second", "00000000000002");
         let moved = c.move_task("L1", "T2", None, Some("T1")).await.unwrap();
         // Placed immediately after T1: sorts after T1 and before T2's original slot.
-        assert!(moved.position > "00000000000001".to_string());
-        assert!(moved.position < "00000000000002".to_string());
+        assert!(moved.position.as_str() > "00000000000001");
+        assert!(moved.position.as_str() < "00000000000002");
         assert!(moved.parent.is_none());
     }
 

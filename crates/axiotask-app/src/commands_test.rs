@@ -225,9 +225,9 @@ mod tests {
 
         // move_task records a pending reorder so the new parent/position is
         // pushed via the move API on the next sync.
-        let moves = state.store.pending_moves().await.unwrap();
+        let pending = state.store.pending_moves().await.unwrap();
         assert!(
-            moves
+            pending
                 .iter()
                 .any(|m| m.task_id == "T2" && m.parent_id.as_deref() == Some("T1"))
         );
