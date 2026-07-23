@@ -126,6 +126,18 @@ impl SyncEngine {
     async fn push_all(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         // Recover any creates interrupted by a crash before pushing new ones.
         self.recover_inflight_creates().await?;
+        // A marker recovery could NOT resolve (its list fetch died transiently,
+        // so the orphan — if any — was invisible) still means "this insert may
+        // already have landed". Re-pushing it now is exactly the duplicate H1
+        // exists to prevent, so the create waits for a run with a complete
+        // remote view. Every other create pushes as usual.
+        let unresolved_creates: HashSet<String> = self
+            .store
+            .inflight_creates()
+            .await?
+            .into_iter()
+            .map(|(local_id, _)| local_id)
+            .collect();
 
         // List CREATES first — tasks reference lists, so the list must exist
         // (with its remote id) before we push tasks into it. Held while the user
@@ -157,6 +169,7 @@ impl SyncEngine {
                 for row in &self.store.drain_dirty().await? {
                     if row.pending_op.as_deref() != Some("create")
                         || attempted.contains(&row.task.id)
+                        || unresolved_creates.contains(&row.task.id)
                         || self.config.held_create_id.as_deref() == Some(row.task.id.as_str())
                     {
                         continue;
@@ -358,6 +371,13 @@ impl SyncEngine {
     async fn recover_inflight_creates(&self) -> Result<(), SyncError> {
         let inflight = self.store.inflight_creates().await?;
         for (local_id, list_id) in inflight {
+            // Adopting an orphan remaps the local id to the server id — the
+            // same invalidation the create push defers for the row the UI is
+            // holding. Leave that one marker open until the hold clears; the
+            // create is held too, so nothing can duplicate meanwhile.
+            if self.config.held_create_id.as_deref() == Some(local_id.as_str()) {
+                continue;
+            }
             let local = self
                 .store
                 .list_tasks(&list_id)
@@ -425,17 +445,54 @@ impl SyncEngine {
         }
     }
 
+    /// Whether an id referenced by a pending move still exists locally at all
+    /// (tombstones included). `None` is no constraint, so it counts as present.
+    async fn task_exists(&self, id: Option<&str>) -> Result<bool, SyncError> {
+        match id {
+            None => Ok(true),
+            Some(i) => Ok(self.store.find_task_any(i).await?.is_some()),
+        }
+    }
+
     /// Push pending position/parent moves via the Tasks move endpoint.
     async fn push_moves(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         for mv in self.store.pending_moves().await? {
+            // The TARGET PARENT is gone (the user deleted it after dropping
+            // this task under it). Its delete cascades to the whole subtree on
+            // both sides (verified live), so this task goes with it: there is
+            // nothing left to express, and Google would answer 400 "Invalid
+            // task ID" for the dead parent (verified live). The synced-yet
+            // check below can never pass for a row that no longer exists, so
+            // the intent — and the pending-changes count the UI shows — would
+            // otherwise survive forever and be re-walked on every run.
+            if !self.task_exists(mv.parent_id.as_deref()).await? {
+                debug!(id = %mv.task_id, "move target parent is gone, dropping move");
+                self.store.clear_move(&mv.task_id).await?;
+                continue;
+            }
+            // The SIBLING this task was dropped after is gone. One drag can
+            // carry two intents — reparent and ordering — and the row already
+            // applied both optimistically. "Place after B" is unexpressible
+            // now, but the reparent still is, so dropping the whole intent
+            // would strand it: local would show the task at its new parent
+            // while Google keeps the old one, and because the row is Clean
+            // with a matching etag no later pull ever corrects the drift.
+            // Keep the parent, drop only the ordering — position self-heals
+            // on the next pull.
+            let mut previous_id = mv.previous_id.clone();
+            if !self.task_exists(previous_id.as_deref()).await? {
+                debug!(id = %mv.task_id, "move's previous sibling is gone, keeping the reparent only");
+                previous_id = None;
+            }
             // A move whose task (or target parent/previous) hasn't been pushed
             // yet still carries a local UUID — the API answers 400 "Invalid
             // task ID" (verified live), which would drop the user's reordering.
             // Hold the intent; finish_create rewrites the ids when the create
             // lands, and the move pushes on that run or the next.
-            if !self.task_is_synced(Some(&mv.task_id)).await?
+            let before = self.store.find_task_any(&mv.task_id).await?;
+            if before.as_ref().is_none_or(|t| t.task.etag.is_none())
                 || !self.task_is_synced(mv.parent_id.as_deref()).await?
-                || !self.task_is_synced(mv.previous_id.as_deref()).await?
+                || !self.task_is_synced(previous_id.as_deref()).await?
             {
                 debug!(id = %mv.task_id, "move waits for its ids to be synced");
                 continue;
@@ -446,18 +503,43 @@ impl SyncEngine {
                     &mv.list_id,
                     &mv.task_id,
                     mv.parent_id.as_deref(),
-                    mv.previous_id.as_deref(),
+                    previous_id.as_deref(),
                 )
                 .await
             {
                 Ok(remote) => {
-                    // Meta only: the move endpoint hands back a fresh etag, but
-                    // the row may carry an unrelated pending content edit whose
-                    // dirty flag must survive the move completing.
-                    self.store
-                        .refresh_task_meta(&remote.id, remote.etag.as_deref(), &remote.updated)
-                        .await?;
+                    // Drop the intent first so the server's parent/position can
+                    // land (apply_pushed_task refuses to touch them while a move
+                    // is still pending).
                     self.store.clear_move(&mv.task_id).await?;
+                    match before.filter(|t| t.sync_state == SyncState::Clean) {
+                        // Adopt the response BODY, not just the etag — the same
+                        // trap push_update documents. A move can change more
+                        // than parent/position: completing a parent cascades to
+                        // its subtree server-side (verified live), so a task
+                        // moved OUT of a parent completed in the same batch
+                        // comes back completed. The fresh etag the move returns
+                        // would otherwise make every later pull skip the row and
+                        // freeze that drift in place. The snapshot taken before
+                        // the call keeps a mid-flight re-edit dirty.
+                        Some(t) => {
+                            self.store
+                                .apply_pushed_task(&remote, &t.local_updated)
+                                .await?;
+                        }
+                        // The row carries its own pending content edit: keep it
+                        // (meta only). Its update push adopts the server body on
+                        // this run or the next.
+                        None => {
+                            self.store
+                                .refresh_task_meta(
+                                    &remote.id,
+                                    remote.etag.as_deref(),
+                                    &remote.updated,
+                                )
+                                .await?;
+                        }
+                    }
                     out.pushed += 1;
                     debug!(id = %mv.task_id, "pushed move");
                 }
@@ -1197,6 +1279,331 @@ mod tests {
             .filter(|t| t.task.title == "buy milk")
             .collect();
         assert_eq!(milk.len(), 1, "no duplicate after recovery");
+        assert!(milk[0].task.id.starts_with("remote-"));
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inflight_create_waits_when_recovery_view_is_incomplete() {
+        // Found by the #104 property tests. The insert committed but the
+        // response was lost, so an in-flight marker is open. On the NEXT run
+        // the recovery fetch fails transiently — the orphan can't be seen, so
+        // it can't be adopted yet. Pushing the create anyway inserts the same
+        // task a second time. An unresolved marker must hold its create back
+        // until a complete remote view lets recovery decide.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut t = dirty_task("local-1", "L1", "create");
+        t.task.title = "buy milk".into();
+        eng.store.upsert_task(&t).await.unwrap();
+
+        // Run 1: server commits, response lost → marker stays open.
+        client.commit_then_fail_next_insert();
+        eng.run().await.unwrap();
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+        assert_eq!(eng.store.inflight_creates().await.unwrap().len(), 1);
+
+        // Run 2: recovery's task fetch dies transiently before it can spot the
+        // orphan. The create must wait, not re-insert.
+        client.fail_next(Method::ListTasks, || ApiError::Server { status: 503 });
+        eng.run().await.unwrap();
+        assert_eq!(
+            client.call_count(Method::InsertTask),
+            1,
+            "create re-pushed while its in-flight marker was still unresolved"
+        );
+        assert_eq!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .filter(|t| t.title == "buy milk")
+                .count(),
+            1,
+            "duplicate on the server"
+        );
+
+        // Run 3: a complete view lets recovery adopt the orphan — one task.
+        eng.run().await.unwrap();
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+        let milk: Vec<_> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.title == "buy milk")
+            .collect();
+        assert_eq!(milk.len(), 1, "no duplicate after recovery");
+        assert!(milk[0].task.id.starts_with("remote-"));
+        assert!(eng.store.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn move_response_body_is_adopted_so_a_server_cascade_cannot_stick() {
+        // Found by the #104 property tests. In one batch the user drags a
+        // subtask out to the top level AND completes its old parent. Updates
+        // push before moves, so Google applies the completion cascade while the
+        // task is still a child — it comes back completed. The move endpoint
+        // returns that truth together with a fresh etag; keeping only the etag
+        // freezes the drift forever, because every later pull etag-skips the
+        // row. Local would show it open while Google has it done.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C", "child", "2", Some("P"));
+        eng.run().await.unwrap();
+
+        // Drag C out to the top level (local row updated + move intent).
+        let mut c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        c.task.parent = None;
+        eng.store.upsert_task(&c).await.unwrap();
+        eng.store.record_move("C", "L1", None, None).await.unwrap();
+        // ...and complete P, which pushes as an update before the move.
+        let mut p = eng.store.find_task_any("P").await.unwrap().unwrap();
+        p.task.status = TaskStatus::Completed;
+        p.task.completed = Some("2026-06-02T00:00:00Z".into());
+        p.sync_state = SyncState::Dirty;
+        p.pending_op = Some("update".into());
+        p.local_updated = "2026-06-02T00:00:00Z".into();
+        eng.store.upsert_task(&p).await.unwrap();
+
+        eng.run().await.unwrap();
+
+        let server_c = client.get_task("L1", "C").await.unwrap();
+        assert_eq!(
+            server_c.status,
+            TaskStatus::Completed,
+            "precondition: the server cascade completed the child"
+        );
+        let local_c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            local_c.task.status,
+            TaskStatus::Completed,
+            "local kept the stale status the move response corrected"
+        );
+        assert_eq!(local_c.task.parent, None, "the move still applied");
+
+        // And it stays converged: a further sync changes nothing.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pulled, 0);
+        assert_eq!(
+            eng.store
+                .find_task_any("C")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn move_whose_anchor_was_deleted_does_not_retry_forever() {
+        // Found while writing the #104 property tests. The user reorders A to
+        // sit after B — a pure reorder, no reparent — then deletes B before the
+        // move pushes. B's row is gone, so the "is it synced yet?" guard says
+        // no, forever: the intent (and the pending-changes count the UI shows)
+        // would never clear, and every future sync would re-walk it. The
+        // ordering is unexpressible without its anchor, so it is dropped and
+        // the move pushes without it; position self-heals on the next pull.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "A", "a", "1");
+        client.seed_task("L1", "B", "b", "2");
+        eng.run().await.unwrap();
+
+        eng.store
+            .record_move("A", "L1", None, Some("B"))
+            .await
+            .unwrap();
+        let mut b = eng.store.find_task_any("B").await.unwrap().unwrap();
+        b.sync_state = SyncState::Deleted;
+        b.pending_op = Some("delete".into());
+        eng.store.upsert_task(&b).await.unwrap();
+
+        eng.run().await.unwrap();
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "stale move intent survived its anchor"
+        );
+        assert_eq!(
+            eng.store.pending_push_count().await.unwrap(),
+            0,
+            "pending-changes count never drains"
+        );
+        // A itself is untouched and still synced.
+        let a = eng.store.find_task_any("A").await.unwrap().unwrap();
+        assert_eq!(a.sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn move_whose_previous_vanished_still_pushes_the_reparent() {
+        // Found by the #104 property soak (3000 cases), shrunk from
+        // [.., CreateSub, Sync, CreateTop, MoveAfter(..), Delete(..)].
+        //
+        // The user drags subtask C OUT of parent P to the top level, dropping
+        // it after sibling B — one gesture carrying TWO intents: reparent
+        // (P → top level) and ordering (after B). The row applies both
+        // optimistically. Then B is deleted before the move pushes.
+        //
+        // "Place after B" is now unexpressible (Google answers 400 for an
+        // unknown previous, verified live), but the REPARENT still is. Dropping
+        // the whole intent strands it: local shows C at the top level, Google
+        // still has it under P, and because the row is Clean with a matching
+        // etag no later pull ever corrects the drift. Keep the parent, drop
+        // only the ordering.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C", "child", "2", Some("P"));
+        client.seed_task("L1", "B", "sibling", "3");
+        eng.run().await.unwrap();
+
+        // Drag C out to the top level, after B.
+        let mut c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        c.task.parent = None;
+        eng.store.upsert_task(&c).await.unwrap();
+        eng.store
+            .record_move("C", "L1", None, Some("B"))
+            .await
+            .unwrap();
+        // ...then delete the sibling it was dropped after.
+        let mut b = eng.store.find_task_any("B").await.unwrap().unwrap();
+        b.sync_state = SyncState::Deleted;
+        b.pending_op = Some("delete".into());
+        eng.store.upsert_task(&b).await.unwrap();
+
+        eng.run().await.unwrap();
+
+        assert_eq!(
+            client.get_task("L1", "C").await.unwrap().parent,
+            None,
+            "the reparent was silently dropped — Google still has C under P \
+             while the local row shows it at the top level"
+        );
+        assert_eq!(
+            eng.store
+                .find_task_any("C")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent,
+            None,
+            "local lost the reparent"
+        );
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "stale move intent survived its anchor"
+        );
+        assert_eq!(eng.store.pending_push_count().await.unwrap(), 0);
+
+        // And it stays converged: a further sync changes nothing.
+        eng.run().await.unwrap();
+        assert_eq!(client.get_task("L1", "C").await.unwrap().parent, None);
+        assert_eq!(
+            eng.store
+                .find_task_any("C")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn move_whose_target_parent_vanished_is_dropped() {
+        // The other half of the anchor rule. Here the TARGET PARENT is what
+        // went away: the user drops C under P, then deletes P. The delete
+        // cascades to the whole subtree on both sides (verified live), so C
+        // goes with it — there is no reparent left to preserve and nothing to
+        // express. Drop the intent rather than 400 against a dead parent.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task("L1", "C", "c", "2");
+        eng.run().await.unwrap();
+
+        let mut c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        c.task.parent = Some("P".into());
+        eng.store.upsert_task(&c).await.unwrap();
+        eng.store
+            .record_move("C", "L1", Some("P"), None)
+            .await
+            .unwrap();
+        let mut p = eng.store.find_task_any("P").await.unwrap().unwrap();
+        p.sync_state = SyncState::Deleted;
+        p.pending_op = Some("delete".into());
+        eng.store.upsert_task(&p).await.unwrap();
+
+        eng.run().await.unwrap();
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "move intent survived its dead target parent"
+        );
+        assert_eq!(eng.store.pending_push_count().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn inflight_recovery_leaves_the_held_create_id_alone() {
+        // Found by the #104 property tests. The row the UI is holding had its
+        // create crash mid-flight, so an orphan is sitting on the server.
+        // Adopting it remaps the local id to the server id — precisely the
+        // invalidation `held_create_id` exists to prevent. Recovery must wait
+        // for the hold to clear, exactly like the create push does.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut t = dirty_task("local-1", "L1", "create");
+        t.task.title = "buy milk".into();
+        eng.store.upsert_task(&t).await.unwrap();
+        client.commit_then_fail_next_insert();
+        eng.run().await.unwrap();
+        assert_eq!(eng.store.inflight_creates().await.unwrap().len(), 1);
+
+        // The user opens the panel on that row, then a sync runs.
+        let held = SyncEngine::with_push(client.clone(), eng.store.clone(), true)
+            .hold_create_id(Some("local-1".into()));
+        held.run().await.unwrap();
+        assert!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "local-1"),
+            "the id the panel holds was remapped mid-edit"
+        );
+        assert_eq!(client.call_count(Method::InsertTask), 1, "no re-insert");
+        assert_eq!(
+            eng.store.inflight_creates().await.unwrap().len(),
+            1,
+            "the marker stays open until the hold clears"
+        );
+
+        // Panel closed: recovery adopts the orphan, still without duplicating.
+        eng.run().await.unwrap();
+        assert_eq!(client.call_count(Method::InsertTask), 1);
+        let milk: Vec<_> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.title == "buy milk")
+            .collect();
+        assert_eq!(milk.len(), 1);
         assert!(milk[0].task.id.starts_with("remote-"));
         assert!(eng.store.inflight_creates().await.unwrap().is_empty());
     }

@@ -11,6 +11,10 @@ mod state;
 #[path = "commands_test.rs"]
 mod commands_test;
 
+#[cfg(test)]
+#[path = "sync_property_test.rs"]
+mod sync_property_test;
+
 use std::sync::Arc;
 
 use state::{AppState, default_db_path};
