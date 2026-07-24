@@ -55,11 +55,14 @@ to silently drop.
 - **P1 — Remote authority.** Google is canonical for every row it knows
   (i.e. every local row carrying a server etag). On true divergence, remote
   wins.
-- **P2 — Unpushed work is untouchable.** *(decide — new principle)* A row the
-  server has **never seen** (no etag: an unpushed create, a conflicted copy, a
-  cross-list clone) is never destroyed by any remote event. It re-homes or
-  waits; it never dies. Remote authority cannot extend to rows it has no
-  knowledge of.
+- **P2 — Unpushed work is untouchable.** *(**RATIFIED** 2026-07-24, with
+  #110)* A row the server has **never seen** (no etag: an unpushed create, a
+  conflicted copy, a cross-list clone) is never destroyed by any remote event.
+  It re-homes or waits; it never dies. Remote authority cannot extend to rows
+  it has no knowledge of. P2 shields work from *remote* events only: the
+  user's own delete still cascades over unpushed rows (invariant #3, P4), and
+  a row that carries an etag is not covered at all — it dies with its parent
+  or its list (P1).
 - **P3 — Edit/edit → conflicted copy.** Remote becomes canonical; the local
   edit survives as a "(conflicted copy)" task. The divergence test for the
   conflict path covers exactly the fields the user types — title, notes, due
@@ -293,25 +296,46 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   marker crash-safety; held-create deferral. `settled` (H1, #102, #104)
 - **G3.** Create in a list deleted remotely → insert fails; meanwhile pull
   removes the local list, and the FK cascade would take the unpushed row with
-  it — destroying work the server never saw, violating P2. Expected
-  (`decide` D2): rows **without etags** in a remotely-deleted list are
-  **re-homed to the default list** (still dirty, push next run); rows *with*
-  etags die with the list (P1/P4). `gap`
+  it — destroying work the server never saw, violating P2. Rows **without
+  etags** in a remotely-deleted list are **re-homed to the default list**
+  (still dirty, push next run); rows *with* etags die with the list (P1/P4).
+  `settled` (D2 **ratified**; implemented in #110 —
+  `reconcile::rehome_target` + `Store::rehome_unpushed_tasks`). The target is
+  the surviving list titled "My Tasks" (Google's default-list title, and the
+  one our own offline bootstrap uses), else the alphabetically first list,
+  ties broken by id so the choice never depends on store iteration order.
+  Local-only lists (they never push) and lists the user has tombstoned are not
+  candidates, nor is any *other* list this same pull is about to remove. An
+  unpushed subtree re-homes intact; an unpushed subtask whose parent stays
+  behind is promoted to top-level. **Boundary:** when nothing can take the
+  rows, the dying list is **kept as an unpushed list create** instead of being
+  dropped — it is re-created (or adopted by title) on the next push and the
+  rows land in it, so P2 holds even for an account with no other list.
 - Subtask create × parent deleted remotely → the insert names a dead parent id
-  → permanent 400 ("Invalid task ID", verified live for unresolved parents) →
-  today the row stays dirty forever. Expected (`decide` D3): **promote to a
-  top-level create in the same list** — the unpushed child never dies (P2) and
-  never wedges. `gap`
+  → permanent 400 ("Invalid task ID", verified live for unresolved parents),
+  and the parent's local removal would cascade the child away entirely.
+  The child is **promoted to a top-level create in the same list** — the
+  unpushed child never dies (P2) and never wedges: it lands on the next run.
+  `settled` (D3 **ratified**; implemented in #110 —
+  `Store::remove_ghost_task` promotes before the ghost delete, and the
+  update-404 / conflict-refetch-404 delete-wins paths promote too, since the
+  same cascade reaches an unpushed subtask there).
 - Subtask create × parent **completed** remotely → the insert is **accepted**
   and the child is created **already completed**, in the insert response body
-  (probed). Adopting the response converges immediately; the user's new
-  subtask arrives done. No wedge. `untested` as a matrix row.
+  (probed). The row converges to `completed` in the same run and no wedge
+  remains. `settled` (#110). Note the *mechanism*: `finish_create` adopts the
+  id, etag, `updated` and position but **not** the response's content fields,
+  so convergence comes from the pull that follows — the freshly created row
+  has no stored `webViewLink` yet, so it is not an etag-skip candidate and the
+  pull upserts the server's version over it. P6 therefore holds for this row
+  by way of the pull, not by way of the insert response.
 - Create racing an identical remote create (same content, not ours) →
   in-flight adoption applies **only** to rows with in-flight markers; otherwise
-  both tasks live (duplicate titles are legal). `settled` — keep as a matrix
-  row so adoption is never "generalized" into content-dedup.
+  both tasks live (duplicate titles are legal). `settled` (#110) — keep as a
+  matrix row so adoption is never "generalized" into content-dedup.
 - Held create (detail panel open) × everything → held row waits; recovery
-  skips it; all other creates push. `settled` (#104)
+  skips it; all other creates push — and a remote list delete in the same
+  window re-homes it rather than destroying it (P2). `settled` (#104, #110)
 
 ### H. Local cross-list move (clone + delete) × remote
 
@@ -332,7 +356,9 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   `untested`
 - × target list deleted remotely → clone creates fail → re-home per D2 to the
   default list; originals' tombstones still push. The subtree survives,
-  somewhere visible. `gap` (depends on D2)
+  somewhere visible. `untested` — the D2 mechanism is in place since #110
+  (clones are etag-less rows, so they re-home like any other unpushed work);
+  the crossing itself is tested in step 7.
 - Crash between pushing clones and pushing deletes → both lists briefly hold
   the subtree; next run pushes the tombstones → converges, no permanent
   duplicate (P8). `untested`
@@ -370,16 +396,26 @@ demote/promote, cross-list move, list delete, remote cascades. `gap`
   unchanged everywhere else (crashed-create adoption stays exact), and any
   content divergence riding along with a status divergence still forks a copy
   under P3.
-- **D2** — Rows without etags in a remotely-deleted list re-home to the
-  default list; rows with etags die with the list. (P2)
-- **D3** — A subtask create whose parent died remotely promotes to a top-level
-  create in the same list. (P2)
+- **D2** — **RATIFIED (2026-07-24, with #110).** Rows without etags in a
+  remotely-deleted list re-home to the default list; rows with etags die with
+  the list. (P2) Target selection, the subtree rules and the
+  nothing-can-take-them boundary are pinned in §G3 above.
+- **D3** — **RATIFIED (2026-07-24, with #110).** A subtask create whose parent
+  died remotely promotes to a top-level create in the same list. (P2) Applies
+  to every remote-driven removal of the parent — ghost detection and the
+  delete-wins 404 paths — never to the user's own delete, which still cascades.
 - **D4** — Cross-list move: a concurrent remote edit to the original is lost
   (clone snapshot wins). Accepted MVP semantics.
 - **D5** — Cross-list move: the task survives in the target even if the
   original was deleted remotely ("move wins").
 - **D6** — List rename conflicts resolve remote-wins, no copy.
-- **P2 itself** — remote events never destroy rows the server has never seen.
+- **P2 itself** — **RATIFIED (2026-07-24, with #110).** Remote events never
+  destroy rows the server has never seen.
+
+Ratification note for the reviewer: D1 was ratified by #107 and P2/D2/D3 by
+#110 — in both cases *by the implementing task*, per the task's own
+instruction, not by a human sign-off. D4–D6 are untouched and still gate
+steps 7–8.
 
 ## Probes required (live API, before encoding — no-hallucination rule)
 
@@ -516,8 +552,15 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   at `plan_move`. One row the matrix had not enumerated was added: a refused or
   rejected move must undo the optimistic local placement, or the matching etag
   freezes the divergence out of every future pull (P6).
-- [ ] **Step 6 (#110)** — Create family + P2 (§G): D2 re-homing, D3 orphan
-  promotion. *(prereq: #105–#106; D2/D3 ratified)*
+- [x] **Step 6 (#110)** — Create family + P2 (§G): D2 re-homing, D3 orphan
+  promotion. *(prereq: #105–#106; D2/D3 ratified)* **Done.** P2, D2 and D3
+  ratified and implemented. Every §G row has a test: the pure target choice in
+  `sync/reconcile.rs`, the two store primitives in `store/repo.rs`, the
+  crossings (incl. the crash window and the held create) in `sync/engine.rs`,
+  and the two user-visible terminal states through the real commands in
+  `commands_test.rs`. One row the matrix had not enumerated was added: the
+  same cascade reaches an unpushed subtask through the update-404 delete-wins
+  path, not only through ghost detection.
 - [ ] **Step 7 (#111)** — Cross-list move matrix (§H) incl. crash windows,
   D4/D5. *(prereq: #105, #108, #110; D4/D5 ratified)*
 - [ ] **Step 8 (#112)** — List-op matrix (§I) + hidden/completed pull row
@@ -532,5 +575,6 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
 - [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
   Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
   §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
-- [ ] **Q2** — D2–D6 + P2 ratification by the reviewer. **D1 is ratified**
-  (2026-07-23) and shipped with #107; the rest still gate steps 6–8.
+- [ ] **Q2** — D4–D6 ratification by the reviewer. **D1 is ratified**
+  (2026-07-23, shipped with #107) and **P2, D2 and D3** are ratified
+  (2026-07-24, shipped with #110); D4/D5 still gate step 7 and D6 step 8.

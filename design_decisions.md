@@ -16,6 +16,9 @@ Push first, then pull — but the order is not the safety mechanism. Every push 
 **Q: What happens when the same task is edited in two places (a conflict)?**
 Edit vs. edit: remote wins, and the local edit survives as a "(conflicted copy)" task pushed next run. Edit vs. **delete** (either direction): the delete wins and the edit is discarded — deliberately, no conflicted copy. **Checkbox vs. checkbox** (title, notes and due all agree; only complete/un-complete differs): remote wins with **no** copy — a lost checkbox click costs one click to redo, while a duplicate task has to be found and cleaned up by hand. The full local×remote permutation matrix lives in `designs/RFC-009-sync-conflict-matrix.md`.
 
+**Q: Can something another device did destroy work that never reached the server?**
+No. A row Google has never seen (no etag — an unpushed create, a conflicted copy, a cross-list clone) is never destroyed by a remote event. If another device deletes its list, it re-homes to the default list, still queued; if another device deletes its parent, it is promoted to a top-level task in the same list. Either way it stays visible and still syncs. This shields against *remote* events only: the user's own delete still cascades over unpushed subtasks, and a row that already carries an etag dies with its parent or its list, because Google is canonical for everything it knows.
+
 **Q: What if one task fails to push?**
 The run continues. A single row's server rejection is logged and left `dirty` to retry next run; it never starves the other rows or the pull. Only an auth failure aborts the run — every call would fail the same way.
 

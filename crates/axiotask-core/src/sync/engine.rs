@@ -716,6 +716,9 @@ impl SyncEngine {
                 UpdateFailure::ResolveConflict => self.resolve_conflict(row, out).await,
                 UpdateFailure::DeleteLocal => {
                     debug!(id = %row.task.id, "task gone from server, deleting locally");
+                    // P2 again: the remote delete takes this row and its synced
+                    // subtree, but not the subtasks the server never saw.
+                    self.store.promote_unpushed_children(&row.task.id).await?;
                     self.store.delete_task_hard(&row.task.id).await?;
                     out.mark_list_changed(&row.list_id);
                     Ok(())
@@ -746,6 +749,7 @@ impl SyncEngine {
                 return match reconcile::on_conflict_refetch_error(&e) {
                     // Server deleted it; mirror the push_update behavior.
                     RefetchFailure::DeleteLocal => {
+                        self.store.promote_unpushed_children(&local.task.id).await?;
                         self.store.delete_task_hard(&local.task.id).await?;
                         Ok(())
                     }
@@ -816,12 +820,55 @@ impl SyncEngine {
         // List ghost detection: a clean local list absent from the server was
         // deleted remotely — remove it (FK cascade drops its tasks).
         let remote_list_ids: HashSet<String> = lists.iter().map(|l| l.id.clone()).collect();
-        for ghost in self
+        let ghost_lists: Vec<String> = self
             .store
             .clean_list_ids()
             .await?
             .difference(&remote_list_ids)
-        {
+            .cloned()
+            .collect();
+        // Only a list that survives THIS pull can take in re-homed rows —
+        // otherwise two lists deleted together would just hand the rows to
+        // each other and both cascades would still fire.
+        let local_lists = self.store.all_lists().await?;
+        let survivors: Vec<StoredTaskList> = local_lists
+            .iter()
+            .filter(|l| !ghost_lists.contains(&l.list.id))
+            .cloned()
+            .collect();
+        for ghost in &ghost_lists {
+            // D2/P2: the rows the server never saw must not die with the list.
+            // They re-home to the default list, still dirty, and push next run.
+            match reconcile::rehome_target(&survivors, ghost) {
+                Some(target) => {
+                    let moved = self
+                        .store
+                        .rehome_unpushed_tasks(ghost, &target.list.id)
+                        .await?;
+                    if moved > 0 {
+                        info!(from = %ghost, to = %target.list.id, moved, "list deleted remotely; re-homing unpushed rows");
+                        out.mark_list_changed(&target.list.id);
+                    }
+                }
+                // Nowhere to put them: keep the list instead, as an unpushed
+                // list create. It is re-created on the server next push (or
+                // adopted by title) and the rows land in it — P2 holds even
+                // when the account has no other list left.
+                None if self.store.has_unpushed_tasks(ghost).await? => {
+                    if let Some(mut revived) =
+                        local_lists.iter().find(|l| &l.list.id == ghost).cloned()
+                    {
+                        revived.list.etag = None;
+                        revived.sync_state = SyncState::Dirty;
+                        revived.pending_op = Some("create".into());
+                        self.store.upsert_list(&revived).await?;
+                    }
+                    info!(id = %ghost, "list deleted remotely but still holds unpushed rows and there is nowhere to re-home them; keeping it as a local create");
+                    out.lists_changed = true;
+                    continue;
+                }
+                None => {}
+            }
             debug!(id = %ghost, "removing ghost list");
             self.store.delete_list_hard_if_clean(ghost).await?;
             out.deleted += 1;
@@ -966,9 +1013,12 @@ impl SyncEngine {
             debug!(id = %ghost_id, list_id, "removing ghost row");
             // Clean-guarded: a live edit that re-dirtied the row cancels the
             // ghost delete (the edit will push as a create/update next run).
-            self.store.delete_task_hard_if_clean(ghost_id).await?;
-            out.deleted += 1;
-            out.mark_list_changed(list_id);
+            // Unpushed subtasks are promoted out of the way first (D3/P2) —
+            // the remote delete may not cascade onto work the server never saw.
+            if self.store.remove_ghost_task(ghost_id).await? {
+                out.deleted += 1;
+                out.mark_list_changed(list_id);
+            }
         }
         Ok(())
     }
@@ -4989,5 +5039,515 @@ mod tests {
         let tasks = eng.store.list_tasks("local-1").await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].task.id, "local-task");
+    }
+
+    // ─── §G — local `create` × remote (RFC-009), P2 ──────────────────────────
+
+    /// Where the row lives now, as the user would see it: `(list_id, parent)`.
+    async fn placement(eng: &SyncEngine, id: &str) -> Option<(String, Option<String>)> {
+        eng.store
+            .find_task_any(id)
+            .await
+            .unwrap()
+            .map(|r| (r.list_id, r.task.parent))
+    }
+
+    #[tokio::test]
+    async fn create_in_remotely_deleted_list_rehomes_to_default_list_still_dirty() {
+        // §G3 / D2. The user adds a task to "Work" offline; another device
+        // deletes "Work" before the create ever reaches the server. The list
+        // goes, but the row the server never saw must NOT go with it (P2): it
+        // re-homes to the default list, still queued, and lands next run.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        eng.run().await.unwrap();
+
+        let mut row = dirty_task("local-1", "L2", "create");
+        row.task.title = "buy milk".into();
+        eng.store.upsert_task(&row).await.unwrap();
+        client.delete_tasklist("L2").await.unwrap();
+
+        eng.run().await.unwrap();
+
+        assert!(
+            eng.store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L2"),
+            "the remotely-deleted list is gone locally"
+        );
+        assert_eq!(
+            placement(&eng, "local-1").await,
+            Some(("L1".into(), None)),
+            "the unpushed create re-homed to the default list instead of dying"
+        );
+        let row = eng.store.find_task_any("local-1").await.unwrap().unwrap();
+        assert_eq!(row.sync_state, SyncState::Dirty);
+        assert_eq!(row.pending_op.as_deref(), Some("create"), "still queued");
+        assert_eq!(row.task.title, "buy milk", "content untouched");
+
+        // Still syncs: the next run pushes it into its new home.
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "buy milk"),
+            "the re-homed create lands on the server"
+        );
+        // And converges: the third run is a no-op (P7).
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0);
+        assert_eq!(out.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn rehome_keeps_an_unpushed_subtree_together_and_promotes_orphans() {
+        // D2's non-happy path: the dying list holds a whole unpushed subtree
+        // AND an unpushed subtask of a SYNCED parent. The subtree re-homes
+        // intact (parent + child, still one level); the orphan — whose parent
+        // dies with the list, since the server knows it (P1) — is promoted to
+        // top-level rather than cascaded away (P2).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        client.seed_task("L2", "SYNCED", "server parent", "1");
+        eng.run().await.unwrap();
+
+        // Unpushed parent + its unpushed child. Held so neither is pushed
+        // before the list dies (this is the "created while offline" shape).
+        let mut parent = dirty_task("local-parent", "L2", "create");
+        parent.task.title = "trip".into();
+        eng.store.upsert_task(&parent).await.unwrap();
+        let mut child = dirty_task("local-child", "L2", "create");
+        child.task.title = "pack".into();
+        child.task.parent = Some("local-parent".into());
+        eng.store.upsert_task(&child).await.unwrap();
+        // An unpushed subtask of the SYNCED parent.
+        let mut orphan = dirty_task("local-orphan", "L2", "create");
+        orphan.task.title = "call hotel".into();
+        orphan.task.parent = Some("SYNCED".into());
+        eng.store.upsert_task(&orphan).await.unwrap();
+
+        client.delete_tasklist("L2").await.unwrap();
+        eng.run().await.unwrap();
+
+        assert_eq!(
+            placement(&eng, "local-parent").await,
+            Some(("L1".into(), None))
+        );
+        assert_eq!(
+            placement(&eng, "local-child").await,
+            Some(("L1".into(), Some("local-parent".into()))),
+            "the unpushed subtree re-homes intact"
+        );
+        assert_eq!(
+            placement(&eng, "local-orphan").await,
+            Some(("L1".into(), None)),
+            "a subtask whose synced parent died is promoted, not destroyed"
+        );
+        assert!(
+            eng.store.find_task_any("SYNCED").await.unwrap().is_none(),
+            "the row the server knew dies with its list (P1)"
+        );
+
+        // All three still sync, and stay one level deep (invariant #1).
+        eng.run().await.unwrap();
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.sync_state == SyncState::Clean));
+        let parent_id = rows
+            .iter()
+            .find(|r| r.task.title == "trip")
+            .unwrap()
+            .task
+            .id
+            .clone();
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.task.title == "pack")
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some(parent_id.as_str()),
+            "the child follows its re-homed parent's remapped id"
+        );
+        assert!(
+            rows.iter()
+                .find(|r| r.task.title == "call hotel")
+                .unwrap()
+                .task
+                .parent
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn rehome_with_nowhere_to_go_keeps_the_list_as_an_unpushed_create() {
+        // D2's boundary: the ONLY list is deleted remotely while it still holds
+        // an unpushed create. There is nowhere to re-home to, so the list is
+        // kept as a local list create instead of being dropped — P2 holds even
+        // then, and the next run re-creates the list and pushes the row.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        eng.run().await.unwrap();
+
+        let mut row = dirty_task("local-1", "L1", "create");
+        row.task.title = "nowhere to go".into();
+        eng.store.upsert_task(&row).await.unwrap();
+        client.delete_tasklist("L1").await.unwrap();
+
+        eng.run().await.unwrap();
+        let l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.title == "Work")
+            .expect("the list is kept, not dropped");
+        assert_eq!(l.sync_state, SyncState::Dirty);
+        assert_eq!(l.pending_op.as_deref(), Some("create"));
+        assert_eq!(
+            placement(&eng, "local-1").await.map(|p| p.1),
+            Some(None),
+            "the unpushed row is still there"
+        );
+
+        // Next run: the list is re-created on the server and the row lands.
+        eng.run().await.unwrap();
+        let lists = client.list_tasklists().await.unwrap();
+        let work = lists
+            .iter()
+            .find(|l| l.title == "Work")
+            .expect("list re-created on the server");
+        assert!(
+            client
+                .list_tasks(&work.id, None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "nowhere to go")
+        );
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "converged (P7)");
+        assert_eq!(out.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn edited_parent_deleted_remotely_spares_its_unpushed_subtask() {
+        // The same P2 hole reached through the update path: we push an edit to
+        // a parent the server already deleted (404 → delete-wins, P4), and its
+        // FK cascade would take an unpushed subtask with it. The subtask is
+        // promoted instead and still lands.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        stage_edit(&eng, "P", false, |r| r.task.title = "renamed here".into()).await;
+        let mut child = dirty_task("local-kid", "L1", "create");
+        child.task.title = "kept".into();
+        child.task.parent = Some("P".into());
+        eng.store.upsert_task(&child).await.unwrap();
+        client.delete_task_from_state("L1", "P");
+
+        eng.run().await.unwrap();
+
+        assert!(
+            eng.store.find_task_any("P").await.unwrap().is_none(),
+            "delete wins over our edit (P4)"
+        );
+        assert_eq!(
+            placement(&eng, "local-kid").await,
+            Some(("L1".into(), None)),
+            "the unpushed subtask survives, promoted"
+        );
+        eng.run().await.unwrap();
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "kept")
+        );
+    }
+
+    #[tokio::test]
+    async fn synced_row_in_remotely_deleted_list_dies_with_the_list() {
+        // D2's boundary (P1/P4): a row the server HAS seen dies with its list
+        // even with a local edit pending. P2 only shields work the server has
+        // never seen — it is not a general "never delete a dirty row" rule.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        client.seed_task("L2", "T2", "server row", "1");
+        eng.run().await.unwrap();
+
+        stage_edit(&eng, "T2", false, |r| r.task.title = "edited here".into()).await;
+        client.delete_tasklist("L2").await.unwrap();
+
+        eng.run().await.unwrap();
+
+        assert!(
+            eng.store.find_task_any("T2").await.unwrap().is_none(),
+            "the synced row dies with its list, edit discarded"
+        );
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "and it is NOT re-homed into the default list"
+        );
+    }
+
+    #[tokio::test]
+    async fn subtask_create_parent_deleted_remotely_promotes_to_toplevel() {
+        // §G / D3. The user adds a subtask; another device deletes its parent
+        // before the create lands. The insert names a dead parent id — a
+        // permanent 400 that would wedge the row dirty forever, and the
+        // parent's local removal would cascade it away entirely. Instead the
+        // child is promoted to a top-level create in the same list (P2).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        let mut child = dirty_task("local-kid", "L1", "create");
+        child.task.title = "orphaned subtask".into();
+        child.task.parent = Some("P".into());
+        eng.store.upsert_task(&child).await.unwrap();
+
+        client.delete_task_from_state("L1", "P");
+        eng.run().await.unwrap();
+
+        assert!(
+            eng.store.find_task_any("P").await.unwrap().is_none(),
+            "the remotely-deleted parent is gone locally"
+        );
+        assert_eq!(
+            placement(&eng, "local-kid").await,
+            Some(("L1".into(), None)),
+            "the unpushed child survives, promoted to top-level"
+        );
+        let row = eng.store.find_task_any("local-kid").await.unwrap().unwrap();
+        assert_eq!(row.pending_op.as_deref(), Some("create"), "still queued");
+
+        // Bounded: it lands on the very next run — no permanent wedge.
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        let remote = client.list_tasks("L1", None).await.unwrap().items;
+        let landed = remote
+            .iter()
+            .find(|t| t.title == "orphaned subtask")
+            .expect("the promoted create lands");
+        assert!(landed.parent.is_none(), "it lands as a top-level task");
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "converged (P7)");
+        assert_eq!(out.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn subtask_create_parent_completed_remotely_converges_no_wedge() {
+        // §G × parent completed remotely. Probe 5: the insert is ACCEPTED and
+        // the child is created already completed — the cascade is Google's, not
+        // ours. The row must converge to `completed` locally in the same run
+        // (P6: an adopted etag with stale content would freeze the row out of
+        // every future pull), and must not wedge or error.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "P",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut child = dirty_task("local-kid", "L1", "create");
+        child.task.title = "late subtask".into();
+        child.task.parent = Some("P".into());
+        eng.store.upsert_task(&child).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "the insert is accepted, not rejected");
+        let row = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.task.title == "late subtask")
+            .expect("the subtask exists locally");
+        assert_eq!(row.task.parent.as_deref(), Some("P"), "still a subtask");
+        assert_eq!(
+            row.task.status,
+            TaskStatus::Completed,
+            "Google's cascade completed it; local mirrors the server (P6)"
+        );
+        assert_eq!(row.sync_state, SyncState::Clean);
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "converged (P7)");
+        assert_eq!(out.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn create_racing_identical_remote_create_both_live_no_content_dedup() {
+        // §G. In-flight adoption is scoped to rows behind an in-flight marker.
+        // A local create that merely LOOKS like a remote task (same title, no
+        // marker) must not be swallowed by it — duplicate titles are legal.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        eng.run().await.unwrap();
+
+        // Someone else creates "buy milk" remotely; we create our own.
+        client.seed_task("L1", "remote-theirs", "buy milk", "1");
+        let mut mine = dirty_task("local-mine", "L1", "create");
+        mine.task.title = "buy milk".into();
+        eng.store.upsert_task(&mine).await.unwrap();
+
+        eng.run().await.unwrap();
+
+        let titles: Vec<_> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.task.title)
+            .collect();
+        assert_eq!(
+            titles.iter().filter(|t| *t == "buy milk").count(),
+            2,
+            "both tasks live — adoption is not content dedup"
+        );
+        assert_eq!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .filter(|t| t.title == "buy milk")
+                .count(),
+            2,
+            "and both exist on the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn held_create_survives_remote_list_delete_and_pushes_after_release() {
+        // §G × held create. The row the UI is holding is not pushed this run —
+        // and a remote list delete in the same window must not destroy it
+        // either (P2). It re-homes, waits for the hold to clear, then pushes.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        eng.run().await.unwrap();
+
+        let mut held = dirty_task("local-held", "L2", "create");
+        held.task.title = "held row".into();
+        eng.store.upsert_task(&held).await.unwrap();
+        client.delete_tasklist("L2").await.unwrap();
+
+        let eng_hold = SyncEngine::with_push(client.clone(), eng.store.clone(), true)
+            .hold_create_id(Some("local-held".into()));
+        let out = eng_hold.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "the held create does not push");
+        assert_eq!(
+            placement(&eng, "local-held").await,
+            Some(("L1".into(), None)),
+            "but it survives the list delete, re-homed"
+        );
+        assert_eq!(
+            eng.store
+                .find_task_any("local-held")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .id,
+            "local-held",
+            "id not remapped while held — the UI still holds it"
+        );
+
+        // Released: it pushes.
+        let out = eng.run().await.unwrap();
+        assert!(out.pushed >= 1);
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "held row")
+        );
+    }
+
+    #[tokio::test]
+    async fn crash_between_rehome_and_push_converges_no_duplicate() {
+        // P8 over the new path: the row re-homes, its insert commits on the
+        // server, and the response is lost. The in-flight marker must survive
+        // the re-home (its own list_id pointed at the list that just died), so
+        // the next run adopts the orphan instead of inserting a second copy.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        eng.run().await.unwrap();
+
+        let mut row = dirty_task("local-1", "L2", "create");
+        row.task.title = "survive me".into();
+        eng.store.upsert_task(&row).await.unwrap();
+        client.delete_tasklist("L2").await.unwrap();
+
+        // Run 1: insert into the dead list fails; the pull re-homes the row.
+        eng.run().await.unwrap();
+        assert_eq!(
+            placement(&eng, "local-1").await,
+            Some(("L1".into(), None)),
+            "re-homed"
+        );
+
+        // Run 2: the insert commits but the response is lost (crash window).
+        client.commit_then_fail_next_insert();
+        eng.run().await.unwrap();
+
+        // Run 3: recovery adopts the orphan — exactly one copy on each side.
+        eng.run().await.unwrap();
+        assert_eq!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .filter(|t| t.title == "survive me")
+                .count(),
+            1,
+            "no duplicate on the server"
+        );
+        let local = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].sync_state, SyncState::Clean);
+        assert!(local[0].task.etag.is_some(), "adopted the server's row");
     }
 }

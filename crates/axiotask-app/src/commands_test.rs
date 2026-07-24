@@ -2872,4 +2872,128 @@ mod tests {
             "intent consumed once it truly lands"
         );
     }
+
+    #[tokio::test]
+    async fn a_subtask_whose_parent_is_deleted_elsewhere_becomes_a_visible_row() {
+        // RFC-009 §G / D3, user-driven. The user adds a subtask in the detail
+        // panel; another device deletes the parent before it syncs. A subtask
+        // only ever renders inside its parent's panel (invariant #1), so a
+        // child left pointing at a dead parent is invisible AND unpushable.
+        // It must come back as a TOP-LEVEL row of the list on screen.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "Parent", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.set_editing_task(Some("P".into()));
+        crate::commands::create_task_inner(
+            &state,
+            "L1".into(),
+            Some("P".into()),
+            "call bank".into(),
+        )
+        .await
+        .unwrap();
+        state.set_editing_task(None);
+
+        // The other device deletes the parent.
+        client.delete_task_from_state("L1", "P");
+        state.run_sync().await.unwrap();
+
+        // What the list view renders: top-level rows only.
+        let rendered: Vec<_> = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.parent.is_none())
+            .map(|t| t.task.title)
+            .collect();
+        assert_eq!(
+            rendered,
+            vec!["call bank"],
+            "the orphaned subtask is visible as a top-level row"
+        );
+
+        // And it still syncs — no permanent wedge.
+        state.run_sync().await.unwrap();
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        let landed = remote
+            .items
+            .iter()
+            .find(|t| t.title == "call bank")
+            .expect("the promoted subtask reached the server");
+        assert!(landed.parent.is_none());
+        let local = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn a_task_added_to_a_list_deleted_elsewhere_shows_up_in_the_default_list() {
+        // RFC-009 §G3 / D2, user-driven. The user adds a task to "Work" while
+        // another device deletes that whole list. The list disappears from the
+        // sidebar, but the task the server never saw must not vanish with it —
+        // it shows up in the default list and still syncs.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Work");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.set_editing_task(Some("whatever".into()));
+        crate::commands::create_task_inner(&state, "L2".into(), None, "file taxes".into())
+            .await
+            .unwrap();
+        state.set_editing_task(None);
+        client.delete_tasklist("L2").await.unwrap();
+
+        state.run_sync().await.unwrap();
+
+        let sidebar: Vec<_> = state
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.list.title)
+            .collect();
+        assert_eq!(sidebar, vec!["My Tasks"], "the deleted list is gone");
+        let rendered: Vec<_> = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.parent.is_none())
+            .map(|t| t.task.title)
+            .collect();
+        assert_eq!(
+            rendered,
+            vec!["file taxes"],
+            "the unpushed task is visible in the default list"
+        );
+
+        state.run_sync().await.unwrap();
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "file taxes"),
+            "and it still syncs from its new home"
+        );
+    }
 }

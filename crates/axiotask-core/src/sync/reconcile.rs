@@ -547,6 +547,43 @@ pub fn plan_list_delete(error: Option<&ApiError>) -> ListDeleteAction {
     }
 }
 
+// ─── §G3 — a remotely-deleted list holding unpushed rows (D2) ────────────────
+
+/// The title Google gives an account's default list, and the title the app's
+/// own offline bootstrap uses (`state.rs::ensure_default_list`). Preferring it
+/// makes the re-home target the list the user thinks of as home whenever one
+/// exists.
+const DEFAULT_LIST_TITLE: &str = "My Tasks";
+
+/// Where the unpushed rows of a remotely-deleted list go (§G3, D2 —
+/// ratified).
+///
+/// A row the server has never seen must not die with a list the server
+/// deleted (P2), so it re-homes to the **default list**: the surviving list
+/// titled "My Tasks" if there is one, otherwise the alphabetically first, tied
+/// by id so the choice is deterministic. Candidates exclude the dying list
+/// itself, lists the user has tombstoned (they would take the rows down again)
+/// and local-only lists (they never push, so a re-homed create would never
+/// sync). `None` means there is nowhere to put them — the caller keeps the
+/// list alive instead (see `engine::pull_all`).
+pub fn rehome_target<'a>(
+    lists: &'a [StoredTaskList],
+    dying_list_id: &str,
+) -> Option<&'a StoredTaskList> {
+    lists
+        .iter()
+        .filter(|l| {
+            l.list.id != dying_list_id && !l.local_only && l.sync_state != SyncState::Deleted
+        })
+        .min_by_key(|l| {
+            (
+                l.list.title != DEFAULT_LIST_TITLE,
+                l.list.title.clone(),
+                l.list.id.clone(),
+            )
+        })
+}
+
 // ─── §A — pull ───────────────────────────────────────────────────────────────
 
 /// The rows of one remote list that are candidates for upsert, in FK-safe
@@ -1660,6 +1697,71 @@ mod tests {
                 local_id: "local-uuid".into()
             }
         );
+    }
+
+    // ─── §G3 / D2 — the re-home target ───────────────────────────────────
+
+    #[test]
+    fn rehome_target_prefers_the_default_list() {
+        let lists = [
+            stored_list(list("r1", "Work")),
+            stored_list(list("r2", "My Tasks")),
+            stored_list(list("r3", "Dying")),
+        ];
+        assert_eq!(
+            rehome_target(&lists, "r3").map(|l| l.list.id.as_str()),
+            Some("r2")
+        );
+    }
+
+    #[test]
+    fn rehome_target_falls_back_to_the_first_list_deterministically() {
+        // No "My Tasks": alphabetical by title, ties broken by id, so the
+        // answer never depends on store iteration order.
+        let lists = [
+            stored_list(list("r2", "Work")),
+            stored_list(list("r1", "Work")),
+            stored_list(list("r3", "Admin")),
+        ];
+        assert_eq!(
+            rehome_target(&lists, "zz").map(|l| l.list.id.as_str()),
+            Some("r3")
+        );
+        let ties = [
+            stored_list(list("r2", "Work")),
+            stored_list(list("r1", "Work")),
+        ];
+        assert_eq!(
+            rehome_target(&ties, "zz").map(|l| l.list.id.as_str()),
+            Some("r1")
+        );
+    }
+
+    #[test]
+    fn rehome_target_skips_lists_that_cannot_keep_the_work() {
+        // A local-only list never pushes (the re-homed create would never
+        // sync) and a tombstoned list is about to take its rows down again.
+        let mut local_only = stored_list(list("r1", "My Tasks"));
+        local_only.local_only = true;
+        let mut doomed = stored_list(list("r2", "Archive"));
+        doomed.sync_state = SyncState::Deleted;
+        doomed.pending_op = Some("delete".into());
+        let good = stored_list(list("r3", "Work"));
+
+        let lists = [local_only.clone(), doomed.clone(), good];
+        assert_eq!(
+            rehome_target(&lists, "dying").map(|l| l.list.id.as_str()),
+            Some("r3")
+        );
+        // Nothing usable at all — the caller must keep the dying list.
+        assert!(rehome_target(&[local_only, doomed], "dying").is_none());
+        assert!(rehome_target(&[], "dying").is_none());
+    }
+
+    #[test]
+    fn rehome_target_never_returns_the_dying_list() {
+        let lists = [stored_list(list("r1", "My Tasks"))];
+        assert!(rehome_target(&lists, "r1").is_none());
     }
 
     #[test]
