@@ -3412,4 +3412,234 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert_eq!((out.pushed, out.errors), (0, 0), "converged (P8/P7)");
     }
+
+    // ─── RFC-009 §I matrix: list ops through the real commands ──────────────
+    //
+    // The sequencing rows live in `sync::engine`; these are the same crossings
+    // driven the way the user drives them — `rename_list` / `delete_list` /
+    // `create_list` — asserting what the sidebar and the list view actually
+    // show afterwards.
+
+    /// What the sidebar renders: `list_tasklists` reads `all_lists`, which
+    /// excludes tombstoned lists.
+    async fn sidebar(state: &AppState) -> Vec<String> {
+        let mut titles: Vec<String> = state
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.list.title)
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    /// Every task title the UI can reach: the frontend builds `allTasks` by
+    /// asking each list the sidebar shows for its tasks, so a row in a list
+    /// that is not rendered is reachable from no view at all.
+    async fn reachable_tasks(state: &AppState) -> Vec<String> {
+        let mut titles = Vec::new();
+        for l in state.store.all_lists().await.unwrap() {
+            for t in state.store.list_tasks(&l.list.id).await.unwrap() {
+                titles.push(t.task.title);
+            }
+        }
+        titles.sort();
+        titles
+    }
+
+    #[tokio::test]
+    async fn renaming_a_list_the_other_device_renamed_too_leaves_one_list() {
+        // §I × remote rename, D6 (RATIFIED). Lists cannot 412 (probe 8), so
+        // there is no conflict to fork: the user gets ONE list, carrying the
+        // last write, and never a second sidebar entry to clean up.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_task("L1", "T1", "ship it", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.rename_list("L1", "Job").await.unwrap();
+        // The other device renames the same list before our push goes out.
+        client.patch_tasklist("L1", "Career").await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            sidebar(&state).await,
+            vec!["Job", "My Tasks"],
+            "one entry for the renamed list — no conflicted copy (D6)"
+        );
+        assert_eq!(
+            rendered(&state, "L1").await,
+            vec!["ship it"],
+            "and its tasks are untouched by the rename race"
+        );
+
+        // Now the other device renames it again, after ours landed: remote
+        // wins on the next pull, silently and without a copy.
+        client.patch_tasklist("L1", "Career").await.unwrap();
+        state.run_sync().await.unwrap();
+        assert_eq!(sidebar(&state).await, vec!["Career", "My Tasks"]);
+        assert_eq!(rendered(&state, "L1").await, vec!["ship it"]);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_list_takes_its_unpushed_tasks_with_it() {
+        // §I row the matrix had not enumerated (the list-level twin of §D's
+        // "delete a parent whose child is an unpushed create"): the list the
+        // user deletes still holds a task the server has never seen. P2 shields
+        // unpushed work from REMOTE events only — the user's own delete
+        // cascades (invariant #3). The row must not survive as an orphan, must
+        // not re-home into another list, and must not be inserted into a list
+        // that is being deleted.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Doomed");
+        client.seed_task("L2", "T1", "synced row", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // A brand-new task, never pushed, plus a subtask under the synced one.
+        crate::commands::create_task_inner(&state, "L2".into(), None, "never pushed".into())
+            .await
+            .unwrap();
+        crate::commands::create_task_inner(
+            &state,
+            "L2".into(),
+            Some("T1".into()),
+            "unpushed subtask".into(),
+        )
+        .await
+        .unwrap();
+
+        state.delete_list("L2").await.unwrap();
+
+        assert_eq!(sidebar(&state).await, vec!["My Tasks"], "gone at once");
+        assert_eq!(
+            reachable_tasks(&state).await,
+            Vec::<String>::new(),
+            "nothing it held is reachable from any view"
+        );
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0, "no insert into the list being deleted");
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.id != "L2"),
+            "the delete reached the server"
+        );
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            Vec::<String>::new(),
+            "the unpushed rows were not re-homed — this was the user's own delete"
+        );
+        assert_eq!(sidebar(&state).await, vec!["My Tasks"]);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_list_renamed_here_and_deleted_elsewhere_disappears_with_its_tasks() {
+        // §I × remote deleted. The rename 404s, and a rename against a list
+        // that no longer exists is meaningless: the list is hard-deleted
+        // locally (P4) instead of retrying forever. The user sees the sidebar
+        // entry and its tasks go — not an entry that never syncs again.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Shared");
+        client.seed_task("L2", "T1", "their task", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+        assert_eq!(sidebar(&state).await, vec!["My Tasks", "Shared"]);
+
+        state.rename_list("L2", "Renamed here").await.unwrap();
+        client.delete_list_from_state("L2");
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0, "a 404 rename is not a rejection");
+        assert_eq!(
+            sidebar(&state).await,
+            vec!["My Tasks"],
+            "the list the other device deleted is gone from the sidebar"
+        );
+        assert_eq!(
+            reachable_tasks(&state).await,
+            Vec::<String>::new(),
+            "and its tasks went with it"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_task_completed_on_another_device_stays_visible_as_done() {
+        // §A × completed and auto-hidden by Google. The pull asks for hidden
+        // and completed tasks, so the row stays in the remote view and ghost
+        // detection spares it. What the user must see is the task still in the
+        // list, ticked — not a task that silently vanished from their history.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_task("L1", "T1", "file taxes", "1");
+        client.seed_task("L1", "T2", "still open", "2");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                axiotask_core::model::TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L1").await,
+            vec!["file taxes", "still open"],
+            "the completed task is still a row in the list"
+        );
+        let done = state
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task.id == "T1")
+            .expect("the completed row survived the pull");
+        assert_eq!(
+            done.task.status,
+            TaskStatus::Completed,
+            "and renders ticked, so 'show completed' and 'clear completed' can see it"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pulled, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
 }

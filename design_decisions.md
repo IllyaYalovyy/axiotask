@@ -28,6 +28,9 @@ No. An in-flight create is recorded before the insert; a restarted run adopts th
 **Q: How does moving a task to another list work?**
 Google has no cross-list move, and deleting a parent cascades its children. So the move clones the task and its whole subtree under new ids in the target list, then deletes the original. The subtree always moves together — nothing is left behind.
 
+**Q: What happens when two devices rename or delete the same list?**
+The last write wins, and there is never a "(conflicted copy)" list. Google's tasklists endpoint ignores `If-Match` — a stale etag still returns 200 and the rename lands (verified live) — so list renames cannot be conflict-detected at all; remote is canonical and the next pull adopts whatever title the server holds. A list delete cascades its tasks on the server, including tasks another device added while our delete was queued, and a delete of a list already deleted elsewhere is a success, not an error. Deleting a list also takes the rows the server has never seen: that is the user's own delete, and it cascades (unpushed work is shielded from *remote* events only).
+
 **Q: What do complete and delete do to subtasks?**
 They mirror Google. Completing a task completes its subtasks (un-completing does not reopen them). Deleting a task deletes its whole subtree. We reproduce these server behaviors locally so state is truthful immediately.
 

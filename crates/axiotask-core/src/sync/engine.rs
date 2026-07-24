@@ -5550,4 +5550,422 @@ mod tests {
         assert_eq!(local[0].sync_state, SyncState::Clean);
         assert!(local[0].task.etag.is_some(), "adopted the server's row");
     }
+
+    // ─── RFC-009 §I matrix: local list ops × remote ──────────────────────────
+    //
+    // One test per row of §I. Lists have no conflict machinery at all: probe 8
+    // (#106) established that `patch_tasklist` IGNORES `If-Match` — a stale
+    // etag still returns 200 — so a rename can never 412 and there is nothing
+    // to fork a "(conflicted copy)" from. D6 (remote wins, no copy) is what
+    // that server design forces, and these tests pin the convergence it has to
+    // produce in both serializations.
+
+    /// Every list title the local store would show in the sidebar. Tombstoned
+    /// lists are excluded by `all_lists`, exactly as the UI sees them.
+    async fn sidebar(eng: &SyncEngine) -> Vec<String> {
+        let mut titles: Vec<String> = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.list.title)
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    /// Mark a synced list deleted the way `AppState::delete_list` does: local
+    /// task rows go immediately, the list becomes a tombstone to push.
+    async fn tombstone_list(eng: &SyncEngine, id: &str) {
+        for t in eng.store.list_tasks(id).await.unwrap() {
+            eng.store.delete_task_hard(&t.task.id).await.unwrap();
+        }
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == id)
+            .expect("list to tombstone");
+        l.sync_state = SyncState::Deleted;
+        l.pending_op = Some("delete".into());
+        eng.store.upsert_list(&l).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_list_rename_race_lands_last_writer_wins_with_no_conflicted_copy() {
+        // §I × remote rename, D6 (RATIFIED). Two devices rename the same list
+        // in the same window. The tasklists endpoint has no precondition, so
+        // our PATCH lands over theirs (last writer wins) — and, crucially, the
+        // outcome is ONE list, not a forked copy: the sidebar never grows a
+        // second entry out of a rename race, and the run converges (P7).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        client.seed_task("L1", "T1", "ship it", "1");
+        eng.run().await.unwrap();
+
+        // Local rename, still unpushed.
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "Job".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+        // The other device renames it too, bumping the list's etag.
+        client.patch_tasklist("L1", "Career").await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "no 412 is possible on a tasklist");
+        assert_eq!(out.conflicts, 0, "and no conflicted copy is ever forked");
+
+        assert_eq!(
+            sidebar(&eng).await,
+            vec!["Job"],
+            "one list, carrying the last write"
+        );
+        let remote = client.list_tasklists().await.unwrap();
+        assert_eq!(remote.len(), 1, "no duplicate list on the server either");
+        assert_eq!(remote[0].title, "Job");
+        // The list's tasks are untouched by the rename race.
+        assert_eq!(
+            eng.store
+                .list_tasks("L1")
+                .await
+                .unwrap()
+                .iter()
+                .map(|t| t.task.title.clone())
+                .collect::<Vec<_>>(),
+            vec!["ship it"]
+        );
+
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_remote_rename_after_ours_landed_wins_on_the_next_pull() {
+        // §I × remote rename, the other serialization — the remote write is
+        // the last one. D6: remote wins, silently. The local title is replaced
+        // with no copy, no error and no "your rename was overwritten" state to
+        // clean up, and the row stays clean so nothing re-pushes the old title.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "Job".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+        eng.run().await.unwrap();
+        assert_eq!(sidebar(&eng).await, vec!["Job"], "our rename landed");
+
+        // Only now does the other device rename it.
+        client.patch_tasklist("L1", "Career").await.unwrap();
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(sidebar(&eng).await, vec!["Career"], "remote wins (D6)");
+        assert_eq!(out.conflicts, 0);
+        assert_eq!(out.errors, 0);
+        assert!(out.lists_changed, "the sidebar is told to refresh");
+        let stored = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        assert_eq!(stored.sync_state, SyncState::Clean, "nothing left to push");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_locally_deleted_list_takes_remotely_added_tasks_with_it() {
+        // §I × remote added tasks to the list meanwhile. Google's list delete
+        // cascades server-side (P4), so a task another device dropped into the
+        // list in our delete window dies with it. Accepted: the user asked for
+        // the list to go. What must NOT happen is a local orphan — a row in a
+        // list that no longer exists, invisible in every view and undeletable.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Doomed");
+        client.seed_task("L2", "T1", "old row", "1");
+        eng.run().await.unwrap();
+
+        tombstone_list(&eng, "L2").await;
+        // Another device adds a task to the list we are deleting.
+        client.seed_task("L2", "T2", "added elsewhere", "2");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(sidebar(&eng).await, vec!["My Tasks"], "the list is gone");
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.id != "L2"),
+            "and gone on the server"
+        );
+        assert!(
+            client
+                .list_tasks("L2", None)
+                .await
+                .unwrap()
+                .items
+                .is_empty(),
+            "the server cascaded its tasks, including the one added late"
+        );
+        assert!(
+            eng.store.find_task_any("T2").await.unwrap().is_none(),
+            "the remote-born row never lands as a local orphan"
+        );
+        assert!(eng.store.find_task_any("T1").await.unwrap().is_none());
+
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_pending_list_delete_hides_the_list_while_the_push_retries() {
+        // §I × remote added tasks, non-happy path: the delete push hits a
+        // transient, so the tombstone survives a whole run in which the pull
+        // still sees the list AND the task added to it remotely. Neither may
+        // come back: `all_lists` (what the sidebar and every smart view iterate
+        // over) must not show the list, so nothing it holds is reachable.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Doomed");
+        eng.run().await.unwrap();
+
+        tombstone_list(&eng, "L2").await;
+        client.seed_task("L2", "T2", "added elsewhere", "1");
+        client.fail_next(crate::api::in_memory::Method::DeleteTaskList, || {
+            ApiError::Server { status: 503 }
+        });
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a transient is not an error");
+        assert_eq!(
+            sidebar(&eng).await,
+            vec!["My Tasks"],
+            "the deleted list stays hidden while its delete retries"
+        );
+        // Every task the UI can reach = the tasks of the lists it renders.
+        let mut visible: Vec<String> = Vec::new();
+        for l in eng.store.all_lists().await.unwrap() {
+            for t in eng.store.list_tasks(&l.list.id).await.unwrap() {
+                visible.push(t.task.title);
+            }
+        }
+        assert!(
+            visible.is_empty(),
+            "nothing from the dying list is reachable: {visible:?}"
+        );
+
+        // Next run: the retry lands and both sides converge.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.id != "L2"),
+            "the delete finally lands"
+        );
+        assert!(eng.store.find_task_any("T2").await.unwrap().is_none());
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_list_delete_that_already_happened_remotely_is_a_success() {
+        // §I × already deleted remotely. The 404 is the outcome we wanted, so
+        // it clears the tombstone instead of counting an error or nagging on
+        // every future run.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "My Tasks");
+        client.seed_list("L2", "Doomed");
+        eng.run().await.unwrap();
+
+        tombstone_list(&eng, "L2").await;
+        client.delete_list_from_state("L2");
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a 404 on a delete is success, not failure");
+        assert_eq!(sidebar(&eng).await, vec!["My Tasks"]);
+        assert!(
+            eng.store
+                .drain_dirty_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L2"),
+            "no tombstone left to retry forever"
+        );
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_local_list_create_adopts_a_same_title_list_created_remotely() {
+        // §I × remote created a list with the same title (the two-device
+        // "Groceries" race, and the offline "My Tasks" bootstrap). The create
+        // adopts the remote list instead of inserting a duplicate — and the
+        // tasks queued in the local list follow it onto the adopted id, which
+        // is the part a plain id remap could silently drop.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L-remote", "Groceries");
+        eng.store
+            .upsert_list(&dirty_list("local-list", "Groceries", "create"))
+            .await
+            .unwrap();
+        let mut t = dirty_task("local-task", "local-list", "create");
+        t.task.title = "milk".into();
+        eng.store.upsert_task(&t).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(sidebar(&eng).await, vec!["Groceries"], "exactly one list");
+        assert_eq!(
+            client.list_tasklists().await.unwrap().len(),
+            1,
+            "no duplicate list was created on the server"
+        );
+        assert_eq!(
+            eng.store
+                .list_tasks("L-remote")
+                .await
+                .unwrap()
+                .iter()
+                .map(|t| t.task.title.clone())
+                .collect::<Vec<_>>(),
+            vec!["milk"],
+            "the queued task followed the list onto the adopted id"
+        );
+        assert!(
+            client
+                .list_tasks("L-remote", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .any(|t| t.title == "milk"),
+            "and it pushed into the adopted list, not a dead local id"
+        );
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    // ─── RFC-009 §A: completed / auto-hidden rows survive the pull ───────────
+
+    #[tokio::test]
+    async fn a_task_completed_remotely_is_pulled_not_ghost_deleted() {
+        // §A × completed (and, live, auto-hidden by Google some time later).
+        // The pull asks for `showCompleted=true&showHidden=true`
+        // (`list_tasks_asks_for_completed_and_hidden_tasks` pins the wire), so
+        // such a row stays in the remote view and ghost detection leaves it
+        // alone. If it ever dropped out, the local row would be DELETED —
+        // silently eating the user's completed history rather than showing it
+        // ticked.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        client.seed_task("L1", "T1", "file taxes", "1");
+        eng.run().await.unwrap();
+
+        // Another device ticks it off.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 0, "a completed row is not a ghost");
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(rows.len(), 1, "the row is still there");
+        assert_eq!(rows[0].task.title, "file taxes");
+        assert_eq!(
+            rows[0].task.status,
+            TaskStatus::Completed,
+            "and it shows as done"
+        );
+        assert_eq!(rows[0].sync_state, SyncState::Clean);
+
+        let out = eng.run().await.unwrap();
+        assert_eq!((out.pulled, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_completed_subtask_survives_the_pull_still_attached() {
+        // §A × completed, non-happy variant: the hidden row is a SUBTASK of an
+        // open parent. Ghost-deleting it would empty the detail panel of a task
+        // the user completed, and detaching it would promote a subtask into a
+        // list row (invariant #1). It must stay exactly where it was, done.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        client.seed_task("L1", "P", "trip", "1");
+        client.seed_task_with_parent("L1", "C", "pack", "2", Some("P"));
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "C",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 0);
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        let child = rows
+            .iter()
+            .find(|r| r.task.id == "C")
+            .expect("the completed subtask survives the pull");
+        assert_eq!(child.task.status, TaskStatus::Completed);
+        assert_eq!(
+            child.task.parent.as_deref(),
+            Some("P"),
+            "still a subtask — never promoted to a list row (invariant #1)"
+        );
+        assert_eq!(
+            rows.iter().find(|r| r.task.id == "P").unwrap().task.status,
+            TaskStatus::NeedsAction,
+            "completing a child does not touch the parent"
+        );
+    }
 }

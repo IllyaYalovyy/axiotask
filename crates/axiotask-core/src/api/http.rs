@@ -781,6 +781,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_tasks_asks_for_completed_and_hidden_tasks() {
+        // RFC-009 §A: Google auto-HIDES a completed task some time after it is
+        // ticked. `showCompleted` alone does not bring a hidden task back —
+        // `showHidden=true` does. Drop either param and every such task falls
+        // out of the pull's remote view, at which point ghost detection reads
+        // "absent from the server" and DELETES the local row: sync silently
+        // eats the user's completed history. This test is the only guard
+        // against that "optimization", so it pins both params on the wire.
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/lists/L1/tasks"))
+            .and(query_param("showCompleted", "true"))
+            .and(query_param("showHidden", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [
+                    {"id": "T1", "title": "done and hidden", "status": "completed",
+                     "hidden": true, "position": "00001", "updated": "2026-01-01T00:00:00Z"}
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let page = client
+            .list_tasks("L1", None)
+            .await
+            .expect("both showCompleted and showHidden must be on the request");
+        assert_eq!(page.items.len(), 1, "the hidden completed task is pulled");
+        assert_eq!(page.items[0].status, crate::model::TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn patch_tasklist_sends_no_if_match() {
+        // RFC-009 §I / D6: probe 8 (#106) established live that the tasklists
+        // endpoint IGNORES `If-Match` — a stale etag still returns 200 and the
+        // rename lands. List renames are therefore last-writer-wins BY SERVER
+        // DESIGN and conflict detection for lists is impossible, which is what
+        // forces D6 (remote wins, no conflicted copy). Sending the header would
+        // dress up a guarantee the server does not offer; this test makes any
+        // future attempt to "add list conflict detection" deliberate.
+        let server = MockServer::start().await;
+
+        Mock::given(method("PATCH"))
+            .and(path("/users/@me/lists/L1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "L1", "title": "New Name", "etag": "e2",
+                "updated": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        client.patch_tasklist("L1", "New Name").await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let patch = requests
+            .iter()
+            .find(|r| r.method == wiremock::http::Method::PATCH)
+            .expect("the PATCH reached the server");
+        assert!(
+            !patch.headers.contains_key("if-match"),
+            "list renames are last-writer-wins by server design (D6): {:?}",
+            patch.headers
+        );
+    }
+
+    #[tokio::test]
     async fn list_tasks_passes_page_token() {
         use wiremock::matchers::query_param;
         let server = MockServer::start().await;

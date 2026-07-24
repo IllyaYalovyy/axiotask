@@ -1699,6 +1699,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn list_pull_adopts_a_remote_rename_even_when_the_etag_is_unchanged() {
+        // §I / D6: a list rename resolves REMOTE-WINS, and it must not be
+        // possible for a stale etag to freeze the local title out of the pull
+        // (the P6 failure mode, at list level). Tasks are skipped on a matching
+        // etag; lists deliberately are NOT — the title itself is compared, so a
+        // server-side rename always lands even if the etag and `updated` are
+        // byte-identical to what we hold.
+        let stored = stored_list(list("r1", "Work"));
+        let mut renamed = list("r1", "Career");
+        renamed.etag = stored.list.etag.clone();
+        renamed.updated = stored.list.updated.clone();
+        assert_eq!(
+            plan_list_pull(&renamed, std::slice::from_ref(&stored)),
+            ListPullAction::Upsert { changed: true },
+            "the remote title wins; no conflicted copy exists for lists"
+        );
+    }
+
     // ─── §G3 / D2 — the re-home target ───────────────────────────────────
 
     #[test]

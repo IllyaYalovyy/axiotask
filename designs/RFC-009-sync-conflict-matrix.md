@@ -126,8 +126,14 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   parent isn't visible yet is detached with etag dropped so it re-links next
   pull. `settled`
 - × completed and auto-hidden by Google → still pulled (`showCompleted=true&
-  showHidden=true`, http.rs:349) → must **not** be ghost-deleted. `untested`
-  — needs an explicit test so nobody ever "optimizes" the query params.
+  showHidden=true`, http.rs) → must **not** be ghost-deleted. `settled` (#112)
+  — pinned on the wire (`list_tasks_asks_for_completed_and_hidden_tasks`
+  matches **both** query params, so dropping either fails the request), and
+  the consequence of dropping them is pinned above it: the row falls out of the
+  remote view, ghost detection reads "absent from the server" and deletes it.
+  Tested for a top-level row and for a completed **subtask** of an open parent
+  (which must also stay attached, never promoted to a list row — invariant #1),
+  and end to end through the list view.
 - × list renamed → upsert. × list deleted → local list and its clean rows
   removed. `settled` (#101) — but see G3/P2 for dirty rows in that list.
 
@@ -371,15 +377,36 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   `If-Match` still returns 200 and the rename lands. Renames are
   last-writer-wins **by server design**, so **D6 (remote wins, no copy) is
   forced rather than chosen** — conflict detection for lists is impossible.
-  `decide` (D6, now a formality)
+  `settled` (D6 **ratified**; #112). Both serializations are tested and both
+  end with **one** list: ours lands last → our title, theirs lands last → the
+  pull adopts theirs. No conflicted copy exists for lists, and none may be
+  invented: `patch_tasklist_sends_no_if_match` pins the absent precondition,
+  and `plan_list_pull` deliberately compares the *title* rather than skipping
+  on a matching etag, so a remote rename can never be frozen out of the pull
+  (the P6 failure mode at list level).
 - Local list delete × remote added tasks to it meanwhile → the list delete
-  cascades them on the server (P4). Accepted; record + test. `untested`
+  cascades them on the server (P4). Accepted. `settled` (#112) — the
+  remote-born row also never lands as a **local orphan** (a row in a list that
+  no longer exists, reachable from no view). Non-happy path tested too: while
+  the delete push retries after a transient, the pull still sees both the list
+  and that task, and neither may resurface — the tombstone is protected twice,
+  by `plan_list_pull` (`KeepLocal`) and by the store's clean-guarded
+  `upsert_remote_list`.
 - Local list delete × already deleted remotely → 404 = success. `settled`
-  (#101)
+  (#101, crossing added in #112: no error counted, no tombstone left to retry
+  forever)
 - Local list create → adopt an existing remote list of the same title instead
-  of duplicating ("My Tasks"). `settled`
+  of duplicating ("My Tasks"). `settled` (#112) — including that tasks queued
+  in the local list follow it onto the adopted remote id and push there.
 - Local rename × remote deleted → NotFound → hard-delete local list (P4).
-  `settled` (#101)
+  `settled` (#101, user-visible crossing added in #112: the sidebar entry and
+  its tasks both go, rather than a list that never syncs again)
+- Local list delete × the list holds **unpushed creates** → they die with it.
+  P2 shields unpushed work from *remote* events only; this is the user's own
+  delete and it cascades (invariant #3), exactly as in §D for a parent task
+  whose child is an unpushed create. They are not re-homed and are never
+  inserted into the list being deleted. `settled` (#112) — a row the matrix
+  had not enumerated.
 
 ### J. Cross-cutting invariants (property layer)
 
@@ -416,16 +443,25 @@ demote/promote, cross-list move, list delete, remote cascades. `gap`
   survives in the target even if the original was deleted remotely ("move
   wins"). Falls out of P2 — the clones are rows the server has never seen —
   and of intent: the user moved the task to keep it.
-- **D6** — List rename conflicts resolve remote-wins, no copy.
+- **D6** — **RATIFIED (2026-07-24, with #112).** List rename conflicts resolve
+  remote-wins, no copy. Not a preference but a consequence: probe 8 showed the
+  tasklists endpoint ignores `If-Match`, so a rename cannot 412 and there is no
+  divergence signal to fork a copy from. Flipping D6 is therefore not a code
+  change we could make — it would need a conflict signal Google does not offer.
+  What the code *does* own, and what #112 pins: no precondition is sent
+  (`api::http`), and the pull adopts a remote title change unconditionally
+  (`sync::reconcile::plan_list_pull`) instead of skipping on a matching etag.
 - **P2 itself** — **RATIFIED (2026-07-24, with #110).** Remote events never
   destroy rows the server has never seen.
 
-Ratification note for the reviewer: D1 was ratified by #107, P2/D2/D3 by #110
-and D4/D5 by #111 — in every case *by the implementing task*, per the task's
-own instruction, not by a human sign-off. D6 is untouched and still gates
-step 8. Flipping D4 or D5 is a code change, not just an RFC edit: D4 lives in
-`api::http` (the DELETE carries no `If-Match`) and D5 in `sync::reconcile`
-(`plan_delete` reads 404 as success) — both pinned by the §H tests.
+Ratification note for the reviewer: D1 was ratified by #107, P2/D2/D3 by #110,
+D4/D5 by #111 and D6 by #112 — in every case *by the implementing task*, per
+the task's own instruction, not by a human sign-off. Every decision in this RFC
+is now ratified. Flipping D4 or D5 is a code change, not just an RFC edit: D4
+lives in `api::http` (the DELETE carries no `If-Match`) and D5 in
+`sync::reconcile` (`plan_delete` reads 404 as success) — both pinned by the §H
+tests. D6 cannot be flipped at all without a server-side precondition Google
+does not implement.
 
 ## Probes required (live API, before encoding — no-hallucination rule)
 
@@ -581,8 +617,17 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   enumerated was added: the crash *inside* a clone insert, where the
   crashed-create adoption machinery (#104) crosses a move. Each test was
   falsified against a deliberately broken engine/command before being kept.
-- [ ] **Step 8 (#112)** — List-op matrix (§I) + hidden/completed pull row
-  (§A). *(prereq: #105–#106; D6 ratified)*
+- [x] **Step 8 (#112)** — List-op matrix (§I) + hidden/completed pull row
+  (§A). *(prereq: #105–#106; D6 ratified)* **Done.** D6 ratified; the engine
+  deviates on no §I row, so the step is tests + this record and no behavior
+  change. Every §I row and the §A hidden/completed row has a test: the two
+  wire-level guards in `api::http` (both pull query params; no `If-Match` on a
+  list rename), the pure list-pull rule in `sync/reconcile.rs`, the sequencing
+  crossings in `sync/engine.rs`, and the user-driven rows through the real
+  `rename_list` / `delete_list` / `create_list` commands in `commands_test.rs`.
+  One row the matrix had not enumerated was added: a list delete over unpushed
+  creates — the list-level twin of §D's unpushed-child row. Each test was
+  falsified against deliberately broken product code before being kept.
 - [ ] **Step 9 (#113)** — Extend the property suite's op vocabulary (§J).
   *(prereq: #107–#112)*
 
@@ -593,7 +638,7 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
 - [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
   Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
   §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
-- [ ] **Q2** — D6 ratification by the reviewer. **D1 is ratified** (2026-07-23,
-  shipped with #107), **P2, D2 and D3** (2026-07-24, shipped with #110) and
-  **D4, D5** (2026-07-24, shipped with #111); only D6 is left, and it gates
-  step 8.
+- [x] **Q2** — D6 ratification. **Answered.** **D1** is ratified (2026-07-23,
+  shipped with #107), **P2, D2 and D3** (2026-07-24, shipped with #110),
+  **D4, D5** (2026-07-24, shipped with #111) and **D6** (2026-07-24, shipped
+  with #112). No decision in this RFC is outstanding.
