@@ -489,8 +489,19 @@ impl GoogleTasksClient for HttpClient {
             url.push_str(&urlencoding::encode(prev));
         }
         let auth = &self.auth;
+        // The explicit `Content-Length: 0` is load-bearing: the move endpoint
+        // takes all its input in the query string, but Google rejects a POST
+        // without that header with 411 Length Required — and reqwest omits it
+        // entirely for a POST with no body. Without this, EVERY
+        // reorder/promote/demote fails against the live API. Verified live
+        // (`live_api_probe`).
         let resp = self
-            .send_authed(|| async { auth.post(&url).send().await })
+            .send_authed(|| async {
+                auth.post(&url)
+                    .header(reqwest::header::CONTENT_LENGTH, "0")
+                    .send()
+                    .await
+            })
             .await?;
         let wire: TaskWire = resp
             .json()
@@ -939,6 +950,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(task.parent.as_deref(), Some("P1"));
+    }
+
+    #[tokio::test]
+    async fn move_task_sends_an_explicit_content_length() {
+        // The live endpoint answers 411 Length Required to a POST that carries
+        // no Content-Length, and reqwest omits the header entirely for a POST
+        // with no body — so a bodyless move NEVER lands against Google
+        // (verified live, `live_api_probe`). Pin the header here: this test is
+        // the only thing standing between us and a silently dead reorder.
+        use wiremock::matchers::header;
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/lists/L1/tasks/T1/move"))
+            .and(header("content-length", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "T1", "title": "moved", "status": "needsAction",
+                "position": "1", "updated": "2026-01-01T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        let task = client.move_task("L1", "T1", None, None).await.unwrap();
+        assert_eq!(task.id, "T1");
     }
 
     #[tokio::test]

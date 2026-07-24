@@ -134,15 +134,18 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   `settled` (#100)
 - × edited, divergent → 412 → refetch → remote canonical + "(conflicted
   copy)". `settled` (#100)
-- × moved/reordered/reparented (content untouched) → if the move bumped the
-  etag: 412 → refetch → content-fields equal → adopt etag; position arrives on
-  pull. **No false conflicted copy** — comparison excludes position/parent.
-  `untested` (also `probe`: does a move bump the task etag?)
-- × deleted → PATCH 404 → hard-delete local, edit discarded (P4).
-  `settled` code (engine.rs push_update NotFound); `untested` as an explicit
-  matrix row.
-- × parent-deleted (cascade removed the subtask we edited) → same as deleted:
-  404 → row gone, edit gone (P4). `untested`
+- × moved/reordered/reparented (content untouched) → a move **does** bump the
+  etag (probed): 412 → refetch → content-fields equal → adopt etag; position
+  arrives on pull. **No false conflicted copy** — comparison excludes
+  position/parent. `untested`
+- × deleted → **not a 404.** Deletes are soft: the PATCH returns **200** with a
+  body echoing our edit, but the row stays deleted and never reappears in
+  `list_tasks`. The edit is lost and the local row is removed by **ghost
+  detection on the pull**, not by a `NotFound` branch (P4 still holds).
+  `gap` — the engine's `push_update` NotFound path does not fire here, and no
+  test may assert that it does.
+- × parent-deleted (cascade removed the subtask we edited) → identical to the
+  row above: 200-but-ignored, then ghost-deleted on pull. `gap`
 - × 412 then refetch 404 → hard-delete. `settled`
 - × 412 then refetch transient → stays dirty, retries. `settled` (#100)
 
@@ -163,10 +166,11 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   matrix row (the adoption exists; engine.rs:660-664).
 - Local complete × remote deleted → 404 → row gone (P4). `untested`
 - Local complete parent × remote added a new subtask meanwhile → our local
-  cascade never saw the new child. Does the server's cascade complete it?
-  `probe` — then converge on pull; invariant: no open child under a completed
-  parent after the run that pulls it. (Whether that invariant is Google's or
-  ours is part of the probe.)
+  cascade never saw the new child, but **the server's cascade takes it**
+  (probed). A child insert also does **not** bump the parent's etag, so our
+  complete lands with the pre-child etag — no spurious 412. The invariant "no
+  open child under a completed parent" is **Google's**, not just ours.
+  `untested` as a matrix row.
 
 ### D. Local `delete` × remote
 
@@ -184,9 +188,10 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 - × already deleted remotely → 404 → success. `settled`
 - Local delete of one subtask ("remove subtask") × any of the above on the
   child → same rows as above, parent unaffected. `untested`
-- `probe`: does Google's DELETE accept If-Match at all? If yes, a future
-  option to detect delete/edit races exists; if no, P4 is also a physical
-  constraint. Record the answer in the fake either way.
+- **Answered:** Google's DELETE **does** accept `If-Match` (stale → 412, task
+  survives; current → 204). P4 is therefore a *choice*, not a physical
+  constraint: `http.rs::delete_task` sends no `If-Match` on purpose. A future
+  option to detect delete/edit races exists if D4 is revisited.
 
 ### E. Local reorder (`move`, previous-sibling) × remote
 
@@ -199,10 +204,11 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 - × previous-sibling deleted **locally** → degrade to reparent-only, ordering
   dropped (local `task_exists` guard). `settled` (#104)
 - × previous-sibling deleted **remotely** (still exists locally, guard passes)
-  → server rejects the stale sibling ref (`probe`: 400 or 404?). Expected:
-  degrade to reparent-only / append, never wedge, never lose the task (P5).
-  `gap` — no code path distinguishes this today; the intent must not retry
-  forever.
+  → server answers **404 "Previous task id not found"** (probed). Today that
+  maps to `MoveFailure::DropIntent`: the intent is dropped, the task is
+  untouched, the run continues — P5 is satisfied, but only by accident, since
+  the same 404 also means "the subject task is gone". `gap` — the two must be
+  distinguished before any 404-driven cleanup is added to the move path.
 - × remote edited same row content → move is orthogonal; move lands, remote
   content arrives via response-body adoption / pull. Converges to remote
   content + last-written order. `untested`
@@ -217,12 +223,16 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   Expected: no wedge, no duplicate, no divergence — the *invariant* is
   convergence, not which serialization won. `untested` (test both orders via
   the fake).
-- Demote under P × P **completed** remotely → can an open task move under a
-  completed parent? `probe`. Whatever the answer: converge, no wedge (P5).
-- Demote a task × remote gave it a subtask meanwhile → the move would create a
-  3rd level; Google rejects >2 levels (verified live). Expected: server error
-  → drop the move intent, task stays top-level, run continues (P5). `gap` —
-  encode once the exact status code is probed.
+- Demote under P × P **completed** remotely → the move is **accepted (200)**
+  and the server's cascade **completes the demoted task**, visible in the move
+  response body (probed). Response-body adoption (P6) converges it; the user
+  sees their open task become done. No wedge. `untested` as a matrix row.
+- Demote a task × remote gave it a subtask meanwhile → the move creates a 3rd
+  level and the server **accepts it (200)** — Google does *not* cap depth
+  (probed; this corrects an earlier claim). So invariant #1 (strictly one
+  level) is **ours to enforce client-side**; the server will happily store a
+  grandchild that our list views cannot render. `gap` — the demote path must
+  refuse the move locally, not rely on a server rejection that never comes.
 - Promote/detach (parent cleared) × remote deleted the row → 404 → drop
   intent; row ghost-deletes (P4). `untested`
 - Promote × remote reparented the same row elsewhere → last-writer-wins (P5);
@@ -246,9 +256,10 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   today the row stays dirty forever. Expected (`decide` D3): **promote to a
   top-level create in the same list** — the unpushed child never dies (P2) and
   never wedges. `gap`
-- Subtask create × parent **completed** remotely → what does Google do with an
-  open child inserted under a completed parent? `probe` → then: converge, no
-  wedge.
+- Subtask create × parent **completed** remotely → the insert is **accepted**
+  and the child is created **already completed**, in the insert response body
+  (probed). Adopting the response converges immediately; the user's new
+  subtask arrives done. No wedge. `untested` as a matrix row.
 - Create racing an identical remote create (same content, not ours) →
   in-flight adoption applies **only** to rows with in-flight markers; otherwise
   both tasks live (duplicate titles are legal). `settled` — keep as a matrix
@@ -282,9 +293,11 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 
 ### I. Local list ops × remote
 
-- Local rename × remote rename → does `patch_tasklist` carry If-Match, and do
-  list etags 412? `probe`. Expected either way: **remote wins, no conflicted
-  copy** — a list title is cheap, a duplicate list is not. `decide` (D6)
+- Local rename × remote rename → **list etags never 412** (probed): a stale
+  `If-Match` still returns 200 and the rename lands. Renames are
+  last-writer-wins **by server design**, so **D6 (remote wins, no copy) is
+  forced rather than chosen** — conflict detection for lists is impossible.
+  `decide` (D6, now a formality)
 - Local list delete × remote added tasks to it meanwhile → the list delete
   cascades them on the server (P4). Accepted; record + test. `untested`
 - Local list delete × already deleted remotely → 404 = success. `settled`
@@ -320,18 +333,67 @@ demote/promote, cross-list move, list delete, remote cascades. `gap`
 
 ## Probes required (live API, before encoding — no-hallucination rule)
 
-- Does a move bump the task's etag?
-- Move with a remotely-deleted previous sibling: 400 or 404?
-- Move creating a 3rd level: exact rejection status.
-- Move an open task under a completed parent: allowed?
-- Insert an open subtask under a completed parent: result?
-- Complete a parent while a new child exists we've never pulled: does the
-  cascade take it?
-- Does DELETE honor If-Match?
-- Does `patch_tasklist` honor If-Match / do lists 412?
+**All eight answered live on 2026-07-23** against the throwaway dev account
+(#106). The probe harness is `crates/axiotask-core/examples/live_api_probe.rs`
+— re-runnable, 33 assertions, creates and deletes its own scratch list.
 
-Every answer lands in `in_memory.rs` (kept exactly as strict as Google) and is
-cited in the task report.
+- **Does a move bump the task's etag?** — **Yes.** A reorder returns a fresh
+  etag. So §B×moved is real: an unrelated local content edit 412s, and the
+  content-equal comparison is what prevents a false conflicted copy.
+- **Move with a remotely-deleted previous sibling: 400 or 404?** — **404**
+  `"Previous task id not found"`. Note the asymmetry: an unknown *subject* id
+  is a **400** `"Invalid task ID"`. Both already degrade correctly
+  (`on_move_error`: 404 → `DropIntent`, 400 → `RejectAndDrop`) — neither
+  wedges, neither deletes (P5). The engine must not read a move 404 as "the
+  task I am moving is gone".
+- **Move creating a 3rd level: exact rejection status.** — **There is no
+  rejection: 200.** The API does **not** cap nesting depth, by `insert` or by
+  `move`. This **falsifies** the earlier claim in §F ("Google rejects >2
+  levels, verified live") — that row is corrected below. The one-level rule is
+  ours alone and must be enforced client-side.
+- **Move an open task under a completed parent: allowed?** — **Yes, 200**, and
+  the parent's cascade **completes the moved-in task**; the move *response
+  body* already shows `status: completed`.
+- **Insert an open subtask under a completed parent: result?** — **Accepted**,
+  and the child is created **already completed** — again visible in the insert
+  response body. Response-body adoption (P6) therefore converges both of these
+  for free.
+- **Complete a parent while a new child exists we've never pulled: does the
+  cascade take it?** — **Yes.** Also: a child insert does **not** bump the
+  parent's etag, so completing with a pre-child etag lands (no spurious 412).
+  The invariant "no open child under a completed parent" is *Google's*, not
+  just ours.
+- **Does DELETE honor If-Match?** — **Yes.** A stale etag returns **412** and
+  the task **survives**; the current etag deletes (204). So P4's unconditional
+  delete is **our choice** (`http.rs` sends no `If-Match`), not a physical
+  constraint — D4 has a real alternative available if the reviewer wants it.
+- **Does `patch_tasklist` honor If-Match / do lists 412?** — **No.** A stale
+  etag still returns 200 and the rename lands. List renames are
+  last-writer-wins **by server design**; conflict detection for lists is
+  impossible. **D6 (remote-wins, no copy) is therefore forced, not chosen.**
+
+### Findings beyond the eight (same run)
+
+- **`POST .../move` requires `Content-Length`.** A bodyless POST — which is
+  what `reqwest` sends for a body-less request — is rejected **411 Length
+  Required**. Every reorder / promote / demote was failing against the live
+  API. Fixed in `http.rs::move_task` (explicit `Content-Length: 0`) and pinned
+  by a wiremock test. The old probe missed it because its "permanent 400"
+  assertion accepted any non-transient status, and 411 qualified.
+- **Deletes are SOFT, and a write to a deleted row is silently ignored.**
+  After `DELETE`, a direct `GET` by id still returns **200 with
+  `deleted: true`**; the row vanishes from `tasks.list` (which defaults to
+  `showDeleted=false`); a later `PATCH` returns **200** with a body echoing
+  the edit, but the row **stays deleted** and never returns to the list. Same
+  for a child removed by its parent's cascade. **This falsifies §B×deleted's
+  "PATCH 404 → hard-delete local"** — that branch does not fire for this
+  crossing; what actually converges the row is ghost detection on the pull.
+  The outcome is the same (row gone, edit lost, P4 holds), but by a different
+  path, and any test asserting the 404 path is asserting a fiction.
+
+`in_memory.rs` is aligned with every answer above except the two recorded as
+deliberate divergences in its module docs (soft-delete by-id status, and
+`DELETE`'s unsupported `If-Match` — the trait has no etag parameter).
 
 ---
 
@@ -373,8 +435,12 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   no behavior change. *(prerequisite: —)* **Done.** `engine.rs` is now
   observe → `reconcile::*` → apply; matrix rows are table tests over pure
   functions in `sync/reconcile.rs`.
-- [ ] **Step 2 (#106)** — Live-API probes; align `in_memory.rs`. *(prereq: —;
-  needs the throwaway account)*
+- [x] **Step 2 (#106)** — Live-API probes; align `in_memory.rs`. *(prereq: —;
+  needs the throwaway account)* **Done.** All eight unknowns answered live and
+  recorded under §Probes; `in_memory.rs` aligned (move `previous` 404,
+  cascade-on-attach for `insert` and `move`) with two divergences documented.
+  Two defects surfaced: the 411 `move` transport bug (fixed here) and the
+  soft-delete/`PATCH`-ignored finding (§B rows re-tagged `gap`).
 - [ ] **Step 3 (#107)** — Matrix tests: edit/complete family (§B, §C) incl.
   D1. *(prereq: #105–#106)*
 - [ ] **Step 4 (#108)** — Matrix tests: delete family (§D), delete-wins
@@ -394,6 +460,7 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
 
 ## Open Questions
 
-- [ ] **Q1** — All `probe` rows above (blocking Steps 3, 5, 6, 8 where
-  marked).
+- [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
+  Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
+  §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
 - [ ] **Q2** — D1–D6 + P2 ratification by the reviewer.

@@ -26,6 +26,30 @@
 //!   is silently ignored (the subtask stays completed). Re-opening the parent
 //!   does NOT reopen its children. All verified against the live service; see
 //!   the `live_api_probe` example for the reproducible probe harness.
+//! - a `move` issues a fresh etag, and does NOT cap nesting depth.
+//! - a `move` naming a `previous` that no longer exists is a **404** — unlike
+//!   an unknown SUBJECT id, which is a 400.
+//! - attaching an open task to a **completed** parent (by `insert` with a
+//!   `parent`, or by `move`) completes it: the response body itself already
+//!   carries `status: completed`, and the cascade reaches the attached
+//!   subtree.
+//! - inserting a child does NOT bump the parent's etag, so a complete pushed
+//!   with a pre-child etag lands and the cascade takes children the client
+//!   never pulled.
+//!
+//! Known, deliberate divergences from the live API (recorded so nobody
+//! "fixes" the fake into a fiction — see RFC-009 §"Probes"):
+//! - **Soft delete.** Google soft-deletes: after `DELETE`, a direct `GET` by
+//!   id still returns 200 with `deleted: true`, the row vanishes from
+//!   `tasks.list`, and a later `PATCH` returns 200 but is silently ignored
+//!   (the row stays deleted). The fake hard-removes instead, so `get`/`patch`
+//!   answer 404. The observable-through-a-pull behavior — the row disappears
+//!   from `list_tasks` and no write revives it — is identical; only the
+//!   by-id status differs. Tracked for the engine's §B×deleted row.
+//! - **`DELETE` honors `If-Match`** live (stale etag → 412, task survives;
+//!   current etag → 204). `HttpClient::delete_task` deliberately sends none,
+//!   making our deletes unconditional (RFC-009 P4, "delete wins"), and the
+//!   trait has no etag parameter — so the fake has none either.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -145,9 +169,55 @@ impl State {
         match previous {
             Some(prev) => match self.tasks.iter().find(|(_, t)| t.id == prev) {
                 Some((_, p)) => Ok(format!("{}+", p.position)),
-                None => Err(ApiError::Other("400: Invalid task ID (previous)".into())),
+                // Live-API behavior: a `previous` that does not exist is a
+                // 404 "Previous task id not found" — note the asymmetry with an
+                // unknown SUBJECT id, which is a 400. Verified live.
+                None => Err(ApiError::NotFound),
             },
             None => Ok(format!("!{:019}", u64::MAX - self.etag_counter)),
+        }
+    }
+
+    /// Is `id` a task the server currently considers completed?
+    fn is_completed(&self, id: &str) -> bool {
+        self.tasks
+            .iter()
+            .any(|(_, t)| t.id == id && t.status == TaskStatus::Completed)
+    }
+
+    /// Complete every descendant of `root` (excluding `root` itself), each
+    /// getting a fresh etag and a `completed` stamp — the live API's cascade.
+    fn cascade_complete_descendants(&mut self, root: &str) {
+        let mut subtree: std::collections::HashSet<String> =
+            std::collections::HashSet::from([root.to_string()]);
+        loop {
+            let n = subtree.len();
+            let more: Vec<String> = self
+                .tasks
+                .iter()
+                .filter(|(_, t)| t.parent.as_deref().is_some_and(|p| subtree.contains(p)))
+                .map(|(_, t)| t.id.clone())
+                .collect();
+            subtree.extend(more);
+            if subtree.len() == n {
+                break;
+            }
+        }
+        let to_complete: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|(_, t)| {
+                t.id != root && subtree.contains(&t.id) && t.status != TaskStatus::Completed
+            })
+            .map(|(_, t)| t.id.clone())
+            .collect();
+        for cid in to_complete {
+            let e = self.fresh_etag();
+            if let Some((_, t)) = self.tasks.iter_mut().find(|(_, t)| t.id == cid) {
+                t.status = TaskStatus::Completed;
+                t.completed = Some("2026-01-01T00:00:00Z".into());
+                t.etag = Some(e);
+            }
         }
     }
 }
@@ -449,21 +519,34 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
         }
         let due = validate_due(new.due)?;
+        // Live-API rule: a task inserted under a COMPLETED parent is completed
+        // by the server's cascade immediately — the insert RESPONSE already
+        // carries status=completed. Verified live (RFC-009 probe 5).
+        let parent_completed = new.parent.as_deref().is_some_and(|p| s.is_completed(p));
         let etag = s.fresh_etag();
         // Live-API positioning: with `previous`, insert right after it; with
         // none, insert FIRST. See `State::position_after`.
         let position = s.position_after(new.previous.as_deref())?;
         let id = format!("remote-{}", s.etag_counter);
         let web_view_link = Some(format!("https://tasks.google.com/task/{id}"));
+        let status = if parent_completed {
+            TaskStatus::Completed
+        } else {
+            new.status.unwrap_or(TaskStatus::NeedsAction)
+        };
         let task = Task {
             id,
             parent: new.parent,
             position,
             title: new.title,
             notes: new.notes,
-            status: new.status.unwrap_or(TaskStatus::NeedsAction),
+            status,
             due,
-            completed: None,
+            completed: if status == TaskStatus::Completed {
+                Some("2026-01-01T00:00:00Z".into())
+            } else {
+                None
+            },
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
             web_view_link,
@@ -565,39 +648,7 @@ impl GoogleTasksClient for InMemoryClient {
         // timestamp. Un-completing a parent does NOT reopen children, so this
         // only runs on completion.
         if cascade_complete {
-            let mut subtree: std::collections::HashSet<String> =
-                std::collections::HashSet::from([result.id.clone()]);
-            loop {
-                let n = subtree.len();
-                let more: Vec<String> = s
-                    .tasks
-                    .iter()
-                    .filter(|(_, t)| t.parent.as_deref().is_some_and(|p| subtree.contains(p)))
-                    .map(|(_, t)| t.id.clone())
-                    .collect();
-                subtree.extend(more);
-                if subtree.len() == n {
-                    break;
-                }
-            }
-            let to_complete: Vec<String> = s
-                .tasks
-                .iter()
-                .filter(|(_, t)| {
-                    t.id != result.id
-                        && subtree.contains(&t.id)
-                        && t.status != TaskStatus::Completed
-                })
-                .map(|(_, t)| t.id.clone())
-                .collect();
-            for cid in to_complete {
-                let e = s.fresh_etag();
-                if let Some((_, t)) = s.tasks.iter_mut().find(|(_, t)| t.id == cid) {
-                    t.status = TaskStatus::Completed;
-                    t.completed = Some("2026-01-01T00:00:00Z".into());
-                    t.etag = Some(e);
-                }
-            }
+            s.cascade_complete_descendants(&result.id);
         }
         Ok(result)
     }
@@ -661,12 +712,25 @@ impl GoogleTasksClient for InMemoryClient {
         // into the requested slot among its siblings, exactly like `insert`.
         // An unknown `previous` is a permanent 400 (same as the live API).
         let position = s.position_after(previous)?;
+        // Live-API rule: moving an open task under a COMPLETED parent is
+        // accepted, and the parent's completion cascade takes the newly
+        // attached task (and its subtree) — the move RESPONSE already shows it
+        // completed. Verified live (RFC-009 probe 4).
+        let dest_completed = parent.is_some_and(|p| s.is_completed(p));
         let t = s.tasks.iter_mut().find(|(_, t)| t.id == id).map(|(_, t)| t);
         let t = t.expect("presence checked above");
         t.parent = parent.map(String::from);
         t.position = position;
         t.etag = Some(new_etag);
-        Ok(t.clone())
+        if dest_completed && t.status != TaskStatus::Completed {
+            t.status = TaskStatus::Completed;
+            t.completed = Some("2026-01-01T00:00:00Z".into());
+        }
+        let result = t.clone();
+        if dest_completed {
+            s.cascade_complete_descendants(&result.id);
+        }
+        Ok(result)
     }
 }
 
@@ -815,7 +879,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_task_unknown_previous_is_permanent_400() {
+    async fn move_with_an_unknown_previous_sibling_is_not_found() {
+        // Live-API behavior (RFC-009 probe 2, verified via `live_api_probe`):
+        // a move naming a `previous` that no longer exists answers
+        // 404 "Previous task id not found" — NOT the 400 that an unknown
+        // SUBJECT id draws. The asymmetry matters: a move 404 does not imply
+        // "the task I am moving is gone".
         let c = InMemoryClient::new();
         c.seed_list("L1", "Inbox");
         c.seed_task("L1", "T1", "only", "00000000000001");
@@ -823,8 +892,194 @@ mod tests {
             .move_task("L1", "T1", None, Some("ghost"))
             .await
             .unwrap_err();
-        assert!(matches!(err, ApiError::Other(_)));
+        assert!(matches!(err, ApiError::NotFound), "got {err:?}");
         assert!(!err.is_transient());
+    }
+
+    #[tokio::test]
+    async fn move_bumps_the_task_etag() {
+        // RFC-009 probe 1: a move DOES issue a fresh etag, so a concurrent
+        // local content edit 412s on a row whose content never changed.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let anchor = c.seed_task("L1", "A", "anchor", "00000000000001");
+        let subject = c.seed_task("L1", "B", "subject", "00000000000002");
+        let moved = c
+            .move_task("L1", &subject.id, None, Some(&anchor.id))
+            .await
+            .unwrap();
+        assert!(moved.etag.is_some());
+        assert_ne!(
+            moved.etag, subject.etag,
+            "a move must issue a fresh etag, like the live API"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_creating_a_third_level_is_accepted() {
+        // RFC-009 probe 3: the API does NOT cap nesting depth — a move under a
+        // task that already has a parent succeeds. Our app self-limits to one
+        // level of subtasks; the server does not enforce it for us, so the fake
+        // must not either (or the engine is tested against a fiction).
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "L1T", "level-1", "00000000000001");
+        c.seed_task_with_parent("L1", "L2T", "level-2", "00000000000002", Some("L1T"));
+        c.seed_task("L1", "X", "to-demote", "00000000000003");
+        let moved = c.move_task("L1", "X", Some("L2T"), None).await.unwrap();
+        assert_eq!(moved.parent.as_deref(), Some("L2T"));
+    }
+
+    #[tokio::test]
+    async fn moving_an_open_task_under_a_completed_parent_completes_it() {
+        // RFC-009 probe 4: the move is accepted (200) and the parent's
+        // completion cascade takes the newly attached child.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "done-parent", "00000000000001");
+        c.patch_task(
+            "L1",
+            "P",
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            p.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+        c.seed_task("L1", "X", "open-task", "00000000000002");
+
+        let moved = c.move_task("L1", "X", Some("P"), None).await.unwrap();
+        assert_eq!(moved.parent.as_deref(), Some("P"));
+        assert_eq!(
+            moved.status,
+            TaskStatus::Completed,
+            "the move response already shows the cascaded completion"
+        );
+        let refetched = c.get_task("L1", "X").await.unwrap();
+        assert_eq!(refetched.status, TaskStatus::Completed);
+        assert!(refetched.completed.is_some(), "carries a completed stamp");
+    }
+
+    #[tokio::test]
+    async fn moving_a_task_under_an_open_parent_leaves_it_open() {
+        // The non-happy-path guard for the row above: the cascade must key off
+        // the DESTINATION parent's status, not fire on every reparent.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "P", "open-parent", "00000000000001");
+        c.seed_task("L1", "X", "open-task", "00000000000002");
+        let moved = c.move_task("L1", "X", Some("P"), None).await.unwrap();
+        assert_eq!(moved.status, TaskStatus::NeedsAction);
+        assert!(moved.completed.is_none());
+    }
+
+    #[tokio::test]
+    async fn inserting_a_subtask_under_a_completed_parent_returns_it_completed() {
+        // RFC-009 probe 5: the insert is accepted, and the child comes back
+        // ALREADY completed — in the insert response itself, so a client that
+        // adopts the response body converges immediately.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "done-parent", "00000000000001");
+        c.patch_task(
+            "L1",
+            "P",
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            p.etag.as_deref(),
+        )
+        .await
+        .unwrap();
+
+        let child = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "new-subtask".into(),
+                    parent: Some("P".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            child.status,
+            TaskStatus::Completed,
+            "insert response already carries the cascaded completion"
+        );
+        assert!(child.completed.is_some());
+        assert_eq!(
+            c.get_task("L1", &child.id).await.unwrap().status,
+            TaskStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn inserting_a_child_does_not_change_the_parents_etag() {
+        // RFC-009 probe 6, first half: another client adding a subtask does not
+        // stale our copy of the parent — so a local complete does not spuriously
+        // 412 on a parent we never edited.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "parent", "00000000000001");
+        c.insert_task(
+            "L1",
+            NewTask {
+                title: "late-child".into(),
+                parent: Some("P".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            c.get_task("L1", "P").await.unwrap().etag,
+            p.etag,
+            "a child insert must leave the parent's etag alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn completing_a_parent_cascades_to_a_child_we_never_pulled() {
+        // RFC-009 probe 6, second half: the server cascade covers children the
+        // client has never seen, and completing with the pre-child etag lands.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let p = c.seed_task("L1", "P", "parent", "00000000000001");
+        let snapshot_etag = p.etag.clone();
+        let unseen = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "unseen-child".into(),
+                    parent: Some("P".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        c.patch_task(
+            "L1",
+            "P",
+            TaskPatch {
+                status: Some(TaskStatus::Completed),
+                ..Default::default()
+            },
+            snapshot_etag.as_deref(),
+        )
+        .await
+        .expect("completing with the pre-child etag must not 412");
+
+        assert_eq!(
+            c.get_task("L1", &unseen.id).await.unwrap().status,
+            TaskStatus::Completed,
+            "the cascade takes a child the client never pulled"
+        );
     }
 
     #[tokio::test]
