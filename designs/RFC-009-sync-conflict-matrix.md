@@ -667,7 +667,9 @@ Ordered; each step has its own GitHub issue.
   recorded under §Probes; `in_memory.rs` aligned (move `previous` 404,
   cascade-on-attach for `insert` and `move`) with two divergences documented.
   Two defects surfaced: the 411 `move` transport bug (fixed here) and the
-  soft-delete/`PATCH`-ignored finding (§B rows re-tagged `gap`).
+  soft-delete/`PATCH`-ignored finding (the §B rows were settled by outcome in
+  #107; the fake still reaches that outcome via its 404 path — modelling the
+  real soft-delete path is #114).
 - [x] **Step 3 (#107)** — Matrix tests: edit/complete family (§B, §C) incl.
   D1. *(prereq: #105–#106)* **Done.** D1 ratified and implemented
   (`resolve_conflict` now compares typed content only); every §B/§C row has a
@@ -742,8 +744,10 @@ Ordered; each step has its own GitHub issue.
 ## Open Questions
 
 - [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
-  Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
-  §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
+  Steps 3, 5, 6 and 8 are unblocked. The two rows they falsified were both
+  subsequently closed: §B×deleted settled by outcome in #107 (fake-path caveat
+  recorded inline; real soft-delete modelling is #114), and the §F 3rd-level
+  guard shipped in #109 (residual arrival race tracked as #119).
 - [x] **Q2** — D6 ratification. **Answered.** **D1** is ratified (2026-07-23,
   shipped with #107), **P2, D2 and D3** (2026-07-24, shipped with #110),
   **D4, D5** (2026-07-24, shipped with #111) and **D6** (2026-07-24, shipped
