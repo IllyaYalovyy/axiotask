@@ -1265,6 +1265,190 @@ mod tests {
         assert_eq!(c.task.status, TaskStatus::Completed, "child stays done");
     }
 
+    // ─── RFC-009 §C matrix: complete / un-complete × remote ──────────────────
+    //
+    // The crossings driven by a real user action go through the real command
+    // (`toggle_complete_inner`) and the real sync engine against the fake, and
+    // assert the state both sides end in.
+
+    #[tokio::test]
+    async fn completing_a_parent_keeps_the_cascade_etag_coherent_and_converges() {
+        // §C row 1: our local cascade and Google's server-side cascade both
+        // run. Every landed response body must be adopted, or a row ends up
+        // carrying a fresh etag over stale content — and every later pull
+        // etag-skips it, freezing the drift forever (P6, the #104 bug class).
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap();
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0, "our own cascade is not a conflict");
+
+        for id in ["P", "C1"] {
+            let local = state.store.find_task_any(id).await.unwrap().unwrap();
+            let remote = client.get_task("L1", id).await.unwrap();
+            assert_eq!(local.task.status, TaskStatus::Completed, "{id} local done");
+            assert_eq!(remote.status, TaskStatus::Completed, "{id} remote done");
+            assert_eq!(local.sync_state, SyncState::Clean, "{id} clean");
+            // P6: the etag we hold and the content we hold came from the same
+            // response.
+            assert_eq!(local.task.etag, remote.etag, "{id} etag coherent");
+            assert_eq!(local.task.title, remote.title, "{id} content coherent");
+        }
+
+        // P7: with a quiescent remote the next run is a no-op.
+        let out2 = state.run_sync().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(out2.pulled, 0);
+        assert_eq!(out2.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn uncompleting_a_subtask_under_a_completed_parent_converges_back() {
+        // §C: re-opening a subtask whose parent is still completed returns 200
+        // and is SILENTLY IGNORED server-side (verified live, #106). Adopting
+        // the response body converges the local row back to completed on the
+        // same run — the user's checkbox bounces back instead of the row
+        // wedging dirty forever or freezing behind a matching etag.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap();
+        state.run_sync().await.unwrap();
+
+        // The user re-opens the SUBTASK while its parent stays done.
+        crate::commands::toggle_complete_inner(&state, "C1".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            state
+                .store
+                .find_task_any("C1")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::NeedsAction,
+            "precondition: the local toggle applied optimistically"
+        );
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0, "a silently-ignored write is not an error");
+        assert_eq!(out.conflicts, 0);
+
+        let local = state.store.find_task_any("C1").await.unwrap().unwrap();
+        let remote = client.get_task("L1", "C1").await.unwrap();
+        assert_eq!(remote.status, TaskStatus::Completed, "server ignored it");
+        assert_eq!(
+            local.task.status,
+            TaskStatus::Completed,
+            "local converged back to the server's truth"
+        );
+        assert_eq!(local.sync_state, SyncState::Clean, "no row left wedged");
+        assert_eq!(local.task.etag, remote.etag, "etag/content coherent (P6)");
+
+        // No etag freeze: the next run is a no-op and the row still agrees.
+        let out2 = state.run_sync().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(out2.conflicts, 0);
+        assert_eq!(
+            state
+                .store
+                .find_task_any("C1")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .status,
+            TaskStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn completing_a_parent_takes_a_subtask_we_never_pulled() {
+        // §C last row: another device added a subtask we have never seen, then
+        // the user completes the parent. Our local cascade cannot reach that
+        // child — but the SERVER's cascade does (verified live, #106), and a
+        // child insert does NOT bump the parent's etag, so our complete lands
+        // with the pre-child etag instead of 412-ing. "No open child under a
+        // completed parent" is Google's invariant, not just ours.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // The other device adds a second subtask; we never pull it first.
+        let unseen = client
+            .insert_task(
+                "L1",
+                axiotask_core::model::NewTask {
+                    title: "kid from another device".into(),
+                    parent: Some("P".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            state
+                .store
+                .find_task_any(&unseen.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: the new subtask is unknown locally"
+        );
+
+        crate::commands::toggle_complete_inner(&state, "P".into())
+            .await
+            .unwrap();
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0, "a child insert must not stale our etag");
+
+        // Server side: the cascade took the child we never saw.
+        let remote = client.list_tasks("L1", None).await.unwrap().items;
+        assert!(
+            remote.iter().all(|t| t.status == TaskStatus::Completed),
+            "no open child under a completed parent on the server: {remote:?}"
+        );
+        // Local side: the pull brought it in, already completed.
+        let local = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(local.len(), 3, "the unseen subtask arrived: {local:?}");
+        assert!(
+            local.iter().all(|t| t.task.status == TaskStatus::Completed),
+            "no open child under a completed parent locally: {local:?}"
+        );
+        assert!(local.iter().all(|t| t.sync_state == SyncState::Clean));
+    }
+
     #[tokio::test]
     async fn undo_after_delete_pushed_restores_the_whole_subtree() {
         // Data-loss regression: delete a parent, let the delete sync (server

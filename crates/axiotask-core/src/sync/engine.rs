@@ -1616,6 +1616,251 @@ mod tests {
         assert_eq!(tasks[0].sync_state, SyncState::Clean);
     }
 
+    // ─── RFC-009 §B/§C matrix: edit and complete crossings ───────────────────
+    //
+    // One test per row of `designs/RFC-009-sync-conflict-matrix.md` §B (local
+    // content edit × remote) and §C (local complete / un-complete × remote).
+    // Each asserts the STATE both sides end in, never that a call happened.
+
+    /// A dirty content edit on an existing row, as the UI writes it: mutate
+    /// through `edit`, mark dirty/update, optionally stale the etag so the
+    /// push draws a 412.
+    async fn stage_edit(
+        eng: &SyncEngine,
+        id: &str,
+        stale: bool,
+        edit: impl FnOnce(&mut StoredTask),
+    ) {
+        let mut row = eng.store.find_task_any(id).await.unwrap().unwrap();
+        edit(&mut row);
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        row.local_updated = "2026-06-02T00:00:00Z".into();
+        if stale {
+            row.task.etag = Some("stale".into());
+        }
+        eng.store.upsert_task(&row).await.unwrap();
+    }
+
+    fn completed(row: &mut StoredTask) {
+        row.task.status = TaskStatus::Completed;
+        row.task.completed = Some("2026-06-02T00:00:00Z".into());
+    }
+
+    #[tokio::test]
+    async fn edit_vs_remote_move_no_false_conflicted_copy() {
+        // §B × moved/reordered/reparented. A move DOES bump the task's etag
+        // (probe 1, #106), so an unrelated push 412s. What keeps that from
+        // manufacturing a duplicate is the content comparison: it covers
+        // title/notes/due/status and never position or parent (P3). Here the
+        // same rename landed from another device, which then reordered the
+        // task — content matches, only the position moved.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "old", "1");
+        client.seed_task("L1", "T2", "anchor", "2");
+        eng.run().await.unwrap();
+
+        // The other device renames T1 and then drags it after T2.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("renamed".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        client
+            .move_task("L1", "T1", None, Some("T2"))
+            .await
+            .unwrap();
+        let remote = client.get_task("L1", "T1").await.unwrap();
+
+        // Locally the user typed the same rename; our etag predates both.
+        stage_edit(&eng, "T1", true, |r| r.task.title = "renamed".into()).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "a remote MOVE is not a content conflict");
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2, "no conflicted copy fabricated");
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.ends_with("(conflicted copy)"))
+        );
+        let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(t1.sync_state, SyncState::Clean);
+        assert_eq!(t1.task.title, "renamed");
+        // The position the move produced arrives with the resolution (P6): the
+        // etag we adopt must never outrun the content we hold.
+        assert_eq!(t1.task.position, remote.position, "remote order adopted");
+        assert_eq!(t1.task.etag, remote.etag);
+    }
+
+    #[tokio::test]
+    async fn edit_vs_remote_delete_discards_edit_and_row_disappears() {
+        // §B × deleted (P4: delete wins, no conflicted copy). The row is gone
+        // locally and the edit is lost by the end of the run.
+        //
+        // The PATH differs from the fake's: Google's deletes are SOFT (probed,
+        // #106) — a live PATCH to a deleted task answers 200 with a body
+        // echoing our edit while the row stays deleted and absent from
+        // `list_tasks`, so ghost detection on the pull is what removes it. The
+        // fake hard-removes, so the same crossing arrives as a 404. Only the
+        // OUTCOME is asserted here, because it is the one both paths share.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "exists", "1");
+        eng.run().await.unwrap();
+
+        client.delete_task_from_state("L1", "T1");
+        stage_edit(&eng, "T1", false, |r| r.task.title = "edited".into()).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a remote delete is not a sync error");
+        assert_eq!(out.conflicts, 0, "delete/edit never forks a copy");
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "row gone locally, edit discarded"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_vs_remote_parent_cascade_delete_discards_edit() {
+        // §B × parent-deleted: another client deleted the PARENT, whose delete
+        // cascades to the subtask we were editing (verified live). Same
+        // outcome as a direct delete — the edit dies with the row (P4), and
+        // nothing is left stranded behind a dead parent.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C", "child", "2", Some("P"));
+        eng.run().await.unwrap();
+
+        // The other client deletes the parent; the server cascades the child.
+        client.delete_task("L1", "P").await.unwrap();
+        stage_edit(&eng, "C", false, |r| r.task.title = "my edit".into()).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0);
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(tasks.is_empty(), "parent and child both gone: {tasks:?}");
+    }
+
+    #[tokio::test]
+    async fn complete_vs_remote_edit_produces_conflicted_copy() {
+        // §C × remote edited the same row: title AND status diverge, so P3
+        // applies unchanged — remote is canonical, the local state survives as
+        // a copy. This is the guard that D1 stayed narrow.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("buy oat milk".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        stage_edit(&eng, "T1", true, completed).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 1);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 2, "remote canonical + conflicted copy");
+        let canonical = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(canonical.task.title, "buy oat milk");
+        assert_eq!(canonical.task.status, TaskStatus::NeedsAction);
+        assert_eq!(canonical.sync_state, SyncState::Clean);
+        let copy = tasks
+            .iter()
+            .find(|t| t.task.title == "buy milk (conflicted copy)")
+            .expect("local completion preserved as a copy");
+        assert_eq!(copy.task.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn status_only_divergence_remote_wins_no_copy() {
+        // §C, D1 (ratified in RFC-009): title/notes/due all agree and only the
+        // checkbox differs — remote wins outright, no conflicted copy. Here
+        // another device completed the task while the user toggled it locally
+        // and ended up back at open; our push 412s on the stale etag.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let remote = client.get_task("L1", "T1").await.unwrap();
+        stage_edit(&eng, "T1", true, |r| {
+            r.task.status = TaskStatus::NeedsAction;
+            r.task.completed = None;
+        })
+        .await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "a status-only difference is not a fork");
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "no conflicted copy created");
+        assert_eq!(tasks[0].task.title, "buy milk", "no renamed duplicate");
+        assert_eq!(tasks[0].task.status, TaskStatus::Completed, "remote wins");
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+        assert_eq!(
+            tasks[0].task.etag, remote.etag,
+            "etag/content coherent (P6)"
+        );
+
+        // And it stays converged — no dirty row to re-push, no drift to freeze.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(out2.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn complete_vs_remote_delete_row_gone() {
+        // §C × remote deleted: the completion is lost with the row (P4). As in
+        // §B × deleted the live path is 200-then-ghost-detection and the fake's
+        // is a 404; the asserted outcome is the one both share.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        eng.run().await.unwrap();
+
+        client.delete_task_from_state("L1", "T1");
+        stage_edit(&eng, "T1", false, completed).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0);
+        assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn conflicted_copy_pushes_then_converges() {
         let (client, eng) = engine_with_push().await;

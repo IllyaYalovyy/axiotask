@@ -113,8 +113,15 @@ pub enum ConflictResolution {
 
 /// Resolve a `412` conflict: identical content is just etag/normalization
 /// drift to absorb; divergent content preserves both (P3).
+///
+/// **Status is deliberately excluded from the divergence test** (RFC-009 D1,
+/// ratified): when title, notes and due all agree and only the checkbox
+/// differs, remote wins outright and no copy is made. A lost checkbox click
+/// costs one click to redo; a duplicate "buy milk (conflicted copy)" is
+/// confusing and has to be cleaned up by hand. Status still counts everywhere
+/// else — [`same_content`] is unchanged, so create-adoption stays exact.
 pub fn resolve_conflict(local: &Task, remote: &Task) -> ConflictResolution {
-    if same_content(local, remote) {
+    if same_typed_content(local, remote) {
         ConflictResolution::AdoptRemote
     } else {
         ConflictResolution::ConflictedCopy
@@ -643,9 +650,17 @@ pub fn plan_list_pull(remote: &TaskList, locals: &[StoredTaskList]) -> ListPullA
 /// conflicts — the local edit gets duplicated as a "(conflicted copy)" even
 /// though nothing diverged.
 pub fn same_content(a: &Task, b: &Task) -> bool {
+    same_typed_content(a, b) && a.status == b.status
+}
+
+/// Whether two tasks agree on everything the user *typed* — title, notes, due
+/// — ignoring the checkbox. This is the divergence test for conflict
+/// resolution only (RFC-009 D1): a status-only difference is not worth a
+/// duplicate task. Same normalization tolerance as [`same_content`].
+fn same_typed_content(a: &Task, b: &Task) -> bool {
     let due = |t: &Task| t.due.as_deref().and_then(crate::dates::normalize_due);
     let notes = |t: &Task| t.notes.clone().filter(|n| !n.is_empty());
-    a.title == b.title && notes(a) == notes(b) && due(a) == due(b) && a.status == b.status
+    a.title == b.title && notes(a) == notes(b) && due(a) == due(b)
 }
 
 /// Order a batch so every task appears after its parent (Kahn-style BFS from
@@ -777,7 +792,11 @@ mod tests {
 
     #[test]
     fn update_404_hard_deletes_local_delete_wins() {
-        // §B × deleted and × parent-deleted cascade both arrive as a 404.
+        // Whatever produces a 404 on the PATCH, delete wins (P4). Note what
+        // this row is NOT: Google's deletes are SOFT (probed, #106) — a PATCH
+        // to a remotely-deleted task answers **200** with a body echoing our
+        // edit while the row stays deleted, so §B × deleted converges through
+        // ghost detection on the pull, not through this branch.
         assert_eq!(
             on_update_error(&ApiError::NotFound),
             UpdateFailure::DeleteLocal
@@ -853,16 +872,74 @@ mod tests {
     }
 
     #[test]
-    fn status_only_divergence_makes_a_copy_today() {
-        // §C: today's behavior, pinned so RFC-009 D1 (remote-wins, no copy) is
-        // a deliberate change rather than a silent drift.
+    fn status_only_divergence_resolves_remote_wins_no_copy() {
+        // §C, D1 (ratified): title/notes/due all match and only the checkbox
+        // differs — remote wins outright. A lost checkbox click is cheap; a
+        // duplicate task is expensive and confusing.
         let local = task("t1");
         let mut remote = task("t1");
         remote.status = TaskStatus::Completed;
         assert_eq!(
             resolve_conflict(&local, &remote),
+            ConflictResolution::AdoptRemote
+        );
+        // Both directions: local complete × remote un-complete resolves the
+        // same way.
+        let mut local_done = task("t1");
+        local_done.status = TaskStatus::Completed;
+        assert_eq!(
+            resolve_conflict(&local_done, &task("t1")),
+            ConflictResolution::AdoptRemote
+        );
+    }
+
+    #[test]
+    fn status_divergence_alongside_content_divergence_still_preserves_both() {
+        // §C: D1 is narrow. The moment anything the user typed also diverges,
+        // P3 applies and the local edit survives as a copy.
+        let mut local = task("t1");
+        local.title = "mine".into();
+        local.status = TaskStatus::Completed;
+        let mut remote = task("t1");
+        remote.title = "theirs".into();
+        assert_eq!(
+            resolve_conflict(&local, &remote),
             ConflictResolution::ConflictedCopy
         );
+
+        // Same for notes and due, each with a status divergence riding along.
+        let mut notes_local = task("t1");
+        notes_local.notes = Some("mine".into());
+        notes_local.status = TaskStatus::Completed;
+        assert_eq!(
+            resolve_conflict(&notes_local, &task("t1")),
+            ConflictResolution::ConflictedCopy
+        );
+        let mut due_local = task("t1");
+        due_local.due = Some("2026-03-04T00:00:00.000Z".into());
+        due_local.status = TaskStatus::Completed;
+        assert_eq!(
+            resolve_conflict(&due_local, &task("t1")),
+            ConflictResolution::ConflictedCopy
+        );
+    }
+
+    #[test]
+    fn d1_does_not_leak_into_orphan_adoption() {
+        // D1 relaxes CONFLICT resolution only. `same_content` still counts
+        // status, so a crashed create never adopts a remote row that merely
+        // looks similar — adoption must stay exact.
+        let local = task("local-uuid");
+        let mut committed = task("server-id");
+        committed.title = local.title.clone();
+        committed.status = TaskStatus::Completed;
+        assert!(find_orphan(&local, &[committed], &HashSet::new()).is_none());
+        assert!(!same_content(&local, &{
+            let mut t = task("x");
+            t.title = local.title.clone();
+            t.status = TaskStatus::Completed;
+            t
+        }));
     }
 
     #[test]

@@ -61,9 +61,11 @@ to silently drop.
   waits; it never dies. Remote authority cannot extend to rows it has no
   knowledge of.
 - **P3 — Edit/edit → conflicted copy.** Remote becomes canonical; the local
-  edit survives as a "(conflicted copy)" task. Content comparison covers
-  exactly title, notes, due, status (`same_content`, engine.rs) — never
-  position, parent, or etag.
+  edit survives as a "(conflicted copy)" task. The divergence test for the
+  conflict path covers exactly the fields the user types — title, notes, due
+  (`same_typed_content`, sync/reconcile.rs) — never position, parent, etag, or
+  **status** (D1, ratified). Elsewhere (crashed-create adoption, pull
+  filtering) `same_content` still counts status too.
 - **P4 — Delete wins, both directions.** Local-edit × remote-delete: the local
   row is hard-deleted, edit discarded. Local-delete × remote-edit: the
   unconditional DELETE lands, remote edit discarded. Cascades included. No
@@ -136,41 +138,51 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   copy)". `settled` (#100)
 - × moved/reordered/reparented (content untouched) → a move **does** bump the
   etag (probed): 412 → refetch → content-fields equal → adopt etag; position
-  arrives on pull. **No false conflicted copy** — comparison excludes
-  position/parent. `untested`
+  arrives on pull. No false conflicted copy from the *comparison*, which
+  excludes position/parent. `settled` (#107)
+- × moved/reordered/reparented **while the local edit changed content** → the
+  refetched remote still holds the PRE-EDIT content, so the whole-row
+  comparison sees divergence and forks a "(conflicted copy)" even though only
+  we touched the content. Whole-row resolution has no pre-edit base to compare
+  against (NG1), so it cannot tell "they changed it" from "we changed it".
+  `gap` (#118) — measured, not theoretical: a remote reorder alone reverts a
+  local rename and duplicates the task.
 - × deleted → **not a 404.** Deletes are soft: the PATCH returns **200** with a
   body echoing our edit, but the row stays deleted and never reappears in
   `list_tasks`. The edit is lost and the local row is removed by **ghost
   detection on the pull**, not by a `NotFound` branch (P4 still holds).
-  `gap` — the engine's `push_update` NotFound path does not fire here, and no
-  test may assert that it does.
+  `settled` (#107) — the test asserts the OUTCOME (row gone, edit discarded,
+  no copy, no error), which both paths share; the fake hard-deletes, so it
+  reaches that outcome through the 404 branch. No test asserts the path, and
+  none may.
 - × parent-deleted (cascade removed the subtask we edited) → identical to the
-  row above: 200-but-ignored, then ghost-deleted on pull. `gap`
+  row above: 200-but-ignored, then ghost-deleted on pull. `settled` (#107)
 - × 412 then refetch 404 → hard-delete. `settled`
 - × 412 then refetch transient → stays dirty, retries. `settled` (#100)
 
 ### C. Local complete / un-complete × remote
 
 - Local complete parent → local cascade + server cascade both run; children's
-  updates align; every landed response body adopted (P6). `untested` as an
-  end-to-end matrix row (#104 fixed the adoption half).
+  updates align; every landed response body adopted (P6). `settled` (#107)
 - × remote edited same row → 412 → title **and** status diverge → conflicted
-  copy (P3). `untested`
+  copy (P3). `settled` (#107)
 - **Status-only divergence** (title/notes/due equal; only status differs, e.g.
-  local complete × remote un-complete) → today: conflicted copy. **Proposal:
-  remote wins, no copy** — a lost checkbox click is cheap, a duplicate task is
-  expensive and confusing. `decide` (D1)
+  local complete × remote un-complete) → **remote wins, no copy** — a lost
+  checkbox click is cheap, a duplicate task is expensive and confusing.
+  `settled` (D1 **ratified**; implemented in #107 —
+  `reconcile::resolve_conflict` compares typed content only).
 - Local un-complete subtask × remote parent-completed → Google returns 200 and
   silently ignores the reopen (verified live); response-body adoption converges
-  local back to completed — no wedge, no etag freeze. `untested` as an explicit
-  matrix row (the adoption exists; engine.rs:660-664).
-- Local complete × remote deleted → 404 → row gone (P4). `untested`
+  local back to completed — no wedge, no etag freeze. `settled` (#107)
+- Local complete × remote deleted → row gone (P4). `settled` (#107) — same
+  path caveat as §B × deleted: live it is 200-then-ghost-detection, the fake
+  reaches the same outcome via 404.
 - Local complete parent × remote added a new subtask meanwhile → our local
   cascade never saw the new child, but **the server's cascade takes it**
   (probed). A child insert also does **not** bump the parent's etag, so our
   complete lands with the pre-child etag — no spurious 412. The invariant "no
   open child under a completed parent" is **Google's**, not just ours.
-  `untested` as a matrix row.
+  `settled` (#107)
 
 ### D. Local `delete` × remote
 
@@ -318,8 +330,12 @@ demote/promote, cross-list move, list delete, remote cascades. `gap`
 
 ## Decisions to ratify
 
-- **D1** — Status-only divergence resolves remote-wins **without** a
-  conflicted copy. (Today it produces a copy.)
+- **D1** — **RATIFIED (2026-07-23, with #107).** Status-only divergence
+  resolves remote-wins **without** a conflicted copy. Scope: the 412 conflict
+  path only, and only when title, notes and due all agree. `same_content` is
+  unchanged everywhere else (crashed-create adoption stays exact), and any
+  content divergence riding along with a status divergence still forks a copy
+  under P3.
 - **D2** — Rows without etags in a remotely-deleted list re-home to the
   default list; rows with etags die with the list. (P2)
 - **D3** — A subtask create whose parent died remotely promotes to a top-level
@@ -441,8 +457,13 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   cascade-on-attach for `insert` and `move`) with two divergences documented.
   Two defects surfaced: the 411 `move` transport bug (fixed here) and the
   soft-delete/`PATCH`-ignored finding (§B rows re-tagged `gap`).
-- [ ] **Step 3 (#107)** — Matrix tests: edit/complete family (§B, §C) incl.
-  D1. *(prereq: #105–#106)*
+- [x] **Step 3 (#107)** — Matrix tests: edit/complete family (§B, §C) incl.
+  D1. *(prereq: #105–#106)* **Done.** D1 ratified and implemented
+  (`resolve_conflict` now compares typed content only); every §B/§C row has a
+  test — pure rows in `sync/reconcile.rs`, sequencing rows in `sync/engine.rs`,
+  and the user-driven complete/un-complete rows through the real command in
+  `commands_test.rs`. One new defect surfaced and filed: §B × moved with a
+  content edit forks a false conflicted copy (#118).
 - [ ] **Step 4 (#108)** — Matrix tests: delete family (§D), delete-wins
   pinned. *(prereq: #105)*
 - [ ] **Step 5 (#109)** — Matrix tests: reorder/promote/demote (§E, §F) incl.
@@ -463,4 +484,5 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
 - [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
   Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
   §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
-- [ ] **Q2** — D1–D6 + P2 ratification by the reviewer.
+- [ ] **Q2** — D2–D6 + P2 ratification by the reviewer. **D1 is ratified**
+  (2026-07-23) and shipped with #107; the rest still gate steps 6–8.
