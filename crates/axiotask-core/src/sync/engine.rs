@@ -1861,6 +1861,309 @@ mod tests {
         assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
     }
 
+    // ─── RFC-009 §D matrix: local delete × remote ────────────────────────────
+    //
+    // One test per row of §D. Every row has the same expected outcome — the
+    // delete lands and whatever the remote concurrently did to that row is
+    // discarded (P4, ratified) — because `delete_task` sends no `If-Match`
+    // (probe 7: Google WOULD honor one; we choose not to send it). The tests
+    // assert the end state on BOTH sides, never that a call happened, and
+    // never a conflicted copy: delete/edit races do not fork.
+    //
+    // The mirror direction (local edit × remote delete) is §B, tested above by
+    // `edit_vs_remote_delete_discards_edit_and_row_disappears`.
+
+    /// A tombstone as `delete_task_inner` writes it: the row stays in the
+    /// store, marked deleted with a pending `delete`, until the push confirms.
+    async fn tombstone(eng: &SyncEngine, id: &str) {
+        let mut row = eng.store.find_task_any(id).await.unwrap().unwrap();
+        row.sync_state = SyncState::Deleted;
+        row.pending_op = Some("delete".into());
+        row.local_updated = "2026-06-02T00:00:00Z".into();
+        eng.store.upsert_task(&row).await.unwrap();
+    }
+
+    /// Whether the fake still holds a task — the remote half of every §D
+    /// assertion.
+    async fn remote_gone(client: &InMemoryClient, list: &str, id: &str) -> bool {
+        matches!(client.get_task(list, id).await, Err(ApiError::NotFound))
+    }
+
+    #[tokio::test]
+    async fn delete_vs_remote_edit_delete_wins() {
+        // §D × edited. Another device renamed the task (bumping its etag)
+        // after our last pull. The unconditional DELETE lands anyway and the
+        // remote edit dies with the row. Not a conflict, not an error.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "doomed", "1");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("renamed elsewhere".into()),
+                    notes: Some("and annotated".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        tombstone(&eng, "T1").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1);
+        assert_eq!(out.errors, 0, "a stale etag cannot block a delete");
+        assert_eq!(out.conflicts, 0, "delete/edit never forks a copy");
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "local row hard-deleted"
+        );
+        assert!(
+            remote_gone(&client, "L1", "T1").await,
+            "the remote edit was discarded with the row"
+        );
+
+        // P7: the next run has nothing left to do, and no revival on pull.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.deleted, 0);
+        assert_eq!(out2.errors, 0);
+        assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_vs_remote_status_change_delete_wins() {
+        // §D × completed / un-completed, both directions of the checkbox in
+        // one run. A status change bumps the etag exactly like a content edit
+        // — and is discarded exactly the same way. D1 (status-only divergence
+        // → remote wins, no copy) is about the 412 CONFLICT path; it must not
+        // leak here and resurrect a task the user deleted.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "will be completed remotely", "1");
+        client.seed_task("L1", "T2", "will be reopened remotely", "2");
+        client
+            .patch_task(
+                "L1",
+                "T2",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        eng.run().await.unwrap();
+
+        // Remote completes one and re-opens the other after our snapshot.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        client
+            .patch_task(
+                "L1",
+                "T2",
+                TaskPatch {
+                    status: Some(TaskStatus::NeedsAction),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        tombstone(&eng, "T1").await;
+        tombstone(&eng, "T2").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 2);
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0);
+        assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
+        assert!(remote_gone(&client, "L1", "T1").await, "completed row gone");
+        assert!(remote_gone(&client, "L1", "T2").await, "reopened row gone");
+    }
+
+    #[tokio::test]
+    async fn delete_vs_remote_move_and_reparent_delete_wins() {
+        // §D × moved / reparented. The DELETE names the task by id, so where
+        // the server moved it is irrelevant — including under a new parent,
+        // which is the case that could plausibly have "protected" it. The
+        // parent it was dragged under survives untouched.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "keeper", "1");
+        client.seed_task("L1", "T1", "doomed", "2");
+        client.seed_task("L1", "T2", "reordered", "3");
+        eng.run().await.unwrap();
+
+        // Another device demotes T1 under P and reorders T2 to the front.
+        client.move_task("L1", "T1", Some("P"), None).await.unwrap();
+        client.move_task("L1", "T2", None, None).await.unwrap();
+        tombstone(&eng, "T1").await;
+        tombstone(&eng, "T2").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 2);
+        assert_eq!(out.errors, 0);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "only the keeper is left: {tasks:?}");
+        assert_eq!(tasks[0].task.id, "P");
+        assert_eq!(tasks[0].task.title, "keeper", "the parent is untouched");
+        assert_eq!(tasks[0].sync_state, SyncState::Clean);
+        assert!(
+            remote_gone(&client, "L1", "T1").await,
+            "reparented row gone"
+        );
+        assert!(remote_gone(&client, "L1", "T2").await, "reordered row gone");
+        assert!(client.get_task("L1", "P").await.is_ok(), "keeper survives");
+    }
+
+    #[tokio::test]
+    async fn delete_parent_takes_a_remote_born_subtask_with_it() {
+        // §D × new remote subtask under the deleted parent. The child was born
+        // on another device and we have never seen it, so our local cascade
+        // cannot reach it — but Google's DELETE cascade does (verified live,
+        // #106). The consequence of P4 + that cascade is that the remote-born
+        // child dies too, and never surfaces locally as an orphan.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        // Another device adds a subtask we never pulled; the user deletes P.
+        client.seed_task_with_parent("L1", "C-remote", "their kid", "2", Some("P"));
+        tombstone(&eng, "P").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1);
+        assert_eq!(out.errors, 0);
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "the child never lands locally, not even as an orphan"
+        );
+        assert!(remote_gone(&client, "L1", "P").await);
+        assert!(
+            remote_gone(&client, "L1", "C-remote").await,
+            "the server cascade took the remote-born child"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_subtask_vs_remote_edit_leaves_the_parent_intact() {
+        // §D last row: "remove subtask" is a delete of the CHILD. Whatever the
+        // remote did to that child (here: renamed it) is discarded, and the
+        // parent must come out untouched and clean — deleting a subtask must
+        // never cascade upward or dirty the parent.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "sibling", "3", Some("P"));
+        eng.run().await.unwrap();
+        let parent_etag = eng
+            .store
+            .find_task_any("P")
+            .await
+            .unwrap()
+            .unwrap()
+            .task
+            .etag;
+
+        client
+            .patch_task(
+                "L1",
+                "C1",
+                TaskPatch {
+                    title: Some("renamed elsewhere".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        tombstone(&eng, "C1").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1);
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let ids: Vec<_> = tasks.iter().map(|t| t.task.id.as_str()).collect();
+        assert_eq!(ids, vec!["P", "C2"], "only the removed subtask is gone");
+        let parent = tasks.iter().find(|t| t.task.id == "P").unwrap();
+        assert_eq!(parent.task.title, "parent");
+        assert_eq!(parent.sync_state, SyncState::Clean, "parent not dirtied");
+        assert_eq!(parent.task.etag, parent_etag, "parent untouched (P6)");
+        let sibling = tasks.iter().find(|t| t.task.id == "C2").unwrap();
+        assert_eq!(sibling.task.parent.as_deref(), Some("P"), "still a subtask");
+        assert!(remote_gone(&client, "L1", "C1").await);
+        assert!(
+            client.get_task("L1", "C2").await.is_ok(),
+            "sibling survives"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_parent_with_an_unpushed_child_converges() {
+        // §D non-happy path: the user adds a subtask and deletes its parent
+        // before either reaches the server. Creates push before deletes, so
+        // the child is inserted and then removed by the parent's cascade —
+        // the point is only that both sides converge, with nothing left dirty
+        // and no child stranded under a dead parent id (which would draw a
+        // permanent 400 on every later run).
+        //
+        // P2 is not in play: it protects unpushed rows from REMOTE events, not
+        // from the user's own delete, which cascades by design (invariant #3).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        eng.run().await.unwrap();
+
+        let mut child = dirty_task("local-kid", "L1", "create");
+        child.task.parent = Some("P".into());
+        eng.store.upsert_task(&child).await.unwrap();
+        tombstone(&eng, "P").await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "the whole subtree is gone locally"
+        );
+        assert!(remote_gone(&client, "L1", "P").await);
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .is_empty(),
+            "no clone of the child left behind on the server"
+        );
+
+        // Nothing left pending, and the next run is a clean no-op.
+        assert!(eng.store.drain_dirty().await.unwrap().is_empty());
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.errors, 0);
+        assert_eq!(out2.pushed, 0);
+        assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn conflicted_copy_pushes_then_converges() {
         let (client, eng) = engine_with_push().await;

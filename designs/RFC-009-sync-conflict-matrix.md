@@ -189,21 +189,34 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 - × unchanged → DELETE; remote 404 counts as success; tombstone cleared.
   `settled`
 - × edited → DELETE is **unconditional** (no If-Match, http.rs:462) → delete
-  lands, remote edit lost (P4, ratified). `untested` — needs a test asserting
-  the *documented* semantics so a future change is deliberate.
-- × completed / un-completed → same: delete wins. `untested`
-- × moved / reparented → delete by id still lands. `untested`
+  lands, remote edit lost (P4, ratified). `settled` (#108) — pinned at three
+  layers: the transport sends no `If-Match`, `plan_delete` takes no remote
+  state at all (adding one would not compile), and the crossing is asserted
+  end to end on both sides.
+- × completed / un-completed → same: delete wins. `settled` (#108) — the same
+  test also guards D1 from leaking out of the 412 path and resurrecting a
+  deleted row.
+- × moved / reparented → delete by id still lands; the new parent it was
+  dragged under is untouched. `settled` (#108)
 - × new remote subtask appeared under the deleted parent → server cascade
   deletes the remote-born child with its parent. Consequence of P4 + Google's
-  cascade. Accepted; must be written down and tested against the fake.
-  `untested`
+  cascade. Accepted; the child never surfaces locally, not even as an orphan.
+  `settled` (#108)
 - × already deleted remotely → 404 → success. `settled`
 - Local delete of one subtask ("remove subtask") × any of the above on the
-  child → same rows as above, parent unaffected. `untested`
+  child → same rows as above, parent unaffected: not dirtied, etag unchanged,
+  siblings still attached. `settled` (#108)
+- Local delete of a parent whose child is an **unpushed** create → creates
+  push before deletes, so the child is inserted and then removed by the
+  parent's cascade; both sides converge with nothing dirty and no child left
+  naming a dead parent id. P2 is not in play — it protects unpushed rows from
+  *remote* events, not from the user's own cascade delete (invariant #3).
+  `settled` (#108)
 - **Answered:** Google's DELETE **does** accept `If-Match` (stale → 412, task
   survives; current → 204). P4 is therefore a *choice*, not a physical
-  constraint: `http.rs::delete_task` sends no `If-Match` on purpose. A future
-  option to detect delete/edit races exists if D4 is revisited.
+  constraint: `http.rs::delete_task` sends no `If-Match` on purpose (pinned by
+  `delete_task_sends_no_if_match`). A future option to detect delete/edit
+  races exists if D4 is revisited.
 
 ### E. Local reorder (`move`, previous-sibling) × remote
 
@@ -464,8 +477,16 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   and the user-driven complete/un-complete rows through the real command in
   `commands_test.rs`. One new defect surfaced and filed: §B × moved with a
   content edit forks a false conflicted copy (#118).
-- [ ] **Step 4 (#108)** — Matrix tests: delete family (§D), delete-wins
-  pinned. *(prereq: #105)*
+- [x] **Step 4 (#108)** — Matrix tests: delete family (§D), delete-wins
+  pinned. *(prereq: #105)* **Done.** Every §D row has a test and the engine
+  deviates on none of them. Delete-wins is pinned in both directions and at
+  three layers: `api::http` (the DELETE carries no `If-Match` — the choice
+  probe 7 left us), `sync::reconcile` (`plan_delete` takes only the error, so
+  no remote state *can* veto a delete; the mirror `NotFound → DeleteLocal` on
+  both the update push and the conflict refetch), and `sync::engine` +
+  `commands_test` (the crossings end to end, asserting local view and remote
+  store). One row was added that the matrix had not enumerated: a local delete
+  of a parent whose child is still an unpushed create.
 - [ ] **Step 5 (#109)** — Matrix tests: reorder/promote/demote (§E, §F) incl.
   the remote-sibling and 3rd-level degradations. *(prereq: #105–#106)*
 - [ ] **Step 6 (#110)** — Create family + P2 (§G): D2 re-homing, D3 orphan

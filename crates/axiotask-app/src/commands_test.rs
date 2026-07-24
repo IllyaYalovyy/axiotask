@@ -1449,6 +1449,138 @@ mod tests {
         assert!(local.iter().all(|t| t.sync_state == SyncState::Clean));
     }
 
+    // ─── RFC-009 §D matrix: delete × remote, through the real command ────────
+    //
+    // The §D crossings the user actually performs: `delete_task_inner` (the
+    // row action / Delete key) racing a change another device made to the same
+    // row. Delete wins in every one (P4) — what these add over the engine-level
+    // rows is that the row leaves the VIEW and never comes back on the pull.
+
+    #[tokio::test]
+    async fn deleting_a_task_the_remote_just_edited_removes_it_from_the_view() {
+        // §D × edited, user-driven. The task must disappear from the list the
+        // user is looking at and stay gone: a resurrection on the next pull —
+        // the row reappearing under its new remote title — is the visible bug
+        // this pins.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        client.seed_task("L1", "T2", "keep me", "2");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // Another device renames it while our copy is still on screen.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                axiotask_core::model::TaskPatch {
+                    title: Some("buy oat milk".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        crate::commands::delete_task_inner(&state, "T1".into())
+            .await
+            .unwrap();
+        // Optimistic: the row is already out of the view before the push.
+        let visible = state.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !visible.iter().any(|t| t.task.id == "T1"),
+            "deleted row still rendered: {visible:?}"
+        );
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0, "a stale etag cannot block a delete");
+        assert_eq!(out.conflicts, 0, "delete/edit never forks a copy");
+
+        for _ in 0..2 {
+            let tasks = state.store.list_tasks("L1").await.unwrap();
+            let titles: Vec<_> = tasks.iter().map(|t| t.task.title.as_str()).collect();
+            assert_eq!(titles, vec!["keep me"], "no resurrection under any title");
+            state.run_sync().await.unwrap();
+        }
+        assert_eq!(
+            client.list_tasks("L1", None).await.unwrap().items.len(),
+            1,
+            "the remote edit died with the row"
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_a_subtask_the_remote_completed_keeps_the_parent_visible() {
+        // §D last row, user-driven, non-happy path: "remove subtask" while the
+        // other device ticked that subtask off. The delete still wins, and the
+        // parent — the row that actually renders in the list — survives with
+        // its remaining subtask attached and nothing left dirty.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid one", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "C1",
+                axiotask_core::model::TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        crate::commands::delete_task_inner(&state, "C1".into())
+            .await
+            .unwrap();
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0);
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let ids: Vec<_> = tasks.iter().map(|t| t.task.id.as_str()).collect();
+        assert_eq!(ids, vec!["P", "C2"], "only the removed subtask is gone");
+        let parent = tasks.iter().find(|t| t.task.id == "P").unwrap();
+        assert_eq!(parent.task.title, "parent", "parent row still rendered");
+        assert_eq!(parent.sync_state, SyncState::Clean, "parent not dirtied");
+        let sibling = tasks.iter().find(|t| t.task.id == "C2").unwrap();
+        assert_eq!(
+            sibling.task.parent.as_deref(),
+            Some("P"),
+            "the sibling is still a subtask of the parent, not promoted"
+        );
+        assert!(
+            client
+                .list_tasks("L1", None)
+                .await
+                .unwrap()
+                .items
+                .iter()
+                .all(|t| t.id != "C1"),
+            "the completed remote copy is gone too"
+        );
+
+        // P7: quiescent afterwards — no tombstone left to retry.
+        let out2 = state.run_sync().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(out2.errors, 0);
+    }
+
     #[tokio::test]
     async fn undo_after_delete_pushed_restores_the_whole_subtree() {
         // Data-loss regression: delete a parent, let the delete sync (server

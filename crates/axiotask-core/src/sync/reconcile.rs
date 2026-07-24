@@ -1020,6 +1020,35 @@ mod tests {
     }
 
     #[test]
+    fn delete_wins_in_both_directions() {
+        // P4, pinned at the layer where the choice lives. `plan_delete` takes
+        // NOTHING but the error: no etag, no remote row, no local content. A
+        // pending delete therefore cannot be talked out of landing by anything
+        // the server concurrently did to the row — that missing parameter IS
+        // the "unconditional" in P4, and adding one would fail to compile here
+        // rather than silently changing the matrix.
+        //
+        // Probe 7 (#106) established this is a CHOICE, not a constraint:
+        // Google's DELETE does honor `If-Match` (stale → 412, task survives).
+        // `http.rs::delete_task` sends none on purpose — pinned separately by
+        // `delete_task_sends_no_if_match` in `api::http`.
+        assert_eq!(plan_delete(None), DeleteAction::HardDeleteLocal);
+
+        // The other direction of P4: a local content edit that discovers the
+        // row already gone remotely also resolves delete-wins — the edit is
+        // discarded and the local row dies, on the push and on the refetch
+        // that follows a 412. Neither path forks a conflicted copy.
+        assert_eq!(
+            on_update_error(&ApiError::NotFound),
+            UpdateFailure::DeleteLocal
+        );
+        assert_eq!(
+            on_conflict_refetch_error(&ApiError::NotFound),
+            RefetchFailure::DeleteLocal
+        );
+    }
+
+    #[test]
     fn delete_failures_defer_to_push_failure() {
         assert_eq!(
             plan_delete(Some(&ApiError::Network("down".into()))),

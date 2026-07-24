@@ -914,6 +914,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_task_sends_no_if_match() {
+        // RFC-009 §D / P4: the delete is UNCONDITIONAL, and that is a choice.
+        // Probe 7 (#106) established live that Google's DELETE *does* honor
+        // `If-Match` — a stale etag returns 412 and the task survives. We send
+        // none, so a concurrent remote edit can never block a delete the user
+        // asked for. Adding the header would silently turn every delete/edit
+        // race into a retry loop; this test makes that change deliberate.
+        let server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/lists/L1/tasks/T1"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let client = plain_client(&server.uri());
+        client.delete_task("L1", "T1").await.unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let del = requests
+            .iter()
+            .find(|r| r.method == wiremock::http::Method::DELETE)
+            .expect("the DELETE reached the server");
+        assert!(
+            !del.headers.contains_key("if-match"),
+            "DELETE must stay unconditional (P4): {:?}",
+            del.headers
+        );
+    }
+
+    #[tokio::test]
     async fn delete_task_404_maps_to_not_found() {
         let server = MockServer::start().await;
 
