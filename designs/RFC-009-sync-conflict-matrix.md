@@ -3,7 +3,7 @@
 | Field         | Value                                      |
 |---------------|--------------------------------------------|
 | Status        | Review                                     |
-| Author(s)     | Illya Yalovyy, Claude                      |
+| Author(s)     | Illya Yalovyy                              |
 | Supersedes    | RFC-004 §Conflict resolution (extends it)  |
 | Superseded by | —                                          |
 
@@ -22,7 +22,7 @@ test proves it), `gap` (behavior undefined or wrong vs. the expected outcome),
 `probe` (real Google semantics unverified — must be checked live before being
 encoded, per the no-hallucination rule).
 
-Each `gap`/`untested` row maps to a fleet task (see Development Plan). The
+Each `gap`/`untested` row maps to a tracked task (see Development Plan). The
 matrix is enforced by unit tests against a **pure decision core** extracted
 from the engine (Testing Strategy), so a row is cheap to test and impossible
 to silently drop.
@@ -656,8 +656,7 @@ server's serialization of exactly that race.
 
 ## Development Plan
 
-Ordered; each step is a ktask fleet task with its own GitHub issue
-(queued as ktask 67–75).
+Ordered; each step has its own GitHub issue.
 
 - [x] **Step 1 (#105)** — Extract the pure reconciler (`sync/reconcile.rs`);
   no behavior change. *(prerequisite: —)* **Done.** `engine.rs` is now
