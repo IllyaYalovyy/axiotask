@@ -340,28 +340,30 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 ### H. Local cross-list move (clone + delete) × remote
 
 - × unchanged → clones created in target (parents first), originals tombstoned
-  and deleted; subtree arrives whole; ids fresh. `untested` end-to-end at the
-  sync layer.
+  and deleted; subtree arrives whole; ids fresh. `settled` (#111)
 - × remote edited the original mid-window → the clone carries the content
   snapshot from move time; the tombstone's unconditional delete discards the
-  remote edit (P4). **Accepted MVP loss** — record + test. `decide` (D4:
-  accept, or fetch-compare before delete once the DELETE If-Match probe (D§)
-  answers).
+  remote edit (P4). **Accepted MVP loss.** `settled` (#111, D4 ratified) — the
+  fetch-compare alternative probe 7 leaves available was NOT taken.
 - × original deleted remotely → tombstone 404 = success; clones still push →
   the task **survives in the target list** ("move wins"): the clones are
   unpushed rows under P2, and the user's move expressed intent to keep the
-  task. `decide` (D5) + `untested`.
+  task. `settled` (#111, D5 ratified).
 - × new remote subtask under the original → not in the clone snapshot; dies
-  with the original's cascade delete. Accepted (P4 + cascade); record + test.
-  `untested`
+  with the original's cascade delete. Accepted (P4 + cascade). `settled`
+  (#111) — and no invisible local orphan is left behind.
 - × target list deleted remotely → clone creates fail → re-home per D2 to the
   default list; originals' tombstones still push. The subtree survives,
-  somewhere visible. `untested` — the D2 mechanism is in place since #110
-  (clones are etag-less rows, so they re-home like any other unpushed work);
-  the crossing itself is tested in step 7.
+  somewhere visible. `settled` (#111) — the D2 mechanism has been in place
+  since #110 (clones are etag-less rows, so they re-home like any other
+  unpushed work); the crossing is now tested end to end.
 - Crash between pushing clones and pushing deletes → both lists briefly hold
   the subtree; next run pushes the tombstones → converges, no permanent
-  duplicate (P8). `untested`
+  duplicate (P8). `settled` (#111) — and the local view never shows the
+  duplicate: the pull does not resurrect the tombstoned original.
+- Crash *inside* a clone insert (committed server-side, response lost) → the
+  in-flight marker adopts the orphan on the next run rather than inserting the
+  moved task twice (P8). Not enumerated before #111; `settled` (#111).
 
 ### I. Local list ops × remote
 
@@ -404,18 +406,26 @@ demote/promote, cross-list move, list delete, remote cascades. `gap`
   died remotely promotes to a top-level create in the same list. (P2) Applies
   to every remote-driven removal of the parent — ghost detection and the
   delete-wins 404 paths — never to the user's own delete, which still cascades.
-- **D4** — Cross-list move: a concurrent remote edit to the original is lost
-  (clone snapshot wins). Accepted MVP semantics.
-- **D5** — Cross-list move: the task survives in the target even if the
-  original was deleted remotely ("move wins").
+- **D4** — **RATIFIED (2026-07-24, with #111).** Cross-list move: a concurrent
+  remote edit to the original is lost (clone snapshot wins). Accepted MVP
+  semantics. The alternative probe 7 left open — fetch-compare, or an
+  `If-Match` DELETE, before tombstoning — is deliberately not taken: it would
+  put a cross-list move behind a conflict prompt the MVP has no UI for, and it
+  contradicts delete-wins (§D), which is already pinned in both directions.
+- **D5** — **RATIFIED (2026-07-24, with #111).** Cross-list move: the task
+  survives in the target even if the original was deleted remotely ("move
+  wins"). Falls out of P2 — the clones are rows the server has never seen —
+  and of intent: the user moved the task to keep it.
 - **D6** — List rename conflicts resolve remote-wins, no copy.
 - **P2 itself** — **RATIFIED (2026-07-24, with #110).** Remote events never
   destroy rows the server has never seen.
 
-Ratification note for the reviewer: D1 was ratified by #107 and P2/D2/D3 by
-#110 — in both cases *by the implementing task*, per the task's own
-instruction, not by a human sign-off. D4–D6 are untouched and still gate
-steps 7–8.
+Ratification note for the reviewer: D1 was ratified by #107, P2/D2/D3 by #110
+and D4/D5 by #111 — in every case *by the implementing task*, per the task's
+own instruction, not by a human sign-off. D6 is untouched and still gates
+step 8. Flipping D4 or D5 is a code change, not just an RFC edit: D4 lives in
+`api::http` (the DELETE carries no `If-Match`) and D5 in `sync::reconcile`
+(`plan_delete` reads 404 as success) — both pinned by the §H tests.
 
 ## Probes required (live API, before encoding — no-hallucination rule)
 
@@ -561,8 +571,16 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   `commands_test.rs`. One row the matrix had not enumerated was added: the
   same cascade reaches an unpushed subtask through the update-404 delete-wins
   path, not only through ghost detection.
-- [ ] **Step 7 (#111)** — Cross-list move matrix (§H) incl. crash windows,
-  D4/D5. *(prereq: #105, #108, #110; D4/D5 ratified)*
+- [x] **Step 7 (#111)** — Cross-list move matrix (§H) incl. crash windows,
+  D4/D5. *(prereq: #105, #108, #110; D4/D5 ratified)* **Done.** D4 and D5
+  ratified; the engine deviates on no §H row, so the step is tests + this
+  record and no behavior change. Every row is exercised through the real
+  `move_to_list` command in `commands_test.rs` — the only layer where a
+  cross-list move exists, since it is a *command* built from a create family
+  and a delete family, not a sync primitive. One row the matrix had not
+  enumerated was added: the crash *inside* a clone insert, where the
+  crashed-create adoption machinery (#104) crosses a move. Each test was
+  falsified against a deliberately broken engine/command before being kept.
 - [ ] **Step 8 (#112)** — List-op matrix (§I) + hidden/completed pull row
   (§A). *(prereq: #105–#106; D6 ratified)*
 - [ ] **Step 9 (#113)** — Extend the property suite's op vocabulary (§J).
@@ -575,6 +593,7 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
 - [x] **Q1** — All `probe` rows above. **Answered live (#106)**; see §Probes.
   Steps 3, 5, 6 and 8 are unblocked. Two rows they falsified (§B×deleted,
   §F 3rd-level) are re-tagged `gap` and need engine work, not just tests.
-- [ ] **Q2** — D4–D6 ratification by the reviewer. **D1 is ratified**
-  (2026-07-23, shipped with #107) and **P2, D2 and D3** are ratified
-  (2026-07-24, shipped with #110); D4/D5 still gate step 7 and D6 step 8.
+- [ ] **Q2** — D6 ratification by the reviewer. **D1 is ratified** (2026-07-23,
+  shipped with #107), **P2, D2 and D3** (2026-07-24, shipped with #110) and
+  **D4, D5** (2026-07-24, shipped with #111); only D6 is left, and it gates
+  step 8.

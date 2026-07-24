@@ -2996,4 +2996,420 @@ mod tests {
             "and it still syncs from its new home"
         );
     }
+
+    // ─── RFC-009 §H matrix: local cross-list move × remote ───────────────────
+    //
+    // One test per row of §H. Google has no cross-list move, so `move_to_list`
+    // is clone-into-target + tombstone-the-original: every row is a create
+    // racing a delete, through the real command the UI calls. D4 (the clone's
+    // move-time snapshot wins over a concurrent remote edit) and D5 (the moved
+    // task survives in the target even when the original died remotely) are
+    // the two decisions this family pins down.
+
+    /// What the list view renders for a list: top-level rows only (invariant
+    /// #1 — subtasks live in the detail panel, never as list rows).
+    async fn rendered(state: &AppState, list_id: &str) -> Vec<String> {
+        state
+            .store
+            .list_tasks(list_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.parent.is_none())
+            .map(|t| t.task.title)
+            .collect()
+    }
+
+    /// Every title the server holds in a list, in position order.
+    async fn remote_titles(client: &InMemoryClient, list_id: &str) -> Vec<String> {
+        client
+            .list_tasks(list_id, None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|t| t.title)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn cross_list_move_lands_the_whole_subtree_under_fresh_ids() {
+        // §H × unchanged. The baseline row: clones are created in the target
+        // (parent before child, or Google 400s the child), the originals are
+        // tombstoned and deleted, and the subtree arrives whole under ids the
+        // server just minted. Then it converges: the next run is a no-op (P7).
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "trip", "1");
+        client.seed_task_with_parent("L1", "C", "pack", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(rendered(&state, "L1").await, Vec::<String>::new());
+        assert_eq!(rendered(&state, "L2").await, vec!["trip"]);
+        assert!(remote_titles(&client, "L1").await.is_empty());
+
+        let l2 = client.list_tasks("L2", None).await.unwrap().items;
+        assert_eq!(l2.len(), 2, "parent + subtask both landed");
+        let parent = l2.iter().find(|t| t.title == "trip").unwrap();
+        let child = l2.iter().find(|t| t.title == "pack").unwrap();
+        assert_ne!(
+            parent.id, "P",
+            "the clone carries a fresh id (invariant #4)"
+        );
+        assert_ne!(child.id, "C");
+        assert_eq!(
+            child.parent.as_deref(),
+            Some(parent.id.as_str()),
+            "the subtask hangs off the clone, not the dead original"
+        );
+
+        // Locally everything settled, and the run after is a no-op.
+        let rows = state.store.list_tasks("L2").await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.sync_state == SyncState::Clean));
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_remote_edit_during_a_cross_list_move_loses_to_the_moved_snapshot() {
+        // §H, D4 (RATIFIED). Another device renames the original in the window
+        // between the move and the sync. The clone carries the move-time
+        // snapshot and the tombstone's DELETE carries no If-Match, so the
+        // rename is discarded (P4). Accepted MVP loss — no conflicted copy, no
+        // wedged row; the user sees exactly what they moved.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("T1", "L2").await.unwrap();
+        // The other device edits the original (bumping its etag) mid-window.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                axiotask_core::model::TaskPatch {
+                    title: Some("buy oat milk".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L2").await,
+            vec!["buy milk"],
+            "the clone's snapshot wins (D4)"
+        );
+        assert_eq!(rendered(&state, "L1").await, Vec::<String>::new());
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "the stale-etag delete still lands — deletes carry no If-Match"
+        );
+        assert_eq!(remote_titles(&client, "L2").await, vec!["buy milk"]);
+        // The lost edit leaves no conflicted copy anywhere (P3 does not apply).
+        for list in ["L1", "L2"] {
+            assert!(
+                !rendered(&state, list)
+                    .await
+                    .iter()
+                    .any(|t| t.contains("oat")),
+                "no conflicted copy of the discarded remote edit"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_moved_task_survives_in_the_target_when_the_original_dies_remotely() {
+        // §H, D5 (RATIFIED). Another device deletes the original before the
+        // move syncs. The tombstone's 404 is success, and the clones are rows
+        // the server has never seen — P2 forbids a remote event from
+        // destroying them. The move expressed intent to KEEP the task, so
+        // "move wins": it lives on in the target list.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "trip", "1");
+        client.seed_task_with_parent("L1", "C", "pack", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+        client.delete_task_from_state("L1", "P"); // cascades C on the server
+        client.delete_task_from_state("L1", "C");
+
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(
+            out.errors, 0,
+            "a 404 on the tombstone is success, not error"
+        );
+
+        assert_eq!(
+            rendered(&state, "L2").await,
+            vec!["trip"],
+            "move wins: the task survives in the target (D5)"
+        );
+        let l2 = client.list_tasks("L2", None).await.unwrap().items;
+        assert_eq!(l2.len(), 2, "the whole subtree survived, on the server");
+        assert_eq!(
+            l2.iter()
+                .find(|t| t.title == "pack")
+                .unwrap()
+                .parent
+                .as_deref(),
+            Some(l2.iter().find(|t| t.title == "trip").unwrap().id.as_str())
+        );
+        assert!(
+            state
+                .store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.sync_state == SyncState::Clean)
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_subtask_added_remotely_after_a_cross_list_move_dies_with_the_original() {
+        // §H × new remote subtask under the original. The child was born after
+        // the move snapshot, so it is not in the clone; the original's delete
+        // cascades it away on the server (P4 + cascade, verified live). An
+        // accepted MVP loss — pinned here so it can never happen SILENTLY in a
+        // way that leaves an invisible orphan row behind locally.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "trip", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+        client.seed_task_with_parent("L1", "C", "book hotel", "2", Some("P"));
+
+        state.run_sync().await.unwrap();
+
+        assert_eq!(rendered(&state, "L2").await, vec!["trip"]);
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "cascade took it"
+        );
+        assert_eq!(remote_titles(&client, "L2").await, vec!["trip"]);
+        // Nothing invisible left behind: no local row anywhere for the child.
+        for list in ["L1", "L2"] {
+            assert!(
+                state
+                    .store
+                    .list_tasks(list)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .all(|t| t.task.title != "book hotel"),
+                "no orphaned local row for the cascaded subtask"
+            );
+        }
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn a_move_into_a_list_deleted_remotely_rehomes_the_clone_to_the_default_list() {
+        // §H × target list deleted remotely, crossing §G3 / D2. The clone
+        // creates cannot land in a list that no longer exists, and they are
+        // rows the server never saw — so they re-home to the default list
+        // rather than dying with it (P2). The originals' tombstones still
+        // push, so the subtree ends up in exactly ONE place, and a visible one.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L0", "My Tasks");
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "trip", "1");
+        client.seed_task_with_parent("L1", "C", "pack", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+        client.delete_tasklist("L2").await.unwrap();
+
+        state.run_sync().await.unwrap();
+
+        // `all_lists` has no ORDER BY — sort so the assertion cannot depend on
+        // SQLite's row order.
+        let mut sidebar: Vec<_> = state
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.list.title)
+            .collect();
+        sidebar.sort();
+        assert_eq!(sidebar, vec!["My Tasks", "Work"], "the target list is gone");
+        assert_eq!(
+            rendered(&state, "L0").await,
+            vec!["trip"],
+            "the moved subtree is visible in the default list"
+        );
+        assert_eq!(rendered(&state, "L1").await, Vec::<String>::new());
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "the original's tombstone pushed regardless"
+        );
+
+        // It still syncs from its new home, subtree intact and one level deep.
+        state.run_sync().await.unwrap();
+        let l0 = client.list_tasks("L0", None).await.unwrap().items;
+        assert_eq!(l0.len(), 2, "parent + subtask reached the server");
+        let parent = l0.iter().find(|t| t.title == "trip").unwrap();
+        assert_eq!(
+            l0.iter()
+                .find(|t| t.title == "pack")
+                .unwrap()
+                .parent
+                .as_deref(),
+            Some(parent.id.as_str())
+        );
+        assert!(
+            state
+                .store
+                .list_tasks("L0")
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.sync_state == SyncState::Clean)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_crash_between_the_clone_and_the_delete_leaves_no_permanent_duplicate() {
+        // §H crash window. The clone lands, then the network drops before the
+        // original's delete is pushed. Both remote lists briefly hold the
+        // subtree — but the user must never see the duplicate (the tombstone
+        // is not a rendered row, and the pull must not resurrect it), and the
+        // next run converges to one copy (P8).
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("T1", "L2").await.unwrap();
+        client.fail_next(axiotask_core::api::in_memory::Method::DeleteTask, || {
+            axiotask_core::api::ApiError::Network("crash".into())
+        });
+
+        state.run_sync().await.unwrap();
+
+        // Server: transiently duplicated. User: one row, in the target list.
+        assert_eq!(remote_titles(&client, "L1").await, vec!["buy milk"]);
+        assert_eq!(remote_titles(&client, "L2").await, vec!["buy milk"]);
+        assert_eq!(
+            rendered(&state, "L1").await,
+            Vec::<String>::new(),
+            "the pull must not resurrect the tombstoned original"
+        );
+        assert_eq!(rendered(&state, "L2").await, vec!["buy milk"]);
+
+        // Next run pushes the surviving tombstone: one copy, and it converges.
+        state.run_sync().await.unwrap();
+        assert!(remote_titles(&client, "L1").await.is_empty());
+        assert_eq!(remote_titles(&client, "L2").await, vec!["buy milk"]);
+        assert_eq!(rendered(&state, "L2").await, vec!["buy milk"]);
+        assert!(
+            state
+                .store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.sync_state == SyncState::Clean)
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P8/P7)");
+    }
+
+    #[tokio::test]
+    async fn a_clone_insert_that_commits_then_times_out_does_not_duplicate_the_move() {
+        // §H second crash window: the clone's insert lands server-side but the
+        // response never arrives, so the local row still looks unpushed. The
+        // in-flight marker must let the next run ADOPT the orphan instead of
+        // inserting the moved task a second time (P8) — the crossing of the
+        // crashed-create machinery with a cross-list move.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list("T1", "L2").await.unwrap();
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+
+        // The original is gone either way; the clone's fate is decided next run.
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            remote_titles(&client, "L2").await,
+            vec!["buy milk"],
+            "the moved task exists exactly once — no duplicate from the retry"
+        );
+        assert!(remote_titles(&client, "L1").await.is_empty());
+        assert_eq!(rendered(&state, "L2").await, vec!["buy milk"]);
+        assert_eq!(rendered(&state, "L1").await, Vec::<String>::new());
+        assert!(
+            state
+                .store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.sync_state == SyncState::Clean)
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.errors), (0, 0), "converged (P8/P7)");
+    }
 }
