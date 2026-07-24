@@ -45,7 +45,19 @@ async function main() {
       return r.value[EKEY];
     } catch { return null; }
   };
-  const source = async () => (await wd("GET", `${base}/source`)).value;
+  // Page source. While the webview is still doing its initial load, the driver
+  // can answer 404 "no such frame — Callback was not called before the unload
+  // event"; that is "not ready yet", not a failure, so report empty source and
+  // let the caller's retry loop poll again. Every source() caller polls, so a
+  // driver that is genuinely dead still fails — via that loop's own timeout.
+  const source = async () => {
+    try {
+      return (await wd("GET", `${base}/source`)).value;
+    } catch (e) {
+      if (String(e).includes("no such frame")) return "";
+      throw e;
+    }
+  };
   const exec = async (script, args = []) => (await wd("POST", `${base}/execute/sync`, { script, args })).value;
   const waitFor = async (label, predicate, { attempts = 40, delay = 250 } = {}) => {
     let last;

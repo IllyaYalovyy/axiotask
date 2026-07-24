@@ -369,8 +369,10 @@ server's serialization of exactly that race.
 Ordered; each step is a ktask fleet task with its own GitHub issue
 (queued as ktask 67–75).
 
-- [ ] **Step 1 (#105)** — Extract the pure reconciler (`sync/reconcile.rs`);
-  no behavior change. *(prerequisite: —)*
+- [x] **Step 1 (#105)** — Extract the pure reconciler (`sync/reconcile.rs`);
+  no behavior change. *(prerequisite: —)* **Done.** `engine.rs` is now
+  observe → `reconcile::*` → apply; matrix rows are table tests over pure
+  functions in `sync/reconcile.rs`.
 - [ ] **Step 2 (#106)** — Live-API probes; align `in_memory.rs`. *(prereq: —;
   needs the throwaway account)*
 - [ ] **Step 3 (#107)** — Matrix tests: edit/complete family (§B, §C) incl.

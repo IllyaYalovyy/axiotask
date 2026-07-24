@@ -4,6 +4,7 @@
 
 mod engine;
 mod error;
+pub mod reconcile;
 
 pub use engine::{SyncEngine, SyncOutcome};
 pub use error::SyncError;

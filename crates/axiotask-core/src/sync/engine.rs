@@ -1,7 +1,13 @@
 //! Sync engine: push local changes, pull remote changes, resolve conflicts.
 //!
-//! Design: RFC-004. Single entry point [`SyncEngine::run`].
-//! All conflict resolution follows "remote wins" for MVP.
+//! Design: RFC-004; conflict matrix: RFC-009. Single entry point
+//! [`SyncEngine::run`]. All conflict resolution follows "remote wins" for MVP.
+//!
+//! This module is the IO half of sync: it **observes** (store reads, API
+//! calls), asks [`super::reconcile`] to **decide**, and **applies** the
+//! decision to the store. Every branch that is a *choice* rather than a write
+//! lives in `reconcile` as a pure function, so RFC-009's matrix rows are
+//! testable without an engine, a fake, or a database.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -9,8 +15,13 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::SyncError;
+use super::reconcile::{
+    self, ConflictResolution, CreateFailure, DeleteAction, ListDeleteAction, ListPullAction,
+    ListRenameFailure, MoveAdoption, MoveFailure, MoveIntent, MoveRefs, PullRowAction, PushFailure,
+    RefState, RefetchFailure, UpdateFailure,
+};
 use crate::api::{ApiError, GoogleTasksClient};
-use crate::model::{NewTask, Task, TaskList, TaskPatch};
+use crate::model::{Task, TaskList};
 use crate::store::{Store, StoredTask, StoredTaskList, SyncState};
 
 /// Counters and changed-data scope from a single sync run.
@@ -167,22 +178,18 @@ impl SyncEngine {
             loop {
                 let mut progressed = false;
                 for row in &self.store.drain_dirty().await? {
-                    if row.pending_op.as_deref() != Some("create")
-                        || attempted.contains(&row.task.id)
-                        || unresolved_creates.contains(&row.task.id)
-                        || self.config.held_create_id.as_deref() == Some(row.task.id.as_str())
-                    {
+                    if !reconcile::create_is_eligible(
+                        row.pending_op.as_deref(),
+                        &row.task.id,
+                        &attempted,
+                        &unresolved_creates,
+                        self.config.held_create_id.as_deref(),
+                    ) {
                         continue;
                     }
-                    let parent_resolved = match &row.task.parent {
-                        None => true,
-                        Some(pid) => self
-                            .store
-                            .find_task_any(pid)
-                            .await?
-                            .is_some_and(|p| p.task.etag.is_some()),
-                    };
-                    if !parent_resolved {
+                    if !reconcile::parent_is_pushable(
+                        self.ref_state_of(row.task.parent.as_deref()).await?,
+                    ) {
                         continue;
                     }
                     attempted.insert(row.task.id.clone());
@@ -213,28 +220,38 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Classify a push failure for one row. Transient errors leave the row
-    /// dirty for the next run. A server rejection (400 & co.) also leaves the
-    /// row dirty but is counted and logged — it must not abort the run, or one
-    /// poisoned row would permanently starve every other push AND the pull.
-    /// Only auth failures propagate: every subsequent call would fail the same
-    /// way, so aborting is correct.
+    /// Apply the decision [`reconcile::push_failure`] made for one row's push
+    /// failure: log it, count it, or propagate it (aborting the run).
     fn row_push_failure(
         e: ApiError,
         out: &mut SyncOutcome,
         id: &str,
         op: &str,
     ) -> Result<(), SyncError> {
-        if e.is_transient() {
-            warn!(id, err = %e, "transient error on {op}, will retry");
-            return Ok(());
+        Self::apply_push_failure(reconcile::push_failure(&e), e, out, id, op)
+    }
+
+    /// Apply an already-classified push failure (used where the decision came
+    /// from an op-specific reconciler that had already inspected the error).
+    fn apply_push_failure(
+        failure: PushFailure,
+        e: ApiError,
+        out: &mut SyncOutcome,
+        id: &str,
+        op: &str,
+    ) -> Result<(), SyncError> {
+        match failure {
+            PushFailure::Retry => {
+                warn!(id, err = %e, "transient error on {op}, will retry");
+                Ok(())
+            }
+            PushFailure::Abort => Err(e.into()),
+            PushFailure::Reject => {
+                warn!(id, err = %e, "server rejected {op}; row stays dirty, continuing");
+                out.errors += 1;
+                Ok(())
+            }
         }
-        if matches!(e, ApiError::Unauthorized | ApiError::AuthExpired(_)) {
-            return Err(e.into());
-        }
-        warn!(id, err = %e, "server rejected {op}; row stays dirty, continuing");
-        out.errors += 1;
-        Ok(())
     }
 
     /// Push locally-created lists so their tasks can reference real ids.
@@ -270,10 +287,7 @@ impl SyncEngine {
 
         for l in creates {
             // Adopt a remote list with the same title we don't already track.
-            if let Some(existing) = remote
-                .iter()
-                .find(|r| r.title == l.list.title && !local_ids.contains(&r.id))
-            {
+            if let Some(existing) = reconcile::adoptable_list(&l.list.title, &remote, &local_ids) {
                 // Record the adoption so a SECOND same-title local create in
                 // this batch doesn't remap onto the same remote id (a primary
                 // key collision that aborts the run); it inserts a new remote
@@ -324,39 +338,47 @@ impl SyncEngine {
                         out.pushed += 1;
                         out.lists_changed = true;
                     }
-                    Err(ApiError::NotFound) => {
-                        self.store.delete_list_hard(&l.list.id).await?;
-                        out.lists_changed = true;
-                    }
-                    Err(e) => Self::row_push_failure(e, out, &l.list.id, "list rename")?,
+                    Err(e) => match reconcile::on_list_rename_error(&e) {
+                        ListRenameFailure::DeleteLocal => {
+                            self.store.delete_list_hard(&l.list.id).await?;
+                            out.lists_changed = true;
+                        }
+                        ListRenameFailure::Failed(f) => {
+                            Self::apply_push_failure(f, e, out, &l.list.id, "list rename")?;
+                        }
+                    },
                 },
-                Some("delete") => match self.client.delete_tasklist(&l.list.id).await {
-                    Ok(()) | Err(ApiError::NotFound) => {
-                        self.store.delete_list_hard(&l.list.id).await?;
-                        out.deleted += 1;
-                        out.lists_changed = true;
+                Some("delete") => {
+                    let result = self.client.delete_tasklist(&l.list.id).await;
+                    match reconcile::plan_list_delete(result.as_ref().err()) {
+                        ListDeleteAction::DeleteLocal => {
+                            self.store.delete_list_hard(&l.list.id).await?;
+                            out.deleted += 1;
+                            out.lists_changed = true;
+                        }
+                        ListDeleteAction::Retry => {
+                            if let Err(e) = &result {
+                                warn!(err = %e, "transient on list delete, retry");
+                            }
+                        }
+                        ListDeleteAction::Abort => return Err(result.unwrap_err().into()),
+                        ListDeleteAction::Revive => {
+                            // Permanently refused — Google will not delete an
+                            // account's default list, for example. Revive the
+                            // list (its tasks re-pull) and tell the user via
+                            // the error count.
+                            if let Err(e) = &result {
+                                warn!(id = %l.list.id, err = %e, "list delete refused by server; restoring list");
+                            }
+                            out.errors += 1;
+                            let mut revived = l.clone();
+                            revived.sync_state = SyncState::Clean;
+                            revived.pending_op = None;
+                            self.store.upsert_list(&revived).await?;
+                            out.lists_changed = true;
+                        }
                     }
-                    Err(e) if e.is_transient() => {
-                        warn!(err = %e, "transient on list delete, retry");
-                    }
-                    Err(e @ (ApiError::Unauthorized | ApiError::AuthExpired(_))) => {
-                        return Err(e.into());
-                    }
-                    Err(e) => {
-                        // Permanently refused — Google will not delete an
-                        // account's default list, for example. A tombstone that
-                        // can never push would error on every run forever;
-                        // revive the list instead (its tasks re-pull) and tell
-                        // the user via the error count.
-                        warn!(id = %l.list.id, err = %e, "list delete refused by server; restoring list");
-                        out.errors += 1;
-                        let mut revived = l.clone();
-                        revived.sync_state = SyncState::Clean;
-                        revived.pending_op = None;
-                        self.store.upsert_list(&revived).await?;
-                        out.lists_changed = true;
-                    }
-                },
+                }
                 _ => {}
             }
         }
@@ -405,9 +427,7 @@ impl SyncEngine {
                 .collect();
 
             // Orphan: a remote task with our content whose id we never recorded.
-            let orphan = remote
-                .iter()
-                .find(|r| !local_id_set.contains(&r.id) && same_content(&local.task, r));
+            let orphan = reconcile::find_orphan(&local.task, &remote, &local_id_set);
 
             match orphan {
                 Some(o) => {
@@ -432,71 +452,44 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Whether an id referenced by a pending move is safe to send: `None`
-    /// (no constraint) or a task that exists locally with a server etag.
-    async fn task_is_synced(&self, id: Option<&str>) -> Result<bool, SyncError> {
+    /// How far along the push pipeline a referenced task id is. `None` (the
+    /// intent names no such id) is no constraint at all.
+    async fn ref_state_of(&self, id: Option<&str>) -> Result<Option<RefState>, SyncError> {
         match id {
-            None => Ok(true),
-            Some(i) => Ok(self
-                .store
-                .find_task_any(i)
-                .await?
-                .is_some_and(|t| t.task.etag.is_some())),
-        }
-    }
-
-    /// Whether an id referenced by a pending move still exists locally at all
-    /// (tombstones included). `None` is no constraint, so it counts as present.
-    async fn task_exists(&self, id: Option<&str>) -> Result<bool, SyncError> {
-        match id {
-            None => Ok(true),
-            Some(i) => Ok(self.store.find_task_any(i).await?.is_some()),
+            None => Ok(None),
+            Some(i) => Ok(Some(RefState::of(
+                self.store.find_task_any(i).await?.as_ref(),
+            ))),
         }
     }
 
     /// Push pending position/parent moves via the Tasks move endpoint.
     async fn push_moves(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         for mv in self.store.pending_moves().await? {
-            // The TARGET PARENT is gone (the user deleted it after dropping
-            // this task under it). Its delete cascades to the whole subtree on
-            // both sides (verified live), so this task goes with it: there is
-            // nothing left to express, and Google would answer 400 "Invalid
-            // task ID" for the dead parent (verified live). The synced-yet
-            // check below can never pass for a row that no longer exists, so
-            // the intent — and the pending-changes count the UI shows — would
-            // otherwise survive forever and be re-walked on every run.
-            if !self.task_exists(mv.parent_id.as_deref()).await? {
-                debug!(id = %mv.task_id, "move target parent is gone, dropping move");
-                self.store.clear_move(&mv.task_id).await?;
-                continue;
-            }
-            // The SIBLING this task was dropped after is gone. One drag can
-            // carry two intents — reparent and ordering — and the row already
-            // applied both optimistically. "Place after B" is unexpressible
-            // now, but the reparent still is, so dropping the whole intent
-            // would strand it: local would show the task at its new parent
-            // while Google keeps the old one, and because the row is Clean
-            // with a matching etag no later pull ever corrects the drift.
-            // Keep the parent, drop only the ordering — position self-heals
-            // on the next pull.
-            let mut previous_id = mv.previous_id.clone();
-            if !self.task_exists(previous_id.as_deref()).await? {
-                debug!(id = %mv.task_id, "move's previous sibling is gone, keeping the reparent only");
-                previous_id = None;
-            }
-            // A move whose task (or target parent/previous) hasn't been pushed
-            // yet still carries a local UUID — the API answers 400 "Invalid
-            // task ID" (verified live), which would drop the user's reordering.
-            // Hold the intent; finish_create rewrites the ids when the create
-            // lands, and the move pushes on that run or the next.
             let before = self.store.find_task_any(&mv.task_id).await?;
-            if before.as_ref().is_none_or(|t| t.task.etag.is_none())
-                || !self.task_is_synced(mv.parent_id.as_deref()).await?
-                || !self.task_is_synced(previous_id.as_deref()).await?
-            {
-                debug!(id = %mv.task_id, "move waits for its ids to be synced");
-                continue;
+            let refs = MoveRefs {
+                task: RefState::of(before.as_ref()),
+                parent: self.ref_state_of(mv.parent_id.as_deref()).await?,
+                previous: self.ref_state_of(mv.previous_id.as_deref()).await?,
+            };
+            let intent = reconcile::plan_move(refs);
+            match intent {
+                MoveIntent::Drop => {
+                    debug!(id = %mv.task_id, "move target parent is gone, dropping move");
+                    self.store.clear_move(&mv.task_id).await?;
+                    continue;
+                }
+                MoveIntent::Wait => {
+                    debug!(id = %mv.task_id, "move waits for its ids to be synced");
+                    continue;
+                }
+                MoveIntent::Send { keep_previous } => {
+                    if mv.previous_id.is_some() && !keep_previous {
+                        debug!(id = %mv.task_id, "move's previous sibling is gone, keeping the reparent only");
+                    }
+                }
             }
+            let previous_id = reconcile::move_previous_id(&mv, intent);
             match self
                 .client
                 .move_task(
@@ -510,27 +503,16 @@ impl SyncEngine {
                 Ok(remote) => {
                     // Drop the intent first so the server's parent/position can
                     // land (apply_pushed_task refuses to touch them while a move
-                    // is still pending).
+                    // is still pending). The snapshot taken before the call is
+                    // what decides how much of the response is adopted.
                     self.store.clear_move(&mv.task_id).await?;
-                    match before.filter(|t| t.sync_state == SyncState::Clean) {
-                        // Adopt the response BODY, not just the etag — the same
-                        // trap push_update documents. A move can change more
-                        // than parent/position: completing a parent cascades to
-                        // its subtree server-side (verified live), so a task
-                        // moved OUT of a parent completed in the same batch
-                        // comes back completed. The fresh etag the move returns
-                        // would otherwise make every later pull skip the row and
-                        // freeze that drift in place. The snapshot taken before
-                        // the call keeps a mid-flight re-edit dirty.
-                        Some(t) => {
+                    match (reconcile::move_adoption(before.as_ref()), &before) {
+                        (MoveAdoption::Body, Some(t)) => {
                             self.store
                                 .apply_pushed_task(&remote, &t.local_updated)
                                 .await?;
                         }
-                        // The row carries its own pending content edit: keep it
-                        // (meta only). Its update push adopts the server body on
-                        // this run or the next.
-                        None => {
+                        _ => {
                             self.store
                                 .refresh_task_meta(
                                     &remote.id,
@@ -543,58 +525,37 @@ impl SyncEngine {
                     out.pushed += 1;
                     debug!(id = %mv.task_id, "pushed move");
                 }
-                // Task gone on server — drop the stale move intent.
-                Err(ApiError::NotFound) => {
-                    self.store.clear_move(&mv.task_id).await?;
-                    debug!(id = %mv.task_id, "move target gone, dropping move");
-                }
-                Err(e) if e.is_transient() => {
-                    warn!(err = %e, "transient error on move, will retry");
-                }
-                Err(e) => {
-                    // A rejected move must not starve the rest of the queue;
-                    // drop the intent (positions self-heal on the next pull).
-                    Self::row_push_failure(e, out, &mv.task_id, "move")?;
-                    self.store.clear_move(&mv.task_id).await?;
-                }
+                Err(e) => match reconcile::on_move_error(&e) {
+                    // Task gone on server — drop the stale move intent.
+                    MoveFailure::DropIntent => {
+                        self.store.clear_move(&mv.task_id).await?;
+                        debug!(id = %mv.task_id, "move target gone, dropping move");
+                    }
+                    MoveFailure::Retry => {
+                        warn!(err = %e, "transient error on move, will retry");
+                    }
+                    MoveFailure::Abort => return Err(e.into()),
+                    MoveFailure::RejectAndDrop => {
+                        Self::apply_push_failure(PushFailure::Reject, e, out, &mv.task_id, "move")?;
+                        self.store.clear_move(&mv.task_id).await?;
+                    }
+                },
             }
         }
         Ok(())
     }
 
     async fn push_create(&self, row: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
-        // For a SUBTASK, anchor the insert after its last already-synced
-        // sibling: without `previous` the API inserts at the top, so a batch
-        // of subtasks lands on Google in reverse creation order.
-        let previous = match &row.task.parent {
+        // A subtask insert is anchored after its last already-synced sibling
+        // (see `reconcile::create_previous_anchor`); a top-level create needs
+        // no list read at all.
+        let previous = match row.task.parent {
             None => None,
-            Some(pid) => self
-                .store
-                .list_tasks(&row.list_id)
-                .await?
-                .into_iter()
-                .filter(|t| {
-                    t.task.parent.as_deref() == Some(pid)
-                        && t.task.id != row.task.id
-                        && t.task.etag.is_some()
-                })
-                .max_by(|a, b| a.task.position.cmp(&b.task.position))
-                .map(|t| t.task.id),
+            Some(_) => {
+                reconcile::create_previous_anchor(row, &self.store.list_tasks(&row.list_id).await?)
+            }
         };
-        let payload = NewTask {
-            title: row.task.title.clone(),
-            notes: row.task.notes.clone(),
-            // Canonicalize on the way out: Google 400s a bare date, and heals
-            // any legacy/imported row that stored a non-canonical form.
-            due: row
-                .task
-                .due
-                .as_deref()
-                .and_then(crate::dates::normalize_due),
-            status: Some(row.task.status),
-            parent: row.task.parent.clone(),
-            previous,
-        };
+        let payload = reconcile::create_payload(row, previous);
         // Durably mark in-flight BEFORE the non-idempotent insert.
         self.store
             .record_inflight_create(&row.task.id, &row.list_id)
@@ -622,35 +583,24 @@ impl SyncEngine {
                 debug!(local_id = %row.task.id, remote_id = %remote.id, "pushed create");
                 Ok(())
             }
-            Err(e) if e.is_transient() => {
-                // Insert may or may not have reached the server. The in-flight
-                // marker lets the next run adopt an orphan instead of dup'ing.
-                warn!(err = %e, "transient error on create, will retry");
-                Ok(())
-            }
-            Err(e) => {
-                self.store.clear_inflight_create(&row.task.id).await?;
-                Self::row_push_failure(e, out, &row.task.id, "create")
-            }
+            Err(e) => match reconcile::on_create_error(&e) {
+                CreateFailure::KeepInflight => {
+                    // Insert may or may not have reached the server. The
+                    // in-flight marker lets the next run adopt an orphan
+                    // instead of duplicating.
+                    warn!(err = %e, "transient error on create, will retry");
+                    Ok(())
+                }
+                CreateFailure::ClearInflight(f) => {
+                    self.store.clear_inflight_create(&row.task.id).await?;
+                    Self::apply_push_failure(f, e, out, &row.task.id, "create")
+                }
+            },
         }
     }
 
     async fn push_update(&self, row: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
-        let patch = TaskPatch {
-            title: Some(row.task.title.clone()),
-            notes: row.task.notes.clone().or(Some(String::new())),
-            // Canonical form, or "" to clear — both verified against the live
-            // API ("" clears; a bare date 400s). An unparseable stored due
-            // degrades to clear rather than poisoning the row forever.
-            due: Some(
-                row.task
-                    .due
-                    .as_deref()
-                    .and_then(crate::dates::normalize_due)
-                    .unwrap_or_default(),
-            ),
-            status: Some(row.task.status),
-        };
+        let patch = reconcile::update_patch(row);
         match self
             .client
             .patch_task(&row.list_id, &row.task.id, patch, row.task.etag.as_deref())
@@ -670,14 +620,18 @@ impl SyncEngine {
                 debug!(id = %row.task.id, "pushed update");
                 Ok(())
             }
-            Err(ApiError::PreconditionFailed) => self.resolve_conflict(row, out).await,
-            Err(ApiError::NotFound) => {
-                debug!(id = %row.task.id, "task gone from server, deleting locally");
-                self.store.delete_task_hard(&row.task.id).await?;
-                out.mark_list_changed(&row.list_id);
-                Ok(())
-            }
-            Err(e) => Self::row_push_failure(e, out, &row.task.id, "update"),
+            Err(e) => match reconcile::on_update_error(&e) {
+                UpdateFailure::ResolveConflict => self.resolve_conflict(row, out).await,
+                UpdateFailure::DeleteLocal => {
+                    debug!(id = %row.task.id, "task gone from server, deleting locally");
+                    self.store.delete_task_hard(&row.task.id).await?;
+                    out.mark_list_changed(&row.list_id);
+                    Ok(())
+                }
+                UpdateFailure::Failed(f) => {
+                    Self::apply_push_failure(f, e, out, &row.task.id, "update")
+                }
+            },
         }
     }
 
@@ -696,72 +650,55 @@ impl SyncEngine {
     ) -> Result<(), SyncError> {
         let remote = match self.client.get_task(&local.list_id, &local.task.id).await {
             Ok(t) => t,
-            // Server deleted it; mirror the push_update NotFound behavior.
-            Err(ApiError::NotFound) => {
-                self.store.delete_task_hard(&local.task.id).await?;
-                return Ok(());
+            Err(e) => {
+                return match reconcile::on_conflict_refetch_error(&e) {
+                    // Server deleted it; mirror the push_update behavior.
+                    RefetchFailure::DeleteLocal => {
+                        self.store.delete_task_hard(&local.task.id).await?;
+                        Ok(())
+                    }
+                    RefetchFailure::StayDirty => Ok(()), // stays dirty, retry
+                    RefetchFailure::Abort => Err(e.into()),
+                };
             }
-            Err(e) if e.is_transient() => return Ok(()), // stays dirty, retry
-            Err(e) => return Err(e.into()),
         };
 
-        // Adopt the remote wholesale if the content is already identical (no
-        // real divergence — just normalization/etag drift to absorb).
-        if same_content(&local.task, &remote) {
-            self.store
-                .apply_pushed_task(&remote, &local.local_updated)
-                .await?;
-            out.mark_list_changed(&local.list_id);
-            return Ok(());
+        match reconcile::resolve_conflict(&local.task, &remote) {
+            // No real divergence — just normalization/etag drift to absorb.
+            ConflictResolution::AdoptRemote => {
+                self.store
+                    .apply_pushed_task(&remote, &local.local_updated)
+                    .await?;
+            }
+            // Remote becomes canonical, the local edit survives as a copy.
+            ConflictResolution::ConflictedCopy => {
+                info!(id = %local.task.id, "412 conflict — preserving local edit as conflicted copy");
+                out.conflicts += 1;
+                self.store
+                    .upsert_task(&reconcile::canonical_row(&remote, &local.list_id))
+                    .await?;
+                let copy =
+                    reconcile::conflicted_copy(local, &remote, uuid::Uuid::new_v4().to_string());
+                self.store.upsert_task(&copy).await?;
+            }
         }
-
-        // Real conflict: remote becomes canonical, local edit survives as a copy.
-        info!(id = %local.task.id, "412 conflict — preserving local edit as conflicted copy");
-        out.conflicts += 1;
-
-        let canonical = StoredTask {
-            task: remote.clone(),
-            list_id: local.list_id.clone(),
-            sync_state: SyncState::Clean,
-            pending_op: None,
-            local_updated: remote.updated.clone(),
-        };
-        self.store.upsert_task(&canonical).await?;
-
-        let copy = StoredTask {
-            task: Task {
-                id: uuid::Uuid::new_v4().to_string(),
-                parent: local.task.parent.clone(),
-                position: local.task.position.clone(),
-                title: format!("{} (conflicted copy)", local.task.title),
-                notes: local.task.notes.clone(),
-                status: local.task.status,
-                due: local.task.due.clone(),
-                completed: local.task.completed.clone(),
-                etag: None,
-                updated: remote.updated.clone(),
-                web_view_link: None,
-            },
-            list_id: local.list_id.clone(),
-            sync_state: SyncState::Dirty,
-            pending_op: Some("create".into()),
-            local_updated: remote.updated.clone(),
-        };
-        self.store.upsert_task(&copy).await?;
         out.mark_list_changed(&local.list_id);
         Ok(())
     }
 
     async fn push_delete(&self, row: &StoredTask, out: &mut SyncOutcome) -> Result<(), SyncError> {
-        match self.client.delete_task(&row.list_id, &row.task.id).await {
-            Ok(()) | Err(ApiError::NotFound) => {
+        let result = self.client.delete_task(&row.list_id, &row.task.id).await;
+        match reconcile::plan_delete(result.as_ref().err()) {
+            DeleteAction::HardDeleteLocal => {
                 self.store.delete_task_hard(&row.task.id).await?;
                 out.deleted += 1;
                 out.mark_list_changed(&row.list_id);
                 debug!(id = %row.task.id, "pushed delete");
                 Ok(())
             }
-            Err(e) => Self::row_push_failure(e, out, &row.task.id, "delete"),
+            DeleteAction::Failed(f) => {
+                Self::apply_push_failure(f, result.unwrap_err(), out, &row.task.id, "delete")
+            }
         }
     }
 
@@ -833,18 +770,9 @@ impl SyncEngine {
 
         let remote_ids: HashSet<String> = remote_tasks.iter().map(|t| t.id.clone()).collect();
 
-        // Filter: skip dirty rows and orphans of in-flight creates.
-        let to_upsert: Vec<_> = remote_tasks
-            .into_iter()
-            .filter(|t| !dirty_ids.contains(&t.id))
-            .filter(|t| !inflight.iter().any(|f| same_content(f, t)))
-            .collect();
-
-        // Parents before children for FK safety — TOPOLOGICALLY, not by a
-        // has-parent flag: the API allows nesting deeper than one level
-        // (verified live), so among tasks that all have parents, a child can
-        // otherwise land before its own parent and fail the FK.
-        let to_upsert = order_parents_first(to_upsert);
+        // Skip dirty rows and orphans of in-flight creates, then order parents
+        // before children for FK safety.
+        let to_upsert = reconcile::pull_batch(remote_tasks, dirty_ids, inflight);
 
         // Idempotency: skip rows where local etag already matches.
         let local_etags = self.build_etag_map(&list.id).await;
@@ -857,22 +785,20 @@ impl SyncEngine {
             .collect();
         let batch_ids: HashSet<String> = to_upsert.iter().map(|t| t.id.clone()).collect();
 
+        let ctx = reconcile::PullRowContext {
+            local_etags: &local_etags,
+            batch_ids: &batch_ids,
+            known_local: &known_local,
+        };
         for mut task in to_upsert {
-            if Self::is_up_to_date(&task.id, task.etag.as_deref(), &local_etags) {
-                continue;
-            }
-            // A parent that is neither in this batch nor already local (its
-            // row was skipped as dirty/in-flight, or it moved mid-pagination)
-            // would fail the FK and abort the whole pull. Detach instead, and
-            // drop the etag so the row is NOT etag-skipped next pull — it gets
-            // re-processed and re-linked once the parent is present.
-            if let Some(p) = &task.parent
-                && !batch_ids.contains(p)
-                && !known_local.contains(p)
-            {
-                warn!(id = %task.id, parent = %p, "pulled task's parent unknown; detaching until it appears");
-                task.parent = None;
-                task.etag = None;
+            match reconcile::plan_pull_row(&task, &ctx) {
+                PullRowAction::Skip => continue,
+                PullRowAction::UpsertDetached => {
+                    warn!(id = %task.id, parent = task.parent.as_deref().unwrap_or_default(), "pulled task's parent unknown; detaching until it appears");
+                    task.parent = None;
+                    task.etag = None;
+                }
+                PullRowAction::Upsert => {}
             }
             let stored = StoredTask {
                 list_id: list.id.clone(),
@@ -936,18 +862,6 @@ impl SyncEngine {
             .collect()
     }
 
-    /// Check if a remote task is already up-to-date locally.
-    fn is_up_to_date(
-        id: &str,
-        remote_etag: Option<&str>,
-        local_etags: &HashMap<String, Option<String>>,
-    ) -> bool {
-        match (local_etags.get(id), remote_etag) {
-            (Some(Some(local)), Some(remote)) => local == remote,
-            _ => false,
-        }
-    }
-
     /// Remove local clean rows that no longer exist on the server.
     async fn remove_ghosts(
         &self,
@@ -970,107 +884,35 @@ impl SyncEngine {
     /// Reconcile one remote list into the local store.
     async fn upsert_list(&self, list: &TaskList) -> Result<bool, SyncError> {
         let locals = self.store.all_lists().await?;
-
-        // Locally dirty list with the same id → preserve local intent (push will handle it).
-        if locals
-            .iter()
-            .any(|l| l.list.id == list.id && l.sync_state != SyncState::Clean)
-        {
-            return Ok(false);
-        }
-
-        // Adopt a local-only create (no etag) with the same title — covers the
-        // offline "My Tasks" bootstrap and any create that already landed.
-        if let Some(orphan) = locals.iter().find(|l| {
-            l.pending_op.as_deref() == Some("create")
-                && l.list.etag.is_none()
-                && l.list.title == list.title
-        }) {
-            self.store
-                .remap_list_id(
-                    &orphan.list.id,
-                    &list.id,
-                    list.etag.as_deref(),
-                    &list.updated,
-                )
-                .await?;
-            return Ok(true);
-        }
-
-        let changed = !locals.iter().any(|l| {
-            l.list.id == list.id
-                && l.list.title == list.title
-                && l.list.etag == list.etag
-                && l.list.updated == list.updated
-                && !l.local_only
-                && l.sync_state == SyncState::Clean
-        });
-
-        let stored = StoredTaskList {
-            list: list.clone(),
-            sync_state: SyncState::Clean,
-            local_updated: list.updated.clone(),
-            pending_op: None,
-            local_only: false,
-        };
-        // Race-safe: won't clobber a list a live rename just dirtied.
-        self.store.upsert_remote_list(&stored).await?;
-        Ok(changed)
-    }
-}
-
-/// Whether two tasks have identical user-visible content (the patchable
-/// fields). Used to tell a real conflict from an identical concurrent edit,
-/// and to adopt an orphaned create after a crash.
-///
-/// Comparison is normalization-tolerant, because Google canonicalizes what we
-/// send: `due` always comes back as `YYYY-MM-DDT00:00:00.000Z` (a local
-/// `...T00:00:00Z` is the same date), and cleared notes come back absent
-/// (`None` ≡ `Some("")`). A raw string comparison here manufactures phantom
-/// conflicts — the local edit gets duplicated as a "(conflicted copy)" even
-/// though nothing diverged.
-fn same_content(a: &Task, b: &Task) -> bool {
-    let due = |t: &Task| t.due.as_deref().and_then(crate::dates::normalize_due);
-    let notes = |t: &Task| t.notes.clone().filter(|n| !n.is_empty());
-    a.title == b.title && notes(a) == notes(b) && due(a) == due(b) && a.status == b.status
-}
-
-/// Order a batch so every task appears after its parent (Kahn-style BFS from
-/// the roots). A task whose parent is not in the batch counts as a root — the
-/// parent already exists locally. Any leftover (a parent cycle, which the API
-/// cannot produce but corrupt data could) is appended last rather than dropped.
-fn order_parents_first(tasks: Vec<Task>) -> Vec<Task> {
-    let in_batch: HashSet<String> = tasks.iter().map(|t| t.id.clone()).collect();
-    let mut remaining: Vec<Option<Task>> = tasks.into_iter().map(Some).collect();
-    let mut placed: HashSet<String> = HashSet::new();
-    let mut out = Vec::with_capacity(remaining.len());
-    loop {
-        let mut progressed = false;
-        for slot in &mut remaining {
-            let ready = slot.as_ref().is_some_and(|t| match &t.parent {
-                None => true,
-                Some(p) => !in_batch.contains(p) || placed.contains(p),
-            });
-            if ready {
-                let t = slot.take().unwrap();
-                placed.insert(t.id.clone());
-                out.push(t);
-                progressed = true;
+        match reconcile::plan_list_pull(list, &locals) {
+            ListPullAction::KeepLocal => Ok(false),
+            ListPullAction::AdoptLocalCreate { local_id } => {
+                self.store
+                    .remap_list_id(&local_id, &list.id, list.etag.as_deref(), &list.updated)
+                    .await?;
+                Ok(true)
+            }
+            ListPullAction::Upsert { changed } => {
+                let stored = StoredTaskList {
+                    list: list.clone(),
+                    sync_state: SyncState::Clean,
+                    local_updated: list.updated.clone(),
+                    pending_op: None,
+                    local_only: false,
+                };
+                // Race-safe: won't clobber a list a live rename just dirtied.
+                self.store.upsert_remote_list(&stored).await?;
+                Ok(changed)
             }
         }
-        if !progressed {
-            break;
-        }
     }
-    out.extend(remaining.into_iter().flatten());
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::InMemoryClient;
-    use crate::model::TaskStatus;
+    use crate::model::{TaskPatch, TaskStatus};
     use crate::store::open_memory;
 
     async fn engine() -> (Arc<InMemoryClient>, SyncEngine) {
