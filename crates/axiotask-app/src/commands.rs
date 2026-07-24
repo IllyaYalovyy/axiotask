@@ -336,14 +336,16 @@ pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<De
         subtree,
     };
 
-    if t.task.etag.is_none() {
-        // Never pushed — just hard-delete locally.
-        state
-            .store
-            .delete_task_hard(&id)
-            .await
-            .map_err(|e| e.to_string())?;
-    } else {
+    // A row the server may already hold — because it has an etag, or because
+    // an in-flight create marker says its insert may have committed before the
+    // response was lost — must be TOMBSTONED so the delete reaches Google.
+    // Only a row the server can never have seen is safe to drop outright.
+    if state
+        .store
+        .server_may_hold(&id)
+        .await
+        .map_err(|e| e.to_string())?
+    {
         let mut t = t;
         t.sync_state = SyncState::Deleted;
         t.pending_op = Some("delete".into());
@@ -351,6 +353,13 @@ pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<De
         state
             .store
             .upsert_task(&t)
+            .await
+            .map_err(|e| e.to_string())?;
+    } else {
+        // Never pushed and no insert in flight — just hard-delete locally.
+        state
+            .store
+            .delete_task_hard(&id)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -677,13 +686,14 @@ pub(crate) async fn clear_completed_inner(
                 tracing::info!(id = %t.task.id, "clear-completed: skipping parent with open subtasks");
                 continue;
             }
-            if t.task.etag.is_none() {
-                state
-                    .store
-                    .delete_task_hard(&t.task.id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            } else {
+            // Same rule as `delete_task_inner`: only a row the server can
+            // never have seen is safe to drop without a tombstone.
+            if state
+                .store
+                .server_may_hold(&t.task.id)
+                .await
+                .map_err(|e| e.to_string())?
+            {
                 let mut d = t.clone();
                 d.sync_state = SyncState::Deleted;
                 d.pending_op = Some("delete".into());
@@ -691,6 +701,12 @@ pub(crate) async fn clear_completed_inner(
                 state
                     .store
                     .upsert_task(&d)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
+                state
+                    .store
+                    .delete_task_hard(&t.task.id)
                     .await
                     .map_err(|e| e.to_string())?;
             }

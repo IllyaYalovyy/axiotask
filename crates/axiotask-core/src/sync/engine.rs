@@ -136,7 +136,7 @@ impl SyncEngine {
     /// Push all dirty rows: creates (parents first), then remaining ops.
     async fn push_all(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         // Recover any creates interrupted by a crash before pushing new ones.
-        self.recover_inflight_creates().await?;
+        self.recover_inflight_creates(out).await?;
         // A marker recovery could NOT resolve (its list fetch died transiently,
         // so the orphan — if any — was invisible) still means "this insert may
         // already have landed". Re-pushing it now is exactly the duplicate H1
@@ -202,8 +202,14 @@ impl SyncEngine {
             }
         }
 
-        // Updates and deletes (always pushed — they reuse existing ids).
+        // Updates and deletes reuse existing ids — except when the row's own
+        // create is still unresolved in flight, in which case there is no
+        // server id to reuse yet and the mutation waits for the run that
+        // resolves the marker.
         for row in &self.store.drain_dirty().await? {
+            if !reconcile::mutation_is_pushable(&row.task.id, &unresolved_creates) {
+                continue;
+            }
             match row.pending_op.as_deref() {
                 Some("update") => self.push_update(row, out).await?,
                 Some("delete") => self.push_delete(row, out).await?,
@@ -340,7 +346,34 @@ impl SyncEngine {
                     }
                     Err(e) => match reconcile::on_list_rename_error(&e) {
                         ListRenameFailure::DeleteLocal => {
-                            self.store.delete_list_hard(&l.list.id).await?;
+                            // The list is gone on the server, so it goes here
+                            // too (P4) — but the rows it holds that the server
+                            // has NEVER SEEN must not die with it (P2/D2).
+                            // This is the pull's ghost-list discovery arriving
+                            // through a different call, so it re-homes them
+                            // the same way.
+                            let survivors: Vec<StoredTaskList> = self
+                                .store
+                                .all_lists()
+                                .await?
+                                .into_iter()
+                                .filter(|s| s.list.id != l.list.id)
+                                .collect();
+                            if self
+                                .rehome_before_dropping(&l.list.id, &survivors, out)
+                                .await?
+                            {
+                                self.store.delete_list_hard(&l.list.id).await?;
+                            } else {
+                                // Nowhere to put them: keep the list as an
+                                // unpushed create so it is re-created on the
+                                // server and the rows land in it.
+                                let mut revived = l.clone();
+                                revived.list.etag = None;
+                                revived.sync_state = SyncState::Dirty;
+                                revived.pending_op = Some("create".into());
+                                self.store.upsert_list(&revived).await?;
+                            }
                             out.lists_changed = true;
                         }
                         ListRenameFailure::Failed(f) => {
@@ -390,7 +423,7 @@ impl SyncEngine {
     /// task (our content, an id we never recorded) and adopt it instead of
     /// re-inserting — eliminating the duplicate. Scoped strictly to in-flight
     /// creates, so it never merges unrelated tasks.
-    async fn recover_inflight_creates(&self) -> Result<(), SyncError> {
+    async fn recover_inflight_creates(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         let inflight = self.store.inflight_creates().await?;
         for (local_id, list_id) in inflight {
             // Adopting an orphan remaps the local id to the server id — the
@@ -400,14 +433,14 @@ impl SyncEngine {
             if self.config.held_create_id.as_deref() == Some(local_id.as_str()) {
                 continue;
             }
-            let local = self
-                .store
-                .list_tasks(&list_id)
-                .await?
-                .into_iter()
-                .find(|t| t.task.id == local_id);
+            // `find_task_any` on purpose: a row the user deleted (or moved to
+            // another list) while its insert was in flight is a TOMBSTONE, and
+            // that tombstone is the only thing that still knows what the
+            // committed insert looks like. It has to be recovered too, or the
+            // orphan survives on the server and the next pull resurrects it.
+            let local = self.store.find_task_any(&local_id).await?;
             let Some(local) = local else {
-                // Local task gone (e.g. user deleted it) — drop the marker.
+                // Local row really is gone (hard-deleted) — nothing to adopt.
                 self.store.clear_inflight_create(&local_id).await?;
                 continue;
             };
@@ -442,6 +475,16 @@ impl SyncEngine {
                             Some(&o.position),
                         )
                         .await?;
+                }
+                None if local.sync_state == SyncState::Deleted => {
+                    // The insert never landed AND the user has since deleted
+                    // the row. There is nothing to delete on the server and
+                    // nothing to keep locally: a tombstone carrying a local
+                    // UUID could never be pushed (Google 400s an id it never
+                    // minted), so drop it outright.
+                    self.store.clear_inflight_create(&local_id).await?;
+                    self.store.delete_task_hard(&local_id).await?;
+                    out.mark_list_changed(&list_id);
                 }
                 None => {
                     // Insert never reached the server — let normal push retry.
@@ -798,6 +841,38 @@ impl SyncEngine {
         }
     }
 
+    /// A list the server no longer has is about to disappear locally (P4).
+    /// Move the rows it holds that the server has NEVER SEEN into a surviving
+    /// list first (P2/D2, ratified): a remote event must not destroy the
+    /// user's unpushed work.
+    ///
+    /// Returns `true` when the list may now be dropped, `false` when there is
+    /// nowhere to put the rows and the caller must keep the list alive
+    /// instead. `survivors` are the lists eligible to take the rows in — the
+    /// caller decides which those are, because two lists deleted in the same
+    /// pull must not hand the rows to each other.
+    async fn rehome_before_dropping(
+        &self,
+        ghost: &str,
+        survivors: &[StoredTaskList],
+        out: &mut SyncOutcome,
+    ) -> Result<bool, SyncError> {
+        match reconcile::rehome_target(survivors, ghost) {
+            Some(target) => {
+                let moved = self
+                    .store
+                    .rehome_unpushed_tasks(ghost, &target.list.id)
+                    .await?;
+                if moved > 0 {
+                    info!(from = %ghost, to = %target.list.id, moved, "list deleted remotely; re-homing unpushed rows");
+                    out.mark_list_changed(&target.list.id);
+                }
+                Ok(true)
+            }
+            None => Ok(!self.store.has_unpushed_tasks(ghost).await?),
+        }
+    }
+
     // ─── Pull ────────────────────────────────────────────────────────────────
 
     /// Pull all lists and their tasks from the server.
@@ -838,36 +913,21 @@ impl SyncEngine {
             .collect();
         for ghost in &ghost_lists {
             // D2/P2: the rows the server never saw must not die with the list.
-            // They re-home to the default list, still dirty, and push next run.
-            match reconcile::rehome_target(&survivors, ghost) {
-                Some(target) => {
-                    let moved = self
-                        .store
-                        .rehome_unpushed_tasks(ghost, &target.list.id)
-                        .await?;
-                    if moved > 0 {
-                        info!(from = %ghost, to = %target.list.id, moved, "list deleted remotely; re-homing unpushed rows");
-                        out.mark_list_changed(&target.list.id);
-                    }
-                }
+            if !self.rehome_before_dropping(ghost, &survivors, out).await? {
                 // Nowhere to put them: keep the list instead, as an unpushed
                 // list create. It is re-created on the server next push (or
                 // adopted by title) and the rows land in it — P2 holds even
                 // when the account has no other list left.
-                None if self.store.has_unpushed_tasks(ghost).await? => {
-                    if let Some(mut revived) =
-                        local_lists.iter().find(|l| &l.list.id == ghost).cloned()
-                    {
-                        revived.list.etag = None;
-                        revived.sync_state = SyncState::Dirty;
-                        revived.pending_op = Some("create".into());
-                        self.store.upsert_list(&revived).await?;
-                    }
-                    info!(id = %ghost, "list deleted remotely but still holds unpushed rows and there is nowhere to re-home them; keeping it as a local create");
-                    out.lists_changed = true;
-                    continue;
+                if let Some(mut revived) = local_lists.iter().find(|l| &l.list.id == ghost).cloned()
+                {
+                    revived.list.etag = None;
+                    revived.sync_state = SyncState::Dirty;
+                    revived.pending_op = Some("create".into());
+                    self.store.upsert_list(&revived).await?;
                 }
-                None => {}
+                info!(id = %ghost, "list deleted remotely but still holds unpushed rows and there is nowhere to re-home them; keeping it as a local create");
+                out.lists_changed = true;
+                continue;
             }
             debug!(id = %ghost, "removing ghost list");
             self.store.delete_list_hard_if_clean(ghost).await?;
@@ -4696,6 +4756,117 @@ mod tests {
                 .iter()
                 .all(|l| l.list.id != "L1"),
             "the gone list is hard-deleted locally, not left dirty forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_list_rename_not_found_rehomes_the_rows_the_server_never_saw() {
+        // §I × P2. The 404 says the list is gone on the server, so it goes
+        // locally too (P4) — but an unpushed create in it is work the server
+        // has NEVER SEEN, and a remote event must not destroy that. It re-homes
+        // to the default list, exactly as the pull's ghost path does (D2).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "My Tasks");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "Work stuff".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
+
+        client.delete_list_from_state("L1");
+        eng.run().await.unwrap();
+
+        assert!(
+            eng.store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L1"),
+            "the gone list is still dropped locally (P4)"
+        );
+        assert_eq!(
+            eng.store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|t| t.task.title)
+                .collect::<Vec<_>>(),
+            vec!["task local-1"],
+            "and the unpushed row survived in the default list (P2/D2)"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_list_rename_not_found_keeps_the_list_when_there_is_nowhere_to_rehome() {
+        // The same 404 with no surviving list to take the rows: dropping the
+        // list would destroy them, so it is kept as an unpushed list create and
+        // re-created on the server instead (P2 holds even with one list left).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Work");
+        eng.run().await.unwrap();
+
+        let mut l = eng
+            .store
+            .all_lists()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|l| l.list.id == "L1")
+            .unwrap();
+        l.list.title = "Work stuff".into();
+        l.sync_state = SyncState::Dirty;
+        l.pending_op = Some("update".into());
+        eng.store.upsert_list(&l).await.unwrap();
+        eng.store
+            .upsert_task(&dirty_task("local-1", "L1", "create"))
+            .await
+            .unwrap();
+
+        client.delete_list_from_state("L1");
+        eng.run().await.unwrap();
+        eng.run().await.unwrap();
+
+        let lists = eng.store.all_lists().await.unwrap();
+        let kept = lists
+            .iter()
+            .find(|l| l.list.title == "Work stuff")
+            .expect("the list was kept rather than taking the row down with it");
+        assert_eq!(
+            eng.store
+                .list_tasks(&kept.list.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|t| t.task.title)
+                .collect::<Vec<_>>(),
+            vec!["task local-1"]
+        );
+        assert_eq!(
+            client
+                .list_tasklists()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|l| l.title)
+                .collect::<Vec<_>>(),
+            vec!["Work stuff"],
+            "and it was re-created on the server so the row can push"
         );
     }
 

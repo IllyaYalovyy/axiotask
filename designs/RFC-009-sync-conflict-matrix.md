@@ -221,6 +221,24 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   naming a dead parent id. P2 is not in play — it protects unpushed rows from
   *remote* events, not from the user's own cascade delete (invariant #3).
   `settled` (#108)
+- Local delete of a create whose **insert crashed mid-flight** (committed
+  server-side, response lost) → the row looks unpushed but an in-flight marker
+  says the server may hold it. It must be **tombstoned, not hard-deleted**: a
+  hard delete FK-cascades the marker away and strands the committed row, which
+  the next pull then resurrects. Recovery adopts the orphan onto the tombstone
+  (id only — never a resurrection) and the delete reaches it; when no orphan
+  exists the tombstone is dropped, because a local UUID on the wire is a
+  permanent 400. `settled` (#113, defect #120) — a row the matrix had not
+  enumerated, found by the §J property suite. Same rule at all three delete
+  paths: `delete_task`, `clear_completed`, and the cross-list move in §H.
+- ...and that tombstone must **not be pushed while its own create is still
+  unresolved in flight** (`reconcile::mutation_is_pushable`): a run whose
+  recovery could not see the list leaves the marker open and the local UUID in
+  place, and a delete sent against it is a permanent 400 that would also
+  "succeed" against the fake while the committed row lives on. Updates take
+  the same gate. `settled` (#113) — found by the §J suite at 1024 cases from
+  `[CreateTop, CrashSync, MoveToList, FlakySync(list_tasks 503)]`, i.e. only
+  once a transient fault was crossed with the crash window and a move.
 - **Answered:** Google's DELETE **does** accept `If-Match` (stale → 412, task
   survives; current → 204). P4 is therefore a *choice*, not a physical
   constraint: `http.rs::delete_task` sends no `If-Match` on purpose (pinned by
@@ -296,6 +314,16 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   updates-then-moves; both land; final state = new content at new position.
   `settled` (#103, re-pinned by #109 with an etag/content-coherence assertion).
 
+- Local demote × the target parent deleted remotely → the move is rejected
+  (the parent id is not a task the server has), the intent is dropped and the
+  optimistic local placement is undone, so the row stays top-level and clean.
+  `settled` (#113) — found by the §J suite from `[Demote, RemoteDelete]`. The
+  crossing was invisible before because the fake accepted a `parent` it did
+  not have (defect #123): the resulting server row pointed at a deleted
+  parent, our pull detached it and dropped its etag on **every** run, and sync
+  never settled (P7). `in_memory::move_task` now applies the same permanent
+  rejection `insert_task` already applies to that field.
+
 ### G. Local `create` × remote
 
 - Top-level create, list alive → insert → `finish_create` remap; in-flight
@@ -370,6 +398,12 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 - Crash *inside* a clone insert (committed server-side, response lost) → the
   in-flight marker adopts the orphan on the next run rather than inserting the
   moved task twice (P8). Not enumerated before #111; `settled` (#111).
+- Crash inside the **original's** insert, then the move → the source row looks
+  unpushed but its in-flight marker says the server may already hold it, so it
+  is tombstoned rather than hard-deleted (§D). Otherwise the committed insert
+  is stranded in the SOURCE list and the next pull shows the task in **both**
+  lists. Not enumerated before #113; `settled` (#113, defect #120) — found by
+  the §J property suite from `[CreateTop, CrashSync, MoveToList]`.
 
 ### I. Local list ops × remote
 
@@ -400,7 +434,14 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   in the local list follow it onto the adopted remote id and push there.
 - Local rename × remote deleted → NotFound → hard-delete local list (P4).
   `settled` (#101, user-visible crossing added in #112: the sidebar entry and
-  its tasks both go, rather than a list that never syncs again)
+  its tasks both go, rather than a list that never syncs again) — **but the
+  rows the server never saw re-home first** (P2/D2). The hard delete
+  FK-cascaded them away, destroying unpushed work on a *remote* event; the
+  pull's ghost-list path already did the re-homing and the rename push is the
+  same discovery arriving through a different call, so both now share
+  `engine::rehome_before_dropping`. With nowhere to re-home, the list is kept
+  as an unpushed create instead of dropped. `settled` (#113, defect #121) —
+  found by the §J property suite from `[RenameList, RemoteDeleteList]`.
 - Local list delete × the list holds **unpushed creates** → they die with it.
   P2 shields unpushed work from *remote* events only; this is the user's own
   delete and it cascades (invariant #3), exactly as in §D for a parent task
@@ -411,9 +452,60 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 ### J. Cross-cutting invariants (property layer)
 
 The #104 property suite (`sync_property_test.rs`) enforces P6/P7/P8 over
-random orderings of: create, edit, complete, delete, reorder, crash, partial
-pull. Its operation vocabulary must grow to cover the rest of this matrix:
-demote/promote, cross-list move, list delete, remote cascades. `gap`
+random orderings of real user operations. Its vocabulary now spans the whole
+matrix, on both sides of the wire. `settled` (#113)
+
+- §B/§C — `Rename`, `SetDue`, `Toggle`, plus the remote twins `RemoteEdit` and
+  `RemoteComplete`. The remote side is what actually manufactures the `412`
+  path: it patches with no `If-Match`, so OUR next push meets the conflict.
+- §D — `Delete`, plus `RemoteDelete`, whose server-side cascade to subtasks
+  (verified live, #106) is the remote cascade this section asked for.
+- §E/§F — `Reorder`, plus explicit `Demote` and `Promote`. `MoveAfter` reached
+  reparenting only by accident (it had to draw a subtask as the anchor), so §F
+  was effectively unexplored.
+- §G — `CreateTop`, `CreateSub`, `RemoteCreate` (the §A pull mirror).
+- §H — `MoveToList`, over lists the sequence itself created. Ids are
+  re-created by the move (invariant #4), so the panel hold is re-pointed to
+  the new root exactly as the UI re-points it.
+- §I — `CreateList`, `RenameList`, `DeleteList`, and the remote
+  `RemoteRenameList` / `RemoteDeleteList`, the latter driving P2/D2 re-homing.
+  Transient faults now cover `insert/patch/delete_tasklist` too.
+
+The harness is multi-list as a result: tasks are addressed by title across
+every list (a title survives both the local→server id remap and the wholesale
+id re-creation of a cross-list move), and the invariants are asserted over the
+whole store rather than one working list. Lists are ordered by TITLE, never by
+id — ids are server-assigned or random UUIDs, so an id order would make the
+same op sequence touch different lists on different runs.
+
+Four defects fell out of the extension, all fixed in #113: a crashed create
+whose local row is then removed (#120, §D/§H above); a list rename 404 that
+destroys unpushed rows (#121, §I above); a tombstone pushed while its own
+create is still unresolved in flight (§D above, no separate issue — it is the
+same window as #120 and was found only at 1024 cases); and a fake that
+accepted a `move` onto a parent it did not have, which made every pull
+re-detach the row forever (#123, §F above, found at 4096 cases). A fifth was
+found while writing the regression tests and is **not** fixed: editing a task
+while its create is in flight breaks orphan adoption and duplicates it (#122).
+It is out of the suite's generated vocabulary on purpose — the fix needs the
+insert payload snapshotted in `inflight_creates`, which is a store-schema
+change and wants its own §G row.
+
+Depth matters here: the default 256 cases found the first two, 1024 found the
+third and 4096 the fourth. `AXIOTASK_PROPTEST_CASES` raises the depth and the
+seed is fixed, so a deeper run explores a strict superset — worth running
+before any change to the engine's push ordering or recovery.
+
+Two boundaries the suite documents rather than asserts, because they are
+deliberate behavior and not defects:
+
+- A create in a list that is itself still an unpushed create is deferred by
+  the panel hold too — `push_list_creates` is held while the UI holds a row,
+  since a list-id remap moves that row between lists. Nothing is lost; the
+  release assertions prove it completes.
+- Convergence compares local against server, so a duplicate that exists on
+  BOTH sides converges. Duplicate-freedom is asserted separately, by the
+  crash-safety invariant's exact title-set comparison.
 
 ---
 
@@ -472,6 +564,10 @@ does not implement.
 - **Does a move bump the task's etag?** — **Yes.** A reorder returns a fresh
   etag. So §B×moved is real: an unrelated local content edit 412s, and the
   content-equal comparison is what prevents a false conflicted copy.
+- **Not probed:** the status for a move naming a `parent` the server does not
+  have. `in_memory` reuses insert's verified permanent 400 for the same field
+  (#123). Any permanent rejection drives the same engine path, so nothing we
+  ship depends on the code — but a future probe run should pin it.
 - **Move with a remotely-deleted previous sibling: 400 or 404?** — **404**
   `"Previous task id not found"`. Note the asymmetry: an unknown *subject* id
   is a **400** `"Invalid task ID"`. Both already degrade correctly
@@ -628,8 +724,19 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   One row the matrix had not enumerated was added: a list delete over unpushed
   creates — the list-level twin of §D's unpushed-child row. Each test was
   falsified against deliberately broken product code before being kept.
-- [ ] **Step 9 (#113)** — Extend the property suite's op vocabulary (§J).
-  *(prereq: #107–#112)*
+- [x] **Step 9 (#113)** — Extend the property suite's op vocabulary (§J).
+  *(prereq: #107–#112)* **Done.** The generator now covers every family in
+  this matrix on both sides of the wire (see §J), and the harness went
+  multi-list to carry it. Unlike steps 7 and 8 this was not tests-only: the
+  new interleavings found two real defects and both are fixed here — a
+  crashed create whose local row is then deleted or moved (#120), a list
+  rename 404 that destroys unpushed rows (#121), a tombstone pushed while its
+  own create is still in flight (found only at 1024 cases), and a fake that
+  accepted a `move` onto a parent it did not have, which wedged the pull
+  (#123, found only at 4096 cases). A fifth (#122, an edit during the
+  in-flight window) is filed and deliberately left outside the generated
+  vocabulary, since fixing it needs a store-schema change. Every fix was
+  falsified against deliberately broken product code before being kept.
 
 ---
 

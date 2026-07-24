@@ -796,8 +796,17 @@ impl AppState {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        if old.task.etag.is_some() {
-            // Synced row → tombstone so the delete reaches the server.
+        if self
+            .store
+            .server_may_hold(id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            // A row the server may hold → tombstone so the delete reaches it.
+            // "May" covers the crash window as well as a plain etag: an open
+            // in-flight create marker means the original's insert could have
+            // committed before its response was lost, and hard-deleting the
+            // row would strand that copy in the SOURCE list forever.
             let mut tomb = old;
             tomb.sync_state = axiotask_core::store::SyncState::Deleted;
             tomb.pending_op = Some("delete".into());

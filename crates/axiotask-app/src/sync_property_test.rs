@@ -16,6 +16,33 @@
 //!  * crash safety    — nested creates + in-flight markers yield no duplicates
 //!  * parent integrity— no child ever points at a parent that isn't there
 //!
+//! ## Operation vocabulary (RFC-009 §J, #113)
+//!
+//! The generator covers the WHOLE conflict matrix, not just the create/edit
+//! /delete core the suite started with. Every family in RFC-009 has at least
+//! one op, on both sides of the wire:
+//!
+//!  * §B/§C edit + complete — `Rename`, `SetDue`, `Toggle`, and their remote
+//!    twins `RemoteEdit` / `RemoteComplete` (another device, no `If-Match`),
+//!    which is what actually manufactures the `412` conflict path.
+//!  * §D delete — `Delete`, plus `RemoteDelete`, whose server-side CASCADE to
+//!    subtasks (verified live, #106) is the remote cascade §J names.
+//!  * §E/§F reorder, demote, promote — `Reorder`, plus explicit `Demote` /
+//!    `Promote` ops. `MoveAfter` reaches reparenting only by accident (it
+//!    needs to draw a subtask as the anchor); the explicit ops make the §F
+//!    family a first-class citizen of every sequence.
+//!  * §G create — `CreateTop`, `CreateSub`, `RemoteCreate` (§A pull mirror).
+//!  * §H cross-list move — `MoveToList`, over lists the sequence itself
+//!    created. Ids are re-created by the move (invariant #4), so the panel
+//!    hold is re-pointed exactly as the UI re-points it.
+//!  * §I list ops — `CreateList`, `RenameList`, `DeleteList` and the remote
+//!    `RemoteRenameList` / `RemoteDeleteList`, the latter driving the P2/D2
+//!    re-homing of rows the server has never seen.
+//!
+//! The harness is therefore MULTI-LIST: tasks are addressed by title across
+//! every list, and the invariants are asserted over the whole store rather
+//! than over one working list.
+//!
 //! ## Determinism (no flaky tests)
 //!
 //! Two sources of randomness are pinned:
@@ -26,6 +53,14 @@
 //!    order, resolved through a UNIQUE TITLE, never through the random UUID the
 //!    store assigns (which also gets remapped to a server id mid-run). The same
 //!    op sequence therefore touches the same logical tasks every time.
+//!  * lists are ordered by TITLE for the same reason — a list id is either
+//!    server-assigned or a random UUID, so an id order would send the same op
+//!    sequence to different lists on different runs.
+//!
+//! `AXIOTASK_PROPTEST_CASES` raises the depth for a soak. The seed is fixed,
+//! so a deeper run explores a strict SUPERSET: 1024 and 4096 each found a bug
+//! 256 does not reach (see RFC-009 §J), which makes a soak worth running
+//! before any change to push ordering or crash recovery.
 
 #[cfg(test)]
 mod tests {
@@ -35,16 +70,17 @@ mod tests {
 
     use axiotask_core::api::in_memory::Method;
     use axiotask_core::api::{ApiError, GoogleTasksClient, InMemoryClient};
-    use axiotask_core::model::{Task, TaskStatus};
-    use axiotask_core::store::{StoredTask, SyncState};
+    use axiotask_core::model::{NewTask, Task, TaskPatch, TaskStatus};
+    use axiotask_core::store::{StoredTask, StoredTaskList, SyncState};
     use axiotask_core::sync::SyncOutcome;
     use proptest::prelude::*;
     use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
     use crate::state::AppState;
 
-    /// The list every generated operation works in. Seeded on the server, so
-    /// its id is stable across the whole run (no list-create remap to chase).
+    /// The list the harness starts from. Seeded on the server, so its id is
+    /// stable across the whole run (no list-create remap to chase). Sequences
+    /// create, rename and delete further lists around it.
     const LIST: &str = "L1";
 
     /// Upper bound on the recovery runs a fixpoint may take. Each healthy run
@@ -65,8 +101,8 @@ mod tests {
     /// live tasks at execution time, so every generated value is meaningful.
     #[derive(Debug, Clone, Copy)]
     enum Op {
-        /// New top-level task.
-        CreateTop,
+        /// New top-level task in the i-th live list.
+        CreateTop(u8),
         /// New subtask under the i-th live TOP-LEVEL task (one level only).
         CreateSub(u8),
         /// Rename the i-th live task.
@@ -82,6 +118,34 @@ mod tests {
         /// Drag the i-th live task to sit after the j-th one, adopting its
         /// parent — the reparent path, kept to one level.
         MoveAfter(u8, u8),
+        /// §F demote: tuck the i-th live task under the top-level sibling
+        /// directly above it.
+        Demote(u8),
+        /// §F promote: lift the i-th live subtask back to top level, right
+        /// after its former parent.
+        Promote(u8),
+        /// §H cross-list move: send the i-th live task (and its subtree) to
+        /// the j-th other list. Every id in the subtree is re-created.
+        MoveToList(u8, u8),
+        /// §I: a new syncable list.
+        CreateList,
+        /// §I: rename the i-th live list.
+        RenameList(u8),
+        /// §I: delete the i-th live list, cascading to its tasks.
+        DeleteList(u8),
+        /// §B remote side: another device edits the i-th PUSHED task's notes.
+        RemoteEdit(u8),
+        /// §C remote side: another device ticks the i-th pushed task.
+        RemoteComplete(u8),
+        /// §D remote side: another device deletes the i-th pushed task. The
+        /// server cascades to its subtasks (verified live, #106).
+        RemoteDelete(u8),
+        /// §A pull mirror: another device adds a task to the i-th pushed list.
+        RemoteCreate(u8),
+        /// §I remote side: another device renames the i-th pushed list (D6).
+        RemoteRenameList(u8),
+        /// §I remote side / P2: another device deletes the i-th pushed list.
+        RemoteDeleteList(u8),
         /// Open the detail panel / inline editor on the i-th live task, which
         /// HOLDS that task's create push.
         OpenPanel(u8),
@@ -99,7 +163,7 @@ mod tests {
 
     /// Transient faults only: a permanent rejection would legitimately leave a
     /// row dirty forever, which is a different (already covered) behavior.
-    const TRANSIENT: [(Method, fn() -> ApiError); 6] = [
+    const TRANSIENT: [(Method, fn() -> ApiError); 9] = [
         (Method::ListTasks, || ApiError::Server { status: 503 }),
         (Method::InsertTask, || ApiError::Network("reset".into())),
         (Method::PatchTask, || ApiError::Server { status: 500 }),
@@ -108,6 +172,13 @@ mod tests {
             retry_after: None,
         }),
         (Method::ListTaskLists, || ApiError::Server { status: 502 }),
+        // §I list ops fail transiently too, and a half-pushed list is the
+        // state the create/rename/delete rows have to survive.
+        (Method::InsertTaskList, || ApiError::Network("reset".into())),
+        (Method::PatchTaskList, || ApiError::Server { status: 500 }),
+        (Method::DeleteTaskList, || ApiError::RateLimited {
+            retry_after: None,
+        }),
     ];
 
     const DATE_MOVES: [&str; 5] = ["Today", "Tomorrow", "NextWeek", "NextMonth", "Clear"];
@@ -120,9 +191,13 @@ mod tests {
         state: Arc<AppState>,
         /// Every task this harness created, in creation order, identified by
         /// its CURRENT title. Titles are unique per harness, so this is a
-        /// stable handle that survives the local→server id remap.
+        /// stable handle that survives the local→server id remap AND the
+        /// wholesale id re-creation of a cross-list move (invariant #4).
         names: Vec<String>,
         next_name: u32,
+        /// The task id the detail panel currently holds, mirrored so a
+        /// cross-list move can re-point it the way the UI does.
+        held: Option<String>,
     }
 
     impl Harness {
@@ -143,6 +218,7 @@ mod tests {
                 state,
                 names: Vec::new(),
                 next_name: 0,
+                held: None,
             }
         }
 
@@ -151,11 +227,63 @@ mod tests {
             format!("t{:03}", self.next_name)
         }
 
-        /// Live tasks of the working list in harness creation order. A task the
-        /// store no longer holds (deleted, or cascade-deleted with its parent)
-        /// simply drops out.
+        /// A list title. Distinct namespace from task titles so a list can
+        /// never shadow a task handle.
+        fn fresh_list_name(&mut self) -> String {
+            self.next_name += 1;
+            format!("L{:03}", self.next_name)
+        }
+
+        /// Set (or clear) the panel hold, keeping the harness's mirror of it
+        /// in step so a cross-list move can re-point instead of stranding it.
+        fn hold(&mut self, id: Option<String>) {
+            self.state.set_editing_task(id.clone());
+            self.held = id;
+        }
+
+        /// Lists an op may target, in a deterministic order. Sorted by TITLE:
+        /// list ids are server-assigned or random UUIDs, so ordering by id
+        /// would make the same op sequence touch different lists on different
+        /// runs. Titles are unique per harness and every rename is itself a
+        /// deterministic op, so this order is reproducible.
+        ///
+        /// Local-only lists are excluded — they never sync, so a task placed
+        /// in one could never converge, which says nothing about sync.
+        async fn lists(&self) -> Vec<StoredTaskList> {
+            let mut ls: Vec<StoredTaskList> = self
+                .state
+                .store
+                .all_lists()
+                .await
+                .expect("lists")
+                .into_iter()
+                .filter(|l| !l.local_only && l.sync_state != SyncState::Deleted)
+                .collect();
+            ls.sort_by(|a, b| a.list.title.cmp(&b.list.title));
+            ls
+        }
+
+        /// Every task row across every list, keyed by title.
+        async fn all_rows(&self) -> Vec<StoredTask> {
+            let mut out = Vec::new();
+            for l in self.state.store.all_lists().await.expect("lists") {
+                out.extend(
+                    self.state
+                        .store
+                        .list_tasks(&l.list.id)
+                        .await
+                        .expect("list_tasks"),
+                );
+            }
+            out
+        }
+
+        /// Live tasks in harness creation order, ACROSS EVERY LIST — a task
+        /// that moved lists is the same logical task and keeps its handle. A
+        /// task the store no longer holds (deleted, cascade-deleted with its
+        /// parent, or gone with its list) simply drops out.
         async fn live(&self) -> Vec<StoredTask> {
-            let rows = self.state.store.list_tasks(LIST).await.expect("list_tasks");
+            let rows = self.all_rows().await;
             let by_title: HashMap<&str, &StoredTask> =
                 rows.iter().map(|r| (r.task.title.as_str(), r)).collect();
             self.names
@@ -164,13 +292,45 @@ mod tests {
                 .collect()
         }
 
-        /// Whether `id` has any child in the working list.
-        async fn has_children(&self, id: &str) -> bool {
-            self.state
-                .store
-                .list_tasks(LIST)
+        /// Live tasks that the server has actually seen — the only ones a
+        /// "another device did X" op can touch.
+        async fn pushed(&self) -> Vec<StoredTask> {
+            self.live()
                 .await
-                .expect("list_tasks")
+                .into_iter()
+                .filter(|t| t.task.etag.is_some() && t.sync_state != SyncState::Deleted)
+                .collect()
+        }
+
+        /// Lists the server has actually seen.
+        async fn pushed_lists(&self) -> Vec<StoredTaskList> {
+            self.lists()
+                .await
+                .into_iter()
+                .filter(|l| l.list.etag.is_some())
+                .collect()
+        }
+
+        /// Create a top-level task in a named list; returns its title, which
+        /// is the handle every later op addresses it by.
+        async fn create_top_in(&mut self, list_id: &str) -> String {
+            let title = self.fresh_name();
+            crate::commands::create_task_inner(
+                &self.state,
+                list_id.to_string(),
+                None,
+                title.clone(),
+            )
+            .await
+            .expect("create");
+            self.names.push(title.clone());
+            title
+        }
+
+        /// Whether `id` has any child anywhere in the store.
+        async fn has_children(&self, id: &str) -> bool {
+            self.all_rows()
+                .await
                 .iter()
                 .any(|r| r.task.parent.as_deref() == Some(id))
         }
@@ -180,27 +340,23 @@ mod tests {
         #[allow(clippy::too_many_lines)]
         async fn apply(&mut self, op: Op) {
             match op {
-                Op::CreateTop => {
-                    let title = self.fresh_name();
-                    crate::commands::create_task_inner(
-                        &self.state,
-                        LIST.into(),
-                        None,
-                        title.clone(),
-                    )
-                    .await
-                    .expect("create");
-                    self.names.push(title);
+                Op::CreateTop(i) => {
+                    let lists = self.lists().await;
+                    let Some(list) = pick(&lists, i) else { return };
+                    let list_id = list.list.id.clone();
+                    self.create_top_in(&list_id).await;
                 }
                 Op::CreateSub(i) => {
                     let live = self.live().await;
                     let tops: Vec<_> = live.iter().filter(|t| t.task.parent.is_none()).collect();
                     let Some(parent) = pick(&tops, i) else { return };
-                    let parent_id = parent.task.id.clone();
+                    // A subtask belongs to its parent's list, whichever list a
+                    // cross-list move has since put the parent in.
+                    let (list_id, parent_id) = (parent.list_id.clone(), parent.task.id.clone());
                     let title = self.fresh_name();
                     crate::commands::create_task_inner(
                         &self.state,
-                        LIST.into(),
+                        list_id,
                         Some(parent_id),
                         title.clone(),
                     )
@@ -251,7 +407,7 @@ mod tests {
                     // Deleting the row the panel holds would leave a hold on a
                     // task that no longer exists; the UI closes the panel, so
                     // mirror that here.
-                    self.state.set_editing_task(None);
+                    self.hold(None);
                     crate::commands::delete_task_inner(&self.state, id)
                         .await
                         .expect("delete");
@@ -271,7 +427,7 @@ mod tests {
                     let (Some(t), Some(anchor)) = (pick(&live, i), pick(&live, j)) else {
                         return;
                     };
-                    if t.task.id == anchor.task.id {
+                    if t.task.id == anchor.task.id || t.list_id != anchor.list_id {
                         return;
                     }
                     let new_parent = anchor.task.parent.clone();
@@ -293,14 +449,215 @@ mod tests {
                     .await
                     .expect("move");
                 }
+                Op::Demote(i) => {
+                    let live = self.live().await;
+                    let Some(t) = pick(&live, i) else {
+                        return;
+                    };
+                    // Only a childless top-level row can be demoted: anything
+                    // else would nest a third level, which the command refuses
+                    // (invariant #1, §F).
+                    if t.task.parent.is_some() || self.has_children(&t.task.id).await {
+                        return;
+                    }
+                    let rows = self
+                        .state
+                        .store
+                        .list_tasks(&t.list_id)
+                        .await
+                        .expect("list_tasks");
+                    let tops: Vec<&StoredTask> =
+                        rows.iter().filter(|r| r.task.parent.is_none()).collect();
+                    let Some(here) = tops.iter().position(|r| r.task.id == t.task.id) else {
+                        return;
+                    };
+                    let Some(parent) = here.checked_sub(1).map(|k| tops[k]) else {
+                        return; // already the first row: nothing above to tuck under
+                    };
+                    crate::commands::move_task_inner(
+                        &self.state,
+                        t.task.id.clone(),
+                        Some(parent.task.id.clone()),
+                        None,
+                    )
+                    .await
+                    .expect("demote");
+                }
+                Op::Promote(i) => {
+                    let live = self.live().await;
+                    let Some(t) = pick(&live, i) else {
+                        return;
+                    };
+                    let Some(parent_id) = t.task.parent.clone() else {
+                        return; // already top level
+                    };
+                    // Lands directly after its former parent, which is where
+                    // the keyboard promote puts it.
+                    crate::commands::move_task_inner(
+                        &self.state,
+                        t.task.id.clone(),
+                        None,
+                        Some(parent_id),
+                    )
+                    .await
+                    .expect("promote");
+                }
+                Op::MoveToList(i, j) => {
+                    let live = self.live().await;
+                    let Some(t) = pick(&live, i) else {
+                        return;
+                    };
+                    let targets: Vec<StoredTaskList> = self
+                        .lists()
+                        .await
+                        .into_iter()
+                        .filter(|l| l.list.id != t.list_id)
+                        .collect();
+                    let Some(target) = pick(&targets, j) else {
+                        return;
+                    };
+                    let new_root = self
+                        .state
+                        .move_task_to_list(&t.task.id, &target.list.id)
+                        .await
+                        .expect("move_to_list");
+                    // The move re-creates every id in the subtree (invariant
+                    // #4). The UI re-points the open panel at the new root and
+                    // closes it if the held row was a descendant; mirror both.
+                    if self.held.as_deref() == Some(t.task.id.as_str()) {
+                        self.hold(Some(new_root));
+                    } else if let Some(h) = self.held.clone()
+                        && self
+                            .state
+                            .store
+                            .find_task_any(&h)
+                            .await
+                            .expect("find held")
+                            .is_none()
+                    {
+                        self.hold(None);
+                    }
+                }
+                Op::CreateList => {
+                    let title = self.fresh_list_name();
+                    self.state
+                        .create_list(&title, false)
+                        .await
+                        .expect("create_list");
+                }
+                Op::RenameList(i) => {
+                    let lists = self.lists().await;
+                    let Some(l) = pick(&lists, i) else { return };
+                    let id = l.list.id.clone();
+                    let title = self.fresh_list_name();
+                    self.state.rename_list(&id, &title).await.expect("rename");
+                }
+                Op::DeleteList(i) => {
+                    let lists = self.lists().await;
+                    // Keep at least one syncable list standing: with none left
+                    // every later op is a no-op, which explores nothing.
+                    if lists.len() < 2 {
+                        return;
+                    }
+                    let Some(l) = pick(&lists, i) else { return };
+                    let id = l.list.id.clone();
+                    // The panel cannot survive a list that took its row.
+                    self.hold(None);
+                    self.state.delete_list(&id).await.expect("delete_list");
+                }
+                Op::RemoteEdit(i) => {
+                    let pushed = self.pushed().await;
+                    let Some(t) = pick(&pushed, i) else { return };
+                    let (list_id, id) = (t.list_id.clone(), t.task.id.clone());
+                    let note = self.fresh_name();
+                    // No `If-Match`: another device's edit always lands, and
+                    // OUR next push is the one that meets the 412 (§B).
+                    let _ = self
+                        .client
+                        .patch_task(
+                            &list_id,
+                            &id,
+                            TaskPatch {
+                                notes: Some(note),
+                                ..TaskPatch::default()
+                            },
+                            None,
+                        )
+                        .await;
+                }
+                Op::RemoteComplete(i) => {
+                    let pushed = self.pushed().await;
+                    let Some(t) = pick(&pushed, i) else { return };
+                    let status = if t.task.status == TaskStatus::Completed {
+                        TaskStatus::NeedsAction
+                    } else {
+                        TaskStatus::Completed
+                    };
+                    let _ = self
+                        .client
+                        .patch_task(
+                            &t.list_id,
+                            &t.task.id,
+                            TaskPatch {
+                                status: Some(status),
+                                ..TaskPatch::default()
+                            },
+                            None,
+                        )
+                        .await;
+                }
+                Op::RemoteDelete(i) => {
+                    let pushed = self.pushed().await;
+                    let Some(t) = pick(&pushed, i) else { return };
+                    // Google cascades to subtasks on its side (#106 probe 5).
+                    let _ = self.client.delete_task(&t.list_id, &t.task.id).await;
+                }
+                Op::RemoteCreate(i) => {
+                    let lists = self.pushed_lists().await;
+                    let Some(l) = pick(&lists, i) else { return };
+                    let list_id = l.list.id.clone();
+                    let title = self.fresh_name();
+                    if self
+                        .client
+                        .insert_task(
+                            &list_id,
+                            NewTask {
+                                title: title.clone(),
+                                ..NewTask::default()
+                            },
+                        )
+                        .await
+                        .is_ok()
+                    {
+                        // A row we never created locally is still a row the
+                        // pull must land, so it joins the handle list.
+                        self.names.push(title);
+                    }
+                }
+                Op::RemoteRenameList(i) => {
+                    let lists = self.pushed_lists().await;
+                    let Some(l) = pick(&lists, i) else { return };
+                    let id = l.list.id.clone();
+                    let title = self.fresh_list_name();
+                    let _ = self.client.patch_tasklist(&id, &title).await;
+                }
+                Op::RemoteDeleteList(i) => {
+                    let lists = self.pushed_lists().await;
+                    if self.lists().await.len() < 2 {
+                        return;
+                    }
+                    let Some(l) = pick(&lists, i) else { return };
+                    let _ = self.client.delete_tasklist(&l.list.id).await;
+                }
                 Op::OpenPanel(i) => {
                     let live = self.live().await;
                     let Some(t) = pick(&live, i) else {
                         return;
                     };
-                    self.state.set_editing_task(Some(t.task.id.clone()));
+                    let id = t.task.id.clone();
+                    self.hold(Some(id));
                 }
-                Op::ClosePanel => self.state.set_editing_task(None),
+                Op::ClosePanel => self.hold(None),
                 Op::Sync => {
                     self.state.run_sync().await.expect("sync");
                 }
@@ -324,9 +681,9 @@ mod tests {
 
         /// Drop every hold and fault, then sync until nothing changes.
         /// Returns the number of runs the fixpoint took.
-        async fn heal(&self) -> usize {
+        async fn heal(&mut self) -> usize {
             self.client.clear_faults();
-            self.state.set_editing_task(None);
+            self.hold(None);
             for run in 1..=MAX_HEAL_RUNS {
                 let out = self.state.run_sync().await.expect("healthy sync");
                 if is_noop(&out) {
@@ -583,7 +940,7 @@ mod tests {
     /// with edits rather than all landing at the end.
     fn any_op() -> impl Strategy<Value = Op> {
         prop_oneof![
-            6 => Just(Op::CreateTop),
+            6 => any::<u8>().prop_map(Op::CreateTop),
             4 => any::<u8>().prop_map(Op::CreateSub),
             3 => any::<u8>().prop_map(Op::Rename),
             3 => (any::<u8>(), any::<u8>()).prop_map(|(i, d)| Op::SetDue(i, d)),
@@ -591,6 +948,18 @@ mod tests {
             2 => any::<u8>().prop_map(Op::Delete),
             2 => (any::<u8>(), any::<bool>()).prop_map(|(i, u)| Op::Reorder(i, u)),
             2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveAfter(i, j)),
+            2 => any::<u8>().prop_map(Op::Demote),
+            2 => any::<u8>().prop_map(Op::Promote),
+            2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveToList(i, j)),
+            2 => Just(Op::CreateList),
+            1 => any::<u8>().prop_map(Op::RenameList),
+            1 => any::<u8>().prop_map(Op::DeleteList),
+            2 => any::<u8>().prop_map(Op::RemoteEdit),
+            2 => any::<u8>().prop_map(Op::RemoteComplete),
+            2 => any::<u8>().prop_map(Op::RemoteDelete),
+            2 => any::<u8>().prop_map(Op::RemoteCreate),
+            1 => any::<u8>().prop_map(Op::RemoteRenameList),
+            1 => any::<u8>().prop_map(Op::RemoteDeleteList),
             2 => any::<u8>().prop_map(Op::OpenPanel),
             2 => Just(Op::ClosePanel),
             5 => Just(Op::Sync),
@@ -604,12 +973,16 @@ mod tests {
     }
 
     /// Creates and subtask creates only, with crash-y syncs — the shape the
-    /// crash-safety invariant is about.
+    /// crash-safety invariant is about. Cross-list moves join it because a
+    /// move IS a create family (§H): the clone it inserts can crash mid-flight
+    /// exactly like any other create, and a duplicate there is the same bug.
     fn crash_ops() -> impl Strategy<Value = Vec<Op>> {
         prop::collection::vec(
             prop_oneof![
-                5 => Just(Op::CreateTop),
+                5 => any::<u8>().prop_map(Op::CreateTop),
                 5 => any::<u8>().prop_map(Op::CreateSub),
+                2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveToList(i, j)),
+                1 => Just(Op::CreateList),
                 3 => Just(Op::CrashSync),
                 2 => Just(Op::Sync),
                 2 => any::<u8>().prop_map(Op::FlakySync),
@@ -769,13 +1142,21 @@ mod tests {
                 // hold itself.
                 let held = live.iter().find(|t| t.task.parent.is_none()).cloned();
                 if let Some(t) = &held {
-                    h.state.set_editing_task(Some(t.task.id.clone()));
+                    let id = t.task.id.clone();
+                    h.hold(Some(id));
                 }
                 h.client.clear_faults();
-                // A brand-new TOP-LEVEL task: it is not the held row, and it
-                // has no parent that could legitimately delay it.
-                h.apply(Op::CreateTop).await;
-                let behind_hold = h.names.last().cloned().expect("created a task");
+                // A brand-new TOP-LEVEL task in a list the server ALREADY
+                // knows: it is not the held row, it has no parent that could
+                // delay it, and no unpushed list create stands in front of it
+                // either. (A list create is itself held while the panel is
+                // open — a list-id remap moves the held row between lists — so
+                // a task in a brand-new list is legitimately deferred as well.
+                // That work is covered by the release assertions below.)
+                let Some(pushed_list) = h.pushed_lists().await.first().cloned() else {
+                    return;
+                };
+                let behind_hold = h.create_top_in(&pushed_list.list.id).await;
                 // Plus a subtask, which may land under the held row and then
                 // legitimately waits for its parent's id.
                 h.apply(Op::CreateSub(0)).await;
@@ -783,15 +1164,31 @@ mod tests {
                     h.state.run_sync().await.expect("held sync");
                 }
 
-                let server_titles: HashSet<String> = h
-                    .server_tasks(LIST)
+                // Across every list: a sequence may have moved the working
+                // list's contents elsewhere, or deleted it outright.
+                let server_titles: HashSet<String> =
+                    h.server_rows().await.into_iter().map(|r| r.title).collect();
+                // The hold defers exactly ONE create, never the rest — unless
+                // the row's own LIST is still unpushed, which parks it behind
+                // the same hold for a legitimate reason (a list create is held
+                // too: remapping a list id moves the held row between lists).
+                // A remote list delete can demote a pushed list back to an
+                // unpushed create mid-run, so this is re-checked here rather
+                // than assumed from the snapshot taken above. Nothing is lost
+                // either way — the release assertions below prove it.
+                let lists_now = h.lists().await;
+                let blocked_by_its_list = h
+                    .live()
                     .await
                     .into_iter()
-                    .map(|t| t.title)
-                    .collect();
-                // The hold defers exactly ONE create, never the rest.
+                    .find(|t| t.task.title == behind_hold)
+                    .is_some_and(|r| {
+                        lists_now
+                            .iter()
+                            .any(|l| l.list.id == r.list_id && l.list.etag.is_none())
+                    });
                 assert!(
-                    server_titles.contains(&behind_hold),
+                    blocked_by_its_list || server_titles.contains(&behind_hold),
                     "a create behind the hold never pushed ({behind_hold}) for {ops:?}\n{}",
                     h.dump().await
                 );
@@ -850,19 +1247,14 @@ mod tests {
                 h.heal().await;
 
                 let expected: HashSet<String> = h.names.iter().cloned().collect();
-                let mut server: Vec<String> = h
-                    .server_tasks(LIST)
-                    .await
-                    .into_iter()
-                    .map(|t| t.title)
-                    .collect();
+                // Every list: a cross-list move re-creates the task under a
+                // new id in another list, and a duplicate would hide there.
+                let mut server: Vec<String> =
+                    h.server_rows().await.into_iter().map(|r| r.title).collect();
                 server.sort();
                 let mut local: Vec<String> = h
-                    .state
-                    .store
-                    .list_tasks(LIST)
+                    .all_rows()
                     .await
-                    .expect("list_tasks")
                     .into_iter()
                     .map(|t| t.task.title)
                     .collect();

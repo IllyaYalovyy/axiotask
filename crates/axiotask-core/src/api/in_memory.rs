@@ -29,6 +29,14 @@
 //! - a `move` issues a fresh etag, and does NOT cap nesting depth.
 //! - a `move` naming a `previous` that no longer exists is a **404** — unlike
 //!   an unknown SUBJECT id, which is a 400.
+//! - a `move` naming a `parent` that no longer exists is a permanent 400, the
+//!   same rule `insert` applies to the same field. The exact live status for
+//!   this one case was NOT probed separately (probe 2 covered `previous` and
+//!   the subject id); what matters is that it is a permanent rejection, since
+//!   Google's cascade means it can only ever be reached by racing a delete.
+//!   Modelling it as success let the fake hold a task whose parent it did not
+//!   have — a state the real service cannot be in, and one our pull re-detaches
+//!   on every run, so sync never settles (found by the §J suite, #113).
 //! - attaching an open task to a **completed** parent (by `insert` with a
 //!   `parent`, or by `move`) completes it: the response body itself already
 //!   carries `status: completed`, and the cascade reaches the attached
@@ -707,10 +715,26 @@ impl GoogleTasksClient for InMemoryClient {
             // 400 "Invalid task ID" (verified live), NOT a 404.
             return Err(ApiError::Other("400: Invalid task ID".into()));
         }
+        // Same strictness `insert_task` already applies to the same field: an
+        // unknown parent id is a permanent 400. Without it the fake happily
+        // parents a task onto a task it does not have, producing a server
+        // state Google cannot be in (its deletes cascade) — and our pull then
+        // detaches that row on every single run, so sync never settles. Found
+        // by the §J property suite (#113). NOTE: probe 2 verified the statuses
+        // for an unknown `previous` (404) and an unknown SUBJECT id (400); the
+        // status for an unknown `parent` on a MOVE was not probed separately,
+        // so this reuses insert's verified rule for the same field. The engine
+        // treats every permanent rejection the same way, so the choice between
+        // 400 and 404 changes nothing it does.
+        if let Some(p) = parent
+            && !s.tasks.iter().any(|(_, t)| t.id == p)
+        {
+            return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
+        }
         let new_etag = s.fresh_etag();
         // Real lexicographic placement: derive a `position` that sorts the task
         // into the requested slot among its siblings, exactly like `insert`.
-        // An unknown `previous` is a permanent 400 (same as the live API).
+        // An unknown `previous` is a 404 (same as the live API).
         let position = s.position_after(previous)?;
         // Live-API rule: moving an open task under a COMPLETED parent is
         // accepted, and the parent's completion cascade takes the newly
@@ -846,6 +870,26 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ApiError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn move_task_rejects_an_unknown_parent() {
+        // The same strictness `insert_task` applies to the same field. Without
+        // it the fake can hold a task whose parent it does not have — a state
+        // Google cannot be in, and one our pull re-detaches on every run.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "child", "00000000000001");
+        let err = c
+            .move_task("L1", "T1", Some("gone"), None)
+            .await
+            .expect_err("an unknown parent is a permanent rejection");
+        assert!(!err.is_transient(), "and it must not be retried forever");
+        let after = c.list_tasks("L1", None).await.unwrap().items;
+        assert_eq!(
+            after[0].parent, None,
+            "the rejected move left the task where it was"
+        );
     }
 
     #[tokio::test]

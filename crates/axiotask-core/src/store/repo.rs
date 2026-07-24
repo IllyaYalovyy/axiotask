@@ -912,6 +912,11 @@ impl Store {
         // rewritten create→update: the task now exists remotely under the new
         // id, so re-running it as a create would insert a duplicate.
         //
+        // A row the user DELETED while the insert was in flight is a tombstone,
+        // and adoption must not resurrect it: it keeps its pending `delete`
+        // and only learns the server id, which is exactly what its delete push
+        // was missing.
+        //
         // Also adopt the server-assigned position (guarded like the rest, and
         // skipped when a pending move exists — the move will supersede it).
         // Without this the row keeps its local placeholder position forever:
@@ -923,8 +928,12 @@ impl Store {
                  position = CASE WHEN local_updated = ?3 AND ?4 IS NOT NULL AND NOT EXISTS
                               (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
                             THEN ?4 ELSE position END,
-                 sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END,
-                 pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE 'update' END
+                 sync_state = CASE WHEN sync_state = 'deleted' THEN 'deleted'
+                                   WHEN local_updated = ?3 THEN 'clean'
+                                   ELSE sync_state END,
+                 pending_op = CASE WHEN sync_state = 'deleted' THEN 'delete'
+                                   WHEN local_updated = ?3 THEN NULL
+                                   ELSE 'update' END
              WHERE id = ?5",
         )
         .bind(etag)
@@ -975,6 +984,31 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Whether the server may already hold this row — the predicate every
+    /// delete path needs before it decides between a hard delete and a
+    /// tombstone.
+    ///
+    /// An etag is the obvious yes. The subtle one is an open in-flight create
+    /// marker: it means an insert was issued and its answer never arrived, so
+    /// the task MAY exist on Google under an id we never recorded. Hard-
+    /// deleting such a row throws that marker away with it (the marker is FK-
+    /// cascaded), stranding the committed insert — the next pull then
+    /// resurrects the task the user deleted, or leaves a second copy behind a
+    /// cross-list move. Tombstoning instead keeps the marker alive, so crash
+    /// recovery adopts the orphan and the delete reaches it.
+    pub async fn server_may_hold(&self, id: &str) -> Result<bool, StoreError> {
+        let found: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM tasks
+             WHERE id = ?1
+               AND (etag IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM inflight_creates WHERE local_id = ?1))",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(found.is_some())
     }
 }
 
@@ -1836,6 +1870,68 @@ mod tests {
         s.record_inflight_create("T1", "L1").await.unwrap();
         s.delete_task_hard("T1").await.unwrap();
         assert!(s.inflight_creates().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn finish_create_does_not_resurrect_a_tombstone() {
+        // The user deleted the row while its insert was in flight. Adopting the
+        // committed orphan must teach the TOMBSTONE the server id — that is the
+        // only thing its delete push was missing — and never flip it back into
+        // a live row (which is what the generic re-edit branch would do).
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("local-1", "L1", None, "1");
+        t.task.etag = None;
+        t.sync_state = SyncState::Deleted;
+        t.pending_op = Some("delete".into());
+        t.local_updated = "2026-01-01T00:00:09Z".into(); // the delete bumped it
+        s.upsert_task(&t).await.unwrap();
+        s.record_inflight_create("local-1", "L1").await.unwrap();
+
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e9"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let row = s
+            .find_task_any("remote-1")
+            .await
+            .unwrap()
+            .expect("the tombstone was remapped to the server id");
+        assert_eq!(row.sync_state, SyncState::Deleted, "still a tombstone");
+        assert_eq!(row.pending_op.as_deref(), Some("delete"));
+        assert_eq!(row.task.etag.as_deref(), Some("e9"), "and now deletable");
+        assert!(
+            s.list_tasks("L1").await.unwrap().is_empty(),
+            "it is still invisible to every view"
+        );
+    }
+
+    #[tokio::test]
+    async fn server_may_hold_covers_the_etag_and_the_inflight_window() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        // Pushed row: obviously.
+        s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
+        assert!(s.server_may_hold("T1").await.unwrap());
+        // Never pushed and no insert issued: safe to drop outright.
+        let mut fresh_row = task("local-1", "L1", None, "2");
+        fresh_row.task.etag = None;
+        fresh_row.sync_state = SyncState::Dirty;
+        fresh_row.pending_op = Some("create".into());
+        s.upsert_task(&fresh_row).await.unwrap();
+        assert!(!s.server_may_hold("local-1").await.unwrap());
+        // Insert issued, answer unknown: the server MAY hold it.
+        s.record_inflight_create("local-1", "L1").await.unwrap();
+        assert!(s.server_may_hold("local-1").await.unwrap());
+        // A row that isn't there at all is nothing to tombstone.
+        assert!(!s.server_may_hold("nope").await.unwrap());
     }
 
     #[tokio::test]

@@ -3642,4 +3642,381 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert_eq!((out.pulled, out.deleted, out.errors), (0, 0, 0), "P7");
     }
+
+    // ─── §J — rows the property suite's extended op vocabulary surfaced (#113) ─
+
+    /// The local id of the only row in `list_id` (they are UUIDs until pushed).
+    async fn only_row_id(state: &AppState, list_id: &str) -> String {
+        let rows = state.store.list_tasks(list_id).await.unwrap();
+        assert_eq!(rows.len(), 1, "expected exactly one row in {list_id}");
+        rows[0].task.id.clone()
+    }
+
+    #[tokio::test]
+    async fn a_cross_list_move_of_a_crashed_create_leaves_nothing_behind() {
+        // §H × §G crash window — the mirror of the clone-side row above. Here
+        // the ORIGINAL's insert committed server-side and the response was
+        // lost, so the local row still looks unpushed. Hard-deleting it on the
+        // move would strand that committed insert: the next pull resurrects it
+        // and the user sees the task in BOTH lists. The in-flight marker says
+        // "the server may already hold this", so the original must be
+        // tombstoned instead and its orphan deleted for real.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            vec!["buy milk"],
+            "the insert really did commit before the response was lost"
+        );
+
+        state.move_task_to_list(&local_id, "L2").await.unwrap();
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L2").await,
+            vec!["buy milk"],
+            "the moved task is in the target list"
+        );
+        assert_eq!(
+            rendered(&state, "L1").await,
+            Vec::<String>::new(),
+            "and nothing was left behind in the source list"
+        );
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "the committed-but-orphaned insert was deleted on the server"
+        );
+        assert_eq!(remote_titles(&client, "L2").await, vec!["buy milk"]);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_crashed_create_does_not_resurrect_it_on_the_next_pull() {
+        // §D × §G crash window. Same hazard through the delete command: the
+        // user deletes a task whose insert had already committed. Delete wins
+        // in both directions (P4), so the committed row must go too — a
+        // deleted task that reappears at the next pull is the worst kind of
+        // sync bug.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+
+        crate::commands::delete_task_inner(&state, local_id)
+            .await
+            .unwrap();
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L1").await,
+            Vec::<String>::new(),
+            "the deleted task stays deleted"
+        );
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "and its committed insert was cleaned up on the server"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_renamed_list_deleted_remotely_keeps_the_rows_the_server_never_saw() {
+        // §I local rename × remote delete, crossed with P2. The rename push
+        // 404s, which means the list is gone on the server and must go locally
+        // too (P4) — but the unpushed rows it holds are work the server has
+        // NEVER SEEN, and P2 forbids a remote event from destroying those. The
+        // pull's ghost-list path already re-homes them (D2); the rename push is
+        // the same discovery arriving through a different call and must do the
+        // same.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "My Tasks");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        state.rename_list("L1", "Work stuff").await.unwrap();
+        client.delete_list_from_state("L1");
+
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert!(
+            state
+                .store
+                .all_lists()
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.list.id != "L1"),
+            "the list the server deleted is gone locally too (P4)"
+        );
+        assert_eq!(
+            rendered(&state, "L2").await,
+            vec!["buy milk"],
+            "the unpushed row re-homed to the default list instead of dying (P2/D2)"
+        );
+        assert_eq!(
+            remote_titles(&client, "L2").await,
+            vec!["buy milk"],
+            "and it reached the server from there"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn clearing_completed_after_a_crashed_create_does_not_resurrect_it() {
+        // The same crash window through the third delete path. Clear-completed
+        // is an AUTOMATIC delete (invariant #3), so a row it drops without a
+        // tombstone comes back at the next pull with no user action to blame.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        // Ticked BEFORE the insert goes out, so the committed row and the local
+        // row still agree — an edit made *during* the in-flight window is a
+        // separate, pre-existing adoption gap (#122) and not what this row is
+        // about.
+        crate::commands::toggle_complete_inner(&state, local_id)
+            .await
+            .unwrap();
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            vec!["buy milk"],
+            "the insert really did commit before the response was lost"
+        );
+
+        let cleared = crate::commands::clear_completed_inner(&state, "L1".into())
+            .await
+            .unwrap();
+        assert_eq!(cleared, 1);
+
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L1").await,
+            Vec::<String>::new(),
+            "the cleared task stays cleared"
+        );
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "and its committed insert was cleaned up on the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn undoing_the_delete_of_a_crashed_create_leaves_exactly_one_task() {
+        // The adjacent feature the tombstone change touches: undo reads the row
+        // back with `find_task_any` and revives it in place. A crashed create's
+        // tombstone has no etag, so undo revives it as a pending CREATE — and
+        // its in-flight marker is still open, so recovery must adopt the
+        // committed orphan rather than insert a second copy.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+
+        let token = crate::commands::delete_task_inner(&state, local_id)
+            .await
+            .unwrap();
+        crate::commands::undo_delete_inner(&state, token)
+            .await
+            .unwrap();
+
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(
+            rendered(&state, "L1").await,
+            vec!["buy milk"],
+            "the undone task is back, once"
+        );
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            vec!["buy milk"],
+            "and exists on the server exactly once"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn a_tombstone_waits_while_its_own_create_is_still_unresolved_in_flight() {
+        // The narrow window the §J suite found from
+        // `[CreateTop, CrashSync, MoveToList, FlakySync(list_tasks 503)]`.
+        // Recovery could not see the remote list this run, so the marker stays
+        // open and the tombstone still carries a LOCAL uuid. Pushing its delete
+        // now would name an id Google never minted (a permanent 400) while the
+        // row the crashed insert really created lives on — and gets pulled back
+        // as a duplicate. The delete has to wait one run.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+
+        state.move_task_to_list(&local_id, "L2").await.unwrap();
+        // Recovery's view of L1 dies transiently, so the marker cannot resolve.
+        client.clear_faults();
+        client.fail_next(axiotask_core::api::in_memory::Method::ListTasks, || {
+            axiotask_core::api::ApiError::Server { status: 503 }
+        });
+        state.run_sync().await.unwrap();
+        assert!(
+            !state.store.inflight_creates().await.unwrap().is_empty(),
+            "the marker is still open — this run could not resolve it"
+        );
+
+        client.clear_faults();
+        state.run_sync().await.unwrap();
+        state.run_sync().await.unwrap();
+
+        assert_eq!(rendered(&state, "L2").await, vec!["buy milk"]);
+        assert_eq!(
+            rendered(&state, "L1").await,
+            Vec::<String>::new(),
+            "no duplicate came back into the source list"
+        );
+        assert!(remote_titles(&client, "L1").await.is_empty());
+        assert_eq!(remote_titles(&client, "L2").await, vec!["buy milk"]);
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_create_whose_insert_never_landed_leaves_no_unpushable_tombstone() {
+        // The other half of the in-flight window: the insert genuinely never
+        // reached the server, so there is no orphan to adopt. The tombstone
+        // still carries a LOCAL uuid, which Google would reject as an invalid
+        // task id on every future run — it must be dropped outright instead of
+        // poisoning the pending-changes count forever.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+        client.fail_next(axiotask_core::api::in_memory::Method::InsertTask, || {
+            axiotask_core::api::ApiError::Network("dropped".into())
+        });
+        state.run_sync().await.unwrap();
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "the insert really did not land"
+        );
+
+        crate::commands::delete_task_inner(&state, local_id.clone())
+            .await
+            .unwrap();
+        client.clear_faults();
+        // Google's verified answer to a request naming a local UUID is a
+        // permanent 400 "Invalid task ID" (RFC-009 §Probes / #106), not a 404.
+        // Armed here so the row is judged against the real API's response
+        // rather than the fake's more forgiving not-found: a tombstone that
+        // ever reaches the wire with a local id is dirty forever.
+        client.fail_next_for_id(
+            axiotask_core::api::in_memory::Method::DeleteTask,
+            &local_id,
+            || axiotask_core::api::ApiError::Other("Invalid task ID".into()),
+        );
+        state.run_sync().await.unwrap();
+
+        assert!(
+            state
+                .store
+                .find_task_any(&local_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "the unpushable tombstone was dropped without ever reaching the wire"
+        );
+        assert_eq!(state.pending_push_count().await.unwrap(), 0);
+        assert!(
+            state.store.inflight_creates().await.unwrap().is_empty(),
+            "and its in-flight marker went with it"
+        );
+        let out = state.run_sync().await.unwrap();
+        assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
+    }
 }

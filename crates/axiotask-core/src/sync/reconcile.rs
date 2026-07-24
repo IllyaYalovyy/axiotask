@@ -251,6 +251,23 @@ pub fn create_is_eligible<S: BuildHasher, T: BuildHasher>(
         && held != Some(id)
 }
 
+/// Whether a pending update or delete may be pushed at all (§B/§D × §G).
+///
+/// A row whose CREATE is still unresolved in flight has no server id yet, and
+/// naming its local UUID in a request is a permanent 400 ("Invalid task ID",
+/// verified live). Worse, its insert MAY have committed: pushing the delete
+/// now would report success against an id Google never minted while the row it
+/// really created lives on, to be pulled back as a duplicate. Both mutations
+/// wait for the run that resolves the marker — recovery either adopts the
+/// orphan (giving the row a real id to delete) or proves the insert never
+/// landed (and drops the row outright).
+pub fn mutation_is_pushable<S: BuildHasher>(
+    id: &str,
+    unresolved_inflight: &HashSet<String, S>,
+) -> bool {
+    !unresolved_inflight.contains(id)
+}
+
 /// Whether a create's parent is resolved enough to name in the insert (§G).
 /// `None` is a top-level create — no constraint. A still-local parent id draws
 /// a permanent 400 from Google ("Invalid task ID", verified live), so the
@@ -1174,6 +1191,21 @@ mod tests {
             &none,
             Some("a")
         ));
+    }
+
+    #[test]
+    fn a_mutation_waits_while_its_own_create_is_unresolved_in_flight() {
+        // The row has no server id yet AND its insert may already have
+        // committed: pushing an update or a delete against its local UUID
+        // would 400, and a delete that "succeeded" would leave the committed
+        // row behind to be pulled back as a duplicate (#113/#120).
+        let none: HashSet<String> = HashSet::new();
+        assert!(mutation_is_pushable("a", &none));
+        assert!(!mutation_is_pushable("a", &ids(&["a"])));
+        assert!(
+            mutation_is_pushable("b", &ids(&["a"])),
+            "only the row behind the marker waits; everything else pushes"
+        );
     }
 
     #[test]
