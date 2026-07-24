@@ -341,6 +341,12 @@ pub struct MoveRefs {
     pub parent: Option<RefState>,
     /// The sibling the task should follow; `None` when the move names none.
     pub previous: Option<RefState>,
+    /// Whether the moved task currently has subtasks of its own. Only matters
+    /// for a demote: its children would land a third level down.
+    pub task_has_children: bool,
+    /// Whether the target parent is itself a subtask — the mirror case of the
+    /// same third level.
+    pub parent_is_subtask: bool,
 }
 
 /// What to do with a pending move before calling the API (§E, §F).
@@ -355,6 +361,12 @@ pub enum MoveIntent {
     /// Nothing left to express — clear the intent so it stops being re-walked
     /// (and stops inflating the pending-changes count the UI shows).
     Drop,
+    /// The move would nest the task a third level deep (invariant #1). Clear
+    /// the intent WITHOUT calling the API: the server would accept it (probe
+    /// 3: there is no depth cap, the move returns 200), and the grandchild it
+    /// would store is a row no list view can render. The pull that follows
+    /// restores the remote parent on the row, so local converges too.
+    Refuse,
     /// The ids aren't on the server yet — keep the intent and try next run.
     Wait,
 }
@@ -370,6 +382,16 @@ pub fn plan_move(refs: MoveRefs) -> MoveIntent {
     // row that no longer exists, so the intent would otherwise survive forever.
     if refs.parent == Some(RefState::Missing) {
         return MoveIntent::Drop;
+    }
+    // A DEMOTE that would produce a third level (invariant #1) — either the
+    // task already has subtasks, or the target parent is itself a subtask.
+    // Google does NOT cap nesting depth: the move is accepted with 200 and the
+    // grandchild is stored (probe 3, which falsified the earlier "the server
+    // rejects it" claim). So the refusal has to happen here. A demote is only
+    // ever *recorded* against a childless task, but a pull can hand that task
+    // a remote-born subtask before the move is pushed.
+    if refs.parent.is_some() && (refs.task_has_children || refs.parent_is_subtask) {
+        return MoveIntent::Refuse;
     }
     // The SIBLING this task was dropped after is gone. One drag can carry two
     // intents — reparent and ordering — and the row already applied both
@@ -431,6 +453,14 @@ pub fn move_adoption(before: Option<&StoredTask>) -> MoveAdoption {
 /// What a failed move push does (§E, §F).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveFailure {
+    /// `404` on a move that named a `previous` sibling. The status is
+    /// **ambiguous**: the server answers 404 both for "Previous task id not
+    /// found" (probe 2, verified live) and for a subject it no longer has.
+    /// Reading it as "the task is gone" throws away a reparent the server
+    /// would have accepted — the user's demote silently reverts. Resolve the
+    /// ambiguity by experiment: drop the ordering half (P5's ladder) and send
+    /// the reparent alone. If THAT 404s, the subject really is gone.
+    DropPreviousAndRetry,
     /// `404`: the task is gone on the server — drop the stale intent.
     DropIntent,
     /// Transient — keep the intent and retry next run.
@@ -442,9 +472,12 @@ pub enum MoveFailure {
     RejectAndDrop,
 }
 
-/// Decide what a move push's error means (§E, §F).
-pub fn on_move_error(e: &ApiError) -> MoveFailure {
+/// Decide what a move push's error means (§E, §F). `sent_previous` says
+/// whether the call that failed named a `previous` sibling — the only thing
+/// that makes a 404 ambiguous ([`MoveFailure::DropPreviousAndRetry`]).
+pub fn on_move_error(e: &ApiError, sent_previous: bool) -> MoveFailure {
     match e {
+        ApiError::NotFound if sent_previous => MoveFailure::DropPreviousAndRetry,
         ApiError::NotFound => MoveFailure::DropIntent,
         e => match push_failure(e) {
             PushFailure::Retry => MoveFailure::Retry,
@@ -1210,6 +1243,8 @@ mod tests {
             task,
             parent,
             previous,
+            task_has_children: false,
+            parent_is_subtask: false,
         }
     }
 
@@ -1338,16 +1373,99 @@ mod tests {
 
     #[test]
     fn move_failures() {
-        assert_eq!(on_move_error(&ApiError::NotFound), MoveFailure::DropIntent);
+        // No `previous` was sent, so a 404 can only mean the subject is gone.
         assert_eq!(
-            on_move_error(&ApiError::Server { status: 500 }),
+            on_move_error(&ApiError::NotFound, false),
+            MoveFailure::DropIntent
+        );
+        assert_eq!(
+            on_move_error(&ApiError::Server { status: 500 }, false),
             MoveFailure::Retry
         );
-        assert_eq!(on_move_error(&ApiError::Unauthorized), MoveFailure::Abort);
+        assert_eq!(
+            on_move_error(&ApiError::Unauthorized, false),
+            MoveFailure::Abort
+        );
         // A rejected move drops its intent so it can't retry forever (P5).
         assert_eq!(
-            on_move_error(&ApiError::Other("400 invalid".into())),
+            on_move_error(&ApiError::Other("400 invalid".into()), false),
             MoveFailure::RejectAndDrop
+        );
+    }
+
+    #[test]
+    fn a_move_404_is_ambiguous_only_while_a_previous_was_sent() {
+        // §E gap: the move endpoint answers 404 for BOTH "previous task id not
+        // found" (probe 2, verified live) and a subject the server no longer
+        // has. Reading either as "the task is gone" would throw away a reparent
+        // the server would have accepted. The ladder resolves the ambiguity by
+        // experiment instead of by guessing: drop the ordering half, retry.
+        assert_eq!(
+            on_move_error(&ApiError::NotFound, true),
+            MoveFailure::DropPreviousAndRetry
+        );
+        // The retry names no `previous`, so its 404 is unambiguous.
+        assert_eq!(
+            on_move_error(&ApiError::NotFound, false),
+            MoveFailure::DropIntent
+        );
+        // Only 404 is ambiguous — every other status means the same either way,
+        // so nothing else may enter the ladder (a retried 400 would be a second
+        // pointless call, a retried 503 would double-count the outage).
+        for sent_previous in [true, false] {
+            assert_eq!(
+                on_move_error(
+                    &ApiError::Other("400: Invalid task ID".into()),
+                    sent_previous
+                ),
+                MoveFailure::RejectAndDrop
+            );
+            assert_eq!(
+                on_move_error(&ApiError::Server { status: 503 }, sent_previous),
+                MoveFailure::Retry
+            );
+            assert_eq!(
+                on_move_error(&ApiError::Unauthorized, sent_previous),
+                MoveFailure::Abort
+            );
+        }
+    }
+
+    #[test]
+    fn a_demote_that_would_create_a_third_level_is_refused() {
+        // §F gap: Google ACCEPTS a move that nests a task three deep (probe 3,
+        // 200 — there is no depth cap), so invariant #1 is ours to enforce.
+        // The moved task already has subtasks of its own — a remote pull can
+        // hand it one after the demote was recorded.
+        let mut with_children = refs(RefState::Synced, Some(RefState::Synced), None);
+        with_children.task_has_children = true;
+        assert_eq!(plan_move(with_children), MoveIntent::Refuse);
+
+        // The mirror: the target parent is itself a subtask.
+        let mut under_a_subtask = refs(RefState::Synced, Some(RefState::Synced), None);
+        under_a_subtask.parent_is_subtask = true;
+        assert_eq!(plan_move(under_a_subtask), MoveIntent::Refuse);
+    }
+
+    #[test]
+    fn a_promote_or_reorder_of_a_parent_task_is_still_allowed() {
+        // The refusal is about DEPTH, not about having children: detaching a
+        // task with subtasks (parent cleared) leaves the tree one level deep,
+        // and so does reordering it among its siblings.
+        let mut promote = refs(RefState::Synced, None, Some(RefState::Synced));
+        promote.task_has_children = true;
+        assert_eq!(
+            plan_move(promote),
+            MoveIntent::Send {
+                keep_previous: true
+            }
+        );
+        // And a childless demote under a top-level parent is the normal path.
+        assert_eq!(
+            plan_move(refs(RefState::Synced, Some(RefState::Synced), None)),
+            MoveIntent::Send {
+                keep_previous: false
+            }
         );
     }
 

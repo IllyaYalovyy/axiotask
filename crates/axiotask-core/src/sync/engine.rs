@@ -22,7 +22,7 @@ use super::reconcile::{
 };
 use crate::api::{ApiError, GoogleTasksClient};
 use crate::model::{Task, TaskList};
-use crate::store::{Store, StoredTask, StoredTaskList, SyncState};
+use crate::store::{PendingMove, Store, StoredTask, StoredTaskList, SyncState};
 
 /// Counters and changed-data scope from a single sync run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -463,20 +463,103 @@ impl SyncEngine {
         }
     }
 
+    /// Undo the optimistic half of a move that will never reach the server.
+    ///
+    /// The UI applies parent/position immediately, so a move the push refuses
+    /// or drops leaves the local row claiming a placement the server does not
+    /// have — and the row's etag still MATCHES the server's, so the pull would
+    /// skip it and freeze that lie in place (P6). Dropping the etag makes the
+    /// pull in this same run re-adopt the row from the server, restoring the
+    /// real parent and position. Same mechanism the pull's detach uses.
+    ///
+    /// Only for CLEAN rows: a dirty row's own content push governs its etag,
+    /// and clearing it there would turn a guarded `If-Match` patch into an
+    /// unconditional one. Its response body carries the true parent anyway.
+    async fn revert_local_move(&self, before: Option<&StoredTask>) -> Result<(), SyncError> {
+        if let Some(row) = before.filter(|r| r.sync_state == SyncState::Clean) {
+            let mut reverted = row.clone();
+            reverted.task.etag = None;
+            self.store.upsert_task(&reverted).await?;
+        }
+        Ok(())
+    }
+
+    /// Everything [`reconcile::plan_move`] needs to know about the local view
+    /// of one pending move: how far along the push pipeline each id it names
+    /// is, plus the two facts that decide whether the move would nest a third
+    /// level (invariant #1). Google accepts a third level with a 200 (probe 3),
+    /// so that check can only happen here.
+    async fn move_refs(
+        &self,
+        mv: &PendingMove,
+        before: Option<&StoredTask>,
+    ) -> Result<MoveRefs, SyncError> {
+        let parent_row = match mv.parent_id.as_deref() {
+            None => None,
+            Some(p) => self.store.find_task_any(p).await?,
+        };
+        let task_has_children = match mv.parent_id {
+            // Only a demote can deepen the tree; a promote or a plain reorder
+            // never does, so skip the list read for those.
+            None => false,
+            Some(_) => self
+                .store
+                .list_tasks(&mv.list_id)
+                .await?
+                .iter()
+                .any(|r| r.task.parent.as_deref() == Some(mv.task_id.as_str())),
+        };
+        Ok(MoveRefs {
+            task: RefState::of(before),
+            parent: mv
+                .parent_id
+                .as_ref()
+                .map(|_| RefState::of(parent_row.as_ref())),
+            previous: self.ref_state_of(mv.previous_id.as_deref()).await?,
+            task_has_children,
+            parent_is_subtask: parent_row.as_ref().is_some_and(|p| p.task.parent.is_some()),
+        })
+    }
+
+    /// Adopt a landed move's response. The snapshot taken *before* the call is
+    /// what decides how much of it is adopted: a clean row takes the whole body
+    /// (a move can complete the task server-side — P6), a dirty one only the
+    /// meta, so its pending edit survives.
+    async fn apply_move_response(
+        &self,
+        before: Option<&StoredTask>,
+        remote: &Task,
+    ) -> Result<(), SyncError> {
+        match (reconcile::move_adoption(before), before) {
+            (MoveAdoption::Body, Some(t)) => {
+                self.store
+                    .apply_pushed_task(remote, &t.local_updated)
+                    .await?;
+            }
+            _ => {
+                self.store
+                    .refresh_task_meta(&remote.id, remote.etag.as_deref(), &remote.updated)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Push pending position/parent moves via the Tasks move endpoint.
     async fn push_moves(&self, out: &mut SyncOutcome) -> Result<(), SyncError> {
         for mv in self.store.pending_moves().await? {
             let before = self.store.find_task_any(&mv.task_id).await?;
-            let refs = MoveRefs {
-                task: RefState::of(before.as_ref()),
-                parent: self.ref_state_of(mv.parent_id.as_deref()).await?,
-                previous: self.ref_state_of(mv.previous_id.as_deref()).await?,
-            };
-            let intent = reconcile::plan_move(refs);
+            let intent = reconcile::plan_move(self.move_refs(&mv, before.as_ref()).await?);
             match intent {
                 MoveIntent::Drop => {
                     debug!(id = %mv.task_id, "move target parent is gone, dropping move");
                     self.store.clear_move(&mv.task_id).await?;
+                    continue;
+                }
+                MoveIntent::Refuse => {
+                    debug!(id = %mv.task_id, "move would nest a third level, refusing it");
+                    self.store.clear_move(&mv.task_id).await?;
+                    self.revert_local_move(before.as_ref()).await?;
                     continue;
                 }
                 MoveIntent::Wait => {
@@ -489,57 +572,66 @@ impl SyncEngine {
                     }
                 }
             }
-            let previous_id = reconcile::move_previous_id(&mv, intent);
-            match self
-                .client
-                .move_task(
-                    &mv.list_id,
-                    &mv.task_id,
-                    mv.parent_id.as_deref(),
-                    previous_id.as_deref(),
-                )
-                .await
-            {
-                Ok(remote) => {
-                    // Drop the intent first so the server's parent/position can
-                    // land (apply_pushed_task refuses to touch them while a move
-                    // is still pending). The snapshot taken before the call is
-                    // what decides how much of the response is adopted.
-                    self.store.clear_move(&mv.task_id).await?;
-                    match (reconcile::move_adoption(before.as_ref()), &before) {
-                        (MoveAdoption::Body, Some(t)) => {
-                            self.store
-                                .apply_pushed_task(&remote, &t.local_updated)
-                                .await?;
-                        }
-                        _ => {
-                            self.store
-                                .refresh_task_meta(
-                                    &remote.id,
-                                    remote.etag.as_deref(),
-                                    &remote.updated,
-                                )
-                                .await?;
-                        }
+            let mut previous_id = reconcile::move_previous_id(&mv, intent);
+            // The degradation ladder (P5): at most two calls — the move as
+            // asked, then, if the ambiguous 404 came back, the reparent alone.
+            // `previous_id` is `None` on the second pass, so the loop cannot
+            // run a third time.
+            loop {
+                match self
+                    .client
+                    .move_task(
+                        &mv.list_id,
+                        &mv.task_id,
+                        mv.parent_id.as_deref(),
+                        previous_id.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(remote) => {
+                        // Drop the intent first so the server's parent/position can
+                        // land (apply_pushed_task refuses to touch them while a move
+                        // is still pending).
+                        self.store.clear_move(&mv.task_id).await?;
+                        self.apply_move_response(before.as_ref(), &remote).await?;
+                        out.pushed += 1;
+                        debug!(id = %mv.task_id, "pushed move");
                     }
-                    out.pushed += 1;
-                    debug!(id = %mv.task_id, "pushed move");
+                    Err(e) => match reconcile::on_move_error(&e, previous_id.is_some()) {
+                        // Ambiguous 404 (§E): it means "previous task id not
+                        // found" as often as "the subject is gone". Retry
+                        // without the ordering half rather than assume — a
+                        // dropped intent here silently reverts the reparent
+                        // the user already sees applied.
+                        MoveFailure::DropPreviousAndRetry => {
+                            debug!(id = %mv.task_id, "move 404 with a previous sibling, retrying as a reparent only");
+                            previous_id = None;
+                            continue;
+                        }
+                        // Task gone on server — drop the stale move intent.
+                        MoveFailure::DropIntent => {
+                            self.store.clear_move(&mv.task_id).await?;
+                            self.revert_local_move(before.as_ref()).await?;
+                            debug!(id = %mv.task_id, "move target gone, dropping move");
+                        }
+                        MoveFailure::Retry => {
+                            warn!(err = %e, "transient error on move, will retry");
+                        }
+                        MoveFailure::Abort => return Err(e.into()),
+                        MoveFailure::RejectAndDrop => {
+                            Self::apply_push_failure(
+                                PushFailure::Reject,
+                                e,
+                                out,
+                                &mv.task_id,
+                                "move",
+                            )?;
+                            self.store.clear_move(&mv.task_id).await?;
+                            self.revert_local_move(before.as_ref()).await?;
+                        }
+                    },
                 }
-                Err(e) => match reconcile::on_move_error(&e) {
-                    // Task gone on server — drop the stale move intent.
-                    MoveFailure::DropIntent => {
-                        self.store.clear_move(&mv.task_id).await?;
-                        debug!(id = %mv.task_id, "move target gone, dropping move");
-                    }
-                    MoveFailure::Retry => {
-                        warn!(err = %e, "transient error on move, will retry");
-                    }
-                    MoveFailure::Abort => return Err(e.into()),
-                    MoveFailure::RejectAndDrop => {
-                        Self::apply_push_failure(PushFailure::Reject, e, out, &mv.task_id, "move")?;
-                        self.store.clear_move(&mv.task_id).await?;
-                    }
-                },
+                break;
             }
         }
         Ok(())
@@ -3662,6 +3754,679 @@ mod tests {
         eng.run().await.unwrap();
         // Move intent preserved for retry.
         assert_eq!(eng.store.pending_moves().await.unwrap().len(), 1);
+    }
+
+    // ─── RFC-009 §E/§F matrix: local reorder / demote / promote × remote ─────
+    //
+    // One test per row of §E (position moves) and §F (parent moves). Moves are
+    // last-writer-wins by construction — the move endpoint takes no etag — so
+    // every row's expected outcome is P5: **degrade, never wedge**. No row may
+    // end with a retry that never stops, a deleted task, an aborted run, or a
+    // local view that has silently drifted from the server.
+    //
+    // The tests assert the end state on BOTH sides (local store AND fake) and,
+    // where ordering is the point, that the two agree row for row.
+
+    /// Apply a move the way `move_task` (the command) does: the local row
+    /// takes the new parent/position immediately AND a pending move is
+    /// recorded for the push. Tests that skip the optimistic half would never
+    /// see the drift a dropped intent leaves behind.
+    async fn local_move(eng: &SyncEngine, id: &str, parent: Option<&str>, previous: Option<&str>) {
+        let mut row = eng.store.find_task_any(id).await.unwrap().unwrap();
+        row.task.parent = parent.map(String::from);
+        row.task.position = match previous {
+            Some(p) => format!("after-{p}"),
+            None => "00000000000001".into(),
+        };
+        row.local_updated = "2026-06-02T00:00:00Z".into();
+        eng.store.upsert_task(&row).await.unwrap();
+        eng.store
+            .record_move(id, &row.list_id, parent, previous)
+            .await
+            .unwrap();
+    }
+
+    /// Top-level task ids in the order the server would render them.
+    async fn remote_order(client: &InMemoryClient, list: &str) -> Vec<String> {
+        client
+            .list_tasks(list, None)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .filter(|t| t.parent.is_none())
+            .map(|t| t.id.clone())
+            .collect()
+    }
+
+    /// Top-level task ids in the order the list view renders them (invariant
+    /// #1: only top-level rows are ever rendered as list rows).
+    async fn local_order(eng: &SyncEngine, list: &str) -> Vec<String> {
+        eng.store
+            .list_tasks(list)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|t| t.task.parent.is_none())
+            .map(|t| t.task.id.clone())
+            .collect()
+    }
+
+    /// The parent of a task as the server currently holds it.
+    async fn remote_parent(client: &InMemoryClient, list: &str, id: &str) -> Option<String> {
+        client.get_task(list, id).await.unwrap().parent
+    }
+
+    /// Invariant #1, asserted over the whole store: no row may have a
+    /// grandparent. Google stores a third level happily (probe 3) — this is
+    /// the check that proves we never asked it to.
+    async fn assert_at_most_one_level(eng: &SyncEngine, list: &str) {
+        let rows = eng.store.list_tasks(list).await.unwrap();
+        for r in &rows {
+            if let Some(p) = r.task.parent.as_deref() {
+                let parent = rows.iter().find(|x| x.task.id == p);
+                assert!(
+                    parent.is_none_or(|x| x.task.parent.is_none()),
+                    "{} is nested a third level under {p}",
+                    r.task.id
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reorder_vs_remote_reorder_last_writer_wins_and_converges() {
+        // §E × remote reordered the same list. The move endpoint carries no
+        // etag, so there is nothing to 412 on: whoever writes last wins the
+        // position, and the pull leaves both sides showing the same order.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "A", "a", "00000000000001");
+        client.seed_task("L1", "B", "b", "00000000000002");
+        client.seed_task("L1", "C", "c", "00000000000003");
+        eng.run().await.unwrap();
+
+        // Another device drags C to the top of the list.
+        client.move_task("L1", "C", None, None).await.unwrap();
+        // We drag A to sit right after B. Ours is written last.
+        local_move(&eng, "A", None, Some("B")).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a concurrent reorder is not an error");
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            2,
+            "the other device's drag, then ours — one call each, no retry"
+        );
+        assert_eq!(
+            remote_order(&client, "L1").await,
+            vec!["C", "B", "A"],
+            "both reorders landed: theirs first, ours after it"
+        );
+        assert_eq!(
+            local_order(&eng, "L1").await,
+            remote_order(&client, "L1").await,
+            "the list view shows exactly what the server holds"
+        );
+
+        // P7: quiescent remote → the next run is a no-op.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(client.call_count(Method::MoveTask), 2);
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reorder_vs_remote_content_edit_keeps_both() {
+        // §E × remote edited the same row's content. A move is orthogonal to
+        // content: the rename arrives (via the move response body, adopted
+        // because the row is clean — P6) and our ordering still lands. No
+        // conflict, no copy.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "A", "a", "00000000000001");
+        client.seed_task("L1", "B", "b", "00000000000002");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "A",
+                TaskPatch {
+                    title: Some("renamed elsewhere".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        local_move(&eng, "A", None, Some("B")).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "a move cannot fork a conflicted copy");
+        assert_eq!(out.errors, 0);
+
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(rows.len(), 2, "no conflicted copy was created");
+        let a = rows.iter().find(|t| t.task.id == "A").unwrap();
+        assert_eq!(
+            a.task.title, "renamed elsewhere",
+            "the remote content is canonical"
+        );
+        assert_eq!(a.sync_state, SyncState::Clean);
+        assert_eq!(
+            local_order(&eng, "L1").await,
+            vec!["B", "A"],
+            "and our reorder still landed"
+        );
+        assert_eq!(remote_order(&client, "L1").await, vec!["B", "A"]);
+    }
+
+    #[tokio::test]
+    async fn move_whose_previous_died_remotely_keeps_the_reparent() {
+        // §E gap — the ambiguous 404. The user dropped T under P, after P's
+        // existing subtask B; another device deleted B in the meantime. B is
+        // still in OUR store, so the local guard passes and the move goes out
+        // naming a `previous` the server no longer has → 404 "Previous task id
+        // not found" (probe 2, verified live).
+        //
+        // Reading that 404 as "the subject is gone" throws the whole intent
+        // away: the server keeps T top-level, the local row keeps the parent
+        // the user already sees, and the etags still match — so the pull
+        // reverts the demote (or, worse, never notices). Degrade instead: drop
+        // the ordering half and send the reparent alone (P5's ladder).
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task_with_parent("L1", "B", "sibling", "00000000000002", Some("P"));
+        client.seed_task("L1", "T", "dragged under P after B", "00000000000003");
+        eng.run().await.unwrap();
+
+        client.delete_task("L1", "B").await.unwrap();
+        local_move(&eng, "T", Some("P"), Some("B")).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a vanished sibling is not a run error");
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            2,
+            "the move as asked, then the reparent alone — and no third try"
+        );
+        assert_eq!(
+            remote_parent(&client, "L1", "T").await.as_deref(),
+            Some("P"),
+            "the reparent the user asked for reached the server"
+        );
+        let t = eng.store.find_task_any("T").await.unwrap().unwrap();
+        assert_eq!(
+            t.task.parent.as_deref(),
+            Some("P"),
+            "and the local view still agrees with it"
+        );
+        assert!(
+            eng.store.find_task_any("B").await.unwrap().is_none(),
+            "the deleted sibling is gone locally too"
+        );
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+
+        // P7 + no wedge: nothing left to push.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(out2.errors, 0);
+        assert_eq!(client.call_count(Method::MoveTask), 2);
+    }
+
+    #[tokio::test]
+    async fn move_404_without_a_previous_drops_the_intent_and_the_run_goes_on() {
+        // §E — the other half of the ambiguity. With no `previous` in the
+        // request there is nothing left to degrade to, so a 404 can only mean
+        // the subject is gone: drop the intent, do NOT retry, and let the rest
+        // of the queue through.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T", "vanishing", "00000000000001");
+        client.seed_task("L1", "A", "a", "00000000000002");
+        client.seed_task("L1", "B", "b", "00000000000003");
+        eng.run().await.unwrap();
+
+        client.fail_next_for_id(Method::MoveTask, "T", || ApiError::NotFound);
+        local_move(&eng, "T", None, None).await;
+        local_move(&eng, "A", None, Some("B")).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            2,
+            "one call for the 404'd move (no pointless retry) and one for the other"
+        );
+        assert_eq!(out.errors, 0, "a 404 move is not counted as a failure");
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "neither intent is left to grind forever"
+        );
+        assert_eq!(
+            remote_order(&client, "L1").await,
+            vec!["T", "B", "A"],
+            "the second move still landed — one bad row cannot starve the queue"
+        );
+    }
+
+    #[tokio::test]
+    async fn reorder_vs_remote_delete_of_the_moved_task_drops_the_intent() {
+        // §E × task deleted remotely. The fake models the live asymmetry: an
+        // unknown SUBJECT id is a permanent 400 "Invalid task ID" (probe 2),
+        // not a 404. It is counted and dropped, never retried, and the pull
+        // removes the row the user can no longer act on.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "A", "a", "00000000000001");
+        client.seed_task("L1", "B", "b", "00000000000002");
+        eng.run().await.unwrap();
+
+        client.delete_task("L1", "A").await.unwrap();
+        local_move(&eng, "A", None, Some("B")).await;
+
+        eng.run().await.unwrap();
+        assert!(
+            eng.store.pending_moves().await.unwrap().is_empty(),
+            "the intent is dropped, not retried forever"
+        );
+        assert_eq!(
+            local_order(&eng, "L1").await,
+            vec!["B"],
+            "the deleted row is gone from the list view"
+        );
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.errors, 0, "and the failure does not repeat");
+    }
+
+    #[tokio::test]
+    async fn demote_under_a_parent_deleted_remotely_converges_in_both_orders() {
+        // §F × P deleted remotely. Two legal serializations; the invariant is
+        // convergence, not which one won.
+        //
+        // (a) The server processed the delete first, so our move names a dead
+        // parent id. The exact status for that is NOT probed (an insert naming
+        // an unresolved parent is a permanent 400 "Invalid task ID"; a move
+        // naming an unknown subject is the same 400, an unknown previous a
+        // 404), so the test injects BOTH permanent statuses and demands the
+        // same outcome from each: the intent is dropped, the run continues,
+        // and the task survives top-level on both sides.
+        use crate::api::in_memory::Method;
+        for reject in [
+            || ApiError::Other("400: Invalid task ID".into()),
+            || ApiError::NotFound,
+        ] {
+            let (client, eng) = engine_with_push().await;
+            client.seed_list("L1", "Inbox");
+            client.seed_task("L1", "P", "parent", "00000000000001");
+            client.seed_task("L1", "T", "dragged under P", "00000000000002");
+            eng.run().await.unwrap();
+
+            // P dies remotely; we have not pulled that yet, so the local guard
+            // still sees a live parent and the move goes out.
+            client.delete_task("L1", "P").await.unwrap();
+            local_move(&eng, "T", Some("P"), None).await;
+            client.fail_next_for_id(Method::MoveTask, "T", reject);
+
+            eng.run().await.unwrap();
+            assert!(
+                eng.store.pending_moves().await.unwrap().is_empty(),
+                "no wedge: the intent is dropped either way"
+            );
+            assert_eq!(
+                local_order(&eng, "L1").await,
+                vec!["T"],
+                "the task survives, top-level, and P is gone from the view"
+            );
+            assert_eq!(remote_parent(&client, "L1", "T").await, None);
+            assert_at_most_one_level(&eng, "L1").await;
+
+            let out2 = eng.run().await.unwrap();
+            assert_eq!(out2.errors, 0);
+            assert_eq!(out2.pushed, 0);
+        }
+
+        // (b) The move landed first, and P's delete cascaded T away on the
+        // server afterwards. Ghost detection converges the local view.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "dragged under P", "00000000000002");
+        eng.run().await.unwrap();
+
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        assert_eq!(
+            remote_parent(&client, "L1", "T").await.as_deref(),
+            Some("P")
+        );
+
+        client.delete_task("L1", "P").await.unwrap();
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "the cascade took the demoted task; local mirrors it"
+        );
+    }
+
+    #[tokio::test]
+    async fn demote_under_a_remotely_completed_parent_arrives_completed() {
+        // §F × P completed remotely. Google accepts the move (200) and its
+        // cascade completes the moved-in task — the move RESPONSE already says
+        // so (probe 4). Response-body adoption (P6) converges it: the user
+        // sees their open task become done rather than the row freezing with a
+        // fresh etag and stale content.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "still open", "00000000000002");
+        eng.run().await.unwrap();
+
+        client
+            .patch_task(
+                "L1",
+                "P",
+                TaskPatch {
+                    status: Some(TaskStatus::Completed),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        let t = eng.store.find_task_any("T").await.unwrap().unwrap();
+        assert_eq!(t.task.parent.as_deref(), Some("P"), "the demote landed");
+        assert_eq!(
+            t.task.status,
+            TaskStatus::Completed,
+            "the server's cascade completed it and we adopted the body"
+        );
+        assert_eq!(t.sync_state, SyncState::Clean);
+        assert_eq!(
+            t.task.etag,
+            client.get_task("L1", "T").await.unwrap().etag,
+            "etag and content stay coherent (P6) — no frozen row"
+        );
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0, "converged in one run");
+    }
+
+    #[tokio::test]
+    async fn demote_of_a_task_that_gained_a_remote_subtask_is_refused() {
+        // §F gap — the third level. The demote was recorded while T was
+        // childless; a pull then handed T a remote-born subtask. Pushing the
+        // move now would nest C three deep, and Google would ACCEPT it (probe
+        // 3: no depth cap, 200) — the server cannot save us here, so the move
+        // must be refused client-side. Invariant #1 is ours to keep.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "about to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+
+        // Another device adds a subtask under T; we pull it.
+        client.seed_task_with_parent("L1", "C", "remote-born child", "00000000000003", Some("T"));
+        eng.run().await.unwrap();
+        assert_eq!(
+            eng.store
+                .find_task_any("C")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("T")
+        );
+
+        local_move(&eng, "T", Some("P"), None).await;
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            0,
+            "the move is never sent: the server would say yes"
+        );
+        assert_eq!(out.errors, 0, "refusing is not an error");
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+        assert_eq!(
+            remote_parent(&client, "L1", "T").await,
+            None,
+            "T is still top-level on the server"
+        );
+        // And the local row was reverted to the server's truth — otherwise the
+        // matching etag would freeze the third level into the local view.
+        assert_eq!(
+            local_order(&eng, "L1").await,
+            vec!["P", "T"],
+            "T renders as a top-level row again"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+        assert_eq!(
+            eng.store
+                .find_task_any("C")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("T"),
+            "and its subtask is still its subtask"
+        );
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(client.call_count(Method::MoveTask), 0);
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn a_refused_move_leaves_a_pending_content_edit_alone() {
+        // The refusal reverts the optimistic placement by dropping the row's
+        // etag — but only for a CLEAN row. A row that also carries a pending
+        // edit owns its etag: clearing it would downgrade the guarded
+        // `If-Match` patch to an unconditional one. The edit must land, and the
+        // row must still converge to the server's parent afterwards.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "about to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+        client.seed_task_with_parent("L1", "C", "remote-born child", "00000000000003", Some("T"));
+        eng.run().await.unwrap();
+
+        local_move(&eng, "T", Some("P"), None).await;
+        let mut t = eng.store.find_task_any("T").await.unwrap().unwrap();
+        t.task.title = "renamed locally".into();
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("update".into());
+        eng.store.upsert_task(&t).await.unwrap();
+
+        // The edit's push drops on the network, so the row is STILL dirty when
+        // the move is refused — the case the clean-only filter exists for.
+        client.fail_next(Method::PatchTask, || ApiError::Server { status: 503 });
+        eng.run().await.unwrap();
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            0,
+            "the move is refused"
+        );
+        let t = eng.store.find_task_any("T").await.unwrap().unwrap();
+        assert_eq!(t.sync_state, SyncState::Dirty, "the edit is still pending");
+        assert!(t.task.etag.is_some(), "and it kept its etag guard");
+
+        // Another device edits the same row. The retried patch must still be
+        // guarded by If-Match, or that edit is silently overwritten.
+        client
+            .patch_task(
+                "L1",
+                "T",
+                TaskPatch {
+                    title: Some("renamed remotely".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 1, "412 → the remote edit was not clobbered");
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        let t = rows.iter().find(|r| r.task.id == "T").unwrap();
+        assert_eq!(t.task.title, "renamed remotely", "remote is canonical (P3)");
+        assert_eq!(t.task.parent, None, "and T is top-level again");
+        assert!(
+            rows.iter()
+                .any(|r| r.task.title.contains("(conflicted copy)")),
+            "the local edit survives as a copy"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn demote_under_a_task_that_became_a_subtask_remotely_is_refused() {
+        // §F gap, mirror case: the target parent P was itself demoted under Q
+        // by another device. Same third level, same refusal.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "Q", "grandparent-to-be", "00000000000001");
+        client.seed_task("L1", "P", "target parent", "00000000000002");
+        client.seed_task("L1", "T", "dragged under P", "00000000000003");
+        eng.run().await.unwrap();
+
+        client.move_task("L1", "P", Some("Q"), None).await.unwrap();
+        eng.run().await.unwrap(); // pull: P is now a subtask of Q locally too
+        let calls_before = client.call_count(Method::MoveTask); // the remote drag
+
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            calls_before,
+            "the move is never sent"
+        );
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+        assert_eq!(remote_parent(&client, "L1", "T").await, None);
+        assert_at_most_one_level(&eng, "L1").await;
+        assert!(
+            local_order(&eng, "L1").await.contains(&"T".to_string()),
+            "T is back to being a top-level row, not a hidden grandchild"
+        );
+    }
+
+    #[tokio::test]
+    async fn promote_vs_remote_delete_drops_the_intent_and_the_row_disappears() {
+        // §F — promote/detach × the row deleted remotely. Delete wins (P4):
+        // the intent is dropped and ghost detection removes the row. The
+        // parent it was detaching from is untouched.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task_with_parent("L1", "S", "subtask", "00000000000002", Some("P"));
+        eng.run().await.unwrap();
+
+        client.delete_task("L1", "S").await.unwrap();
+        local_move(&eng, "S", None, None).await;
+
+        eng.run().await.unwrap();
+        assert!(eng.store.pending_moves().await.unwrap().is_empty());
+        assert!(
+            eng.store.find_task_any("S").await.unwrap().is_none(),
+            "the promoted row is gone, not resurrected top-level"
+        );
+        let p = eng.store.find_task_any("P").await.unwrap().unwrap();
+        assert_eq!(p.sync_state, SyncState::Clean, "the parent is untouched");
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.errors, 0);
+    }
+
+    #[tokio::test]
+    async fn promote_vs_remote_reparent_last_writer_wins() {
+        // §F — promote × the remote reparented the same row elsewhere. No etag
+        // on the move endpoint, so the last write wins and the pull converges
+        // both sides on it. Ours is written last: the task ends up top-level.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "old parent", "00000000000001");
+        client.seed_task("L1", "Q", "other parent", "00000000000002");
+        client.seed_task_with_parent("L1", "S", "subtask", "00000000000003", Some("P"));
+        eng.run().await.unwrap();
+
+        client.move_task("L1", "S", Some("Q"), None).await.unwrap();
+        local_move(&eng, "S", None, None).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(
+            remote_parent(&client, "L1", "S").await,
+            None,
+            "our promote was written last"
+        );
+        assert_eq!(
+            local_order(&eng, "L1").await,
+            vec!["S", "P", "Q"],
+            "and the row renders as a top-level task"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.pushed, 0, "converged");
+    }
+
+    #[tokio::test]
+    async fn a_content_edit_and_a_move_on_the_same_row_both_land_in_one_run() {
+        // §F last row: push order is updates-then-moves, so the final state is
+        // the new content at the new position. The move response must NOT
+        // clobber the pending edit (meta-only adoption for a dirty row).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "A", "a", "00000000000001");
+        client.seed_task("L1", "B", "b", "00000000000002");
+        eng.run().await.unwrap();
+
+        let mut a = eng.store.find_task_any("A").await.unwrap().unwrap();
+        a.task.title = "renamed by me".into();
+        a.sync_state = SyncState::Dirty;
+        a.pending_op = Some("update".into());
+        a.local_updated = "2026-06-02T00:00:00Z".into();
+        eng.store.upsert_task(&a).await.unwrap();
+        local_move(&eng, "A", None, Some("B")).await;
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0);
+        assert_eq!(out.errors, 0);
+        let a = eng.store.find_task_any("A").await.unwrap().unwrap();
+        assert_eq!(a.task.title, "renamed by me");
+        assert_eq!(a.sync_state, SyncState::Clean, "nothing left pending");
+        assert_eq!(
+            client.get_task("L1", "A").await.unwrap().title,
+            "renamed by me"
+        );
+        assert_eq!(remote_order(&client, "L1").await, vec!["B", "A"]);
+        assert_eq!(local_order(&eng, "L1").await, vec!["B", "A"]);
+        assert_eq!(
+            a.task.etag,
+            client.get_task("L1", "A").await.unwrap().etag,
+            "etag/content coherence (P6) survives update-then-move"
+        );
     }
 
     // ─── List sync ───────────────────────────────────────────────────────────

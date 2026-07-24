@@ -223,48 +223,69 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 - × unchanged → move lands; **response body adopted** when the row is clean,
   meta-only when dirty (P6, the #104 fix). `settled` (#103/#104)
 - × remote reordered the same list → last-writer-wins on position (P5); pull
-  converges both sides. `untested` as an explicit crossing.
-- × task deleted remotely → move endpoint 404 → drop the intent (H7); row
-  ghost-deletes on pull. `settled`
+  converges both sides. `settled` (#109)
+- × task deleted remotely → the move is rejected (an unknown SUBJECT id is a
+  permanent **400** "Invalid task ID", probe 2 — *not* a 404); the intent is
+  counted and dropped and the row ghost-deletes on pull. `settled` (#109)
 - × previous-sibling deleted **locally** → degrade to reparent-only, ordering
   dropped (local `task_exists` guard). `settled` (#104)
 - × previous-sibling deleted **remotely** (still exists locally, guard passes)
-  → server answers **404 "Previous task id not found"** (probed). Today that
-  maps to `MoveFailure::DropIntent`: the intent is dropped, the task is
-  untouched, the run continues — P5 is satisfied, but only by accident, since
-  the same 404 also means "the subject task is gone". `gap` — the two must be
-  distinguished before any 404-driven cleanup is added to the move path.
+  → server answers **404 "Previous task id not found"** (probed). The status is
+  genuinely ambiguous — the same 404 also means "the subject is gone" — so the
+  engine no longer guesses: a 404 on a call that named a `previous` **drops the
+  ordering half and retries the reparent alone** (`MoveFailure::
+  DropPreviousAndRetry`, the P5 ladder). If that second call 404s it named no
+  `previous`, so "the subject is gone" is the only reading left and the intent
+  is dropped. At most two calls, ever. `settled` (#109) — before this, the
+  demote was silently reverted whenever the anchor sibling had died remotely.
 - × remote edited same row content → move is orthogonal; move lands, remote
   content arrives via response-body adoption / pull. Converges to remote
-  content + last-written order. `untested`
+  content + last-written order. `settled` (#109)
+- Any move that is **refused or permanently rejected** must also undo the
+  optimistic local half: the UI already applied the new parent/position, and
+  the row's etag still matches the server's, so the pull would skip the row and
+  freeze the divergence (P6). The engine drops the etag on such a row
+  (`revert_local_move`) so the same run's pull re-adopts the server's placement.
+  Clean rows only — a dirty row's own update push owns its etag. `settled`
+  (#109) — added by this step; the matrix had not enumerated it.
 
 ### F. Local demote / promote (`move` with parent change) × remote
 
 - Demote under P, P alive → move parent=P lands. `settled` (#103)
 - Demote under P × P deleted **remotely** → two legal serializations: (a) the
-  server processes the delete first → our move 404s → drop intent, task stays
-  top-level and survives; (b) the move lands first → P's delete cascades the
-  task on the server → it ghost-deletes locally. Both end with local == remote.
-  Expected: no wedge, no duplicate, no divergence — the *invariant* is
-  convergence, not which serialization won. `untested` (test both orders via
-  the fake).
+  server processes the delete first → our move names a dead parent id and is
+  permanently rejected → drop intent, task stays top-level and survives;
+  (b) the move lands first → P's delete cascades the task on the server → it
+  ghost-deletes locally. Both end with local == remote. The *invariant* is
+  convergence, not which serialization won. `settled` (#109) — the exact status
+  for (a) is **not probed** (an insert naming an unresolved parent is a
+  permanent 400, and so is a move naming an unknown subject; an unknown
+  `previous` is a 404), so the test injects **both** permanent statuses and
+  demands the same outcome from each, rather than encoding a guess in the fake.
 - Demote under P × P **completed** remotely → the move is **accepted (200)**
   and the server's cascade **completes the demoted task**, visible in the move
   response body (probed). Response-body adoption (P6) converges it; the user
-  sees their open task become done. No wedge. `untested` as a matrix row.
+  sees their open task become done. No wedge. `settled` (#109)
 - Demote a task × remote gave it a subtask meanwhile → the move creates a 3rd
   level and the server **accepts it (200)** — Google does *not* cap depth
   (probed; this corrects an earlier claim). So invariant #1 (strictly one
-  level) is **ours to enforce client-side**; the server will happily store a
-  grandchild that our list views cannot render. `gap` — the demote path must
-  refuse the move locally, not rely on a server rejection that never comes.
-- Promote/detach (parent cleared) × remote deleted the row → 404 → drop
-  intent; row ghost-deletes (P4). `untested`
+  level) is **ours to enforce client-side**. Now refused at both gates:
+  `commands::move_task` rejects the demote outright (the last gate before the
+  store records the intent), and `reconcile::plan_move` returns
+  `MoveIntent::Refuse` when the row has picked up subtasks — or the target
+  parent has become a subtask — since the intent was recorded. The refused row
+  reverts to the server's placement via `revert_local_move`. `settled` (#109).
+  **Residual race**, recorded not fixed: if the remote-born subtask arrives
+  *after* our demote already landed, the server holds a grandchild we never
+  asked for; the pull surfaces it and no list view renders it. Repairing an
+  existing third level is not in this step.
+- Promote/detach (parent cleared) × remote deleted the row → rejected → drop
+  intent; row ghost-deletes (P4); the old parent is untouched. `settled` (#109)
 - Promote × remote reparented the same row elsewhere → last-writer-wins (P5);
-  pull converges. `untested`
+  pull converges. `settled` (#109)
 - Local update + local move on the same row in one run → push order is
   updates-then-moves; both land; final state = new content at new position.
-  `settled` (#103) — keep a matrix row anyway.
+  `settled` (#103, re-pinned by #109 with an etag/content-coherence assertion).
 
 ### G. Local `create` × remote
 
@@ -487,8 +508,14 @@ Ordered; each step is a ktask fleet task with its own GitHub issue
   `commands_test` (the crossings end to end, asserting local view and remote
   store). One row was added that the matrix had not enumerated: a local delete
   of a parent whose child is still an unpushed create.
-- [ ] **Step 5 (#109)** — Matrix tests: reorder/promote/demote (§E, §F) incl.
+- [x] **Step 5 (#109)** — Matrix tests: reorder/promote/demote (§E, §F) incl.
   the remote-sibling and 3rd-level degradations. *(prereq: #105–#106)*
+  **Done.** Every §E/§F row has a test. Both gaps closed: the ambiguous move
+  404 now degrades (drop `previous`, retry the reparent) instead of guessing,
+  and a demote that would nest a third level is refused at the command *and*
+  at `plan_move`. One row the matrix had not enumerated was added: a refused or
+  rejected move must undo the optimistic local placement, or the matching etag
+  freezes the divergence out of every future pull (P6).
 - [ ] **Step 6 (#110)** — Create family + P2 (§G): D2 re-homing, D3 orphan
   promotion. *(prereq: #105–#106; D2/D3 ratified)*
 - [ ] **Step 7 (#111)** — Cross-list move matrix (§H) incl. crash windows,

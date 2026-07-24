@@ -570,6 +570,29 @@ pub(crate) async fn move_task_inner(
     previous_id: Option<String>,
 ) -> Result<(), String> {
     let mut t = find_task(state, &id).await?;
+    // Subtasks are strictly ONE level (invariant #1). Google enforces no depth
+    // cap at all — a move that nests three deep is accepted with 200 (RFC-009
+    // probe 3) — so this is the last gate before the store holds a tree no list
+    // view can render. Detaching (`parent_id = None`) is always allowed.
+    if let Some(parent) = parent_id.as_deref() {
+        let siblings = state
+            .store
+            .list_tasks(&t.list_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if siblings
+            .iter()
+            .any(|s| s.task.id == parent && s.task.parent.is_some())
+        {
+            return Err("cannot nest under a subtask: subtasks are one level deep".into());
+        }
+        if siblings
+            .iter()
+            .any(|s| s.task.parent.as_deref() == Some(id.as_str()))
+        {
+            return Err("cannot make a task with subtasks into a subtask".into());
+        }
+    }
     t.task.parent = parent_id.clone();
     if let Some(ref prev) = previous_id {
         t.task.position = format!("after-{prev}");

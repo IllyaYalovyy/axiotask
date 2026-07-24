@@ -234,6 +234,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn demoting_a_task_that_has_subtasks_is_refused() {
+        // Invariant #1 (RFC-009 §F): subtasks are strictly ONE level. Google
+        // does not enforce that — a move that nests three deep is accepted with
+        // 200 (probe 3) — so the refusal has to happen on our side, and not
+        // only in the Svelte guard: this command is the last gate before the
+        // store records an intent the list view could never render.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task(&state, "P", "L1", "parent").await;
+        seed_task(&state, "C", "L1", "its subtask").await;
+        seed_task(&state, "X", "L1", "another top-level task").await;
+        crate::commands::move_task_inner(&state, "C".into(), Some("P".into()), None)
+            .await
+            .unwrap();
+
+        let err = crate::commands::move_task_inner(&state, "P".into(), Some("X".into()), None)
+            .await
+            .expect_err("demoting a task that has subtasks must be refused");
+        assert!(err.contains("subtask"), "explains itself: {err}");
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let p = tasks.iter().find(|t| t.task.id == "P").unwrap();
+        assert_eq!(p.task.parent, None, "P is still a top-level row");
+        let c = tasks.iter().find(|t| t.task.id == "C").unwrap();
+        assert_eq!(
+            c.task.parent.as_deref(),
+            Some("P"),
+            "and its subtask is untouched"
+        );
+        assert!(
+            !state
+                .store
+                .pending_moves()
+                .await
+                .unwrap()
+                .iter()
+                .any(|m| m.task_id == "P"),
+            "nothing queued to push a third level at the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn nesting_a_task_under_a_subtask_is_refused() {
+        // The mirror of the row above: the TARGET is already a subtask, so the
+        // moved task would be the third level.
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task(&state, "P", "L1", "parent").await;
+        seed_task(&state, "C", "L1", "its subtask").await;
+        seed_task(&state, "X", "L1", "would-be grandchild").await;
+        crate::commands::move_task_inner(&state, "C".into(), Some("P".into()), None)
+            .await
+            .unwrap();
+
+        let err = crate::commands::move_task_inner(&state, "X".into(), Some("C".into()), None)
+            .await
+            .expect_err("nesting under a subtask must be refused");
+        assert!(err.contains("subtask"), "explains itself: {err}");
+
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let x = tasks.iter().find(|t| t.task.id == "X").unwrap();
+        assert_eq!(x.task.parent, None, "X still renders as a top-level row");
+        assert!(
+            !state
+                .store
+                .pending_moves()
+                .await
+                .unwrap()
+                .iter()
+                .any(|m| m.task_id == "X")
+        );
+    }
+
+    #[tokio::test]
     async fn sync_pulls_remote_tasks_into_store() {
         let (client, state) = setup().await;
         client.seed_list("L1", "Inbox");
