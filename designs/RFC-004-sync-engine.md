@@ -105,6 +105,10 @@ not between passes.
 
 ## Conflict resolution
 
+> **Superseded by RFC-009** for the full local×remote permutation matrix
+> (moves, promote/demote, cascades, delete crossings, cross-list moves,
+> list ops). The table below covers only the update path and remains accurate.
+
 | Local | Remote | Resolution |
 |---|---|---|
 | clean | etag differs | Take remote (clean = no local intent). |
