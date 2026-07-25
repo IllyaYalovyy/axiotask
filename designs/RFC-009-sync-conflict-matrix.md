@@ -341,19 +341,21 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   Local-only lists (they never push) and lists the user has tombstoned are not
   candidates, nor is any *other* list this same pull is about to remove. An
   unpushed subtree re-homes intact; an unpushed subtask whose parent stays
-  behind is promoted to top-level. **Boundary:** when nothing can take the
+  behind **dies with its parent** (D3 rejected — no promotion; the
+  promote-then-re-home edge #110 shipped is removed by #125). **Boundary:**
+  when nothing can take the
   rows, the dying list is **kept as an unpushed list create** instead of being
   dropped — it is re-created (or adopted by title) on the next push and the
   rows land in it, so P2 holds even for an account with no other list.
-- Subtask create × parent deleted remotely → the insert names a dead parent id
-  → permanent 400 ("Invalid task ID", verified live for unresolved parents),
-  and the parent's local removal would cascade the child away entirely.
-  The child is **promoted to a top-level create in the same list** — the
-  unpushed child never dies (P2) and never wedges: it lands on the next run.
-  `settled` (D3 **ratified**; implemented in #110 —
-  `Store::remove_ghost_task` promotes before the ghost delete, and the
-  update-404 / conflict-refetch-404 delete-wins paths promote too, since the
-  same cascade reaches an unpushed subtask there).
+- Subtask create × parent deleted remotely → **the child dies with the
+  parent** (D3 REJECTED by user 2026-07-24: no auto-promotion; a subtask
+  shares its parent's fate, remote or local, same as invariant #3). The
+  parent's local removal FK-cascades the unpushed child away, which is also
+  the no-wedge guarantee — no dead-parent insert survives to retry. `gap`
+  (#125) — #110 implemented the now-rejected promotion
+  (`Store::remove_ghost_task` promote-before-ghost-delete, plus the
+  update-404 / conflict-refetch-404 promotions); #125 removes it without
+  trace and pins the cascade outcome red-first.
 - Subtask create × parent **completed** remotely → the insert is **accepted**
   and the child is created **already completed**, in the insert response body
   (probed). The row converges to `completed` in the same run and no wedge
@@ -511,31 +513,47 @@ deliberate behavior and not defects:
 
 ## Decisions to ratify
 
-- **D1** — **RATIFIED (2026-07-23, with #107).** Status-only divergence
+User review 2026-07-24: **D1, D2, D4 and P2 ratified by the user.**
+**D3 REJECTED by the user** — no auto-promotion; see its entry and #125.
+D5 and D6 are under user review (clarification in progress).
+
+- **D1** — **RATIFIED by user (2026-07-24).** Status-only divergence
   resolves remote-wins **without** a conflicted copy. Scope: the 412 conflict
   path only, and only when title, notes and due all agree. `same_content` is
   unchanged everywhere else (crashed-create adoption stays exact), and any
   content divergence riding along with a status divergence still forks a copy
   under P3.
-- **D2** — **RATIFIED (2026-07-24, with #110).** Rows without etags in a
+- **D2** — **RATIFIED by user (2026-07-24).** Rows without etags in a
   remotely-deleted list re-home to the default list; rows with etags die with
   the list. (P2) Target selection, the subtree rules and the
-  nothing-can-take-them boundary are pinned in §G3 above.
-- **D3** — **RATIFIED (2026-07-24, with #110).** A subtask create whose parent
-  died remotely promotes to a top-level create in the same list. (P2) Applies
-  to every remote-driven removal of the parent — ghost detection and the
-  delete-wins 404 paths — never to the user's own delete, which still cascades.
-- **D4** — **RATIFIED (2026-07-24, with #111).** Cross-list move: a concurrent
+  nothing-can-take-them boundary are pinned in §G3 above. **One edge revised
+  by the D3 rejection:** an unpushed SUBTASK whose parent dies (with the list
+  or otherwise) is NOT promoted-and-re-homed — it dies with its parent. Only
+  unpushed top-level tasks, and unpushed subtrees moving whole, re-home.
+- **D3** — **REJECTED by user (2026-07-24).** No auto-promotion, ever: "a
+  subtask can contain a lot of garbage; if the parent dies one way or another,
+  all children die with it." A subtask create whose parent died remotely dies
+  in the parent's cascade, exactly like the user's own delete (invariant #3) —
+  the parent↔subtask bond outranks P2. The #110 promotion machinery is to be
+  removed without trace (#125): `Store::remove_ghost_task`'s promote-before-
+  ghost-delete, the update-404 / conflict-refetch-404 promotions, and the D2
+  re-homing's promote-when-parent-stays-behind edge. The FK cascade already
+  provides the no-wedge guarantee (child row goes with the parent row, so no
+  dead-parent insert is ever retried).
+- **D4** — **RATIFIED by user (2026-07-24).** Cross-list move: a concurrent
   remote edit to the original is lost (clone snapshot wins). Accepted MVP
   semantics. The alternative probe 7 left open — fetch-compare, or an
   `If-Match` DELETE, before tombstoning — is deliberately not taken: it would
   put a cross-list move behind a conflict prompt the MVP has no UI for, and it
   contradicts delete-wins (§D), which is already pinned in both directions.
-- **D5** — **RATIFIED (2026-07-24, with #111).** Cross-list move: the task
+- **D5** — **UNDER USER REVIEW (2026-07-24).** Agent-ratified with #111; the
+  user has asked for a plain-language re-statement before ruling. As
+  implemented: cross-list move — the task
   survives in the target even if the original was deleted remotely ("move
   wins"). Falls out of P2 — the clones are rows the server has never seen —
   and of intent: the user moved the task to keep it.
-- **D6** — **RATIFIED (2026-07-24, with #112).** List rename conflicts resolve
+- **D6** — **UNDER USER REVIEW (2026-07-24).** Agent-recorded with #112; the
+  user is unconvinced. As recorded: list rename conflicts resolve
   remote-wins, no copy. Not a preference but a consequence: probe 8 showed the
   tasklists endpoint ignores `If-Match`, so a rename cannot 412 and there is no
   divergence signal to fork a copy from. Flipping D6 is therefore not a code
@@ -543,13 +561,17 @@ deliberate behavior and not defects:
   What the code *does* own, and what #112 pins: no precondition is sent
   (`api::http`), and the pull adopts a remote title change unconditionally
   (`sync::reconcile::plan_list_pull`) instead of skipping on a matching etag.
-- **P2 itself** — **RATIFIED (2026-07-24, with #110).** Remote events never
-  destroy rows the server has never seen.
+- **P2 itself** — **RATIFIED by user (2026-07-24), with a boundary carved by
+  the D3 rejection:** remote events never destroy rows the server has never
+  seen — *except a subtask, which always shares its parent's fate.* P2's
+  re-homing protects unpushed top-level tasks and whole unpushed subtrees;
+  it never severs the parent↔subtask bond to save a child.
 
-Ratification note for the reviewer: D1 was ratified by #107, P2/D2/D3 by #110,
-D4/D5 by #111 and D6 by #112 — in every case *by the implementing task*, per
-the task's own instruction, not by a human sign-off. Every decision in this RFC
-is now ratified. Flipping D4 or D5 is a code change, not just an RFC edit: D4
+History note: D1 was originally marked ratified by #107, P2/D2/D3 by #110,
+D4/D5 by #111 and D6 by #112 — *by the implementing tasks themselves*, not by
+a human. The user's own review (2026-07-24) ratified D1/D2/D4/P2, REJECTED D3,
+and has D5/D6 under review. Flipping D4 or D5 is a code change, not just an
+RFC edit: D4
 lives in `api::http` (the DELETE carries no `If-Match`) and D5 in
 `sync::reconcile` (`plan_delete` reads 404 as success) — both pinned by the §H
 tests. D6 cannot be flipped at all without a server-side precondition Google
