@@ -105,6 +105,47 @@ describe("GH#23: Error feedback toast", () => {
     expect(toast.textContent).toContain("Permission denied");
   });
 
+  it("hides a raw SQL/sqlx error from the toast, showing a human message (#128)", async () => {
+    // A store failure reaches the frontend as `sql: <sqlx text>`. The user must
+    // never see the SQL — only a calm, actionable sentence.
+    mockBackend(
+      [task("t1", "My Task")],
+      "toggle_complete",
+      "sql: UNIQUE constraint failed: tasks.id, tasks.list_id",
+    );
+    render(App);
+    await waitFor(() => expect(screen.getByText("My Task")).toBeInTheDocument());
+
+    await fireEvent.keyDown(window, { key: " " });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    const toast = screen.getByRole("alert");
+    expect(toast.textContent).not.toMatch(/sql:/i);
+    expect(toast.textContent).not.toMatch(/constraint/i);
+    expect(toast.textContent).not.toMatch(/tasks\.id/i);
+    // Still tells the user something happened and where the detail lives.
+    expect(toast.textContent.toLowerCase()).toContain("log");
+  });
+
+  it("still shows a deliberate validation message verbatim (#128)", async () => {
+    // Non-internal messages we author (a refusal the user must understand) are
+    // NOT redacted — only raw SQL/sqlx detail is.
+    mockBackend(
+      [task("t1", "My Task")],
+      "toggle_complete",
+      "cannot nest under a subtask: subtasks are one level deep",
+    );
+    render(App);
+    await waitFor(() => expect(screen.getByText("My Task")).toBeInTheDocument());
+
+    await fireEvent.keyDown(window, { key: " " });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "cannot nest under a subtask",
+    );
+  });
+
   it("times out a hung startup command and returns control to the UI", async () => {
     invoke.mockImplementation(async (cmd) => {
       if (cmd === "auth_status") return true;

@@ -53,7 +53,11 @@ impl From<&StoredTask> for TaskView {
 
 #[tauri::command]
 pub async fn list_tasklists(state: State<'_, Arc<AppState>>) -> Result<Vec<TaskListView>, String> {
-    let lists = state.store.all_lists().await.map_err(|e| e.to_string())?;
+    let lists = state
+        .store
+        .all_lists()
+        .await
+        .map_err(|e| user_error("list_tasklists", e.to_string()))?;
     Ok(lists
         .iter()
         .map(|l| TaskListView {
@@ -72,7 +76,8 @@ pub async fn create_list(
 ) -> Result<TaskListView, String> {
     let stored = state
         .create_list(&title, local_only.unwrap_or(false))
-        .await?;
+        .await
+        .map_err(|e| user_error("create_list", e))?;
     Ok(TaskListView {
         id: stored.list.id,
         title: stored.list.title,
@@ -86,12 +91,18 @@ pub async fn rename_list(
     id: String,
     title: String,
 ) -> Result<(), String> {
-    state.rename_list(&id, &title).await
+    state
+        .rename_list(&id, &title)
+        .await
+        .map_err(|e| user_error("rename_list", e))
 }
 
 #[tauri::command]
 pub async fn delete_list(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
-    state.delete_list(&id).await
+    state
+        .delete_list(&id)
+        .await
+        .map_err(|e| user_error("delete_list", e))
 }
 
 #[tauri::command]
@@ -103,7 +114,7 @@ pub async fn list_tasks(
         .store
         .list_tasks(&list_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error("list_tasks", e.to_string()))?;
     Ok(tasks.iter().map(TaskView::from).collect())
 }
 
@@ -114,7 +125,9 @@ pub async fn create_task(
     parent_id: Option<String>,
     title: String,
 ) -> Result<TaskView, String> {
-    create_task_inner(&state, list_id, parent_id, title).await
+    create_task_inner(&state, list_id, parent_id, title)
+        .await
+        .map_err(|e| user_error("create_task", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -161,7 +174,9 @@ pub async fn rename_task(
     id: String,
     title: String,
 ) -> Result<(), String> {
-    rename_task_inner(&state, id, title).await
+    rename_task_inner(&state, id, title)
+        .await
+        .map_err(|e| user_error("rename_task", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -187,7 +202,9 @@ pub(crate) async fn rename_task_inner(
 
 #[tauri::command]
 pub async fn toggle_complete(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
-    toggle_complete_inner(&state, id).await
+    toggle_complete_inner(&state, id)
+        .await
+        .map_err(|e| user_error("toggle_complete", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -288,7 +305,9 @@ pub async fn delete_task(
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<DeleteToken, String> {
-    delete_task_inner(&state, id).await
+    delete_task_inner(&state, id)
+        .await
+        .map_err(|e| user_error("delete_task", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -372,7 +391,9 @@ pub async fn undo_delete(
     state: State<'_, Arc<AppState>>,
     token: DeleteToken,
 ) -> Result<(), String> {
-    undo_delete_inner(&state, token).await
+    undo_delete_inner(&state, token)
+        .await
+        .map_err(|e| user_error("undo_delete", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -518,7 +539,9 @@ pub async fn set_due(
     id: String,
     mv: String,
 ) -> Result<(), String> {
-    set_due_inner(&state, id, mv).await
+    set_due_inner(&state, id, mv)
+        .await
+        .map_err(|e| user_error("set_due", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -567,7 +590,9 @@ pub async fn move_task(
     parent_id: Option<String>,
     previous_id: Option<String>,
 ) -> Result<(), String> {
-    move_task_inner(&state, id, parent_id, previous_id).await
+    move_task_inner(&state, id, parent_id, previous_id)
+        .await
+        .map_err(|e| user_error("move_task", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -636,7 +661,10 @@ pub async fn move_to_list(
     id: String,
     target_list_id: String,
 ) -> Result<String, String> {
-    state.move_task_to_list(&id, &target_list_id).await
+    state
+        .move_task_to_list(&id, &target_list_id)
+        .await
+        .map_err(|e| user_error("move_to_list", e))
 }
 
 #[tauri::command]
@@ -644,7 +672,9 @@ pub async fn clear_completed(
     state: State<'_, Arc<AppState>>,
     list_id: String,
 ) -> Result<u32, String> {
-    clear_completed_inner(&state, list_id).await
+    clear_completed_inner(&state, list_id)
+        .await
+        .map_err(|e| user_error("clear_completed", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -726,7 +756,10 @@ pub struct SyncRunView {
 
 #[tauri::command]
 pub async fn sync_now(state: State<'_, Arc<AppState>>) -> Result<SyncRunView, String> {
-    let outcome = state.run_sync_if_authed().await?;
+    let outcome = state
+        .run_sync_if_authed()
+        .await
+        .map_err(|e| user_error("sync_now", e))?;
     Ok(SyncRunView {
         summary: format!(
             "pulled={}, pushed={}, conflicts={}, deleted={}",
@@ -745,8 +778,11 @@ pub async fn fresh_sync(state: State<'_, Arc<AppState>>) -> Result<String, Strin
         .store
         .clear_synced()
         .await
-        .map_err(|e| e.to_string())?;
-    let outcome = state.run_sync_if_authed().await?;
+        .map_err(|e| user_error("fresh_sync", e.to_string()))?;
+    let outcome = state
+        .run_sync_if_authed()
+        .await
+        .map_err(|e| user_error("fresh_sync", e))?;
     Ok(format!(
         "fresh sync: pulled={}, lists and tasks rebuilt from remote",
         outcome.pulled
@@ -759,7 +795,9 @@ pub async fn set_notes(
     id: String,
     notes: String,
 ) -> Result<(), String> {
-    let mut t = find_task(&state, &id).await?;
+    let mut t = find_task(&state, &id)
+        .await
+        .map_err(|e| user_error("set_notes", e))?;
     t.task.notes = if notes.is_empty() { None } else { Some(notes) };
     t.sync_state = SyncState::Dirty;
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
@@ -768,7 +806,7 @@ pub async fn set_notes(
         .store
         .upsert_task(&t)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error("set_notes", e.to_string()))?;
     state.schedule_sync();
     Ok(())
 }
@@ -779,7 +817,9 @@ pub async fn reorder_task(
     id: String,
     direction: String,
 ) -> Result<(), String> {
-    reorder_task_inner(&state, id, direction).await
+    reorder_task_inner(&state, id, direction)
+        .await
+        .map_err(|e| user_error("reorder_task", e))
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
@@ -858,13 +898,19 @@ pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<bool, String>
     // which is exactly what the frontend's error wrapper returns on failure —
     // a successful login was indistinguishable from a failed one, so the UI
     // never flipped to signed-in until a restart (#45).
-    state.start_login().await?;
+    state
+        .start_login()
+        .await
+        .map_err(|e| user_error("auth_login", e))?;
     Ok(true)
 }
 
 #[tauri::command]
 pub async fn auth_logout(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.logout().await
+    state
+        .logout()
+        .await
+        .map_err(|e| user_error("auth_logout", e))
 }
 
 #[tauri::command]
@@ -979,8 +1025,12 @@ pub async fn set_push_enabled(
     state: State<'_, Arc<AppState>>,
     enabled: bool,
 ) -> Result<AppSettings, String> {
-    state.set_push_enabled(enabled)?;
-    build_settings(&state).await
+    state
+        .set_push_enabled(enabled)
+        .map_err(|e| user_error("set_push_enabled", e))?;
+    build_settings(&state)
+        .await
+        .map_err(|e| user_error("set_push_enabled", e))
 }
 
 /// Record which task the UI is actively holding (inline editor row or open
@@ -1003,8 +1053,12 @@ pub async fn set_auto_sync(
     state: State<'_, Arc<AppState>>,
     enabled: bool,
 ) -> Result<AppSettings, String> {
-    state.set_auto_sync_on_start(enabled)?;
-    build_settings(&state).await
+    state
+        .set_auto_sync_on_start(enabled)
+        .map_err(|e| user_error("set_auto_sync", e))?;
+    build_settings(&state)
+        .await
+        .map_err(|e| user_error("set_auto_sync", e))
 }
 
 /// Result of an export, surfaced to the UI for a confirmation toast.
@@ -1030,24 +1084,28 @@ pub async fn export_backup(
     state: State<'_, Arc<AppState>>,
     path: Option<String>,
 ) -> Result<ExportResult, String> {
-    let backup = state.build_backup().await?;
-    let json = backup.to_json_pretty().map_err(|e| e.to_string())?;
+    async move {
+        let backup = state.build_backup().await?;
+        let json = backup.to_json_pretty().map_err(|e| e.to_string())?;
 
-    let target = match path {
-        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
-        _ => crate::state::default_backup_path(),
-    };
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let target = match path {
+            Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+            _ => crate::state::default_backup_path(),
+        };
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&target, json.as_bytes()).map_err(|e| e.to_string())?;
+
+        Ok(ExportResult {
+            path: target.display().to_string(),
+            lists: backup.lists.len(),
+            tasks: backup.task_count(),
+            bytes: json.len(),
+        })
     }
-    std::fs::write(&target, json.as_bytes()).map_err(|e| e.to_string())?;
-
-    Ok(ExportResult {
-        path: target.display().to_string(),
-        lists: backup.lists.len(),
-        tasks: backup.task_count(),
-        bytes: json.len(),
-    })
+    .await
+    .map_err(|e| user_error("export_backup", e))
 }
 
 /// Result of an import/restore, surfaced to the UI for a confirmation toast.
@@ -1075,30 +1133,102 @@ pub async fn import_backup(
     state: State<'_, Arc<AppState>>,
     path: Option<String>,
 ) -> Result<ImportResult, String> {
-    let target = match path {
-        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p.trim()),
-        _ => crate::state::latest_backup_path().ok_or("no backup file found to restore")?,
-    };
+    async move {
+        let target = match path {
+            Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p.trim()),
+            _ => crate::state::latest_backup_path().ok_or("no backup file found to restore")?,
+        };
 
-    let json = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
-    let backup = axiotask_core::export::Backup::from_json(&json)
-        .map_err(|e| format!("invalid backup file: {e}"))?;
+        let json = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        let backup = axiotask_core::export::Backup::from_json(&json)
+            .map_err(|e| format!("invalid backup file: {e}"))?;
 
-    if backup.version > axiotask_core::export::BACKUP_VERSION {
-        return Err(format!(
-            "backup version {} is newer than this app supports ({})",
-            backup.version,
-            axiotask_core::export::BACKUP_VERSION
-        ));
+        if backup.version > axiotask_core::export::BACKUP_VERSION {
+            return Err(format!(
+                "backup version {} is newer than this app supports ({})",
+                backup.version,
+                axiotask_core::export::BACKUP_VERSION
+            ));
+        }
+
+        let summary = state.restore_backup(backup).await?;
+
+        Ok(ImportResult {
+            path: target.display().to_string(),
+            lists: summary.lists,
+            tasks: summary.tasks,
+        })
     }
+    .await
+    .map_err(|e| user_error("import_backup", e))
+}
 
-    let summary = state.restore_backup(backup).await?;
+/// Sanitize a command-layer error for display, logging the full detail first
+/// (#128).
+///
+/// A command's `Err` string is rendered verbatim in a frontend toast. A raw
+/// sqlx/SQL error ("sql: UNIQUE constraint failed: tasks.id") means nothing to
+/// the user, so it is replaced with a calm, per-command-family sentence while
+/// the full detail is written to the log. Two kinds of message pass through
+/// untouched: the auth/session signals the frontend substring-matches to flip
+/// its auth UI, and the deliberate human validation messages we author (which
+/// explain a refusal and carry no internal detail).
+pub(crate) fn user_error(command: &str, raw: String) -> String {
+    // Signals the frontend keys on (`ipc.js` friendlyError) to switch auth
+    // state — they must survive verbatim.
+    if raw.contains("not authenticated")
+        || raw.contains("session expired")
+        || raw.contains("Google session expired")
+    {
+        return raw;
+    }
+    if is_internal_detail(&raw) {
+        tracing::error!(command, detail = %raw, "command failed; internal detail hidden from the user");
+        return format!(
+            "Couldn't {} right now — a local error occurred. The details are in the log.",
+            command_action(command)
+        );
+    }
+    // A message we wrote on purpose (validation, "task not found", …): already
+    // human and safe. Still record it, at a lower level, for support.
+    tracing::debug!(command, detail = %raw, "command failed with a user-facing message");
+    raw
+}
 
-    Ok(ImportResult {
-        path: target.display().to_string(),
-        lists: summary.lists,
-        tasks: summary.tasks,
-    })
+/// Whether an error string carries internal persistence detail that must never
+/// reach a toast. Matches the `StoreError` / core `Error` Display prefixes and
+/// the raw sqlx markers that ride inside them.
+fn is_internal_detail(raw: &str) -> bool {
+    const PREFIXES: [&str; 6] = [
+        "sql:",
+        "decode:",
+        "migrate:",
+        "open db:",
+        "json:",
+        "internal:",
+    ];
+    let head = raw.trim_start();
+    PREFIXES.iter().any(|p| head.starts_with(p))
+        || raw.contains("error returned from database")
+        || raw.contains("no such table")
+        || raw.contains("no such column")
+}
+
+/// The human clause used in the fallback message, grouped by command family so
+/// the toast reads naturally for what the user was doing.
+fn command_action(command: &str) -> &'static str {
+    match command {
+        "list_tasklists" | "create_list" | "rename_list" | "delete_list" => "update your lists",
+        "sync_now" | "fresh_sync" => "sync with Google",
+        "auth_login" | "auth_logout" => "update your Google sign-in",
+        "get_settings" | "set_push_enabled" | "set_auto_sync" | "set_editing" => {
+            "update your settings"
+        }
+        "export_backup" => "export your backup",
+        "import_backup" => "restore your backup",
+        // Everything task-shaped (create/rename/complete/delete/move/reorder/…).
+        _ => "save your change",
+    }
 }
 
 async fn find_task(state: &AppState, id: &str) -> Result<StoredTask, String> {
