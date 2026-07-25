@@ -759,9 +759,10 @@ impl SyncEngine {
                 UpdateFailure::ResolveConflict => self.resolve_conflict(row, out).await,
                 UpdateFailure::DeleteLocal => {
                     debug!(id = %row.task.id, "task gone from server, deleting locally");
-                    // P2 again: the remote delete takes this row and its synced
-                    // subtree, but not the subtasks the server never saw.
-                    self.store.promote_unpushed_children(&row.task.id).await?;
+                    // Delete-wins (P4): the FK cascade takes this row and its
+                    // WHOLE subtree, unpushed subtasks included — a subtask
+                    // shares its parent's fate (RFC-009 D3 REJECTED; no
+                    // auto-promotion).
                     self.store.delete_task_hard(&row.task.id).await?;
                     out.mark_list_changed(&row.list_id);
                     Ok(())
@@ -790,9 +791,10 @@ impl SyncEngine {
             Ok(t) => t,
             Err(e) => {
                 return match reconcile::on_conflict_refetch_error(&e) {
-                    // Server deleted it; mirror the push_update behavior.
+                    // Server deleted it; mirror the push_update behavior — the
+                    // FK cascade takes the whole subtree, unpushed subtasks
+                    // included (RFC-009 D3 REJECTED; no auto-promotion).
                     RefetchFailure::DeleteLocal => {
-                        self.store.promote_unpushed_children(&local.task.id).await?;
                         self.store.delete_task_hard(&local.task.id).await?;
                         Ok(())
                     }
@@ -1073,8 +1075,9 @@ impl SyncEngine {
             debug!(id = %ghost_id, list_id, "removing ghost row");
             // Clean-guarded: a live edit that re-dirtied the row cancels the
             // ghost delete (the edit will push as a create/update next run).
-            // Unpushed subtasks are promoted out of the way first (D3/P2) —
-            // the remote delete may not cascade onto work the server never saw.
+            // The FK cascade takes the whole subtree, unpushed subtasks
+            // included — a subtask shares its parent's fate (RFC-009 D3
+            // REJECTED; no auto-promotion).
             if self.store.remove_ghost_task(ghost_id).await? {
                 out.deleted += 1;
                 out.mark_list_changed(list_id);
@@ -5280,12 +5283,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rehome_keeps_an_unpushed_subtree_together_and_promotes_orphans() {
+    async fn rehome_keeps_an_unpushed_subtree_together_but_the_orphan_dies_with_its_parent() {
         // D2's non-happy path: the dying list holds a whole unpushed subtree
         // AND an unpushed subtask of a SYNCED parent. The subtree re-homes
         // intact (parent + child, still one level); the orphan — whose parent
-        // dies with the list, since the server knows it (P1) — is promoted to
-        // top-level rather than cascaded away (P2).
+        // dies with the list, since the server knows it (P1) — dies WITH its
+        // parent in the list cascade rather than being promoted (D3 rejected:
+        // the parent bond outranks P2).
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "My Tasks");
         client.seed_list("L2", "Work");
@@ -5319,21 +5323,33 @@ mod tests {
             Some(("L1".into(), Some("local-parent".into()))),
             "the unpushed subtree re-homes intact"
         );
-        assert_eq!(
-            placement(&eng, "local-orphan").await,
-            Some(("L1".into(), None)),
-            "a subtask whose synced parent died is promoted, not destroyed"
+        assert!(
+            eng.store
+                .find_task_any("local-orphan")
+                .await
+                .unwrap()
+                .is_none(),
+            "a subtask whose synced parent died dies with it — never promoted (D3 rejected)"
         );
         assert!(
             eng.store.find_task_any("SYNCED").await.unwrap().is_none(),
             "the row the server knew dies with its list (P1)"
         );
 
-        // All three still sync, and stay one level deep (invariant #1).
+        // Only the subtree survives, still one level deep (invariant #1), and
+        // it converges — the orphan's death leaves no wedge behind.
         eng.run().await.unwrap();
         let rows = eng.store.list_tasks("L1").await.unwrap();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.len(),
+            2,
+            "the orphan is gone; only the subtree remains"
+        );
         assert!(rows.iter().all(|r| r.sync_state == SyncState::Clean));
+        assert!(
+            rows.iter().all(|r| r.task.title != "call hotel"),
+            "the orphaned subtask never comes back as a row"
+        );
         let parent_id = rows
             .iter()
             .find(|r| r.task.title == "trip")
@@ -5350,14 +5366,6 @@ mod tests {
                 .as_deref(),
             Some(parent_id.as_str()),
             "the child follows its re-homed parent's remapped id"
-        );
-        assert!(
-            rows.iter()
-                .find(|r| r.task.title == "call hotel")
-                .unwrap()
-                .task
-                .parent
-                .is_none()
         );
     }
 
@@ -5415,11 +5423,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edited_parent_deleted_remotely_spares_its_unpushed_subtask() {
-        // The same P2 hole reached through the update path: we push an edit to
-        // a parent the server already deleted (404 → delete-wins, P4), and its
-        // FK cascade would take an unpushed subtask with it. The subtask is
-        // promoted instead and still lands.
+    async fn edited_parent_deleted_remotely_takes_its_unpushed_subtask_with_it() {
+        // The delete-wins cascade reached through the update path: we push an
+        // edit to a parent the server already deleted (404 → delete-wins, P4),
+        // and its FK cascade takes the unpushed subtask with it. D3 rejected:
+        // the child dies with the parent — never promoted (the parent bond
+        // outranks P2, exactly like the user's own delete, invariant #3).
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "My Tasks");
         client.seed_task("L1", "P", "parent", "1");
@@ -5438,12 +5447,19 @@ mod tests {
             eng.store.find_task_any("P").await.unwrap().is_none(),
             "delete wins over our edit (P4)"
         );
-        assert_eq!(
-            placement(&eng, "local-kid").await,
-            Some(("L1".into(), None)),
-            "the unpushed subtask survives, promoted"
+        assert!(
+            eng.store
+                .find_task_any("local-kid")
+                .await
+                .unwrap()
+                .is_none(),
+            "the unpushed subtask dies with its parent — never promoted (D3 rejected)"
         );
-        eng.run().await.unwrap();
+        // No wedge: nothing lingers to push, and the child never reaches the
+        // server as a stray top-level row.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pushed, 0, "converged (P7)");
+        assert_eq!(out.errors, 0);
         assert!(
             client
                 .list_tasks("L1", None)
@@ -5451,7 +5467,8 @@ mod tests {
                 .unwrap()
                 .items
                 .iter()
-                .any(|t| t.title == "kept")
+                .all(|t| t.title != "kept"),
+            "the dead child never lands on the server"
         );
     }
 
@@ -5482,12 +5499,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subtask_create_parent_deleted_remotely_promotes_to_toplevel() {
-        // §G / D3. The user adds a subtask; another device deletes its parent
-        // before the create lands. The insert names a dead parent id — a
-        // permanent 400 that would wedge the row dirty forever, and the
-        // parent's local removal would cascade it away entirely. Instead the
-        // child is promoted to a top-level create in the same list (P2).
+    async fn subtask_create_parent_deleted_remotely_dies_with_its_parent() {
+        // §G / D3 (REJECTED by user). The user adds a subtask; another device
+        // deletes its parent before the create lands. The parent's local
+        // removal FK-cascades the unpushed child away — the child shares its
+        // parent's fate, exactly like the user's own delete (invariant #3).
+        // No auto-promotion: the child never becomes a stray top-level row,
+        // and the dead-parent insert never survives to wedge the queue.
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "My Tasks");
         client.seed_task("L1", "P", "parent", "1");
@@ -5505,26 +5523,25 @@ mod tests {
             eng.store.find_task_any("P").await.unwrap().is_none(),
             "the remotely-deleted parent is gone locally"
         );
-        assert_eq!(
-            placement(&eng, "local-kid").await,
-            Some(("L1".into(), None)),
-            "the unpushed child survives, promoted to top-level"
+        assert!(
+            eng.store
+                .find_task_any("local-kid")
+                .await
+                .unwrap()
+                .is_none(),
+            "the unpushed child dies with its parent — never promoted (D3 rejected)"
         );
-        let row = eng.store.find_task_any("local-kid").await.unwrap().unwrap();
-        assert_eq!(row.pending_op.as_deref(), Some("create"), "still queued");
 
-        // Bounded: it lands on the very next run — no permanent wedge.
-        let out = eng.run().await.unwrap();
-        assert!(out.pushed >= 1);
-        let remote = client.list_tasks("L1", None).await.unwrap().items;
-        let landed = remote
-            .iter()
-            .find(|t| t.title == "orphaned subtask")
-            .expect("the promoted create lands");
-        assert!(landed.parent.is_none(), "it lands as a top-level task");
+        // No wedge and nothing lands: the queue is empty and the server never
+        // sees the dead child.
         let out = eng.run().await.unwrap();
         assert_eq!(out.pushed, 0, "converged (P7)");
         assert_eq!(out.errors, 0);
+        let remote = client.list_tasks("L1", None).await.unwrap().items;
+        assert!(
+            remote.iter().all(|t| t.title != "orphaned subtask"),
+            "the dead child never reaches the server"
+        );
     }
 
     #[tokio::test]

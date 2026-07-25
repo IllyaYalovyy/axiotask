@@ -342,7 +342,7 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   candidates, nor is any *other* list this same pull is about to remove. An
   unpushed subtree re-homes intact; an unpushed subtask whose parent stays
   behind **dies with its parent** (D3 rejected — no promotion; the
-  promote-then-re-home edge #110 shipped is removed by #125). **Boundary:**
+  promote-then-re-home edge #110 shipped was removed by #125). **Boundary:**
   when nothing can take the
   rows, the dying list is **kept as an unpushed list create** instead of being
   dropped — it is re-created (or adopted by title) on the next push and the
@@ -351,11 +351,11 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   parent** (D3 REJECTED by user 2026-07-24: no auto-promotion; a subtask
   shares its parent's fate, remote or local, same as invariant #3). The
   parent's local removal FK-cascades the unpushed child away, which is also
-  the no-wedge guarantee — no dead-parent insert survives to retry. `gap`
-  (#125) — #110 implemented the now-rejected promotion
+  the no-wedge guarantee — no dead-parent insert survives to retry. `settled`
+  (#125) — #110 had implemented the now-rejected promotion
   (`Store::remove_ghost_task` promote-before-ghost-delete, plus the
-  update-404 / conflict-refetch-404 promotions); #125 removes it without
-  trace and pins the cascade outcome red-first.
+  update-404 / conflict-refetch-404 promotions); #125 removed it without
+  trace and pinned the cascade outcome red-first.
 - Subtask create × parent **completed** remotely → the insert is **accepted**
   and the child is created **already completed**, in the insert response body
   (probed). The row converges to `completed` in the same run and no wedge
@@ -533,7 +533,7 @@ User review 2026-07-24: **D1, D2, D4, D5, D6 and P2 ratified by the user.**
   subtask can contain a lot of garbage; if the parent dies one way or another,
   all children die with it." A subtask create whose parent died remotely dies
   in the parent's cascade, exactly like the user's own delete (invariant #3) —
-  the parent↔subtask bond outranks P2. The #110 promotion machinery is to be
+  the parent↔subtask bond outranks P2. The #110 promotion machinery was
   removed without trace (#125): `Store::remove_ghost_task`'s promote-before-
   ghost-delete, the update-404 / conflict-refetch-404 promotions, and the D2
   re-homing's promote-when-parent-stays-behind edge. The FK cascade already
