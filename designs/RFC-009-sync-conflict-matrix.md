@@ -307,10 +307,14 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   `MoveIntent::Refuse` when the row has picked up subtasks — or the target
   parent has become a subtask — since the intent was recorded. The refused row
   reverts to the server's placement via `revert_local_move`. `settled` (#109).
-  **Residual race**, recorded not fixed: if the remote-born subtask arrives
-  *after* our demote already landed, the server holds a grandchild we never
-  asked for; the pull surfaces it and no list view renders it. Repairing an
-  existing third level is not in this step.
+  **Residual race** — the remote-born subtask arrives *after* our demote
+  already landed: the server holds a grandchild we never asked for. Repaired
+  per **D7** (ratified): the pull detects any row at depth ≥ 2, promotes the
+  grandchild to top-level in its list, pushes the corrective move so the
+  server converges (a local-only repair would re-trigger every pull, P7),
+  and counts the repair as a **conflict** in the sync outcome — visible,
+  never silent. The repair must be idempotent under racing repairs. `gap`
+  (#119)
 - Promote/detach (parent cleared) × remote deleted the row → rejected → drop
   intent; row ghost-deletes (P4); the old parent is untouched. `settled` (#109)
 - Promote × remote reparented the same row elsewhere → last-writer-wins (P5);
@@ -376,6 +380,14 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   (`Store::remove_ghost_task` promote-before-ghost-delete, plus the
   update-404 / conflict-refetch-404 promotions); #125 removed it without
   trace and pinned the cascade outcome red-first.
+- Subtask create × parent **demoted** remotely → push runs before pull, so
+  the queued insert cannot know its parent is now a subtask; the server
+  accepts it (no depth cap, probed) and **we ourselves create the 3rd level**
+  (`parent_is_pushable` checks Synced, not depth — and cannot do better,
+  since the demote is unseen until the pull). This is the most practical
+  3rd-level vector: an offline device with a queued subtask create racing a
+  demote from another device. No push-side guard can close it; the pull-side
+  D7 repair (§F) catches it within one round-trip. `gap` (#119)
 - Subtask create × parent **completed** remotely → the insert is **accepted**
   and the child is created **already completed**, in the insert response body
   (probed). The row converges to `completed` in the same run and no wedge
@@ -593,6 +605,17 @@ User review 2026-07-24: **D1, D2, D4, D5, D6 and P2 ratified by the user.**
   What the code *does* own, and what #112 pins: no precondition is sent
   (`api::http`), and the pull adopts a remote title change unconditionally
   (`sync::reconcile::plan_list_pull`) instead of skipping on a matching etag.
+- **D7** — **RATIFIED by user (2026-07-25).** A server-side third level
+  (grandchild `C` under `P > T`) is treated as a **conflict**, never kept:
+  the pull detects depth ≥ 2, promotes `C` to top-level in its list, pushes
+  the corrective move (server must converge too — P7), and counts it in the
+  sync outcome's conflict counter. Rationale (user): it can only arise from
+  a concurrent change; resolve it as a conflict and never hold a 3rd level.
+  Promotion of `C` is the one resolution that discards neither task: `C`
+  keeps its content, the user's demote of `T` survives. No rename/marker —
+  nothing is duplicated or lost. Covers both vectors: a remote-born subtask
+  after our demote (§F) and our own queued create under a remotely-demoted
+  parent (§G). Implementation: #119.
 - **P2 itself** — **RATIFIED by user (2026-07-24), with a boundary carved by
   the D3 rejection:** remote events never destroy rows the server has never
   seen — *except a subtask, which always shares its parent's fate.* P2's
