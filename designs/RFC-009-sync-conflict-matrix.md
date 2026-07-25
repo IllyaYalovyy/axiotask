@@ -513,9 +513,8 @@ deliberate behavior and not defects:
 
 ## Decisions to ratify
 
-User review 2026-07-24: **D1, D2, D4 and P2 ratified by the user.**
+User review 2026-07-24: **D1, D2, D4, D5, D6 and P2 ratified by the user.**
 **D3 REJECTED by the user** — no auto-promotion; see its entry and #125.
-D5 and D6 are under user review (clarification in progress).
 
 - **D1** — **RATIFIED by user (2026-07-24).** Status-only divergence
   resolves remote-wins **without** a conflicted copy. Scope: the 412 conflict
@@ -546,14 +545,19 @@ D5 and D6 are under user review (clarification in progress).
   `If-Match` DELETE, before tombstoning — is deliberately not taken: it would
   put a cross-list move behind a conflict prompt the MVP has no UI for, and it
   contradicts delete-wins (§D), which is already pinned in both directions.
-- **D5** — **UNDER USER REVIEW (2026-07-24).** Agent-ratified with #111; the
-  user has asked for a plain-language re-statement before ruling. As
-  implemented: cross-list move — the task
+- **D5** — **RATIFIED by user (2026-07-24)**, after a plain-language
+  re-statement: a task you moved to another list survives even if another
+  device deleted the original mid-window — "move wins". The alternative
+  (delete wins) would have to kill clones already created on the server,
+  since creates push before deletes, and that cleanup can itself race.
+  Cross-list move — the task
   survives in the target even if the original was deleted remotely ("move
   wins"). Falls out of P2 — the clones are rows the server has never seen —
   and of intent: the user moved the task to keep it.
-- **D6** — **UNDER USER REVIEW (2026-07-24).** Agent-recorded with #112; the
-  user is unconvinced. As recorded: list rename conflicts resolve
+- **D6** — **RATIFIED by user (2026-07-24)** as *forced, not chosen*: the
+  server offers no conflict signal for list renames, so last-writer-wins is
+  the only implementable outcome and a lost rename costs one retype. List
+  rename conflicts resolve
   remote-wins, no copy. Not a preference but a consequence: probe 8 showed the
   tasklists endpoint ignores `If-Match`, so a rename cannot 412 and there is no
   divergence signal to fork a copy from. Flipping D6 is therefore not a code
@@ -569,9 +573,9 @@ D5 and D6 are under user review (clarification in progress).
 
 History note: D1 was originally marked ratified by #107, P2/D2/D3 by #110,
 D4/D5 by #111 and D6 by #112 — *by the implementing tasks themselves*, not by
-a human. The user's own review (2026-07-24) ratified D1/D2/D4/P2, REJECTED D3,
-and has D5/D6 under review. Flipping D4 or D5 is a code change, not just an
-RFC edit: D4
+a human. The user's own review (2026-07-24) ratified D1/D2/D4/D5/D6/P2 and
+REJECTED D3 (reversal is #125). Flipping D4 or D5 is a code change, not just
+an RFC edit: D4
 lives in `api::http` (the DELETE carries no `If-Match`) and D5 in
 `sync::reconcile` (`plan_delete` reads 404 as success) — both pinned by the §H
 tests. D6 cannot be flipped at all without a server-side precondition Google
