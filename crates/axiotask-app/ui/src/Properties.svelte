@@ -150,7 +150,9 @@
           </label>
 
           <h3>Status</h3>
-          {#if settings.sync.last_error}
+          {#if settings.sync.needs_attention}
+            <p class="error" role="alert"><Icon name="alertTriangle" size={14} /> Sync needs attention: {settings.sync.last_error} — automatic retries have slowed down until this is resolved.</p>
+          {:else if settings.sync.last_error}
             <p class="error" role="alert"><Icon name="alertTriangle" size={14} /> Last sync failed: {settings.sync.last_error}</p>
           {/if}
           <dl class="stats">

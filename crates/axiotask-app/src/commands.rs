@@ -887,6 +887,11 @@ pub struct SyncStatusView {
     pub total_syncs: u64,
     /// Most recent sync error, cleared on the next success.
     pub last_error: Option<String>,
+    /// A permanent (non-transient, non-auth) failure is stuck — retrying is
+    /// pointless until something changes, so the scheduler has backed off. The
+    /// UI surfaces `last_error` as a persistent "needs attention" state rather
+    /// than a one-off blip. Cleared on the next success.
+    pub needs_attention: bool,
     /// The stored session is dead — the user must sign in again. Rides on the
     /// `sync-updated` event so the main window can show a re-auth action.
     pub needs_reauth: bool,
@@ -904,6 +909,7 @@ impl From<&crate::state::SyncStatus> for SyncStatusView {
             lists_changed: s.lists_changed,
             total_syncs: s.total_syncs,
             last_error: s.last_error.clone(),
+            needs_attention: s.needs_attention,
             needs_reauth: s.needs_reauth,
         }
     }

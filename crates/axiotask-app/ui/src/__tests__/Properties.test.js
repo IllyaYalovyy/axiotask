@@ -23,6 +23,7 @@ const baseSettings = {
     last_deleted: 0,
     total_syncs: 5,
     last_error: null,
+    needs_attention: false,
   },
 };
 
@@ -145,6 +146,26 @@ describe("Properties dialog", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(/network unreachable/i),
     );
+  });
+
+  it("surfaces a stuck (needs-attention) failure distinctly from a one-off blip", async () => {
+    // A permanent failure is stuck — retries have backed off. The user must see
+    // the real error framed as a persistent "needs attention" state, NOT the
+    // transient "last sync failed" wording that reads like a one-off.
+    mockBackend();
+    settings.sync.last_error = "schema mismatch: column tasks.blorp missing";
+    settings.sync.needs_attention = true;
+    render(App);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /properties/i })).toBeInTheDocument(),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: /properties/i }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/needs attention/i);
+    expect(alert).toHaveTextContent(/schema mismatch: column tasks\.blorp missing/i);
+    expect(alert).toHaveTextContent(/retries have slowed down/i);
+    // It must NOT read as a transient one-off failure.
+    expect(alert).not.toHaveTextContent(/last sync failed/i);
   });
 
   it("Account tab shows signed-in status and scope", async () => {
