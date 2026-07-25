@@ -384,6 +384,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permanent_sync_failure_flags_attention_backs_off_and_logs_the_real_error() {
+        // A permanent failure (a non-retryable API rejection / store bug) fails
+        // identically on every retry. The app must: surface the REAL error as a
+        // "needs attention" state (not a transient blip, not a dead session),
+        // and stretch the idle re-poll cadence instead of hammering every 60s.
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+        use std::time::Duration;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        // Healthy: no attention, base cadence.
+        assert!(!state.sync_status().await.needs_attention);
+        let base = state.next_sync_period();
+
+        // First permanent failure.
+        client.fail_next(Method::ListTaskLists, || {
+            ApiError::Other("schema mismatch: column tasks.blorp missing".into())
+        });
+        state.run_sync().await.unwrap_err();
+
+        let status = state.sync_status().await;
+        assert!(
+            status.needs_attention,
+            "permanent failure must need attention"
+        );
+        let msg = status.last_error.expect("the real error is surfaced");
+        assert!(
+            msg.contains("schema mismatch: column tasks.blorp missing"),
+            "surfaces the real error, got: {msg}"
+        );
+        // Distinct from the dead-session state — this is NOT a re-auth prompt.
+        assert!(!state.needs_reauth());
+        assert!(!state.sync_status().await.needs_reauth);
+        // The idle cadence has backed off past the base period.
+        let after_one = state.next_sync_period();
+        assert!(
+            after_one > base,
+            "cadence must back off: {after_one:?} !> {base:?}"
+        );
+
+        // A second consecutive permanent failure backs off further still.
+        client.fail_next(Method::ListTaskLists, || {
+            ApiError::Other("schema mismatch: column tasks.blorp missing".into())
+        });
+        state.run_sync().await.unwrap_err();
+        let after_two = state.next_sync_period();
+        assert!(
+            after_two > after_one,
+            "cadence keeps growing: {after_two:?} !> {after_one:?}"
+        );
+
+        // The first success clears attention and restores the base cadence.
+        state.run_sync().await.unwrap();
+        let recovered = state.sync_status().await;
+        assert!(!recovered.needs_attention, "success clears attention");
+        assert!(recovered.last_error.is_none(), "success clears the error");
+        assert_eq!(
+            state.next_sync_period(),
+            Duration::from_secs(60),
+            "cadence returns to the base period after recovery"
+        );
+    }
+
+    #[tokio::test]
+    async fn transient_sync_failure_does_not_flag_attention_or_back_off() {
+        // A transient failure (5xx / network / rate-limit) is expected to clear
+        // itself — keep retrying silently at the base cadence. It must NOT flip
+        // the "needs attention" state or stretch the polling interval. The
+        // engine usually swallows transients into a partial Ok, so to reach the
+        // scheduler as an Err we fail the list-creates pull, whose only retry
+        // signal is to return the transient error up.
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        let base = state.next_sync_period();
+
+        // A 5xx on the lists pull is transient; the engine returns Ok (partial
+        // run) so no Err reaches the scheduler and attention stays clear.
+        client.fail_next(Method::ListTaskLists, || ApiError::Server { status: 503 });
+        let _ = state.run_sync().await;
+
+        let status = state.sync_status().await;
+        assert!(
+            !status.needs_attention,
+            "a transient failure never needs attention"
+        );
+        assert_eq!(
+            state.next_sync_period(),
+            base,
+            "a transient failure never stretches the cadence"
+        );
+    }
+
+    #[tokio::test]
     async fn logout_works_inside_the_async_runtime() {
         // Sign out runs as an async Tauri command on a tokio worker. The old
         // implementation called block_on there, panicking the runtime AFTER

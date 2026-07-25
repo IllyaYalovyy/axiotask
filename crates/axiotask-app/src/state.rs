@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify};
@@ -18,6 +18,41 @@ use axiotask_core::sync::{SyncEngine, SyncOutcome};
 const SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
 /// Periodic sync interval to catch remote changes.
 const SYNC_PERIOD: Duration = Duration::from_secs(60);
+/// Ceiling for the exponential backoff applied after a *permanent* sync
+/// failure. A dead schema or corrupt store fails identically on every retry,
+/// so the periodic cadence stretches from [`SYNC_PERIOD`] up to this cap
+/// instead of hammering the same failure every minute forever.
+const SYNC_MAX_BACKOFF: Duration = Duration::from_secs(60 * 60);
+
+/// The periodic delay before the next background sync, given how many
+/// consecutive *permanent* failures have occurred. `streak == 0` (healthy, or
+/// only transient failures) keeps the base cadence; each permanent failure
+/// doubles the delay, capped at [`SYNC_MAX_BACKOFF`]. A mutation trigger still
+/// fires promptly (see [`wait_for_sync_trigger`]) — only the idle polling
+/// cadence backs off, which is exactly the "retry the same failure every 60s
+/// forever" churn this replaces.
+fn backoff_period(base: Duration, streak: u32, cap: Duration) -> Duration {
+    if streak == 0 {
+        return base;
+    }
+    // 2^streak, saturating: at streak 1 the delay doubles, and a large streak
+    // can never overflow the shift or the multiply — it just pins to the cap.
+    let factor = 1u64.checked_shl(streak).unwrap_or(u64::MAX);
+    let secs = base.as_secs().saturating_mul(factor);
+    Duration::from_secs(secs).min(cap)
+}
+
+/// Whether a permanent failure should be logged at ERROR (its first occurrence,
+/// or a *different* error than last time) versus DEBUG (an identical repeat).
+/// Keeps a stuck sync from reprinting the same ERROR line every cadence tick,
+/// which otherwise buries everything else in the log.
+fn permanent_failure_is_new(
+    prev_attention: bool,
+    prev_error: Option<&str>,
+    new_error: &str,
+) -> bool {
+    !prev_attention || prev_error != Some(new_error)
+}
 
 /// File-based token store. Persists tokens as JSON to a file.
 struct FileTokenStore {
@@ -94,6 +129,14 @@ pub struct SyncStatus {
     pub total_syncs: u64,
     /// Message from the most recent sync failure, cleared on the next success.
     pub last_error: Option<String>,
+    /// A *permanent* (non-transient, non-auth) failure is stuck — store
+    /// corruption, a schema mismatch, a deserialization bug. Retrying is
+    /// pointless until something changes, so the scheduler has backed off and
+    /// the UI surfaces `last_error` as a "sync needs attention" state the user
+    /// can act on. Distinct from a transient blip (silently retried, this stays
+    /// false) and from a dead session ([`Self::needs_reauth`], its own state).
+    /// Cleared by the first successful run.
+    pub needs_attention: bool,
     /// The stored session is dead (token refresh permanently denied) — the
     /// user must sign in again. Mirrored into every status snapshot so the
     /// `sync-updated` event carries it and the main window can surface a
@@ -149,6 +192,12 @@ pub struct AppState {
     /// Manual "Sync now" is deliberately NOT gated, so the user can always
     /// force a re-check.
     needs_reauth: AtomicBool,
+    /// Count of consecutive *permanent* (non-transient, non-auth) sync
+    /// failures. Drives the scheduler's exponential backoff
+    /// ([`backoff_period`]) and is reset to 0 by the first successful run. A
+    /// transient failure or a dead session leaves it untouched (they have
+    /// their own handling), so a network blip never stretches the cadence.
+    attention_streak: AtomicU32,
     /// Path to the config file, so settings changes persist to the right place.
     config_path: PathBuf,
     /// Path to the SQLite database (shown in the Properties dialog).
@@ -210,6 +259,7 @@ impl AppState {
             held_create_id: std::sync::Mutex::new(None),
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
             needs_reauth: AtomicBool::new(false),
+            attention_streak: AtomicU32::new(0),
             config_path: axiotask_core::config::AppConfig::default_path(),
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
@@ -260,6 +310,7 @@ impl AppState {
             held_create_id: std::sync::Mutex::new(None),
             auto_sync_on_start: AtomicBool::new(true),
             needs_reauth: AtomicBool::new(false),
+            attention_streak: AtomicU32::new(0),
             // A throwaway temp path so settings writes in tests never touch the
             // real user config.
             config_path: std::env::temp_dir()
@@ -491,7 +542,12 @@ impl AppState {
     /// Only runs sync when authenticated; otherwise the trigger is a no-op.
     pub async fn run_sync_loop(self: Arc<Self>) {
         loop {
-            wait_for_sync_trigger(&self.sync_notify, SYNC_DEBOUNCE, SYNC_PERIOD).await;
+            // A run of permanent failures stretches the idle cadence (see
+            // [`Self::next_sync_period`]); a mutation still triggers promptly
+            // via `sync_notify`, so backing off never delays the user's own
+            // changes — only the pointless re-poll of a stuck failure.
+            let period = self.next_sync_period();
+            wait_for_sync_trigger(&self.sync_notify, SYNC_DEBOUNCE, period).await;
             // A dead session fails identically on every attempt — don't churn
             // (and spam the token endpoint) until the user signs in again.
             // Manual "Sync now" stays available as an explicit re-check.
@@ -499,12 +555,25 @@ impl AppState {
                 tracing::debug!("background sync skipped: session expired, waiting for re-login");
                 continue;
             }
+            // `run_sync` already logs the failure (once, not every tick) and
+            // records the needs-attention state; nothing to add at WARN here or
+            // a stuck sync would spam the log again from this layer.
             if self.is_authenticated()
                 && let Err(e) = self.run_sync_if_authed().await
             {
-                tracing::warn!("background sync failed: {e}");
+                tracing::debug!("background sync failed: {e}");
             }
         }
+    }
+
+    /// The delay before the next *idle* periodic sync. The base cadence
+    /// ([`SYNC_PERIOD`]) while healthy; after consecutive *permanent* failures
+    /// it backs off exponentially up to [`SYNC_MAX_BACKOFF`], so a sync that
+    /// fails identically every time stops re-polling every 60s. The streak (and
+    /// thus the backoff) resets to the base cadence on the first success.
+    pub(crate) fn next_sync_period(&self) -> Duration {
+        let streak = self.attention_streak.load(Ordering::Relaxed);
+        backoff_period(SYNC_PERIOD, streak, SYNC_MAX_BACKOFF)
     }
 
     /// Run sync immediately. Does not check authentication — use `run_sync_if_authed` for guarded access.
@@ -545,6 +614,11 @@ impl AppState {
                     // after re-login, or a mis-flagged transient).
                     self.needs_reauth.store(false, Ordering::Relaxed);
                     status.needs_reauth = false;
+                    // A success also clears any "needs attention" backoff — the
+                    // stuck failure resolved, so the idle cadence returns to
+                    // base ([`Self::next_sync_period`]).
+                    self.attention_streak.store(0, Ordering::Relaxed);
+                    status.needs_attention = false;
                     status.last_pulled = o.pulled;
                     status.last_pushed = o.pushed;
                     status.last_conflicts = o.conflicts;
@@ -564,23 +638,49 @@ impl AppState {
                     });
                 }
                 Err(e) => {
-                    tracing::error!("sync failed: {e}");
                     status.changed_list_ids.clear();
                     status.lists_changed = false;
-                    if matches!(
-                        e,
-                        axiotask_core::sync::SyncError::Api(
-                            axiotask_core::api::ApiError::AuthExpired(_)
-                        )
-                    ) {
+                    if e.is_auth_expired() {
                         // The refresh token is dead — stop the background
                         // retry churn and tell the user what to actually do.
+                        // This is its own state, distinct from the generic
+                        // needs-attention backoff (the loop already gates
+                        // background runs on `needs_reauth`), so clear that
+                        // streak rather than compounding two backoffs.
+                        tracing::error!("sync failed: session expired — sign in again");
                         self.needs_reauth.store(true, Ordering::Relaxed);
                         status.needs_reauth = true;
+                        self.attention_streak.store(0, Ordering::Relaxed);
+                        status.needs_attention = false;
                         status.last_error =
                             Some("Google session expired — sign in again to resume sync".into());
-                    } else {
+                    } else if e.is_transient() {
+                        // A blip that clears itself (network / 5xx / rate-limit)
+                        // — keep retrying silently at the base cadence. This is
+                        // the "transient behavior unchanged" path: no attention,
+                        // no backoff, the streak is left untouched.
+                        tracing::warn!("transient sync failure, will retry: {e}");
                         status.last_error = Some(e.to_string());
+                    } else {
+                        // Permanent: fails identically on every retry until
+                        // something changes. Surface it as "needs attention" and
+                        // back the idle cadence off. Log at ERROR only the first
+                        // time (or when the error text changes) — a stuck sync
+                        // must not reprint the same line every cadence tick.
+                        let msg = e.to_string();
+                        if permanent_failure_is_new(
+                            status.needs_attention,
+                            status.last_error.as_deref(),
+                            &msg,
+                        ) {
+                            tracing::error!("sync failed (needs attention): {msg}");
+                        } else {
+                            tracing::debug!("sync still failing (unchanged, backing off): {msg}");
+                        }
+                        let streak = self.attention_streak.fetch_add(1, Ordering::Relaxed) + 1;
+                        tracing::debug!("permanent sync-failure streak now {streak}");
+                        status.needs_attention = true;
+                        status.last_error = Some(msg);
                     }
                 }
             }
@@ -1150,6 +1250,41 @@ mod tests {
         let dir = TempDir::new().unwrap();
         assert!(latest_backup_in(dir.path()).is_none());
         assert!(latest_backup_in(&dir.path().join("does-not-exist")).is_none());
+    }
+
+    // ─── Permanent-failure backoff / attention ───────────────────────────────
+
+    #[test]
+    fn backoff_period_stays_at_base_while_healthy() {
+        let base = Duration::from_secs(60);
+        let cap = Duration::from_secs(3600);
+        // No permanent-failure streak → the plain periodic cadence.
+        assert_eq!(backoff_period(base, 0, cap), base);
+    }
+
+    #[test]
+    fn backoff_period_doubles_per_failure_then_pins_to_cap() {
+        let base = Duration::from_secs(60);
+        let cap = Duration::from_secs(3600);
+        assert_eq!(backoff_period(base, 1, cap), Duration::from_secs(120));
+        assert_eq!(backoff_period(base, 2, cap), Duration::from_secs(240));
+        assert_eq!(backoff_period(base, 3, cap), Duration::from_secs(480));
+        // 60 * 2^6 = 3840s would exceed the hour cap → pinned to the cap.
+        assert_eq!(backoff_period(base, 6, cap), cap);
+        // A pathologically large streak can never overflow the shift/multiply.
+        assert_eq!(backoff_period(base, u32::MAX, cap), cap);
+    }
+
+    #[test]
+    fn permanent_failure_logs_at_error_only_when_new_or_changed() {
+        // First failure of a healthy sync → log at ERROR.
+        assert!(permanent_failure_is_new(false, None, "boom"));
+        // Same error repeating while already in attention → DEBUG (no spam).
+        assert!(!permanent_failure_is_new(true, Some("boom"), "boom"));
+        // A *different* permanent error while in attention → ERROR again.
+        assert!(permanent_failure_is_new(true, Some("boom"), "kaput"));
+        // Re-entering attention after a clear (prev_attention false) → ERROR.
+        assert!(permanent_failure_is_new(false, Some("boom"), "boom"));
     }
 
     // ─── Background sync trigger timing ──────────────────────────────────────
