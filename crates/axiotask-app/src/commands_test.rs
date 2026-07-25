@@ -4397,4 +4397,76 @@ mod tests {
         let out = state.run_sync().await.unwrap();
         assert_eq!((out.pushed, out.deleted, out.errors), (0, 0, 0), "P7");
     }
+
+    // ─── User-facing error sanitization (#128) ───────────────────────────────
+    //
+    // A command's Err string is what the frontend renders in a toast. A raw
+    // sqlx/SQL error ("sql: UNIQUE constraint failed: tasks.id") is noise to the
+    // user; it must be replaced with a calm per-family message while the full
+    // detail is kept for the log. Auth signals the UI switches state on, and the
+    // deliberate human validation messages we author, must pass through intact.
+    mod user_facing_errors {
+        use crate::commands::user_error;
+        use axiotask_core::store::StoreError;
+
+        #[test]
+        fn raw_sql_error_is_replaced_and_never_shown_verbatim() {
+            // The exact string a failing store query produces at the boundary.
+            let raw = StoreError::Sql("UNIQUE constraint failed: tasks.id".into()).to_string();
+            assert!(
+                raw.contains("sql:"),
+                "precondition: the raw string leaks SQL"
+            );
+
+            let shown = user_error("create_task", raw);
+            assert!(
+                !shown.contains("sql:"),
+                "no sql prefix reaches the user: {shown}"
+            );
+            assert!(
+                !shown.to_lowercase().contains("constraint"),
+                "no sqlx detail reaches the user: {shown}"
+            );
+            assert!(
+                shown.to_lowercase().contains("log"),
+                "the message points the user at the log: {shown}"
+            );
+        }
+
+        #[test]
+        fn message_is_grouped_by_command_family() {
+            let sql = || StoreError::Sql("disk I/O error".into()).to_string();
+            let sync = user_error("sync_now", sql());
+            let backup = user_error("import_backup", sql());
+            let task = user_error("toggle_complete", sql());
+            // Distinct families read differently, and none leak the raw detail.
+            assert!(sync.to_lowercase().contains("sync"), "{sync}");
+            assert!(backup.to_lowercase().contains("backup"), "{backup}");
+            assert_ne!(sync, task);
+            for m in [&sync, &backup, &task] {
+                assert!(!m.to_lowercase().contains("disk i/o"), "leaked detail: {m}");
+            }
+        }
+
+        #[test]
+        fn auth_signals_pass_through_so_the_ui_can_react() {
+            // The frontend substring-matches these to flip auth affordances.
+            assert_eq!(
+                user_error("sync_now", "not authenticated".into()),
+                "not authenticated"
+            );
+            let expired = "session expired — sign in again (invalid_grant)".to_string();
+            assert_eq!(user_error("sync_now", expired.clone()), expired);
+        }
+
+        #[test]
+        fn deliberate_validation_messages_pass_through() {
+            // Non-happy path: a human message we authored is already safe and
+            // must survive unchanged (it explains the refusal to the user).
+            let msg = "cannot nest under a subtask: subtasks are one level deep";
+            assert_eq!(user_error("move_task", msg.into()), msg);
+            let nf = "task abc not found";
+            assert_eq!(user_error("rename_task", nf.into()), nf);
+        }
+    }
 }

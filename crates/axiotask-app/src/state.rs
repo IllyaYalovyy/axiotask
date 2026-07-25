@@ -54,6 +54,27 @@ fn permanent_failure_is_new(
     !prev_attention || prev_error != Some(new_error)
 }
 
+/// A user-safe description of a *permanent* sync failure (#128).
+///
+/// The `last_error` this produces is rendered verbatim in the "Sync failed"
+/// toast and the Properties dialog. A store failure carries raw sqlx text
+/// ("sql: no such column: …") that is noise to the user, so it is replaced with
+/// a calm sentence pointing at the log — the full typed error is still written
+/// to the log at the call site. API-level failures are already human and never
+/// carry SQL, so their text is kept.
+fn sync_user_message(e: &axiotask_core::sync::SyncError) -> String {
+    use axiotask_core::sync::SyncError;
+    match e {
+        SyncError::Store(_) => {
+            "Sync hit a local database problem — the details are in the log.".into()
+        }
+        SyncError::Internal(_) => {
+            "Sync hit an unexpected internal error — the details are in the log.".into()
+        }
+        SyncError::Api(_) => e.to_string(),
+    }
+}
+
 /// File-based token store. Persists tokens as JSON to a file.
 struct FileTokenStore {
     path: std::path::PathBuf,
@@ -667,20 +688,25 @@ impl AppState {
                         // back the idle cadence off. Log at ERROR only the first
                         // time (or when the error text changes) — a stuck sync
                         // must not reprint the same line every cadence tick.
-                        let msg = e.to_string();
+                        // Full typed detail (may carry raw SQL) goes to the log;
+                        // the user only ever sees the sanitized message (#128).
+                        let detail = e.to_string();
+                        let user_msg = sync_user_message(e);
                         if permanent_failure_is_new(
                             status.needs_attention,
                             status.last_error.as_deref(),
-                            &msg,
+                            &user_msg,
                         ) {
-                            tracing::error!("sync failed (needs attention): {msg}");
+                            tracing::error!("sync failed (needs attention): {detail}");
                         } else {
-                            tracing::debug!("sync still failing (unchanged, backing off): {msg}");
+                            tracing::debug!(
+                                "sync still failing (unchanged, backing off): {detail}"
+                            );
                         }
                         let streak = self.attention_streak.fetch_add(1, Ordering::Relaxed) + 1;
                         tracing::debug!("permanent sync-failure streak now {streak}");
                         status.needs_attention = true;
-                        status.last_error = Some(msg);
+                        status.last_error = Some(user_msg);
                     }
                 }
             }
@@ -1250,6 +1276,49 @@ mod tests {
         let dir = TempDir::new().unwrap();
         assert!(latest_backup_in(dir.path()).is_none());
         assert!(latest_backup_in(&dir.path().join("does-not-exist")).is_none());
+    }
+
+    // ─── Sync failure messages the user sees (#128) ──────────────────────────
+
+    #[test]
+    fn permanent_store_failure_message_hides_sql_from_the_user() {
+        use axiotask_core::store::StoreError;
+        use axiotask_core::sync::SyncError;
+        // A store failure during sync carries raw sqlx text. `last_error` is
+        // rendered in the "Sync failed" toast and the Properties dialog, so it
+        // must not carry that detail.
+        let e = SyncError::Store(StoreError::Sql("no such column: foo".into()));
+        assert!(e.to_string().contains("sql:"), "precondition: raw leaks");
+
+        let shown = sync_user_message(&e);
+        assert!(!shown.contains("sql:"), "no sql prefix: {shown}");
+        assert!(!shown.contains("no such column"), "no sqlx detail: {shown}");
+        assert!(
+            shown.to_lowercase().contains("log"),
+            "points at the log: {shown}"
+        );
+    }
+
+    #[test]
+    fn internal_sync_failure_message_is_calm() {
+        use axiotask_core::sync::SyncError;
+        let e = SyncError::Internal("assertion x != y failed".into());
+        let shown = sync_user_message(&e);
+        assert!(!shown.contains("assertion"), "no internal detail: {shown}");
+        assert!(
+            shown.to_lowercase().contains("log"),
+            "points at the log: {shown}"
+        );
+    }
+
+    #[test]
+    fn api_sync_failures_keep_their_human_text() {
+        use axiotask_core::api::ApiError;
+        use axiotask_core::sync::SyncError;
+        // API errors are already human and never carry SQL — keep them so the
+        // user still sees "server error: 503" rather than a generic sentence.
+        let e = SyncError::Api(ApiError::Server { status: 503 });
+        assert_eq!(sync_user_message(&e), "server error: 503");
     }
 
     // ─── Permanent-failure backoff / attention ───────────────────────────────
