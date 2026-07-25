@@ -1912,12 +1912,10 @@ mod tests {
         // §B × deleted (P4: delete wins, no conflicted copy). The row is gone
         // locally and the edit is lost by the end of the run.
         //
-        // The PATH differs from the fake's: Google's deletes are SOFT (probed,
-        // #106) — a live PATCH to a deleted task answers 200 with a body
-        // echoing our edit while the row stays deleted and absent from
-        // `list_tasks`, so ghost detection on the pull is what removes it. The
-        // fake hard-removes, so the same crossing arrives as a 404. Only the
-        // OUTCOME is asserted here, because it is the one both paths share.
+        // This runs the REAL Google path: the fake now soft-deletes (#114), so
+        // our pending edit's PATCH lands 200-but-ignored (never a 404) while the
+        // row stays deleted and absent from `list_tasks`, and ghost detection on
+        // the pull is what removes it — exactly what the live service does.
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "exists", "1");
@@ -2049,9 +2047,9 @@ mod tests {
 
     #[tokio::test]
     async fn complete_vs_remote_delete_row_gone() {
-        // §C × remote deleted: the completion is lost with the row (P4). As in
-        // §B × deleted the live path is 200-then-ghost-detection and the fake's
-        // is a 404; the asserted outcome is the one both share.
+        // §C × remote deleted: the completion is lost with the row (P4). Runs
+        // the real path — the fake soft-deletes (#114), so the complete's PATCH
+        // is 200-but-ignored and ghost detection on the pull removes the row.
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "buy milk", "1");
@@ -2088,10 +2086,19 @@ mod tests {
         eng.store.upsert_task(&row).await.unwrap();
     }
 
-    /// Whether the fake still holds a task — the remote half of every §D
-    /// assertion.
+    /// Whether the row is gone from the server as the pull sees it — the remote
+    /// half of every §D assertion. Google soft-deletes, so a deleted row still
+    /// answers 200 on a by-id `get` (flagged `deleted:true`); "gone" as sync
+    /// means absent from `list_tasks`, which is exactly what ghost detection
+    /// reads.
     async fn remote_gone(client: &InMemoryClient, list: &str, id: &str) -> bool {
-        matches!(client.get_task(list, id).await, Err(ApiError::NotFound))
+        !client
+            .list_tasks(list, None)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .any(|t| t.id == id)
     }
 
     #[tokio::test]
@@ -2401,8 +2408,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_update_412_then_server_gone_deletes_local() {
-        // 412 then the task is deleted on the server before we fetch it.
+    async fn push_update_into_a_remotely_deleted_list_deletes_local() {
+        // The one way a task PATCH still 404s now that the fake soft-deletes
+        // tasks: the row's whole LIST was deleted out from under it. That is a
+        // real, permanent NotFound, and `on_update_error` hard-deletes the local
+        // row (delete wins, P4) — the genuine integration exercise of the
+        // patch → 404 → DeleteLocal branch. (A soft-deleted *task* answers 200,
+        // not 404, and converges through ghost detection instead — see
+        // `edit_vs_remote_delete_...`.)
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "doomed", "1");
@@ -2412,14 +2425,15 @@ mod tests {
         local.task.title = "edit".into();
         local.sync_state = SyncState::Dirty;
         local.pending_op = Some("update".into());
-        local.task.etag = Some("stale".into());
         eng.store.upsert_task(&local).await.unwrap();
 
-        // patch → 412, then get_task → NotFound (server deleted it).
-        client.delete_task_from_state("L1", "T1");
+        // The list vanishes server-side: a PATCH into it is a 404.
+        client.delete_list_from_state("L1");
 
-        eng.run().await.unwrap();
-        // Local row dropped to mirror server.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a remote delete is not a sync error");
+        assert_eq!(out.conflicts, 0, "delete/edit never forks a copy");
+        // Local row dropped to mirror the server.
         assert!(
             eng.store
                 .list_tasks("L1")
@@ -2529,7 +2543,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_update_not_found_deletes_local() {
+    async fn push_update_of_a_soft_deleted_task_converges_via_ghost() {
+        // §B×deleted through the REAL Google path: the row was soft-deleted
+        // remotely, so our pending edit's PATCH lands 200-but-ignored (never a
+        // 404), the response body is adopted, and the pull's ghost detection —
+        // the row being absent from list_tasks — is what removes it. No error,
+        // no conflicted copy, edit discarded (P4).
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");
         let remote = client.seed_task("L1", "T1", "exists", "1");
@@ -2541,10 +2560,12 @@ mod tests {
         local.task.title = "edited".into();
         local.sync_state = SyncState::Dirty;
         local.pending_op = Some("update".into());
-        local.task.etag = remote.etag;
+        local.task.etag = remote.etag; // current etag → the PATCH is 200-ignored
         eng.store.upsert_task(&local).await.unwrap();
 
-        eng.run().await.unwrap();
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(out.conflicts, 0, "delete/edit never forks a copy");
         assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
     }
 

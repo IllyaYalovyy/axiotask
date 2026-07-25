@@ -29,14 +29,15 @@
 //! - a `move` issues a fresh etag, and does NOT cap nesting depth.
 //! - a `move` naming a `previous` that no longer exists is a **404** — unlike
 //!   an unknown SUBJECT id, which is a 400.
-//! - a `move` naming a `parent` that no longer exists is a permanent 400, the
-//!   same rule `insert` applies to the same field. The exact live status for
-//!   this one case was NOT probed separately (probe 2 covered `previous` and
-//!   the subject id); what matters is that it is a permanent rejection, since
-//!   Google's cascade means it can only ever be reached by racing a delete.
-//!   Modelling it as success let the fake hold a task whose parent it did not
-//!   have — a state the real service cannot be in, and one our pull re-detaches
-//!   on every run, so sync never settles (found by the §J suite, #113).
+//! - a `move` naming a `parent` that no longer exists is modeled as a permanent
+//!   400, the same rule `insert` applies to the same field. Probe round 2c
+//!   (#114) was added to pin the exact live status (400 vs 404) for both an
+//!   unknown and a soft-deleted parent; either way it is a permanent rejection,
+//!   which is all the engine keys off. This case can only ever be reached by
+//!   racing a delete, since Google's cascade means a live parent vanishes only
+//!   mid-flight. Modelling it as success let the fake hold a task whose parent
+//!   it did not have — a state the real service cannot be in, and one our pull
+//!   re-detaches on every run, so sync never settles (found by §J, #113).
 //! - attaching an open task to a **completed** parent (by `insert` with a
 //!   `parent`, or by `move`) completes it: the response body itself already
 //!   carries `status: completed`, and the cascade reaches the attached
@@ -45,15 +46,19 @@
 //!   with a pre-child etag lands and the cascade takes children the client
 //!   never pulled.
 //!
+//! - **Soft delete.** Google soft-deletes, and the fake now models it: a
+//!   `DELETE` moves the row (and its cascade subtree) into a `deleted` set
+//!   instead of dropping it. A direct `get` still returns 200 (its `deleted`
+//!   flag lives on the wire only; our typed `Task` drops it), a later `patch`
+//!   returns 200 but is silently ignored (the row stays deleted, and — key for
+//!   P4 — does NOT 412 on a stale etag), and the row is absent from
+//!   `list_tasks` (which defaults to `showDeleted=false`). The engine converges
+//!   §B×deleted through ghost detection on the pull, exactly as live. Verified
+//!   live (RFC-009 #106; exact echo body + stale-etag PATCH pinned by probe
+//!   round 2 — see the `live_api_probe` example).
+//!
 //! Known, deliberate divergences from the live API (recorded so nobody
 //! "fixes" the fake into a fiction — see RFC-009 §"Probes"):
-//! - **Soft delete.** Google soft-deletes: after `DELETE`, a direct `GET` by
-//!   id still returns 200 with `deleted: true`, the row vanishes from
-//!   `tasks.list`, and a later `PATCH` returns 200 but is silently ignored
-//!   (the row stays deleted). The fake hard-removes instead, so `get`/`patch`
-//!   answer 404. The observable-through-a-pull behavior — the row disappears
-//!   from `list_tasks` and no write revives it — is identical; only the
-//!   by-id status differs. Tracked for the engine's §B×deleted row.
 //! - **`DELETE` honors `If-Match`** live (stale etag → 412, task survives;
 //!   current etag → 204). `HttpClient::delete_task` deliberately sends none,
 //!   making our deletes unconditional (RFC-009 P4, "delete wins"), and the
@@ -115,6 +120,14 @@ struct TargetedFault {
 struct State {
     lists: Vec<TaskList>,
     tasks: Vec<(String, Task)>, // (list_id, task)
+    /// Soft-deleted rows, moved OUT of `tasks` by a `delete`. Google
+    /// soft-deletes: a deleted row vanishes from `tasks.list` (which defaults
+    /// to `showDeleted=false`) but a direct `get` still returns it (200,
+    /// `deleted: true`) and a `patch` is accepted-but-ignored. Keeping them in
+    /// a separate collection means every internal query over `tasks`
+    /// (insert/move parent checks, positioning, completion cascade) naturally
+    /// sees only live rows, exactly as the live service does.
+    deleted: Vec<(String, Task)>, // (list_id, task)
     etag_counter: u64,
     faults: VecDeque<(Method, fn() -> ApiError)>,
     /// Faults scoped to a specific task id or `list_tasks` page.
@@ -184,6 +197,46 @@ impl State {
             },
             None => Ok(format!("!{:019}", u64::MAX - self.etag_counter)),
         }
+    }
+
+    /// Soft-delete `id` and its whole subtree the way the live service does:
+    /// the rows move out of the live set into `deleted`, so they disappear from
+    /// `list_tasks` while a direct `get`/`patch` still reaches them. Mirrors
+    /// the DELETE endpoint's server-side cascade (a parent's delete takes its
+    /// descendants). Returns how many rows were moved — `0` when `id` names no
+    /// live task, which the callers turn into a 404.
+    fn soft_delete_subtree(&mut self, id: &str) -> usize {
+        if !self.tasks.iter().any(|(_, t)| t.id == id) {
+            return 0;
+        }
+        // Collect the subtree: the root plus every transitive descendant.
+        let mut subtree: std::collections::HashSet<String> =
+            std::collections::HashSet::from([id.to_string()]);
+        loop {
+            let n = subtree.len();
+            let more: Vec<String> = self
+                .tasks
+                .iter()
+                .filter(|(_, t)| t.parent.as_deref().is_some_and(|p| subtree.contains(p)))
+                .map(|(_, t)| t.id.clone())
+                .collect();
+            subtree.extend(more);
+            if subtree.len() == n {
+                break;
+            }
+        }
+        let mut moved = 0;
+        let mut i = 0;
+        while i < self.tasks.len() {
+            if subtree.contains(&self.tasks[i].1.id) {
+                let row = self.tasks.remove(i);
+                self.deleted.push(row);
+                moved += 1;
+            } else {
+                i += 1;
+            }
+        }
+        moved
     }
 
     /// Is `id` a task the server currently considers completed?
@@ -373,11 +426,16 @@ impl InMemoryClient {
         s.commit_then_fail_insert = false;
     }
 
-    /// Remove a task from internal state (simulates server-side deletion by another client).
-    pub fn delete_task_from_state(&self, list_id: &str, task_id: &str) {
-        let mut s = self.inner.lock().unwrap();
-        s.tasks
-            .retain(|(lid, t)| !(lid == list_id && t.id == task_id));
+    /// Soft-delete a task server-side, the way another client's `DELETE`
+    /// would: the row (and its subtree, per Google's cascade) leaves
+    /// `list_tasks`, but a direct `get` still returns it (200, `deleted:true`)
+    /// and a `patch` is accepted-but-ignored — so a local pending edit against
+    /// it converges through ghost detection on the pull, not a 404. Mirrors
+    /// [`GoogleTasksClient::delete_task`] without recording a call or consuming
+    /// a fault. `list_id` is accepted for call-site clarity; the subtree is
+    /// resolved by id (ids are unique across lists).
+    pub fn delete_task_from_state(&self, _list_id: &str, task_id: &str) {
+        self.inner.lock().unwrap().soft_delete_subtree(task_id);
     }
 
     /// Remove a list (and its tasks) from internal state, simulating a list
@@ -388,6 +446,7 @@ impl InMemoryClient {
         let mut s = self.inner.lock().unwrap();
         s.lists.retain(|l| l.id != list_id);
         s.tasks.retain(|(lid, _)| lid != list_id);
+        s.deleted.retain(|(lid, _)| lid != list_id);
     }
 
     /// How many times `m` has been invoked.
@@ -452,6 +511,7 @@ impl GoogleTasksClient for InMemoryClient {
             return Err(ApiError::NotFound);
         }
         s.tasks.retain(|(lid, _)| lid != id); // server cascades
+        s.deleted.retain(|(lid, _)| lid != id); // its tombstones go too
         Ok(())
     }
 
@@ -576,11 +636,21 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_targeted_fault(Method::GetTask, &FaultTarget::Id(id.into())) {
             return Err(e);
         }
-        s.tasks
+        if let Some((_, t)) = s.tasks.iter().find(|(lid, t)| lid == list_id && t.id == id) {
+            return Ok(t.clone());
+        }
+        // Live-API behavior: a soft-deleted task still answers 200 on a direct
+        // get (flagged `deleted:true` server-side). Our wire type drops that
+        // flag, so the typed client sees a normal `Task` — what actually
+        // converges the row is its absence from `list_tasks` (ghost detection).
+        if let Some((_, t)) = s
+            .deleted
             .iter()
             .find(|(lid, t)| lid == list_id && t.id == id)
-            .map(|(_, t)| t.clone())
-            .ok_or(ApiError::NotFound)
+        {
+            return Ok(t.clone());
+        }
+        Err(ApiError::NotFound)
     }
 
     async fn patch_task(
@@ -603,6 +673,42 @@ impl GoogleTasksClient for InMemoryClient {
         }
         let new_etag = s.fresh_etag();
         let Some(idx) = s.tasks.iter().position(|(_, t)| t.id == id) else {
+            // Live-API behavior: a PATCH to a soft-deleted task returns 200 with
+            // a body echoing the requested edit, but the row stays deleted and
+            // never returns to `list_tasks` — the "accepted then silently
+            // ignored" shape (verified live, RFC-009 #106; the exact echo body
+            // and whether a stale If-Match still 200s are pinned by probe round
+            // 2). §B×deleted therefore converges through ghost detection on the
+            // pull, not this method's 404. The echo is NOT persisted, so the
+            // row remains deleted; the etag is left unchanged (nothing changed
+            // server-side). This must NOT 412 on a stale etag: a fork on a
+            // delete/edit race would violate P4 (delete wins, no conflicted
+            // copy).
+            if let Some((_, dt)) = s
+                .deleted
+                .iter()
+                .find(|(lid, t)| lid == list_id && t.id == id)
+            {
+                let mut echo = dt.clone();
+                if let Some(title) = patch.title {
+                    echo.title = title;
+                }
+                if let Some(notes) = patch.notes {
+                    echo.notes = if notes.is_empty() { None } else { Some(notes) };
+                }
+                if let Some(due) = patch.due {
+                    echo.due = validate_due(Some(due))?;
+                }
+                if let Some(status) = patch.status {
+                    echo.status = status;
+                    echo.completed = if status == TaskStatus::Completed {
+                        Some("2026-01-01T00:00:00Z".into())
+                    } else {
+                        None
+                    };
+                }
+                return Ok(echo);
+            }
             return Err(ApiError::NotFound);
         };
         if let Some(want) = etag
@@ -673,21 +779,11 @@ impl GoogleTasksClient for InMemoryClient {
         if !s.lists.iter().any(|l| l.id == list_id) {
             return Err(ApiError::NotFound);
         }
-        let before = s.tasks.len();
-        s.tasks.retain(|(_, t)| t.id != id);
-        if s.tasks.len() == before {
+        // Live-API behavior: DELETE soft-deletes. The row leaves `list_tasks`
+        // but a direct `get`/`patch` still reaches it (verified live, RFC-009
+        // #106). The server cascades to descendants, so the whole subtree goes.
+        if s.soft_delete_subtree(id) == 0 {
             return Err(ApiError::NotFound);
-        }
-        // Live-API behavior: deleting a parent deletes its descendants too.
-        loop {
-            let alive: std::collections::HashSet<String> =
-                s.tasks.iter().map(|(_, t)| t.id.clone()).collect();
-            let n = s.tasks.len();
-            s.tasks
-                .retain(|(_, t)| t.parent.as_deref().is_none_or(|p| alive.contains(p)));
-            if s.tasks.len() == n {
-                break;
-            }
         }
         Ok(())
     }
@@ -721,11 +817,11 @@ impl GoogleTasksClient for InMemoryClient {
         // state Google cannot be in (its deletes cascade) — and our pull then
         // detaches that row on every single run, so sync never settles. Found
         // by the §J property suite (#113). NOTE: probe 2 verified the statuses
-        // for an unknown `previous` (404) and an unknown SUBJECT id (400); the
-        // status for an unknown `parent` on a MOVE was not probed separately,
-        // so this reuses insert's verified rule for the same field. The engine
-        // treats every permanent rejection the same way, so the choice between
-        // 400 and 404 changes nothing it does.
+        // for an unknown `previous` (404) and an unknown SUBJECT id (400);
+        // probe round 2c (#114) pins the status for an unknown/soft-deleted
+        // `parent` on a MOVE. This reuses insert's verified rule for the same
+        // field; the engine treats every permanent rejection the same way, so
+        // the choice between 400 and 404 changes nothing it does.
         if let Some(p) = parent
             && !s.tasks.iter().any(|(_, t)| t.id == p)
         {
@@ -852,12 +948,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_then_patch_returns_not_found() {
+    async fn delete_soft_deletes_gone_from_list_but_still_gettable() {
+        // Live-API soft delete (RFC-009 #106): after DELETE the row vanishes
+        // from `list_tasks` (showDeleted defaults off) but a direct `get` still
+        // returns 200 — it is NOT hard-removed.
         let c = InMemoryClient::new();
         c.seed_list("L1", "Inbox");
         let t = c.seed_task("L1", "T1", "first", "00000000000001");
         c.delete_task("L1", &t.id).await.unwrap();
-        let err = c
+
+        assert!(
+            c.list_tasks("L1", None).await.unwrap().items.is_empty(),
+            "a deleted task is absent from list_tasks"
+        );
+        let got = c
+            .get_task("L1", &t.id)
+            .await
+            .expect("a soft-deleted task still answers 200 on a direct get");
+        assert_eq!(got.id, "T1");
+    }
+
+    #[tokio::test]
+    async fn patch_of_a_deleted_task_is_200_but_ignored() {
+        // Live-API behavior: a PATCH to a soft-deleted task returns 200 with a
+        // body echoing the edit, but the row stays deleted and never returns to
+        // list_tasks. The stored row is untouched.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let t = c.seed_task("L1", "T1", "first", "00000000000001");
+        c.delete_task("L1", &t.id).await.unwrap();
+
+        let echo = c
+            .patch_task(
+                "L1",
+                &t.id,
+                TaskPatch {
+                    title: Some("edit-after-delete".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .expect("PATCH of a deleted task is accepted (200), not a 404");
+        assert_eq!(
+            echo.title, "edit-after-delete",
+            "the 200 body echoes the requested edit"
+        );
+        // …but nothing was revived: still gone from list_tasks, and the stored
+        // row keeps its original title.
+        assert!(c.list_tasks("L1", None).await.unwrap().items.is_empty());
+        assert_eq!(
+            c.get_task("L1", &t.id).await.unwrap().title,
+            "first",
+            "the edit was silently ignored server-side"
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_of_a_deleted_task_with_a_stale_etag_still_200s_no_412() {
+        // P4 guard: a delete/edit race must never fork. The engine cannot see
+        // the `deleted` flag through the typed client, so if a stale-etag PATCH
+        // to a deleted row 412'd, the 412-resolution path would refetch it and
+        // fabricate a conflicted copy of a row that is actually gone. The live
+        // service answers 200-and-ignore regardless of If-Match (pinned by
+        // probe round 2); the fake must too.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let t = c.seed_task("L1", "T1", "first", "00000000000001");
+        c.delete_task("L1", &t.id).await.unwrap();
+
+        let resp = c
             .patch_task(
                 "L1",
                 &t.id,
@@ -865,11 +1025,61 @@ mod tests {
                     title: Some("nope".into()),
                     ..Default::default()
                 },
-                None,
+                Some("definitely-stale-etag"),
+            )
+            .await;
+        assert!(
+            resp.is_ok(),
+            "a stale etag must not 412 a deleted row: got {resp:?}"
+        );
+        assert!(c.list_tasks("L1", None).await.unwrap().items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_soft_deletes_the_whole_subtree() {
+        // The server cascades a delete to descendants; each is soft-deleted
+        // (gone from list_tasks, still gettable), not left stranded.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "P", "parent", "1");
+        c.seed_task_with_parent("L1", "C", "child", "2", Some("P"));
+        c.seed_task_with_parent("L1", "G", "grandchild", "3", Some("C"));
+
+        c.delete_task("L1", "P").await.unwrap();
+
+        assert!(
+            c.list_tasks("L1", None).await.unwrap().items.is_empty(),
+            "parent and every descendant leave list_tasks"
+        );
+        for id in ["P", "C", "G"] {
+            assert!(
+                c.get_task("L1", id).await.is_ok(),
+                "{id} is soft-deleted, not hard-removed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_parent_prevents_new_inserts_under_it() {
+        // A soft-deleted parent is not a live task, so an insert naming it is a
+        // permanent 400 — the same rule an unknown parent draws. Guards that
+        // deleted rows stay out of the live parent set.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "P", "parent", "1");
+        c.delete_task("L1", "P").await.unwrap();
+        let err = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "orphan".into(),
+                    parent: Some("P".into()),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap_err();
-        assert!(matches!(err, ApiError::NotFound));
+        assert!(!err.is_transient(), "unknown/deleted parent is permanent");
     }
 
     #[tokio::test]

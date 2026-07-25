@@ -44,6 +44,14 @@
 //!    server cascade take it, and does the child's insert stale the parent etag?
 //! 7. does `DELETE /tasks/{id}` honor `If-Match`?
 //! 8. does `PATCH /users/@me/lists/{id}` honor `If-Match` (do list etags 412)?
+//!
+//! Round 2 (#114) — pinning the soft-delete shape the fake now models:
+//! - 2a. the EXACT PATCH-echo of a deleted task: the 200 body echoes the edit
+//!   and carries `deleted:true`, while the stored row is left untouched.
+//! - 2b. a STALE `If-Match` PATCH on a deleted row still 200s (no 412) — the
+//!   P4 guard that a delete/edit race never forks a conflicted copy.
+//! - 2c. the exact status of a `move` naming an unknown / soft-deleted
+//!   `parent` (the one case `in_memory.rs` had not probed separately).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -183,6 +191,21 @@ impl Raw {
         let url = format!("{BASE_URL}/users/@me/lists/{}", urlencoding::encode(id));
         let body = serde_json::json!({ "title": title });
         self.send(self.auth.patch(&url).json(&body), if_match).await
+    }
+
+    /// Raw `PATCH .../tasks/{id}` with an arbitrary JSON body and optional
+    /// `If-Match`. The typed client drops the `deleted` flag and normalizes the
+    /// body into a `Task`; probe round 2 needs the verbatim status + body to
+    /// pin the exact PATCH-echo of a soft-deleted row.
+    async fn patch_task(
+        &self,
+        lid: &str,
+        id: &str,
+        body: &serde_json::Value,
+        if_match: Option<&str>,
+    ) -> RawResp {
+        let url = format!("{BASE_URL}/lists/{lid}/tasks/{id}");
+        self.send(self.auth.patch(&url).json(body), if_match).await
     }
 
     fn move_url(lid: &str, id: &str, parent: Option<&str>, previous: Option<&str>) -> String {
@@ -627,6 +650,8 @@ async fn probe_delete_visibility(client: &HttpClient, raw: &Raw, lid: &str, r: &
         ),
     );
 
+    probe_deleted_patch_echo(client, raw, lid, r).await;
+
     // --- a child taken by its parent's cascade ---------------------------
     let p = new_task(client, lid, "del-casc-parent", None).await;
     let c = new_task(client, lid, "del-casc-child", Some(&p.id)).await;
@@ -672,6 +697,80 @@ async fn probe_delete_visibility(client: &HttpClient, raw: &Raw, lid: &str, r: &
             patched.is_ok(),
             after.deleted_flag()
         ),
+    );
+}
+
+/// Round 2 (#114): the EXACT shape of a soft-deleted row's PATCH, now that the
+/// fake models it. 2a pins the echo body (edited fields returned, `deleted:true`,
+/// stored row untouched); 2b pins the P4 guard that a stale `If-Match` still
+/// 200s rather than 412ing into a spurious conflicted copy.
+async fn probe_deleted_patch_echo(client: &HttpClient, raw: &Raw, lid: &str, r: &mut Report) {
+    // --- round 2a: the EXACT PATCH-echo body -----------------------------
+    // The fake returns a 200 whose body echoes the requested edit but carries
+    // `deleted:true`, and leaves the stored row untouched (get still shows the
+    // ORIGINAL title). Confirm that is what the live service actually returns,
+    // to the field: does the 200 body echo `title`, and is it flagged deleted?
+    let echoed = new_task(client, lid, "del-echo", None).await;
+    let orig_etag = echoed.etag.clone();
+    client
+        .delete_task(lid, &echoed.id)
+        .await
+        .expect("delete for echo probe");
+    let raw_patch = raw
+        .patch_task(
+            lid,
+            &echoed.id,
+            &serde_json::json!({ "title": "echoed-edit" }),
+            None,
+        )
+        .await;
+    let get_after = raw.get_task(lid, &echoed.id).await;
+    r.observe(
+        "round2a: PATCH-echo of a deleted task is 200, body carries the edited title AND deleted:true",
+        raw_patch.status == 200
+            && raw_patch.field("title").as_deref() == Some("echoed-edit")
+            && raw_patch.deleted_flag() == Some(true),
+        format!(
+            "{raw_patch} | echoed title={:?} deleted={:?} etag before={:?} echo etag={:?}",
+            raw_patch.field("title"),
+            raw_patch.deleted_flag(),
+            orig_etag,
+            raw_patch.field("etag"),
+        ),
+    );
+    r.observe(
+        "round2a: …and the STORED row is untouched (get still shows the original title)",
+        get_after.field("title").as_deref() == Some("del-echo")
+            && get_after.deleted_flag() == Some(true),
+        format!(
+            "stored title={:?}, deleted={:?}",
+            get_after.field("title"),
+            get_after.deleted_flag()
+        ),
+    );
+
+    // --- round 2b: a STALE If-Match PATCH on a deleted row ---------------
+    // P4-critical: the engine cannot see `deleted` through the typed client, so
+    // a 412 here would send it down the conflict-refetch path and fork a
+    // conflicted copy of a row that is actually gone. Verify the deleted row
+    // ignores the precondition too (200, not 412), so delete/edit never forks.
+    let stale = new_task(client, lid, "del-stale", None).await;
+    client
+        .delete_task(lid, &stale.id)
+        .await
+        .expect("delete for stale-etag probe");
+    let stale_patch = raw
+        .patch_task(
+            lid,
+            &stale.id,
+            &serde_json::json!({ "title": "stale-edit" }),
+            Some("\"definitely-stale-etag\""),
+        )
+        .await;
+    r.observe(
+        "round2b: a stale If-Match PATCH on a deleted row still 200s (no 412 → no fork, P4)",
+        stale_patch.status == 200,
+        format!("{stale_patch}"),
     );
 }
 
@@ -741,6 +840,8 @@ async fn probe_move_semantics(client: &HttpClient, raw: &Raw, lid: &str, r: &mut
         format!("{typed:?}"),
     );
 
+    probe_move_unknown_parent(client, raw, lid, r).await;
+
     // --- 3. move creating a 3rd level ------------------------------------
     let l1 = new_task(client, lid, "depth-l1", None).await;
     let l2 = new_task(client, lid, "depth-l2", Some(&l1.id)).await;
@@ -775,6 +876,37 @@ async fn probe_move_semantics(client: &HttpClient, raw: &Raw, lid: &str, r: &mut
             format!("status={:?}, parent={:?}", after.status, after.parent),
         );
     }
+}
+
+/// Round 2c (#114): the exact status of a `move` naming a `parent` that does not
+/// exist — the one `move` field `in_memory.rs` had not probed separately. Two
+/// variants: a parent id that never existed, and one soft-deleted mid-flight
+/// (the only way a live parent actually vanishes). Either way it must be a
+/// permanent rejection; the engine treats every permanent status the same.
+async fn probe_move_unknown_parent(client: &HttpClient, raw: &Raw, lid: &str, r: &mut Report) {
+    let mover_a = new_task(client, lid, "mv-bad-parent-a", None).await;
+    let unknown_parent = raw
+        .move_task(lid, &mover_a.id, Some("no-such-parent-id"), None)
+        .await;
+    r.observe(
+        "round2c: move under an UNKNOWN parent — exact status (fake models 400)",
+        unknown_parent.status == 400 || unknown_parent.status == 404,
+        format!("{unknown_parent}"),
+    );
+    let doomed_parent = new_task(client, lid, "mv-doomed-parent", None).await;
+    let mover_b = new_task(client, lid, "mv-bad-parent-b", None).await;
+    client
+        .delete_task(lid, &doomed_parent.id)
+        .await
+        .expect("deleting the doomed parent");
+    let deleted_parent = raw
+        .move_task(lid, &mover_b.id, Some(&doomed_parent.id), None)
+        .await;
+    r.observe(
+        "round2c: move under a soft-DELETED parent — exact status (fake models 400)",
+        deleted_parent.status == 400 || deleted_parent.status == 404,
+        format!("{deleted_parent}"),
+    );
 }
 
 /// RFC-009 probes 5–6: writes that race a completed parent.

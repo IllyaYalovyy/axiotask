@@ -880,10 +880,12 @@ mod tests {
     #[test]
     fn update_404_hard_deletes_local_delete_wins() {
         // Whatever produces a 404 on the PATCH, delete wins (P4). Note what
-        // this row is NOT: Google's deletes are SOFT (probed, #106) — a PATCH
-        // to a remotely-deleted task answers **200** with a body echoing our
-        // edit while the row stays deleted, so §B × deleted converges through
-        // ghost detection on the pull, not through this branch.
+        // this row is NOT: Google's deletes are SOFT (probed, #106; modeled in
+        // the fake since #114) — a PATCH to a remotely-deleted TASK answers
+        // **200** with a body echoing our edit while the row stays deleted, so
+        // §B × deleted converges through ghost detection on the pull, not this
+        // branch. A task PATCH only 404s when its whole LIST was deleted; that
+        // is the crossing this branch actually handles.
         assert_eq!(
             on_update_error(&ApiError::NotFound),
             UpdateFailure::DeleteLocal
