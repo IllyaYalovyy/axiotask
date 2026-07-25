@@ -23,7 +23,13 @@ asynchronous.
 - **G1** — Tasks survive restarts, including changes made offline.
 - **G2** — A list's full hierarchy loads in one query.
 - **G3** — Sync engine can cheaply enumerate dirty rows.
-- **G4** — Migrations are versioned and forward-only.
+- **G4** — Pre-1.0 there are **no migrations**. The store is a cache of
+  Google's data (Google is the source of truth), so a schema change wipes and
+  recreates the cache rather than evolving it in place. The schema lives in
+  **one file** (`crates/axiotask-core/schema.sql`); `store::open` fingerprints
+  it and, on a mismatch, exports the old database to JSON and recreates it from
+  the current schema. (Post-1.0, when real user-owned local data exists, this
+  becomes versioned forward-only migrations — a separate RFC.)
 - **G5** — All queries are compile-time checked (`sqlx`).
 
 ## Non-Goals
@@ -132,7 +138,12 @@ Database file lives at `dirs::data_dir()/axiotask/axiotask.sqlite`.
 
 ## Testing Strategy
 
-- **Migrations**: run all migrations against `sqlite::memory:` in a test; assert idempotency by running twice.
+- **Schema fingerprint (pre-1.0 wipe-and-recreate)**: opening a fresh DB stamps
+  the schema fingerprint and creates no backup; reopening a current DB preserves
+  its data (no wipe); opening a DB stamped with an incompatible fingerprint
+  exports every table to a timestamped JSON file beside the DB, then wipes and
+  recreates it from `schema.sql`. Old-schema fixtures (including a parent with a
+  subtask) prove the export captures the full subtree before the wipe.
 - **Repository tests**: in-memory DB per test (`SqlitePool::connect(":memory:")`); coverage target = every public method.
 - **Tree query**: property test — generate arbitrary tree shapes, round-trip insert → `load_tree` → assert structure.
 - **Dirty queue**: assert ordering invariants (creates before updates before deletes for the same row).

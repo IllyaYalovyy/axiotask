@@ -1,21 +1,17 @@
--- Schema v1. Applied when PRAGMA user_version < 1.
--- See designs/RFC-003-local-sqlite-store.md and RFC-004-sync-engine.md.
+-- The whole local-store schema, in one file.
 --
--- v1 is the clean pre-1.0 baseline. It first drops any tables left by the
--- earlier unversioned `CREATE TABLE IF NOT EXISTS` schema so a dev database
--- created before migration versioning is reset to this schema. There is no
--- pre-1.0 data to preserve. user_version gates this to run exactly once;
--- it is a no-op on a fresh database. Future migrations (v2+) MUST NOT drop —
--- they evolve the schema in place.
-DROP TABLE IF EXISTS inflight_creates;
-DROP TABLE IF EXISTS pending_moves;
-DROP TABLE IF EXISTS tasks;
-DROP TABLE IF EXISTS task_lists;
-DROP TABLE IF EXISTS id_remap;
-DROP TABLE IF EXISTS sync_log;
+-- Pre-1.0 there are NO migrations (see designs/RFC-003-local-sqlite-store.md).
+-- The local store is a CACHE of Google Tasks plus per-row sync metadata, and
+-- Google is the source of truth. A schema change therefore does not migrate
+-- data in place — it wipes the cache and recreates it from this exact file.
+-- `store::open` fingerprints this text; a database stamped with a different
+-- fingerprint is exported to JSON and then wiped-and-recreated at runtime.
+--
+-- To change the schema, edit THIS file. Do not add migration steps, version
+-- counters, DROP-TABLE reset fragments, or in-place ALTERs — the fingerprint
+-- mismatch handles the reset uniformly and leaves no legacy compatibility code.
 --
 -- Design notes:
---  * The local store is a CACHE of Google Tasks plus per-row sync metadata.
 --  * Domain columns mirror the Google Tasks API; sync columns drive the
 --    dirty-flag reconciliation engine (RFC-004).
 --  * Pending mutations are tracked on two orthogonal axes:
@@ -32,7 +28,12 @@ CREATE TABLE task_lists (
   updated         TEXT NOT NULL,              -- server 'updated' (RFC-3339)
   local_updated   TEXT NOT NULL,              -- local last-edit (RFC-3339)
   sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted')),
-  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL)
+  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL),
+  -- Local-only list: lives exclusively on this device, never pushed to, pulled
+  -- from, or reconciled against Google. The sync engine must never push it (or
+  -- its tasks) and never ghost-delete it (it is absent from the server by
+  -- design, not because it was deleted remotely).
+  local_only      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE tasks (
@@ -61,7 +62,12 @@ CREATE TABLE tasks (
   base_title      TEXT,
   base_notes      TEXT,
   base_due        TEXT,
-  base_status     TEXT CHECK (base_status IN ('needsAction','completed') OR base_status IS NULL)
+  base_status     TEXT CHECK (base_status IN ('needsAction','completed') OR base_status IS NULL),
+  -- Google's absolute URL to this task in the Tasks web app (output-only,
+  -- populated on pull; NULL for tasks not yet synced). The UI's "Open in Google
+  -- Tasks" action — the only place Google-only features like recurrence can be
+  -- managed, since the REST API does not expose them.
+  web_view_link   TEXT
 );
 
 CREATE INDEX idx_tasks_tree  ON tasks(list_id, parent_id, position);
