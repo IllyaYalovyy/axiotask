@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 
 use crate::api::ApiError;
-use crate::model::{NewTask, Task, TaskList, TaskPatch};
+use crate::model::{BaseSnapshot, NewTask, Task, TaskList, TaskPatch, TaskStatus};
 use crate::store::{PendingMove, StoredTask, StoredTaskList, SyncState};
 
 // ─── Shared vocabulary ───────────────────────────────────────────────────────
@@ -347,6 +347,46 @@ pub fn find_orphan<'a, S: BuildHasher>(
         .find(|r| !known_local_ids.contains(&r.id) && same_content(local, r))
 }
 
+/// Like [`find_orphan`] but matches on the create's **base snapshot** — the
+/// insert payload as it was actually sent — instead of the row's current
+/// content (RFC-009 §G, #122). An edit made during the in-flight window mutates
+/// the local row but never the base, so adoption still recognizes the committed
+/// server row; without this the drifted content misses and the create is
+/// retried, duplicating the task.
+///
+/// `has_parent` tolerates the one status coercion Google applies on insert that
+/// the payload cannot predict: a subtask inserted under a completed parent is
+/// stored **already completed**, and a later parent-complete cascades onto it
+/// too (RFC-009 §G, probe). So for any SUBTASK create, a completed remote is
+/// still our child — status is not required to match (the parent's completion
+/// state can itself change between the insert and recovery, so we cannot key on
+/// it). Everything the user typed always must match. For a top-level create
+/// (`has_parent == false`) status stays strict, since no cascade can touch it —
+/// so a crashed create never adopts an unrelated same-title row (the
+/// d1-does-not-leak guarantee).
+pub fn find_orphan_by_base<'a, S: BuildHasher>(
+    base: &BaseSnapshot,
+    has_parent: bool,
+    remote: &'a [Task],
+    known_local_ids: &HashSet<String, S>,
+) -> Option<&'a Task> {
+    remote
+        .iter()
+        .find(|r| !known_local_ids.contains(&r.id) && base_matches_create(base, has_parent, r))
+}
+
+/// A create's base against a committed remote row (see [`find_orphan_by_base`]).
+/// Typed content (title/notes/due) must always match; status must match unless
+/// the subtask completion cascade explains a completed remote.
+fn base_matches_create(base: &BaseSnapshot, has_parent: bool, r: &Task) -> bool {
+    let due = |d: &Option<String>| d.as_deref().and_then(crate::dates::normalize_due);
+    let notes = |n: &Option<String>| n.clone().filter(|s| !s.is_empty());
+    base.title == r.title
+        && notes(&base.notes) == notes(&r.notes)
+        && due(&base.due) == due(&r.due)
+        && (base.status == r.status || (has_parent && r.status == TaskStatus::Completed))
+}
+
 // ─── §E/§F — position and parent moves ───────────────────────────────────────
 
 /// The ids a pending move references, as the store currently sees them.
@@ -603,20 +643,40 @@ pub fn rehome_target<'a>(
 
 // ─── §A — pull ───────────────────────────────────────────────────────────────
 
+/// An in-flight create the pull must not front-run: its base snapshot (the
+/// payload as sent) plus the remote parent id it was inserted under. Matching on
+/// the base — not the row's live content — means an edit made during the
+/// in-flight window (#122) still recognizes the committed orphan, and the parent
+/// id lets the match tolerate the completed-parent cascade (RFC-009 §G).
+pub struct InflightBase {
+    /// The create's base snapshot (payload as sent).
+    pub base: BaseSnapshot,
+    /// The parent id the row currently names (remote id once the parent has
+    /// been adopted), used to detect the completed-parent cascade.
+    pub parent: Option<String>,
+}
+
 /// The rows of one remote list that are candidates for upsert, in FK-safe
 /// order (§A). Dirty rows keep their local intent (push handles them), and a
-/// remote row matching an in-flight create by content is left for
-/// `recover_inflight_creates` to adopt via id remap — pulling it as a new
-/// clean row would duplicate it (or collide on the primary key).
+/// remote row matching an in-flight create by its BASE snapshot is left for
+/// `recover_inflight_creates` to adopt via id remap — pulling it as a new clean
+/// row would duplicate it (or collide on the primary key). Matching on the base
+/// (not the live row) makes this robust to an edit during the in-flight window
+/// (#122) and to the completed-parent status cascade (RFC-009 §G), exactly like
+/// recovery's [`find_orphan_by_base`].
 pub fn pull_batch<S: BuildHasher>(
     remote: Vec<Task>,
     dirty_ids: &HashSet<String, S>,
-    inflight: &[Task],
+    inflight: &[InflightBase],
 ) -> Vec<Task> {
     let filtered: Vec<Task> = remote
         .into_iter()
         .filter(|t| !dirty_ids.contains(&t.id))
-        .filter(|t| !inflight.iter().any(|f| same_content(f, t)))
+        .filter(|t| {
+            !inflight
+                .iter()
+                .any(|f| base_matches_create(&f.base, f.parent.is_some(), t))
+        })
         .collect();
     order_parents_first(filtered)
 }
@@ -740,11 +800,29 @@ pub fn same_content(a: &Task, b: &Task) -> bool {
     same_typed_content(a, b) && a.status == b.status
 }
 
+/// On a `412`, whether the server left the TYPED content (title/notes/due)
+/// unchanged relative to our base snapshot (RFC-009 §B × moved-while-edited,
+/// #118). True means the etag bumped for a reason that did not touch what the
+/// user typed — a bare reorder, or a status cascade — so the server never
+/// diverged from us on content. The caller then keeps the local typed edit and
+/// re-pushes it (adopting the remote STATUS, which D1 resolves remote-wins); no
+/// conflicted copy. Status is deliberately EXCLUDED here: the completed-parent
+/// cascade coerces status on both sides, so comparing it would read that shared
+/// coercion as a remote divergence. Whole-row resolution still holds (NG1) —
+/// this is base-version conflict *detection*, not a field-level content merge.
+pub fn only_local_diverged(remote: &Task, base: &BaseSnapshot) -> bool {
+    let due = |d: &Option<String>| d.as_deref().and_then(crate::dates::normalize_due);
+    let notes = |n: &Option<String>| n.clone().filter(|s| !s.is_empty());
+    base.title == remote.title
+        && notes(&base.notes) == notes(&remote.notes)
+        && due(&base.due) == due(&remote.due)
+}
+
 /// Whether two tasks agree on everything the user *typed* — title, notes, due
 /// — ignoring the checkbox. This is the divergence test for conflict
-/// resolution only (RFC-009 D1): a status-only difference is not worth a
-/// duplicate task. Same normalization tolerance as [`same_content`].
-fn same_typed_content(a: &Task, b: &Task) -> bool {
+/// resolution (RFC-009 D1): a status-only difference is not worth a duplicate
+/// task. Same normalization tolerance as [`same_content`].
+pub fn same_typed_content(a: &Task, b: &Task) -> bool {
     let due = |t: &Task| t.due.as_deref().and_then(crate::dates::normalize_due);
     let notes = |t: &Task| t.notes.clone().filter(|n| !n.is_empty());
     a.title == b.title && notes(a) == notes(b) && due(a) == due(b)
@@ -1029,6 +1107,114 @@ mod tests {
             t.status = TaskStatus::Completed;
             t
         }));
+    }
+
+    // ─── §B/§G base snapshot (#124) ──────────────────────────────────────────
+
+    #[test]
+    fn only_local_diverged_true_for_a_bare_remote_reorder() {
+        // #118: the remote moved position/parent and bumped the etag but left
+        // the TYPED content equal to our base — only WE changed. Structural
+        // fields are not part of the comparison, so they never break the match.
+        // Normalization tolerance matches `same_content` (due canonicalization,
+        // empty notes ≡ None).
+        let base = BaseSnapshot {
+            title: "t".into(),
+            notes: Some(String::new()),
+            due: Some("2026-03-04T00:00:00Z".into()),
+            status: TaskStatus::NeedsAction,
+        };
+        let mut reordered = task("t1");
+        reordered.title = "t".into();
+        reordered.notes = None;
+        reordered.due = Some("2026-03-04T00:00:00.000Z".into());
+        reordered.parent = Some("p9".into());
+        reordered.position = "99999999999999999999".into();
+        reordered.etag = Some("bumped".into());
+        assert!(only_local_diverged(&reordered, &base));
+
+        // Status is EXCLUDED: a completed-parent cascade can flip the server's
+        // status without it being a content divergence (both sides cascade).
+        let mut cascaded = reordered.clone();
+        cascaded.status = TaskStatus::Completed;
+        assert!(
+            only_local_diverged(&cascaded, &base),
+            "a status-only server change is not a typed-content divergence"
+        );
+
+        // A genuine remote TYPED edit is a real divergence — not "only local".
+        let mut theirs = reordered.clone();
+        theirs.title = "theirs".into();
+        assert!(!only_local_diverged(&theirs, &base));
+    }
+
+    #[test]
+    fn find_orphan_by_base_adopts_despite_a_mid_flight_edit() {
+        // #122: the row was edited during the in-flight window, so its CURRENT
+        // content no longer matches the committed server row and `find_orphan`
+        // misses — but the base (the payload as sent) still adopts it.
+        let base = BaseSnapshot {
+            title: "buy milk".into(),
+            notes: None,
+            due: None,
+            status: TaskStatus::NeedsAction,
+        };
+        let mut committed = task("server-id");
+        committed.title = "buy milk".into();
+
+        let mut drifted = task("local-uuid");
+        drifted.title = "buy oat milk".into();
+        assert!(
+            find_orphan(&drifted, std::slice::from_ref(&committed), &HashSet::new()).is_none(),
+            "current content misses the orphan"
+        );
+        assert_eq!(
+            find_orphan_by_base(
+                &base,
+                false,
+                std::slice::from_ref(&committed),
+                &HashSet::new()
+            )
+            .map(|t| t.id.as_str()),
+            Some("server-id"),
+            "the base still adopts it"
+        );
+        // A row we already track locally is never re-adopted.
+        assert!(find_orphan_by_base(&base, false, &[committed], &ids(&["server-id"])).is_none());
+    }
+
+    #[test]
+    fn find_orphan_by_base_tolerates_the_completed_parent_cascade() {
+        // RFC-009 §G: a subtask inserted under a completed parent is stored
+        // already completed, so the payload (needsAction) and the committed row
+        // (completed) disagree only on status. With a completed parent that is
+        // our cascaded child — adopt it — otherwise a crashed subtask create
+        // duplicates. Top-level, status stays strict (d1-does-not-leak).
+        let base = BaseSnapshot {
+            title: "sub".into(),
+            notes: None,
+            due: None,
+            status: TaskStatus::NeedsAction, // what we sent
+        };
+        let mut committed = task("server-sub");
+        committed.title = "sub".into();
+        committed.status = TaskStatus::Completed; // what the server stored
+        // Parent completed → the coercion is explained → adopt.
+        assert_eq!(
+            find_orphan_by_base(
+                &base,
+                true,
+                std::slice::from_ref(&committed),
+                &HashSet::new()
+            )
+            .map(|t| t.id.as_str()),
+            Some("server-sub"),
+        );
+        // Parent NOT completed → a completed same-title row is unrelated → miss.
+        assert!(
+            find_orphan_by_base(&base, false, &[committed], &HashSet::new()).is_none(),
+            "status stays strict without a completed-parent explanation"
+        );
     }
 
     #[test]
@@ -1598,14 +1784,67 @@ mod tests {
     #[test]
     fn pull_batch_skips_dirty_rows_and_inflight_orphans() {
         let mut committed = task("server-id");
-        committed.title = "task local-uuid".into(); // same content as the local row
+        committed.title = "task local-uuid".into(); // same content as the base
+        let inflight = InflightBase {
+            base: BaseSnapshot {
+                title: "task local-uuid".into(),
+                notes: None,
+                due: None,
+                status: TaskStatus::NeedsAction,
+            },
+            parent: None,
+        };
         let batch = pull_batch(
             vec![task("a"), task("b"), committed],
             &ids(&["a"]),
-            &[task("local-uuid")],
+            &[inflight],
         );
         let got: Vec<&str> = batch.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(got, vec!["b"]);
+    }
+
+    #[test]
+    fn pull_batch_skips_an_inflight_orphan_edited_during_the_window() {
+        // #122 at the pull layer: the local row drifted ("edited"), but the base
+        // still matches the committed orphan, so the pull leaves it for recovery
+        // instead of front-running it as a duplicate.
+        let mut committed = task("server-id");
+        committed.title = "buy milk".into(); // the payload as sent
+        let inflight = InflightBase {
+            base: BaseSnapshot {
+                title: "buy milk".into(),
+                notes: None,
+                due: None,
+                status: TaskStatus::NeedsAction,
+            },
+            parent: None,
+        };
+        let batch = pull_batch(vec![committed], &HashSet::new(), &[inflight]);
+        assert!(batch.is_empty(), "the committed orphan is not pulled");
+    }
+
+    #[test]
+    fn pull_batch_skips_a_completed_subtask_orphan_under_a_completed_parent() {
+        // RFC-009 §G at the pull layer: the committed child was stored completed
+        // by the cascade, but the parent-completed tolerance still recognizes it.
+        let mut parent = task("remote-parent");
+        parent.status = TaskStatus::Completed;
+        let mut child = task("remote-child");
+        child.title = "sub".into();
+        child.parent = Some("remote-parent".into());
+        child.status = TaskStatus::Completed;
+        let inflight = InflightBase {
+            base: BaseSnapshot {
+                title: "sub".into(),
+                notes: None,
+                due: None,
+                status: TaskStatus::NeedsAction, // payload was open
+            },
+            parent: Some("remote-parent".into()),
+        };
+        let batch = pull_batch(vec![parent, child], &HashSet::new(), &[inflight]);
+        let got: Vec<&str> = batch.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(got, vec!["remote-parent"], "only the parent is pulled");
     }
 
     #[test]

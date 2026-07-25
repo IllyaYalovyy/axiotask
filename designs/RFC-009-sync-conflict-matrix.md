@@ -150,12 +150,17 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   arrives on pull. No false conflicted copy from the *comparison*, which
   excludes position/parent. `settled` (#107)
 - × moved/reordered/reparented **while the local edit changed content** → the
-  refetched remote still holds the PRE-EDIT content, so the whole-row
-  comparison sees divergence and forks a "(conflicted copy)" even though only
-  we touched the content. Whole-row resolution has no pre-edit base to compare
-  against (NG1), so it cannot tell "they changed it" from "we changed it".
-  `gap` (#118) — measured, not theoretical: a remote reorder alone reverts a
-  local rename and duplicates the task.
+  refetched remote still holds the PRE-EDIT content. A **per-row base snapshot**
+  (the content as of the last server agreement, #124) tells "only we changed it"
+  from "they changed it too": on the `412`, if the refetched remote equals the
+  base, a bare reorder bumped the etag and the server never diverged from us —
+  adopt the fresh etag and re-push the local edit; no conflicted copy, no
+  reverted edit. Only when the remote diverges from the base (a genuine remote
+  content edit) does P3 fork a copy. `settled` (#124) — this is base-version
+  conflict *detection*, not a field-level merge, so NG1 still holds. The base is
+  captured when a clean row is first edited and cleared when it goes clean
+  again; a mid-flight re-edit re-bases to the just-pushed body. Regression:
+  `remote_reorder_plus_local_rename_no_false_copy_rename_lands` (red first).
 - × deleted → **not a 404.** Deletes are soft: the PATCH returns **200** with a
   body echoing our edit, but the row stays deleted and never reappears in
   `list_tasks`. The edit is lost and the local row is removed by **ghost
@@ -328,6 +333,21 @@ Remote conditions on the same row (or its surroundings) since our last sync:
 
 - Top-level create, list alive → insert → `finish_create` remap; in-flight
   marker crash-safety; held-create deferral. `settled` (H1, #102, #104)
+- Create whose insert crashed mid-flight (committed server-side, response lost)
+  **and was then edited during the window** → recovery matches the orphan on the
+  create's **base snapshot** — the insert payload as sent, recorded in
+  `inflight_creates.base_local_updated` and `tasks.base_*` before the insert —
+  not the row's now-drifted content, so it adopts instead of re-inserting; the
+  edit survives as a pending `update` against the adopted id (`finish_create`'s
+  drain-snapshot guard, fed the recorded `base_local_updated`). The pull's own
+  front-run guard (`pull_batch`) matches on the same base, so the committed
+  orphan is never pulled as a duplicate clean row while its marker is open. Base
+  matching tolerates the ONE status coercion Google applies — a subtask stored
+  completed under a completed parent (RFC-009 §G cascade) — for any row with a
+  parent. `settled` (#124) — before this, an edit in the window broke adoption
+  and duplicated the task (#122). Regression:
+  `edit_during_inflight_create_adopts_orphan_no_duplicate_edit_survives` (red
+  first) and the §J property generator now exercises the op.
 - **G3.** Create in a list deleted remotely → insert fails; meanwhile pull
   removes the local list, and the FK cascade would take the unpushed row with
   it — destroying work the server never saw, violating P2. Rows **without
@@ -487,11 +507,19 @@ create is still unresolved in flight (§D above, no separate issue — it is the
 same window as #120 and was found only at 1024 cases); and a fake that
 accepted a `move` onto a parent it did not have, which made every pull
 re-detach the row forever (#123, §F above, found at 4096 cases). A fifth was
-found while writing the regression tests and is **not** fixed: editing a task
-while its create is in flight breaks orphan adoption and duplicates it (#122).
-It is out of the suite's generated vocabulary on purpose — the fix needs the
-insert payload snapshotted in `inflight_creates`, which is a store-schema
-change and wants its own §G row.
+found while writing the regression tests and is now **fixed by #124**: editing
+a task while its create is in flight used to break orphan adoption and duplicate
+it (#122). The fix is the per-row **base snapshot** (§B/§G above): the insert
+payload is recorded before the insert, so both recovery and the pull's front-run
+guard match the committed orphan on the payload, not the drifted content. With
+that in place the op (`Rename`/`Toggle`/`SetDue` interleaved with `CrashSync`)
+is now IN the crash generator's vocabulary — it was deliberately excluded while
+unfixable. Adding it surfaced a latent, pre-existing crash-safety gap the base
+snapshot also closes: a subtask create whose committed orphan was stored (or
+later cascaded) **completed** under a completed parent — the status coercion
+broke both the recovery match and `pull_batch`'s front-run guard, re-inserting a
+duplicate. The base match now tolerates a completed orphan for any row with a
+parent (RFC-009 §G cascade); top-level creates keep status strict.
 
 Depth matters here: the default 256 cases found the first two, 1024 found the
 third and 4096 the fourth. `AXIOTASK_PROPTEST_CASES` raises the depth and the
@@ -764,6 +792,21 @@ Ordered; each step has its own GitHub issue.
   in-flight window) is filed and deliberately left outside the generated
   vocabulary, since fixing it needs a store-schema change. Every fix was
   falsified against deliberately broken product code before being kept.
+- [x] **Step 10 (#124)** — Per-row **base snapshot** primitive. *(prereq: #113;
+  store-schema change, pre-1.0 wipe + recreate, NO migration)* **Done.** One
+  primitive fixes two symptoms that both stemmed from comparing against a row's
+  CURRENT content: the false conflicted copy from a remote reorder + local edit
+  (#118, §B) and the in-flight-edit duplication (#122, §G). `tasks.base_*` holds
+  the content as of the last server agreement (captured on the first edit of a
+  clean row, and as the payload before an insert); `inflight_creates.
+  base_local_updated` holds the create's drain snapshot. The `412` path keys
+  "only we changed the typed content" on the base (status excluded — the
+  completed-parent cascade coerces it on both sides, and D1 resolves status
+  remote-wins); recovery and `pull_batch` key orphan adoption on the base.
+  Adding #122's op to the crash generator surfaced a latent completed-subtask
+  duplication the same primitive closes (tolerate a completed orphan for any
+  row with a parent). Every §B/§G row above is `settled`; the full gate incl.
+  the 2000-case soak and a 4096 spot run is green. Each test was red-first.
 
 ---
 

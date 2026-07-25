@@ -3021,6 +3021,19 @@ mod tests {
             .collect()
     }
 
+    /// Every SUBTASK title in a list (rows with a parent), in position order.
+    async fn subtasks(state: &AppState, list_id: &str) -> Vec<String> {
+        state
+            .store
+            .list_tasks(list_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.task.parent.is_some())
+            .map(|t| t.task.title)
+            .collect()
+    }
+
     /// Every title the server holds in a list, in position order.
     async fn remote_titles(client: &InMemoryClient, list_id: &str) -> Vec<String> {
         client
@@ -3079,6 +3092,70 @@ mod tests {
         assert!(rows.iter().all(|r| r.sync_state == SyncState::Clean));
         let out = state.run_sync().await.unwrap();
         assert_eq!((out.pushed, out.errors), (0, 0), "converged (P7)");
+    }
+
+    #[tokio::test]
+    async fn cross_list_move_subtree_no_duplicate_when_root_delete_is_delayed() {
+        // §H / P8. A cross-list move clones the subtree and removes the
+        // originals; the ROOT's delete is what cascades the descendants away on
+        // the server. If a transient delays that root delete while a pull runs,
+        // a descendant that was only hard-deleted locally is RESURRECTED from
+        // the server — a duplicate of the moved subtree. Descendants the server
+        // may hold are tombstoned instead, so the pull can never re-add them.
+        // (Found by the §J crash property at 4096 once the crash generator got
+        // edit ops; pre-existing, independent of #124.)
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Work");
+        client.seed_list("L2", "Personal");
+        client.seed_task("L1", "P", "trip", "1");
+        client.seed_task_with_parent("L1", "C", "pack", "2", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap(); // pull P + C into L1
+
+        state.move_task_to_list("P", "L2").await.unwrap();
+
+        // The root's delete keeps failing transiently, so the sync that pushes
+        // the clones and pulls the server view runs while the server still holds
+        // the original subtree.
+        client.fail_next_for_id(Method::DeleteTask, "P", || ApiError::Server { status: 503 });
+        state.run_sync().await.unwrap();
+
+        // Nothing must have been resurrected: even mid-retry, the subtask exists
+        // exactly once across every list.
+        let after_fault: Vec<String> = {
+            let mut t = rendered(&state, "L1").await;
+            t.extend(subtasks(&state, "L1").await);
+            t.extend(rendered(&state, "L2").await);
+            t.extend(subtasks(&state, "L2").await);
+            t
+        };
+        assert_eq!(
+            after_fault.iter().filter(|t| *t == "pack").count(),
+            1,
+            "the subtask was not resurrected in the source list: {after_fault:?}"
+        );
+
+        // Converge and confirm one subtree, in L2, no duplicate anywhere.
+        client.clear_faults();
+        for _ in 0..8 {
+            state.run_sync().await.unwrap();
+        }
+        assert_eq!(rendered(&state, "L1").await, Vec::<String>::new());
+        assert_eq!(rendered(&state, "L2").await, vec!["trip"]);
+        assert_eq!(subtasks(&state, "L2").await, vec!["pack"]);
+        assert!(
+            remote_titles(&client, "L1").await.is_empty(),
+            "source clear"
+        );
+        let l2 = client.list_tasks("L2", None).await.unwrap().items;
+        assert_eq!(l2.len(), 2, "exactly parent + one subtask on the server");
     }
 
     #[tokio::test]
@@ -3821,10 +3898,9 @@ mod tests {
             .await
             .unwrap();
         let local_id = only_row_id(&state, "L1").await;
-        // Ticked BEFORE the insert goes out, so the committed row and the local
-        // row still agree — an edit made *during* the in-flight window is a
-        // separate, pre-existing adoption gap (#122) and not what this row is
-        // about.
+        // Ticked BEFORE the insert goes out to keep this row about clear-completed
+        // only. (An edit made *during* the in-flight window is exercised
+        // separately by the #124 base-snapshot regression tests.)
         crate::commands::toggle_complete_inner(&state, local_id)
             .await
             .unwrap();
@@ -3853,6 +3929,201 @@ mod tests {
         assert!(
             remote_titles(&client, "L1").await.is_empty(),
             "and its committed insert was cleaned up on the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_reorder_plus_local_rename_no_false_copy_rename_lands() {
+        // RFC-009 §B × moved-while-edited (#118). Another device merely REORDERS
+        // a task — which bumps its etag (probe 1) but leaves the content equal to
+        // what we last synced — while the user renames it locally. Without a base
+        // to compare against, whole-row resolution reads the etag bump as a
+        // remote edit and forks a false "(conflicted copy)", reverting the
+        // rename. The base snapshot recognizes the server never diverged, so the
+        // rename lands with no copy and no lost edit.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "old", "00000000000001");
+        client.seed_task("L1", "anchor", "anchor", "00000000000002");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap(); // pull; T1 clean locally
+
+        // Another device drags T1 after `anchor`. Content untouched; etag bumped.
+        client
+            .move_task("L1", "T1", None, Some("anchor"))
+            .await
+            .unwrap();
+
+        // The user renames T1 locally — this captures the base ("old").
+        crate::commands::rename_task_inner(&state, "T1".into(), "new".into())
+            .await
+            .unwrap();
+
+        // Sync to a fixpoint, counting every conflict raised along the way.
+        let mut total_conflicts = 0;
+        for _ in 0..6 {
+            let out = state.run_sync().await.unwrap();
+            total_conflicts += out.conflicts;
+            if state.pending_push_count().await.unwrap() == 0 {
+                break;
+            }
+        }
+
+        assert_eq!(
+            total_conflicts, 0,
+            "a bare remote reorder is not a conflict"
+        );
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.contains("(conflicted copy)")),
+            "no false conflicted copy: {:?}",
+            tasks.iter().map(|t| &t.task.title).collect::<Vec<_>>()
+        );
+        let renamed: Vec<_> = tasks.iter().filter(|t| t.task.title == "new").collect();
+        assert_eq!(renamed.len(), 1, "the rename landed on exactly one row");
+        assert_eq!(
+            renamed[0].sync_state,
+            SyncState::Clean,
+            "and the row converged clean"
+        );
+        // The server holds the renamed task and nothing else spurious.
+        let mut server = remote_titles(&client, "L1").await;
+        server.sort();
+        assert_eq!(server, vec!["anchor".to_string(), "new".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn status_only_divergence_over_a_remote_reorder_never_forks_a_copy() {
+        // The D1 guard (RFC-009 §C) with a base snapshot present: a status-only
+        // difference must never produce a "(conflicted copy)". The user ticks a
+        // task complete while another device merely reorders it (etag bumped,
+        // content — including status — unchanged from our base). Whole-row
+        // resolution with no base could read the etag bump as a remote status
+        // change and, combined with our toggle, fork a copy; the base shows the
+        // server never diverged, so our tick lands with no copy.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "chore", "00000000000001");
+        client.seed_task("L1", "anchor", "anchor", "00000000000002");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        // Another device reorders T1 — status untouched.
+        client
+            .move_task("L1", "T1", None, Some("anchor"))
+            .await
+            .unwrap();
+        // The user ticks T1 complete (base captured = needsAction content).
+        crate::commands::toggle_complete_inner(&state, "T1".into())
+            .await
+            .unwrap();
+
+        let mut total_conflicts = 0;
+        for _ in 0..6 {
+            let out = state.run_sync().await.unwrap();
+            total_conflicts += out.conflicts;
+            if state.pending_push_count().await.unwrap() == 0 {
+                break;
+            }
+        }
+
+        assert_eq!(
+            total_conflicts, 0,
+            "a status-only change is never a conflict"
+        );
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.contains("(conflicted copy)")),
+            "no conflicted copy for a status-only divergence"
+        );
+        let chore: Vec<_> = tasks.iter().filter(|t| t.task.title == "chore").collect();
+        assert_eq!(chore.len(), 1, "exactly one row, never a copy");
+        // D1 (ratified): a status-only difference resolves remote-wins — the
+        // server never changed the status (only reordered), but whole-row
+        // resolution adopts the remote row, so the tick is dropped. A lost
+        // checkbox click is cheap; a duplicate task is not. The invariant this
+        // guards is "no conflicted copy", which holds.
+        assert_eq!(chore[0].task.status, TaskStatus::NeedsAction);
+        assert_eq!(chore[0].sync_state, SyncState::Clean);
+    }
+
+    #[tokio::test]
+    async fn edit_during_inflight_create_adopts_orphan_no_duplicate_edit_survives() {
+        // RFC-009 §G in-flight (#122). The insert commits server-side but the
+        // response is lost, and the user edits the row during that window.
+        // Matching the orphan on the row's CURRENT content would miss (it
+        // drifted) and the create would be retried, duplicating the task. The
+        // base snapshot — the payload as sent — still adopts the committed row,
+        // and the edit survives as a pending update against the server id.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        let local_id = only_row_id(&state, "L1").await;
+
+        // Insert commits on the server, but the response is lost (crash window).
+        client.commit_then_fail_next_insert();
+        state.run_sync().await.unwrap();
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            vec!["buy milk"],
+            "the insert really did commit before the response was lost"
+        );
+
+        // The user edits the row WHILE the create is still in flight.
+        crate::commands::rename_task_inner(&state, local_id.clone(), "buy oat milk".into())
+            .await
+            .unwrap();
+
+        // Recovery adopts the orphan on the base match and keeps the edit.
+        client.clear_faults();
+        let mut converged = false;
+        for _ in 0..6 {
+            state.run_sync().await.unwrap();
+            if state.pending_push_count().await.unwrap() == 0 {
+                converged = true;
+                break;
+            }
+        }
+        assert!(converged, "sync must reach a fixpoint");
+
+        // Exactly one task, locally and on the server, carrying the EDITED title.
+        let local = state.store.list_tasks("L1").await.unwrap();
+        assert_eq!(local.len(), 1, "no duplicate locally");
+        assert_eq!(local[0].task.title, "buy oat milk", "the edit survived");
+        assert_eq!(local[0].sync_state, SyncState::Clean);
+        assert!(
+            local[0].task.etag.is_some(),
+            "adopted the committed server row, not a fresh insert"
+        );
+        assert_eq!(
+            remote_titles(&client, "L1").await,
+            vec!["buy oat milk"],
+            "no duplicate on the server, and it carries the edit"
+        );
+        assert!(
+            state.store.inflight_creates().await.unwrap().is_empty(),
+            "the in-flight marker was cleared by adoption"
         );
     }
 

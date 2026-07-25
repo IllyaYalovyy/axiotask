@@ -722,6 +722,47 @@ impl AppState {
     /// deletes its children too (verified against the live API), and the
     /// local FK cascade mirrors that — so leaving subtasks behind would
     /// silently destroy them the moment the parent's delete pushed.
+    /// Remove one original row after its subtree was recreated in another list.
+    /// A row the server MAY hold is tombstoned, not hard-deleted: the server
+    /// only cascades a moved subtree away once the ROOT's delete lands, and if a
+    /// pull happens first (e.g. the root delete is still retrying after a
+    /// transient) a hard-deleted row is RESURRECTED from the server, duplicating
+    /// the moved subtree (P8). A tombstone pushes its own delete and the pull
+    /// cannot re-add it; a redundant server cascade then 404s = success. A row
+    /// the server has never seen is hard-deleted. `fallback` is the source-list
+    /// snapshot to tombstone from (its absence — shouldn't happen — hard-deletes).
+    async fn remove_moved_original(
+        &self,
+        old_id: &str,
+        fallback: Option<&axiotask_core::store::StoredTask>,
+        now: &str,
+    ) -> Result<(), String> {
+        let may_hold = self
+            .store
+            .server_may_hold(old_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        match (may_hold, fallback) {
+            (true, Some(row)) => {
+                let mut tomb = row.clone();
+                tomb.sync_state = axiotask_core::store::SyncState::Deleted;
+                tomb.pending_op = Some("delete".into());
+                tomb.local_updated = now.to_string();
+                self.store
+                    .upsert_task(&tomb)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            _ => {
+                self.store
+                    .delete_task_hard(old_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn move_task_to_list(
         &self,
         id: &str,
@@ -787,41 +828,16 @@ impl AppState {
             .find_map(|(old_id, new_id)| (old_id == id).then(|| new_id.clone()))
             .ok_or_else(|| format!("failed to recreate task {id}"))?;
 
-        // Remove the old subtree: hard-delete descendants locally (the
-        // server cascades them when the root's delete lands), then tombstone
-        // or hard-delete the root itself.
+        // Remove the old subtree: descendants first, then the root. Each row is
+        // tombstoned if the server may hold it and hard-deleted otherwise (see
+        // [`remove_moved_original`] — this is where the P8 anti-resurrection
+        // lives). "May hold" on the root also covers its in-flight-create crash
+        // window, so a committed original is never stranded in the source list.
         for (old_id, _) in recreated.iter().skip(1) {
-            self.store
-                .delete_task_hard(old_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            let fallback = siblings.iter().find(|t| &t.task.id == old_id);
+            self.remove_moved_original(old_id, fallback, &now).await?;
         }
-        if self
-            .store
-            .server_may_hold(id)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            // A row the server may hold → tombstone so the delete reaches it.
-            // "May" covers the crash window as well as a plain etag: an open
-            // in-flight create marker means the original's insert could have
-            // committed before its response was lost, and hard-deleting the
-            // row would strand that copy in the SOURCE list forever.
-            let mut tomb = old;
-            tomb.sync_state = axiotask_core::store::SyncState::Deleted;
-            tomb.pending_op = Some("delete".into());
-            tomb.local_updated = now;
-            self.store
-                .upsert_task(&tomb)
-                .await
-                .map_err(|e| e.to_string())?;
-        } else {
-            // Never synced → hard delete.
-            self.store
-                .delete_task_hard(id)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+        self.remove_moved_original(id, Some(&old), &now).await?;
 
         self.schedule_sync();
         Ok(new_root_id)

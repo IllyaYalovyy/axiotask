@@ -7,7 +7,7 @@
 use sqlx::{Row, SqlitePool};
 
 use super::StoreError;
-use crate::model::{Task, TaskList, TaskStatus};
+use crate::model::{BaseSnapshot, Task, TaskList, TaskStatus};
 
 /// Sync state for a stored row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +199,12 @@ impl Store {
     }
 
     /// Insert or replace a task row.
+    ///
+    /// Captures the base snapshot (#124) as a side effect: the first edit that
+    /// turns a `clean` row `dirty` records the pre-edit content as its base
+    /// (`tasks.*` on the RHS is the OLD row in an `ON CONFLICT DO UPDATE`), and
+    /// every later edit preserves it — so the base always holds the content as
+    /// of the last server agreement until the row goes clean again.
     pub async fn upsert_task(&self, t: &StoredTask) -> Result<(), StoreError> {
         sqlx::query(
             r"INSERT INTO tasks
@@ -209,6 +215,14 @@ impl Store {
                 list_id = excluded.list_id,
                 parent_id = excluded.parent_id,
                 position = excluded.position,
+                base_title  = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                                   THEN tasks.title  ELSE tasks.base_title  END,
+                base_notes  = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                                   THEN tasks.notes  ELSE tasks.base_notes  END,
+                base_due    = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                                   THEN tasks.due    ELSE tasks.base_due    END,
+                base_status = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                                   THEN tasks.status ELSE tasks.base_status END,
                 title = excluded.title,
                 notes = excluded.notes,
                 status = excluded.status,
@@ -515,6 +529,13 @@ impl Store {
                   due          = CASE WHEN local_updated = ?3 THEN ?9  ELSE due          END,
                   completed_at = CASE WHEN local_updated = ?3 THEN ?10 ELSE completed_at END,
                   web_view_link = COALESCE(?11, web_view_link),
+                  -- Base snapshot (#124): a clean landing clears it; a mid-flight
+                  -- re-edit that keeps the row dirty re-bases to what the server
+                  -- now holds (the pushed body), so a later 412 compares right.
+                  base_title  = CASE WHEN local_updated = ?3 THEN NULL ELSE ?6 END,
+                  base_notes  = CASE WHEN local_updated = ?3 THEN NULL ELSE ?7 END,
+                  base_due    = CASE WHEN local_updated = ?3 THEN NULL ELSE ?9 END,
+                  base_status = CASE WHEN local_updated = ?3 THEN NULL ELSE ?8 END,
                   sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END,
                   pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END
               WHERE id = ?12",
@@ -909,16 +930,38 @@ impl Store {
 
     /// Durably mark a create as in-flight before calling the (non-idempotent)
     /// server insert. Cleared by [`finish_create`] on success.
+    ///
+    /// Also captures the base snapshot for the row (#124): `base_local_updated`
+    /// is the drain-time `local_updated`, so crash recovery can pass it to
+    /// [`finish_create`] and an edit during the in-flight window keeps its dirty
+    /// flag; and `tasks.base_*` is set to the current content — the payload as
+    /// sent — so orphan adoption matches on it, not on drifted local content
+    /// (#122). Both writes commit before the insert, so they survive a crash.
     pub async fn record_inflight_create(
         &self,
         local_id: &str,
         list_id: &str,
+        base_local_updated: &str,
     ) -> Result<(), StoreError> {
-        sqlx::query("INSERT OR REPLACE INTO inflight_creates (local_id, list_id) VALUES (?, ?)")
-            .bind(local_id)
-            .bind(list_id)
-            .execute(&self.pool)
-            .await?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO inflight_creates (local_id, list_id, base_local_updated)
+             VALUES (?, ?, ?)",
+        )
+        .bind(local_id)
+        .bind(list_id)
+        .bind(base_local_updated)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE tasks
+               SET base_title = title, base_notes = notes, base_due = due, base_status = status
+             WHERE id = ?",
+        )
+        .bind(local_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -929,6 +972,49 @@ impl Store {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows)
+    }
+
+    /// The drain-time `local_updated` recorded for an in-flight create (#124).
+    /// `None` when there is no marker (or a legacy marker without one).
+    pub async fn inflight_base_local_updated(
+        &self,
+        local_id: &str,
+    ) -> Result<Option<String>, StoreError> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT base_local_updated FROM inflight_creates WHERE local_id = ?")
+                .bind(local_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// The base snapshot for a row (#124), or `None` when the row is clean / has
+    /// no base recorded. `base_title` is the presence sentinel: a `NOT NULL`
+    /// title column can only be absent when no base was captured.
+    pub async fn base_snapshot(&self, id: &str) -> Result<Option<BaseSnapshot>, StoreError> {
+        let Some(row) = sqlx::query(
+            "SELECT base_title, base_notes, base_due, base_status FROM tasks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        else {
+            return Ok(None);
+        };
+        // `base_title` is the presence sentinel: NULL means no base captured.
+        let Some(title): Option<String> = row.try_get("base_title")? else {
+            return Ok(None);
+        };
+        let status: Option<String> = row.try_get("base_status")?;
+        Ok(Some(BaseSnapshot {
+            title,
+            notes: row.try_get("base_notes")?,
+            due: row.try_get("base_due")?,
+            status: status
+                .as_deref()
+                .and_then(TaskStatus::parse_api)
+                .unwrap_or(TaskStatus::NeedsAction),
+        }))
     }
 
     /// Clear an in-flight marker without finalizing (e.g. the insert never
@@ -1801,7 +1887,9 @@ mod tests {
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
-        s.record_inflight_create("T1", "L1").await.unwrap();
+        s.record_inflight_create("T1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
         let inflight = s.inflight_creates().await.unwrap();
         assert_eq!(inflight, vec![("T1".into(), "L1".into())]);
     }
@@ -1814,7 +1902,9 @@ mod tests {
         t.sync_state = SyncState::Dirty;
         t.pending_op = Some("create".into());
         s.upsert_task(&t).await.unwrap();
-        s.record_inflight_create("local-1", "L1").await.unwrap();
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
         s.finish_create(
             "local-1",
             "remote-1",
@@ -1833,7 +1923,9 @@ mod tests {
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_task(&task("T1", "L1", None, "1")).await.unwrap();
-        s.record_inflight_create("T1", "L1").await.unwrap();
+        s.record_inflight_create("T1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
         s.delete_task_hard("T1").await.unwrap();
         assert!(s.inflight_creates().await.unwrap().is_empty());
     }
@@ -1852,7 +1944,9 @@ mod tests {
         t.pending_op = Some("delete".into());
         t.local_updated = "2026-01-01T00:00:09Z".into(); // the delete bumped it
         s.upsert_task(&t).await.unwrap();
-        s.record_inflight_create("local-1", "L1").await.unwrap();
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
 
         s.finish_create(
             "local-1",
@@ -1894,10 +1988,105 @@ mod tests {
         s.upsert_task(&fresh_row).await.unwrap();
         assert!(!s.server_may_hold("local-1").await.unwrap());
         // Insert issued, answer unknown: the server MAY hold it.
-        s.record_inflight_create("local-1", "L1").await.unwrap();
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
         assert!(s.server_may_hold("local-1").await.unwrap());
         // A row that isn't there at all is nothing to tombstone.
         assert!(!s.server_may_hold("nope").await.unwrap());
+    }
+
+    // ─── Base snapshot (#124) ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn editing_a_clean_row_captures_and_preserves_its_base() {
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        // A clean, synced row has no base.
+        let mut clean = task("T1", "L1", None, "1");
+        clean.task.title = "old".into();
+        clean.task.etag = Some("e1".into());
+        s.upsert_task(&clean).await.unwrap();
+        assert!(
+            s.base_snapshot("T1").await.unwrap().is_none(),
+            "a clean row has no base"
+        );
+
+        // The first edit captures the pre-edit content as the base.
+        let mut edited = s.find_task_any("T1").await.unwrap().unwrap();
+        edited.task.title = "new".into();
+        edited.sync_state = SyncState::Dirty;
+        edited.pending_op = Some("update".into());
+        s.upsert_task(&edited).await.unwrap();
+        assert_eq!(
+            s.base_snapshot("T1").await.unwrap().map(|b| b.title),
+            Some("old".into()),
+            "base is the last-synced content"
+        );
+
+        // A second edit preserves the ORIGINAL base — it is the last agreement
+        // with the server, not the last keystroke.
+        let mut again = s.find_task_any("T1").await.unwrap().unwrap();
+        again.task.title = "newer".into();
+        s.upsert_task(&again).await.unwrap();
+        assert_eq!(
+            s.base_snapshot("T1").await.unwrap().map(|b| b.title),
+            Some("old".into()),
+            "base survives repeated edits"
+        );
+
+        // Landing the push clean clears the base.
+        let mut server = again.task.clone();
+        server.title = "newer".into();
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, &again.local_updated)
+            .await
+            .unwrap();
+        assert!(
+            s.base_snapshot("T1").await.unwrap().is_none(),
+            "clean again → base cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn inflight_base_is_the_payload_as_sent_and_is_durable() {
+        // The base for a create is captured by record_inflight_create — the
+        // payload as sent — and survives an edit made during the in-flight
+        // window (#122). It lives in SQLite, not engine memory, so it is durable
+        // across a crash: reading it straight back is the durability check.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut t = task("local-1", "L1", None, "1");
+        t.task.title = "buy milk".into();
+        t.task.etag = None;
+        t.sync_state = SyncState::Dirty;
+        t.pending_op = Some("create".into());
+        t.local_updated = "2026-01-01T00:00:00Z".into();
+        s.upsert_task(&t).await.unwrap();
+
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+
+        // Edit during the window: the row's content drifts, the base does not.
+        let mut edited = s.find_task_any("local-1").await.unwrap().unwrap();
+        edited.task.title = "buy oat milk".into();
+        edited.local_updated = "2026-01-01T00:00:05Z".into();
+        s.upsert_task(&edited).await.unwrap();
+
+        assert_eq!(
+            s.base_snapshot("local-1").await.unwrap().map(|b| b.title),
+            Some("buy milk".into()),
+            "base is the payload as sent, not the drifted content"
+        );
+        assert_eq!(
+            s.inflight_base_local_updated("local-1")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("2026-01-01T00:00:00Z"),
+            "the drain snapshot is durable for recovery"
+        );
     }
 
     #[tokio::test]
