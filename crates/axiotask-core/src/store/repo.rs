@@ -292,69 +292,28 @@ impl Store {
     /// Remove a row the server no longer has (ghost detection), only if it is
     /// still clean — a live edit that re-dirtied it cancels the removal.
     ///
-    /// The rows in its subtree the server has never seen are promoted to
-    /// top-level first, in the same transaction: `ON DELETE CASCADE` would
-    /// otherwise take an unpushed subtask down with a parent another device
-    /// deleted (RFC-009 D3, P2). Returns whether the row was removed.
+    /// `ON DELETE CASCADE` takes its whole subtree with it, including the
+    /// subtasks the server has never seen: a subtask shares its parent's fate
+    /// (RFC-009 D3 REJECTED — no auto-promotion; the parent bond outranks P2).
+    /// Returns whether the row was removed.
     pub async fn remove_ghost_task(&self, id: &str) -> Result<bool, StoreError> {
-        let mut tx = self.pool.begin().await?;
-        let still_clean: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM tasks WHERE id = ? AND sync_state = 'clean'")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if still_clean.is_none() {
-            tx.rollback().await?;
-            return Ok(false);
-        }
-        sqlx::query(
-            "UPDATE tasks SET parent_id = NULL
-             WHERE parent_id = ? AND etag IS NULL AND sync_state != 'deleted'",
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        let res = sqlx::query("DELETE FROM tasks WHERE id = ?")
+        let res = sqlx::query("DELETE FROM tasks WHERE id = ? AND sync_state = 'clean'")
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&self.pool)
             .await?;
-        tx.commit().await?;
         Ok(res.rows_affected() > 0)
-    }
-
-    /// Detach the rows the server has never seen from a parent that a REMOTE
-    /// event is about to remove (RFC-009 §G / D3, P2).
-    ///
-    /// `parent_id REFERENCES tasks(id) ON DELETE CASCADE` would otherwise take
-    /// an unpushed subtask down with a parent that was deleted on another
-    /// device — destroying work the server never saw, and the row's insert
-    /// would 400 forever on the dead parent id anyway. Promoting it to
-    /// top-level keeps it, still queued, in the same list.
-    ///
-    /// Deliberately NOT used for the user's own delete: that cascade is the
-    /// point (invariant #3, P4), so tombstoned rows are left alone here and
-    /// only remote-driven removals call this.
-    ///
-    /// Returns the number of rows promoted.
-    pub async fn promote_unpushed_children(&self, parent_id: &str) -> Result<u64, StoreError> {
-        let res = sqlx::query(
-            "UPDATE tasks SET parent_id = NULL
-             WHERE parent_id = ? AND etag IS NULL AND sync_state != 'deleted'",
-        )
-        .bind(parent_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(res.rows_affected())
     }
 
     /// Move the rows the server has never seen out of a list that a REMOTE
     /// delete is about to remove, into `to_list` (RFC-009 §G3 / D2, P2).
     ///
-    /// Rows *with* an etag stay behind and die with the list (P1/P4). A row
-    /// whose parent stays behind is promoted to top-level, so an unpushed
-    /// subtree re-homes intact while an unpushed subtask of a synced parent
-    /// survives as a top-level task rather than being cascaded away.
-    /// Tombstones are left behind too — the user already deleted them.
+    /// Only unpushed top-level rows and whole unpushed subtrees move: a row
+    /// re-homes when it is top-level, or when its (unpushed) parent is moving
+    /// too. Rows *with* an etag stay behind and die with the list (P1/P4). An
+    /// unpushed subtask whose parent stays behind is NOT promoted (RFC-009 D3
+    /// REJECTED) — it stays put and dies with its parent when the list
+    /// cascades. Tombstones are left behind too — the user already deleted
+    /// them.
     ///
     /// Returns the number of rows re-homed.
     pub async fn rehome_unpushed_tasks(
@@ -363,22 +322,18 @@ impl Store {
         to_list: &str,
     ) -> Result<u64, StoreError> {
         let mut tx = self.pool.begin().await?;
-        // Detach first: "parent is re-homing too" must be evaluated while the
-        // rows are all still in the dying list.
-        sqlx::query(
-            "UPDATE tasks SET parent_id = NULL
-             WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted'
-               AND parent_id IS NOT NULL
-               AND parent_id NOT IN (
-                   SELECT id FROM tasks
-                   WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted')",
-        )
-        .bind(from_list)
-        .execute(&mut *tx)
-        .await?;
+        // `id IN (SELECT ...)` materializes the row set against the pre-update
+        // state, so "parent is re-homing too" is evaluated while every row is
+        // still in the dying list. A row moves only when it is top-level or
+        // its parent is itself an unpushed row in this same list.
         let res = sqlx::query(
             "UPDATE tasks SET list_id = ?2
-             WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted'",
+             WHERE id IN (
+                 SELECT id FROM tasks
+                 WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted'
+                   AND (parent_id IS NULL OR parent_id IN (
+                       SELECT id FROM tasks
+                       WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted')))",
         )
         .bind(from_list)
         .bind(to_list)
@@ -1617,9 +1572,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remove_ghost_task_promotes_unpushed_children_only() {
-        // A remotely-deleted parent takes its SYNCED subtree with it, but the
-        // subtask the server has never seen is promoted, not cascaded (P2).
+    async fn remove_ghost_task_cascades_its_whole_subtree() {
+        // RFC-009 D3 (REJECTED by user): a remotely-deleted parent takes its
+        // ENTIRE subtree with it — synced rows, tombstones, AND the unpushed
+        // subtask the server never saw. No auto-promotion: a subtask shares
+        // its parent's fate (invariant #3), so the FK cascade is the whole
+        // story here.
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
         let mut parent = task("P", "L1", None, "1");
@@ -1631,14 +1589,14 @@ mod tests {
         synced_child.task.etag = Some("e-child".into());
         s.upsert_task(&synced_child).await.unwrap();
 
+        // Non-happy path: an unpushed subtask the server has never seen. It
+        // dies with its parent all the same — the parent bond outranks P2.
         let mut unpushed = task("C-new", "L1", Some("P"), "3");
         unpushed.sync_state = SyncState::Dirty;
         unpushed.pending_op = Some("create".into());
         unpushed.task.etag = None;
         s.upsert_task(&unpushed).await.unwrap();
 
-        // A tombstoned unpushed child: the user deleted it, so it dies with
-        // the parent rather than being resurrected as a top-level task.
         let mut doomed = task("C-doomed", "L1", Some("P"), "4");
         doomed.sync_state = SyncState::Deleted;
         doomed.pending_op = Some("delete".into());
@@ -1649,16 +1607,19 @@ mod tests {
 
         assert!(s.find_task_any("C-synced").await.unwrap().is_none());
         assert!(s.find_task_any("C-doomed").await.unwrap().is_none());
-        let kept = s.find_task_any("C-new").await.unwrap().expect("survives");
-        assert_eq!(kept.task.parent, None, "promoted to top-level");
-        assert_eq!(kept.pending_op.as_deref(), Some("create"));
+        assert!(
+            s.find_task_any("C-new").await.unwrap().is_none(),
+            "the unpushed subtask dies with its parent — never promoted (D3 rejected)"
+        );
     }
 
     #[tokio::test]
     async fn rehome_unpushed_tasks_moves_only_rows_the_server_never_saw() {
         // D2 at the store layer: etag-less rows follow to the target list,
-        // keeping an unpushed subtree together; a subtask of a row that stays
-        // behind is promoted; synced rows and tombstones do not move.
+        // keeping an unpushed subtree together. A subtask of a row that stays
+        // behind is NOT promoted-and-re-homed (D3 rejected) — it stays put and
+        // dies with its parent when the dying list cascades. Synced rows and
+        // tombstones do not move.
         let s = fresh().await;
         s.upsert_list(&list("L1")).await.unwrap();
         s.upsert_list(&list("L2")).await.unwrap();
@@ -1685,10 +1646,10 @@ mod tests {
         tombstone.task.etag = None;
         s.upsert_task(&tombstone).await.unwrap();
 
-        assert_eq!(s.rehome_unpushed_tasks("L1", "L2").await.unwrap(), 3);
+        assert_eq!(s.rehome_unpushed_tasks("L1", "L2").await.unwrap(), 2);
 
         let moved = s.list_tasks("L2").await.unwrap();
-        assert_eq!(moved.len(), 3);
+        assert_eq!(moved.len(), 2);
         let by_id = |id: &str| moved.iter().find(|r| r.task.id == id).cloned().unwrap();
         assert_eq!(by_id("new-parent").task.parent, None);
         assert_eq!(
@@ -1696,10 +1657,16 @@ mod tests {
             Some("new-parent"),
             "the unpushed subtree stays together"
         );
+        let orphan = s
+            .find_task_any("new-orphan")
+            .await
+            .unwrap()
+            .expect("the orphan is not moved out");
         assert_eq!(
-            by_id("new-orphan").task.parent,
-            None,
-            "its synced parent stays behind, so it is promoted"
+            (orphan.list_id.as_str(), orphan.task.parent.as_deref()),
+            ("L1", Some("SYNCED")),
+            "a subtask of a row that stays behind is NOT promoted or re-homed — \
+             it stays with its parent to die in the list cascade (D3 rejected)"
         );
         assert_eq!(
             s.find_task_any("SYNCED").await.unwrap().unwrap().list_id,
@@ -1711,7 +1678,6 @@ mod tests {
             "L1",
             "a tombstone does not move"
         );
-        assert!(!s.has_unpushed_tasks("L1").await.unwrap());
         assert!(s.has_unpushed_tasks("L2").await.unwrap());
     }
 

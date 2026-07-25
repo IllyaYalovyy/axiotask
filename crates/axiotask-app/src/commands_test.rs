@@ -2874,12 +2874,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_subtask_whose_parent_is_deleted_elsewhere_becomes_a_visible_row() {
-        // RFC-009 §G / D3, user-driven. The user adds a subtask in the detail
-        // panel; another device deletes the parent before it syncs. A subtask
-        // only ever renders inside its parent's panel (invariant #1), so a
-        // child left pointing at a dead parent is invisible AND unpushable.
-        // It must come back as a TOP-LEVEL row of the list on screen.
+    async fn a_subtask_whose_parent_is_deleted_elsewhere_dies_with_it() {
+        // RFC-009 §G / D3 (REJECTED by user), user-driven. The user adds a
+        // subtask in the detail panel; another device deletes the parent
+        // before it syncs. The subtask shares its parent's fate: it is
+        // cascaded away, NOT promoted to a top-level row. What the user sees
+        // is an empty list — the parent and its child are both gone.
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "P", "Parent", "1");
@@ -2905,7 +2905,8 @@ mod tests {
         client.delete_task_from_state("L1", "P");
         state.run_sync().await.unwrap();
 
-        // What the list view renders: top-level rows only.
+        // What the list view renders: nothing — the child died with its parent
+        // and was never promoted to a stray top-level row.
         let rendered: Vec<_> = state
             .store
             .list_tasks("L1")
@@ -2915,24 +2916,24 @@ mod tests {
             .filter(|t| t.task.parent.is_none())
             .map(|t| t.task.title)
             .collect();
-        assert_eq!(
-            rendered,
-            vec!["call bank"],
-            "the orphaned subtask is visible as a top-level row"
+        assert!(
+            rendered.is_empty(),
+            "the orphaned subtask never appears as a top-level row; got {rendered:?}"
         );
 
-        // And it still syncs — no permanent wedge.
-        state.run_sync().await.unwrap();
+        // No wedge, and the dead child never reaches the server.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.pushed, 0, "converged — nothing left to push");
+        assert_eq!(out.errors, 0);
         let remote = client.list_tasks("L1", None).await.unwrap();
-        let landed = remote
-            .items
-            .iter()
-            .find(|t| t.title == "call bank")
-            .expect("the promoted subtask reached the server");
-        assert!(landed.parent.is_none());
-        let local = state.store.list_tasks("L1").await.unwrap();
-        assert_eq!(local.len(), 1);
-        assert_eq!(local[0].sync_state, SyncState::Clean);
+        assert!(
+            remote.items.iter().all(|t| t.title != "call bank"),
+            "the dead child never reaches the server"
+        );
+        assert!(
+            state.store.list_tasks("L1").await.unwrap().is_empty(),
+            "the list is empty locally too"
+        );
     }
 
     #[tokio::test]
