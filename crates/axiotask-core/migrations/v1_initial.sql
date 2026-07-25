@@ -49,7 +49,19 @@ CREATE TABLE tasks (
   updated         TEXT NOT NULL,              -- server 'updated'
   local_updated   TEXT NOT NULL,              -- local last-edit
   sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted')),
-  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL)
+  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL),
+  -- Base snapshot: the content fields as of this row's last agreement with the
+  -- server (RFC-009 §B/§G, #124). Captured when a clean row is first edited
+  -- (base = last-synced content) and when an insert payload goes out (base =
+  -- payload as sent). NULL while the row is clean. On a 412 the refetched
+  -- remote equal to the base means only WE diverged — a remote reorder bumped
+  -- the etag without touching content — so our edit wins with no conflicted
+  -- copy (#118). Orphan adoption after a crashed create matches on the base,
+  -- immune to an edit made during the in-flight window (#122).
+  base_title      TEXT,
+  base_notes      TEXT,
+  base_due        TEXT,
+  base_status     TEXT CHECK (base_status IN ('needsAction','completed') OR base_status IS NULL)
 );
 
 CREATE INDEX idx_tasks_tree  ON tasks(list_id, parent_id, position);
@@ -83,5 +95,10 @@ CREATE TABLE sync_log (
 -- adopts the orphaned remote task instead of re-inserting (no duplicate).
 CREATE TABLE inflight_creates (
   local_id  TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-  list_id   TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE
+  list_id   TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE,
+  -- The row's local_updated at the moment the insert payload was drained and
+  -- sent (#124/#122). Crash recovery passes it to finish_create as the
+  -- drain snapshot, so an edit made during the in-flight window keeps its
+  -- dirty flag (rewritten create->update) instead of being wiped clean.
+  base_local_updated TEXT
 );

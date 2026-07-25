@@ -86,6 +86,39 @@ impl TaskStatus {
     }
 }
 
+/// A row's content as of its last agreement with the server (RFC-009 §B/§G,
+/// #124). The reconciler compares the refetched remote against this to tell
+/// "only WE changed the content" from "the server changed it too": a base-equal
+/// remote on a `412` means a bare reorder bumped the etag, so the local edit
+/// wins with no conflicted copy (#118); orphan adoption after a crashed create
+/// matches on the base so an edit during the in-flight window can't duplicate
+/// the task (#122). Holds exactly the fields [`Task`] carries as user content —
+/// title, notes, due, status — and nothing structural (position, parent, etag).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseSnapshot {
+    /// Title as last agreed with the server.
+    pub title: String,
+    /// Notes as last agreed (empty string is treated as `None`, as on the wire).
+    pub notes: Option<String>,
+    /// Due date as last agreed (RFC 3339; compared with the same normalization
+    /// tolerance the reconciler uses everywhere).
+    pub due: Option<String>,
+    /// Completion status as last agreed.
+    pub status: TaskStatus,
+}
+
+impl BaseSnapshot {
+    /// Snapshot a task's current content as the new base.
+    pub fn of(task: &Task) -> Self {
+        Self {
+            title: task.title.clone(),
+            notes: task.notes.clone(),
+            due: task.due.clone(),
+            status: task.status,
+        }
+    }
+}
+
 /// Payload accepted by `insert_task`. Server fills in the missing fields.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewTask {

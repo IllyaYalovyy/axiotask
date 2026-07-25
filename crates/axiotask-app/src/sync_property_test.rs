@@ -976,11 +976,20 @@ mod tests {
     /// crash-safety invariant is about. Cross-list moves join it because a
     /// move IS a create family (§H): the clone it inserts can crash mid-flight
     /// exactly like any other create, and a duplicate there is the same bug.
+    ///
+    /// Edits (`Rename`, `Toggle`, `SetDue`) are in the mix so the generator
+    /// explores an edit made DURING the in-flight window (#122): with the base
+    /// snapshot now recording the insert payload, orphan adoption matches on it
+    /// and the edit survives as a pending update — no duplicate. Before #124
+    /// this op family was deliberately kept out because it duplicated the task.
     fn crash_ops() -> impl Strategy<Value = Vec<Op>> {
         prop::collection::vec(
             prop_oneof![
                 5 => any::<u8>().prop_map(Op::CreateTop),
                 5 => any::<u8>().prop_map(Op::CreateSub),
+                3 => any::<u8>().prop_map(Op::Rename),
+                2 => any::<u8>().prop_map(Op::Toggle),
+                2 => (any::<u8>(), any::<u8>()).prop_map(|(i, d)| Op::SetDue(i, d)),
                 2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveToList(i, j)),
                 1 => Just(Op::CreateList),
                 3 => Just(Op::CrashSync),

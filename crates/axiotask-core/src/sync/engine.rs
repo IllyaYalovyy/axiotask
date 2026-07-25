@@ -460,18 +460,44 @@ impl SyncEngine {
                 .collect();
 
             // Orphan: a remote task with our content whose id we never recorded.
-            let orphan = reconcile::find_orphan(&local.task, &remote, &local_id_set);
+            // Match on the base snapshot — the insert payload as sent — so an
+            // edit made during the in-flight window still adopts the committed
+            // row instead of retrying the create and duplicating it (#122). A
+            // row with no base (legacy marker) falls back to current content.
+            let base = self.store.base_snapshot(&local_id).await?;
+            // A SUBTASK create's committed row may have been stored completed by
+            // the insert-under-completed-parent cascade, or completed later when
+            // the parent was — so tolerate a completed orphan for any row that
+            // has a parent (RFC-009 §G). A top-level create keeps status strict.
+            let has_parent = local.task.parent.is_some();
+            let orphan = match &base {
+                Some(base) => {
+                    reconcile::find_orphan_by_base(base, has_parent, &remote, &local_id_set)
+                }
+                None => reconcile::find_orphan(&local.task, &remote, &local_id_set),
+            };
 
             match orphan {
                 Some(o) => {
                     info!(local_id = %local_id, remote_id = %o.id, "adopting orphaned create after crash");
+                    // Pass the DRAIN-time local_updated (base_local_updated), not
+                    // the row's current one: an edit during the window advanced
+                    // the row's local_updated, so finish_create's guard misses
+                    // and keeps the edit as a pending update against the new
+                    // server id (#122). No edit → they match → the row goes
+                    // clean, exactly as the non-crash path.
+                    let drained = self
+                        .store
+                        .inflight_base_local_updated(&local_id)
+                        .await?
+                        .unwrap_or_else(|| local.local_updated.clone());
                     self.store
                         .finish_create(
                             &local_id,
                             &o.id,
                             o.etag.as_deref(),
                             &o.updated,
-                            &local.local_updated,
+                            &drained,
                             Some(&o.position),
                         )
                         .await?;
@@ -691,9 +717,12 @@ impl SyncEngine {
             }
         };
         let payload = reconcile::create_payload(row, previous);
-        // Durably mark in-flight BEFORE the non-idempotent insert.
+        // Durably mark in-flight BEFORE the non-idempotent insert. The drained
+        // `local_updated` is the base snapshot's drain marker (#124): a
+        // mid-flight re-edit changes the row's local_updated, so recovery can
+        // tell it apart and keep the edit as a pending update.
         self.store
-            .record_inflight_create(&row.task.id, &row.list_id)
+            .record_inflight_create(&row.task.id, &row.list_id, &row.local_updated)
             .await?;
         match self.client.insert_task(&row.list_id, payload).await {
             Ok(remote) => {
@@ -803,6 +832,30 @@ impl SyncEngine {
                 };
             }
         };
+
+        // #118: if the server left the TYPED content (title/notes/due) unchanged
+        // relative to our base snapshot, it never diverged from us on content —
+        // the etag bumped for a bare reorder or a status cascade. If we ALSO hold
+        // a pending typed edit the server has not got, our edit wins: keep it,
+        // adopt the remote STATUS (a status change we did not make is the
+        // remote's — D1) and the fresh etag, and re-push next run. No conflicted
+        // copy, no reverted edit. When our typed content already matches the
+        // remote, this is skipped and the normal path adopts the row (resolving
+        // any status difference remote-wins per D1). A row with no base falls
+        // through to whole-row resolution.
+        if let Some(base) = self.store.base_snapshot(&local.task.id).await?
+            && reconcile::only_local_diverged(&remote, &base)
+            && !reconcile::same_typed_content(&local.task, &remote)
+        {
+            let mut merged = local.clone();
+            merged.task.status = remote.status;
+            merged.task.completed = remote.completed.clone();
+            merged.task.etag = remote.etag.clone();
+            merged.task.updated = remote.updated.clone();
+            self.store.upsert_task(&merged).await?;
+            out.mark_list_changed(&local.list_id);
+            return Ok(());
+        }
 
         match reconcile::resolve_conflict(&local.task, &remote) {
             // No real divergence — just normalization/etag drift to absorb.
@@ -940,14 +993,27 @@ impl SyncEngine {
         // Compute skip-set after push so remapped IDs are current.
         let dirty_ids = self.store.dirty_ids().await?;
 
-        // In-flight creates: a remote task matching one of these by content is
-        // the (possibly committed) result of an interrupted create. Don't pull
-        // it as a new clean row — leave it for recover_inflight_creates to
-        // adopt via id remap next run (avoids a duplicate / PK collision).
-        let mut inflight_by_list: HashMap<String, Vec<Task>> = HashMap::new();
+        // In-flight creates: a remote task matching one of these by its BASE
+        // snapshot is the (possibly committed) result of an interrupted create.
+        // Don't pull it as a new clean row — leave it for recover_inflight_creates
+        // to adopt via id remap next run (avoids a duplicate / PK collision).
+        // Matching on the base (not the live row) survives an edit made during
+        // the window (#122) and the completed-parent cascade (RFC-009 §G).
+        let mut inflight_by_list: HashMap<String, Vec<reconcile::InflightBase>> = HashMap::new();
         for (local_id, list_id) in self.store.inflight_creates().await? {
             if let Some(t) = self.store.find_task_any(&local_id).await? {
-                inflight_by_list.entry(list_id).or_default().push(t.task);
+                let base = self
+                    .store
+                    .base_snapshot(&local_id)
+                    .await?
+                    .unwrap_or_else(|| crate::model::BaseSnapshot::of(&t.task));
+                inflight_by_list
+                    .entry(list_id)
+                    .or_default()
+                    .push(reconcile::InflightBase {
+                        base,
+                        parent: t.task.parent.clone(),
+                    });
             }
         }
         let empty = Vec::new();
@@ -964,7 +1030,7 @@ impl SyncEngine {
         &self,
         list: &TaskList,
         dirty_ids: &HashSet<String>,
-        inflight: &[Task],
+        inflight: &[reconcile::InflightBase],
         out: &mut SyncOutcome,
     ) -> Result<(), SyncError> {
         let (remote_tasks, complete) = self.fetch_all_tasks(&list.id).await?;
@@ -1216,7 +1282,7 @@ mod tests {
         client.seed_task("L1", "remote-orphan", "buy milk", "1");
         // In-flight marker persisted before the (crashed) finish.
         eng.store
-            .record_inflight_create("local-1", "L1")
+            .record_inflight_create("local-1", "L1", "2026-06-01T00:00:00Z")
             .await
             .unwrap();
 
@@ -1252,7 +1318,7 @@ mod tests {
         local.task.title = "orphan-free".into();
         eng.store.upsert_task(&local).await.unwrap();
         eng.store
-            .record_inflight_create("local-1", "L1")
+            .record_inflight_create("local-1", "L1", "2026-06-01T00:00:00Z")
             .await
             .unwrap();
 
@@ -1772,6 +1838,23 @@ mod tests {
         client.seed_task("L1", "T1", "server-version", "1");
         eng.run().await.unwrap();
 
+        // Another device edits the CONTENT to a third value — a genuine
+        // divergence from what we last synced (our base snapshot), which is what
+        // forks a conflicted copy (P3). A bare reorder that left the content
+        // equal to the base would not (#118, covered separately).
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("their-version".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
         let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
         local.task.title = "local-edit".into();
         local.sync_state = SyncState::Dirty;
@@ -1788,7 +1871,7 @@ mod tests {
         assert!(
             tasks
                 .iter()
-                .any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean)
+                .any(|t| t.task.title == "their-version" && t.sync_state == SyncState::Clean)
         );
         assert!(
             tasks
@@ -2383,6 +2466,21 @@ mod tests {
         client.seed_task("L1", "T1", "server", "1");
         eng.run().await.unwrap();
 
+        // A genuine remote content edit (not a bare reorder) so the push forks
+        // a conflicted copy — the base snapshot no longer matches the remote.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("their-edit".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
         let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
         local.task.title = "conflict".into();
         local.sync_state = SyncState::Dirty;
@@ -2456,6 +2554,21 @@ mod tests {
         client.seed_task("L1", "T1", "server-version", "1");
         eng.run().await.unwrap();
 
+        // Another device diverges the content (not a bare reorder), so once the
+        // fetch succeeds this resolves to a genuine conflicted copy.
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("their-version".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
         let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
         local.task.title = "local-edit".into();
         local.sync_state = SyncState::Dirty;
@@ -2494,7 +2607,7 @@ mod tests {
         assert!(
             tasks
                 .iter()
-                .any(|t| t.task.title == "server-version" && t.sync_state == SyncState::Clean)
+                .any(|t| t.task.title == "their-version" && t.sync_state == SyncState::Clean)
         );
         assert!(
             tasks
@@ -2926,7 +3039,7 @@ mod tests {
                 .unwrap();
         }
         eng.store
-            .record_inflight_create("local-1", "L1")
+            .record_inflight_create("local-1", "L1", "2026-06-01T00:00:00Z")
             .await
             .unwrap();
 
@@ -3421,7 +3534,7 @@ mod tests {
         local.task.title = "buy milk".into();
         eng.store.upsert_task(&local).await.unwrap();
         eng.store
-            .record_inflight_create("local-p", "L1")
+            .record_inflight_create("local-p", "L1", "2026-06-01T00:00:00Z")
             .await
             .unwrap();
         // …its committed orphan on the server, plus a child under the orphan.
