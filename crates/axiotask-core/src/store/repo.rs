@@ -920,6 +920,15 @@ impl Store {
                  position = CASE WHEN local_updated = ?3 AND ?4 IS NOT NULL AND NOT EXISTS
                               (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
                             THEN ?4 ELSE position END,
+                 -- Base snapshot (#134): a clean create landing clears it, exactly
+                 -- as `apply_pushed_task` does for an update landing — base_* is
+                 -- NULL while the row is clean (schema.sql, RFC-009 §B). A re-edited
+                 -- (still-dirty) or deleted row keeps its base: for the re-edit it
+                 -- holds the payload as sent, which a later 412 compares against.
+                 base_title  = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_title  END,
+                 base_notes  = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_notes  END,
+                 base_due    = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_due    END,
+                 base_status = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_status END,
                  sync_state = CASE WHEN sync_state = 'deleted' THEN 'deleted'
                                    WHEN local_updated = ?3 THEN 'clean'
                                    ELSE sync_state END,
@@ -1553,6 +1562,101 @@ mod tests {
         );
         assert_eq!(row.task.etag.as_deref(), Some("e9"));
         assert_eq!(row.task.title, "typed more while pushing");
+    }
+
+    #[tokio::test]
+    async fn finish_create_clean_landing_clears_base() {
+        // Schema invariant (schema.sql, RFC-009 §B): base_* is NULL while a row
+        // is clean. `record_inflight_create` populates base with the payload as
+        // sent; when the create lands clean, `finish_create` must clear it — the
+        // same clean-only clear `apply_pushed_task` does for an update landing.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut p = task("local-1", "L1", None, "1");
+        p.task.etag = None;
+        p.task.title = "buy milk".into();
+        p.sync_state = SyncState::Dirty;
+        p.pending_op = Some("create".into());
+        p.local_updated = "2026-01-01T00:00:00Z".into();
+        s.upsert_task(&p).await.unwrap();
+        // Drain: mark in-flight + snapshot the payload as its base.
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        assert!(
+            s.base_snapshot("local-1").await.unwrap().is_some(),
+            "precondition: the in-flight create captured a base"
+        );
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e9"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z", // matches the drain snapshot → clean landing
+            None,
+        )
+        .await
+        .unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        let row = rows.iter().find(|r| r.task.id == "remote-1").unwrap();
+        assert_eq!(row.sync_state, SyncState::Clean);
+        assert!(
+            s.base_snapshot("remote-1").await.unwrap().is_none(),
+            "a clean create landing must clear base_* (NULL while clean)"
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_create_reedited_row_keeps_its_base() {
+        // Non-happy path: a mid-flight re-edit keeps the row dirty (create→update),
+        // so its base must SURVIVE — it holds the payload as sent (= what the
+        // server now stores), which a later 412 compares the refetched remote
+        // against (#118). Clearing it here would be the clean-only rule bleeding
+        // into a still-dirty row.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut p = task("local-1", "L1", None, "1");
+        p.task.etag = None;
+        p.task.title = "buy milk".into();
+        p.sync_state = SyncState::Dirty;
+        p.pending_op = Some("create".into());
+        p.local_updated = "2026-01-01T00:00:00Z".into();
+        s.upsert_task(&p).await.unwrap();
+        s.record_inflight_create("local-1", "L1", "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        // User keeps typing during the in-flight window: content + local_updated
+        // move past the drain snapshot, but base_* is preserved by the upsert.
+        let mut edited = p.clone();
+        edited.task.title = "buy oat milk".into();
+        edited.local_updated = "2026-01-01T00:00:07Z".into();
+        s.upsert_task(&edited).await.unwrap();
+        s.finish_create(
+            "local-1",
+            "remote-1",
+            Some("e9"),
+            "2026-02-01T00:00:00Z",
+            "2026-01-01T00:00:00Z", // drain snapshot ≠ current → stays dirty
+            None,
+        )
+        .await
+        .unwrap();
+        let rows = s.list_tasks("L1").await.unwrap();
+        let row = rows.iter().find(|r| r.task.id == "remote-1").unwrap();
+        assert_eq!(
+            row.sync_state,
+            SyncState::Dirty,
+            "mid-flight edit stays queued"
+        );
+        let base = s
+            .base_snapshot("remote-1")
+            .await
+            .unwrap()
+            .expect("re-edited row must keep its base (the pushed payload)");
+        assert_eq!(
+            base.title, "buy milk",
+            "base is the payload as sent, not the mid-flight edit"
+        );
     }
 
     #[tokio::test]

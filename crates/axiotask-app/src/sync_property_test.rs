@@ -957,6 +957,36 @@ mod tests {
         }
     }
 
+    /// Schema invariant (schema.sql, RFC-009 §B, #134): a `clean` row carries no
+    /// base snapshot. base_* is captured only while a row is dirty / a create is
+    /// in flight, and cleared the moment the row agrees with the server again. A
+    /// clean row with a lingering base would make a future 412 compare the
+    /// refetched remote against stale content.
+    ///
+    /// Wired into `prop_crashed_creates_never_duplicate` only: #134 clears base on
+    /// clean CREATE landings (`finish_create`, both the push and crash-adoption
+    /// paths). The broader op mix in `prop_local_converges_with_server` also trips
+    /// a separate 412 `ConflictedCopy` leak (the canonical row lands clean via a
+    /// dirty→clean `upsert_task`, which does not clear base) — filed as its own
+    /// defect, out of scope here.
+    async fn assert_base_null_when_clean(h: &Harness, ctx: &str) {
+        let dump = h.dump().await;
+        for t in h.all_rows().await {
+            if t.sync_state == SyncState::Clean {
+                assert!(
+                    h.state
+                        .store
+                        .base_snapshot(&t.task.id)
+                        .await
+                        .expect("base_snapshot")
+                        .is_none(),
+                    "{ctx}: clean task {} still carries a base snapshot\n{dump}",
+                    t.task.id
+                );
+            }
+        }
+    }
+
     async fn assert_converged(h: &Harness, ctx: &str) {
         let local = h.local_rows().await;
         let server = h.server_rows().await;
@@ -1320,6 +1350,7 @@ mod tests {
                     h.dump().await
                 );
                 assert_parent_integrity(&h, "after crash recovery").await;
+                assert_base_null_when_clean(&h, "after crash recovery").await;
             });
         });
     }
