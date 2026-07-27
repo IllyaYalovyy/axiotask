@@ -42,16 +42,42 @@ fn backoff_period(base: Duration, streak: u32, cap: Duration) -> Duration {
     Duration::from_secs(secs).min(cap)
 }
 
-/// Whether a permanent failure should be logged at ERROR (its first occurrence,
-/// or a *different* error than last time) versus DEBUG (an identical repeat).
-/// Keeps a stuck sync from reprinting the same ERROR line every cadence tick,
-/// which otherwise buries everything else in the log.
-fn permanent_failure_is_new(
+/// How to log one permanent sync failure, and what to remember for the next run.
+struct PermanentFailureLog {
+    /// Log this occurrence at ERROR (a first-time or *changed* failure) rather
+    /// than DEBUG (an identical repeat that would otherwise spam the log every
+    /// cadence tick).
+    log_at_error: bool,
+    /// The full typed detail (`SyncError::to_string`): written to the log AND
+    /// kept as the dedup key for the next run. May carry raw SQL — never shown
+    /// to the user.
+    raw_detail: String,
+    /// The sanitized, user-safe message for `last_error` (#128).
+    user_msg: String,
+}
+
+/// Decide how to log a permanent sync failure and dedup it against the last one.
+///
+/// Dedup is keyed on the RAW typed detail, NOT the sanitized display message
+/// (#131). Every store failure sanitizes to one calm sentence and every internal
+/// failure to another (see [`sync_user_message`]), so two *distinct* root causes
+/// routinely collapse to identical user-facing text. Keying the dedup on that
+/// sanitized text would swallow a genuinely new failure as a "repeat" and bury
+/// it at DEBUG. Keying on the raw detail gives every distinct failure its own
+/// first-time ERROR line, while an *identical* failure that repeats every
+/// cadence tick still drops to DEBUG so it stops burying everything else.
+fn classify_permanent_failure(
     prev_attention: bool,
-    prev_error: Option<&str>,
-    new_error: &str,
-) -> bool {
-    !prev_attention || prev_error != Some(new_error)
+    prev_raw_error: Option<&str>,
+    e: &axiotask_core::sync::SyncError,
+) -> PermanentFailureLog {
+    let raw_detail = e.to_string();
+    let log_at_error = !prev_attention || prev_raw_error != Some(raw_detail.as_str());
+    PermanentFailureLog {
+        log_at_error,
+        raw_detail,
+        user_msg: sync_user_message(e),
+    }
 }
 
 /// A user-safe description of a *permanent* sync failure (#128).
@@ -149,7 +175,16 @@ pub struct SyncStatus {
     /// Number of successful syncs since the app started.
     pub total_syncs: u64,
     /// Message from the most recent sync failure, cleared on the next success.
+    /// This is the *sanitized*, user-safe text (#128) — it is what the UI shows.
     pub last_error: Option<String>,
+    /// The RAW typed detail (`SyncError::to_string`) of the most recent
+    /// *permanent* failure, kept ONLY to dedup log lines across cadence ticks
+    /// (#131). Distinct from [`Self::last_error`]: two different root causes can
+    /// sanitize to the same calm sentence, so the dedup key must be the raw
+    /// detail or a genuinely new failure would be swallowed as a "repeat" and
+    /// logged at DEBUG. May carry raw SQL, so it is never surfaced to the UI
+    /// (it is deliberately absent from `SyncStatusView`). Cleared on success.
+    pub last_raw_error: Option<String>,
     /// A *permanent* (non-transient, non-auth) failure is stuck — store
     /// corruption, a schema mismatch, a deserialization bug. Retrying is
     /// pointless until something changes, so the scheduler has backed off and
@@ -640,6 +675,9 @@ impl AppState {
                     // base ([`Self::next_sync_period`]).
                     self.attention_streak.store(0, Ordering::Relaxed);
                     status.needs_attention = false;
+                    // The stuck failure resolved: forget its raw dedup key so a
+                    // later, identical permanent failure re-logs at ERROR (#131).
+                    status.last_raw_error = None;
                     status.last_pulled = o.pulled;
                     status.last_pushed = o.pushed;
                     status.last_conflicts = o.conflicts;
@@ -686,27 +724,31 @@ impl AppState {
                         // Permanent: fails identically on every retry until
                         // something changes. Surface it as "needs attention" and
                         // back the idle cadence off. Log at ERROR only the first
-                        // time (or when the error text changes) — a stuck sync
-                        // must not reprint the same line every cadence tick.
+                        // time a DISTINCT failure appears — keyed on the RAW
+                        // typed detail, not the sanitized display text (#131) —
+                        // so a stuck sync repeating the same failure drops to
+                        // DEBUG and stops reprinting every cadence tick, while a
+                        // genuinely new root cause still gets its own ERROR line.
                         // Full typed detail (may carry raw SQL) goes to the log;
                         // the user only ever sees the sanitized message (#128).
-                        let detail = e.to_string();
-                        let user_msg = sync_user_message(e);
-                        if permanent_failure_is_new(
+                        let log = classify_permanent_failure(
                             status.needs_attention,
-                            status.last_error.as_deref(),
-                            &user_msg,
-                        ) {
-                            tracing::error!("sync failed (needs attention): {detail}");
+                            status.last_raw_error.as_deref(),
+                            e,
+                        );
+                        if log.log_at_error {
+                            tracing::error!("sync failed (needs attention): {}", log.raw_detail);
                         } else {
                             tracing::debug!(
-                                "sync still failing (unchanged, backing off): {detail}"
+                                "sync still failing (unchanged, backing off): {}",
+                                log.raw_detail
                             );
                         }
                         let streak = self.attention_streak.fetch_add(1, Ordering::Relaxed) + 1;
                         tracing::debug!("permanent sync-failure streak now {streak}");
                         status.needs_attention = true;
-                        status.last_error = Some(user_msg);
+                        status.last_raw_error = Some(log.raw_detail);
+                        status.last_error = Some(log.user_msg);
                     }
                 }
             }
@@ -1346,14 +1388,188 @@ mod tests {
 
     #[test]
     fn permanent_failure_logs_at_error_only_when_new_or_changed() {
+        use axiotask_core::api::ApiError;
+        use axiotask_core::sync::SyncError;
+        let boom = SyncError::Api(ApiError::Other("boom".into()));
+        let kaput = SyncError::Api(ApiError::Other("kaput".into()));
+        let raw_boom = boom.to_string();
         // First failure of a healthy sync → log at ERROR.
-        assert!(permanent_failure_is_new(false, None, "boom"));
+        assert!(classify_permanent_failure(false, None, &boom).log_at_error);
         // Same error repeating while already in attention → DEBUG (no spam).
-        assert!(!permanent_failure_is_new(true, Some("boom"), "boom"));
+        assert!(!classify_permanent_failure(true, Some(&raw_boom), &boom).log_at_error);
         // A *different* permanent error while in attention → ERROR again.
-        assert!(permanent_failure_is_new(true, Some("boom"), "kaput"));
+        assert!(classify_permanent_failure(true, Some(&raw_boom), &kaput).log_at_error);
         // Re-entering attention after a clear (prev_attention false) → ERROR.
-        assert!(permanent_failure_is_new(false, Some("boom"), "boom"));
+        assert!(classify_permanent_failure(false, Some(&raw_boom), &boom).log_at_error);
+    }
+
+    #[test]
+    fn distinct_root_causes_relog_at_error_even_when_display_text_is_identical() {
+        // #131: two DIFFERENT store failures both sanitize to the SAME calm
+        // sentence (SQL is hidden from the user). The dedup must key on the RAW
+        // typed detail, not that sanitized display text — otherwise the second,
+        // genuinely-new root cause is swallowed as a "repeat" and buried at
+        // DEBUG. It must earn its own first-time ERROR line.
+        use axiotask_core::store::StoreError;
+        use axiotask_core::sync::SyncError;
+        let first = SyncError::Store(StoreError::Sql("no such column: foo".into()));
+        let second = SyncError::Store(StoreError::Sql("no such table: bar".into()));
+
+        let a = classify_permanent_failure(false, None, &first);
+        assert!(a.log_at_error, "first distinct failure logs at ERROR");
+        // Precondition the fix depends on: distinct raw, identical display.
+        assert_ne!(a.raw_detail, second.to_string(), "raw details differ");
+        assert_eq!(
+            a.user_msg,
+            classify_permanent_failure(false, None, &second).user_msg,
+            "both sanitize to the same user-facing sentence",
+        );
+
+        // Now the second failure arrives while already in attention, with the
+        // first failure's RAW detail remembered.
+        let b = classify_permanent_failure(true, Some(&a.raw_detail), &second);
+        assert!(
+            b.log_at_error,
+            "a distinct root cause must re-log at ERROR despite identical display text",
+        );
+
+        // …but an *identical* raw failure repeating stays DEBUG (no spam).
+        let c = classify_permanent_failure(true, Some(&a.raw_detail), &first);
+        assert!(!c.log_at_error, "identical raw repeat stays DEBUG");
+        // And the raw detail is what reaches the log (carries the SQL), while the
+        // user message hides it.
+        assert!(
+            a.raw_detail.contains("no such column: foo"),
+            "raw kept for log"
+        );
+        assert!(
+            !a.user_msg.contains("no such column"),
+            "SQL hidden from user"
+        );
+    }
+
+    // ─── End-to-end permanent-failure log dedup through run_sync (#131) ───────
+
+    /// A thread-local tracing sink that records `(level, message)` for every
+    /// event, so a test can assert the LEVEL a permanent failure was logged at.
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+    impl CapturedLogs {
+        fn count(&self, level: tracing::Level, needle: &str) -> usize {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(l, m)| *l == level && m.contains(needle))
+                .count()
+        }
+    }
+
+    struct MsgVisitor(String);
+    impl tracing::field::Visit for MsgVisitor {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
+    }
+
+    struct CaptureLayer(CapturedLogs);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CaptureLayer {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut v = MsgVisitor(String::new());
+            event.record(&mut v);
+            self.0
+                .0
+                .lock()
+                .unwrap()
+                .push((*event.metadata().level(), v.0));
+        }
+    }
+
+    #[tokio::test]
+    async fn permanent_failure_logs_error_once_then_debug_across_run_sync() {
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        const BLORP: &str = "schema mismatch: tasks.blorp";
+        const ZONK: &str = "schema mismatch: lists.zonk";
+
+        // Capture logs on this test's thread (current-thread runtime, so every
+        // run_sync await stays on it and nothing else races the sink).
+        let logs = CapturedLogs::default();
+        let subscriber = tracing_subscriber::registry().with(CaptureLayer(logs.clone()));
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+
+        // The same permanent failure twice, then a genuinely different one.
+        for _ in 0..2 {
+            client.fail_next(Method::ListTaskLists, || ApiError::Other(BLORP.into()));
+            state.run_sync().await.unwrap_err();
+        }
+        client.fail_next(Method::ListTaskLists, || ApiError::Other(ZONK.into()));
+        state.run_sync().await.unwrap_err();
+
+        // The user-visible state carries only the sanitized message (verbatim
+        // for an API error) and flags "needs attention".
+        let status = state.sync_status().await;
+        assert!(status.needs_attention, "permanent failure needs attention");
+        // An API error keeps its human text verbatim (#128 sanitizes only store
+        // / internal detail); the display just carries the typed `other:` prefix.
+        assert!(
+            status
+                .last_error
+                .as_deref()
+                .is_some_and(|m| m.contains(ZONK)),
+            "user-visible error surfaces the failure text, got: {:?}",
+            status.last_error
+        );
+
+        // First occurrence of each DISTINCT failure logs once at ERROR; the
+        // identical repeat is muted to DEBUG so it stops spamming the log.
+        assert_eq!(
+            logs.count(tracing::Level::ERROR, BLORP),
+            1,
+            "first occurrence of a distinct failure logs exactly one ERROR"
+        );
+        assert_eq!(
+            logs.count(tracing::Level::DEBUG, BLORP),
+            1,
+            "the identical repeat is muted to DEBUG"
+        );
+        assert_eq!(
+            logs.count(tracing::Level::ERROR, ZONK),
+            1,
+            "a genuinely different failure earns its own ERROR line"
+        );
+
+        // A success clears attention AND the raw dedup key, so the SAME failure
+        // recurring afterwards is treated as new and re-logs at ERROR.
+        state.run_sync().await.unwrap();
+        let recovered = state.sync_status().await;
+        assert!(!recovered.needs_attention, "success clears attention");
+        assert!(recovered.last_error.is_none(), "success clears the error");
+
+        client.fail_next(Method::ListTaskLists, || ApiError::Other(BLORP.into()));
+        state.run_sync().await.unwrap_err();
+        assert_eq!(
+            logs.count(tracing::Level::ERROR, BLORP),
+            2,
+            "after a clean sync, the same failure re-logs at ERROR (dedup key was reset)"
+        );
     }
 
     // ─── Background sync trigger timing ──────────────────────────────────────
