@@ -137,6 +137,10 @@
   function taskListId(id) { return allTasks.find(t => t.id === id)?.listId; }
 
   let needsReauth = $state(false); // stored session is dead — re-auth required
+  // A *permanent*, backed-off sync failure the user must act on (#136). Purely
+  // derived from the live backend `sync-updated` state — never persisted — so a
+  // restart starts clean and the first post-restart run re-derives it.
+  let needsAttention = $state(false);
 
   async function checkAuth() {
     const r = await cmd("auth_status");
@@ -166,6 +170,10 @@
       // A dead session needs an action (the sidebar's "Sign in again"), not
       // just an error string.
       needsReauth = s.needs_reauth === true;
+      // Reflect the persistent needs-attention state in the main window, not
+      // just the Properties dialog. Every run carries the current flag, so this
+      // both raises the indicator on a stuck failure and lowers it on recovery.
+      needsAttention = s.needs_attention === true;
       if (s.last_error) {
         syncStatus = "error";
         // The loop retries periodically; only toast a new/changed error so a
@@ -1392,6 +1400,7 @@
       theme={themePref}
       {authenticated}
       {needsReauth}
+      {needsAttention}
       {syncStatus}
       {lastSynced}
       {renamingListId}
