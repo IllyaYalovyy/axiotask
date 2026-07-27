@@ -197,6 +197,50 @@ describe("Sidebar", () => {
     });
   });
 
+  describe("Needs-attention indicator", () => {
+    it("does not show the needs-attention indicator when sync is healthy", () => {
+      renderSidebar({ authenticated: true, needsAttention: false });
+      expect(
+        screen.queryByRole("button", { name: /needs attention/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows a persistent needs-attention indicator when sync is stuck", () => {
+      renderSidebar({ authenticated: true, needsAttention: true });
+      expect(
+        screen.getByRole("button", { name: /needs attention/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the indicator visible even when the transient status reads idle", () => {
+      // needs_attention is a persistent, backed-off permanent-failure state:
+      // it must stay up regardless of the moment-to-moment syncStatus, not
+      // vanish the way a transient "Sync error" line does.
+      renderSidebar({ authenticated: true, needsAttention: true, syncStatus: "idle" });
+      expect(
+        screen.getByRole("button", { name: /needs attention/i }),
+      ).toBeInTheDocument();
+    });
+
+    it("opens Properties when the needs-attention indicator is clicked", async () => {
+      const onproperties = vi.fn();
+      renderSidebar({ authenticated: true, needsAttention: true, onproperties });
+      await fireEvent.click(
+        screen.getByRole("button", { name: /needs attention/i }),
+      );
+      expect(onproperties).toHaveBeenCalled();
+    });
+
+    it("does not show needs-attention when the session is dead (re-auth wins)", () => {
+      // A dead session is its own state with its own call-to-action ("Sign in
+      // again"); it must not double up with the needs-attention indicator.
+      renderSidebar({ authenticated: true, needsAttention: true, needsReauth: true });
+      expect(
+        screen.queryByRole("button", { name: /needs attention/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   describe("Sign in button", () => {
     it("shows Sign in button when not authenticated", () => {
       renderSidebar({ authenticated: false });

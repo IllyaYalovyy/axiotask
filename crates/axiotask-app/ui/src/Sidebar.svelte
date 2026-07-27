@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
 
-  let { lists, selectedView, onselect, onlogin, onlogout, onsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
+  let { lists, selectedView, onselect, onlogin, onlogout, onsync, oncreateList, onrenameList, onlistaction, onreorderlists, onproperties, ontoggletheme, theme = "dark", authenticated, needsReauth = false, needsAttention = false, syncStatus, lastSynced, excludedLists = [], counts = {}, renamingListId = null } = $props();
 
   let newListMode = $state(false);
   let newListValue = $state("");
@@ -190,6 +190,17 @@
   </nav>
 
   <div class="footer">
+    {#if needsAttention && !needsReauth}
+      <!-- A permanent, backed-off sync failure ("needs attention") is stuck
+           until the user acts. Unlike a transient blip it doesn't clear on its
+           own, so it gets a persistent, always-visible affordance here — not
+           just a line buried in the Properties dialog (#136). Clicking it opens
+           Properties, where the sanitized cause and Sync actions live. It's a
+           real button, so it works for mouse, keyboard, and touch alike. -->
+      <button class="attention-btn" onclick={onproperties} title="Sync needs attention — open Properties">
+        <Icon name="alertTriangle" size={14} /> Sync needs attention
+      </button>
+    {/if}
     {#if !authenticated || needsReauth}
       <!-- Signed out, or the stored session is dead (refresh token expired /
            revoked): either way the one useful action is re-running the OAuth
@@ -203,9 +214,10 @@
       </button>
     {/if}
     <div class="sync-info">
-      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error" || needsReauth} class:offline={!authenticated}></span>
+      <span class="sync-dot" class:syncing={syncStatus === "syncing"} class:error={syncStatus === "error" || needsReauth || needsAttention} class:offline={!authenticated}></span>
       <span class="sync-text">
         {#if needsReauth}Session expired
+        {:else if needsAttention}Needs attention
         {:else if syncStatus === "error"}Sync error
         {:else if lastSynced}Synced {formatSynced(lastSynced)}
         {:else if authenticated}Ready
@@ -268,6 +280,16 @@
   /* Dead session: the re-auth action is the only way forward — make it read
      as the call-to-action, not another gray utility button. */
   .action-btn.reauth { background: var(--bg-active); color: var(--accent); font-weight: 600; }
+  /* Persistent needs-attention banner: a stuck permanent sync failure the user
+     must act on. Reads as a danger call-to-action, distinct from a transient
+     error line, and stays until a successful sync clears it (#136). */
+  .attention-btn {
+    display: flex; align-items: center; justify-content: center; gap: 0.35rem;
+    width: 100%; background: var(--bg-danger); color: var(--danger);
+    border: 1px solid var(--border-danger); padding: 0.45rem; border-radius: 4px;
+    cursor: pointer; font-size: 0.78rem; font-weight: 600; font-family: inherit;
+  }
+  .attention-btn:hover { background: var(--border-danger); }
   .sync-info { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.2rem; }
   .sync-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); }
   .sync-dot.offline { background: var(--fg-faint); }
@@ -305,5 +327,6 @@
     .views button, .lists button { padding: 0.6rem 0.8rem; min-height: 44px; }
     .icon-btn { width: 44px; height: 44px; }
     .action-btn { padding: 0.6rem; font-size: 0.9rem; min-height: 44px; }
+    .attention-btn { padding: 0.6rem; font-size: 0.85rem; min-height: 44px; }
   }
 </style>
