@@ -13,6 +13,13 @@ pub enum StoreError {
     #[error("migrate: {0}")]
     Migrate(String),
 
+    /// A pre-1.0 wipe-and-recreate was refused because the local store holds
+    /// data not yet on Google (local-only or unsynced) and the pre-wipe backup
+    /// could not be written durably to disk. Startup fails open — the data is
+    /// left intact — rather than destroy it silently.
+    #[error("{0}")]
+    WipeAborted(String),
+
     /// Underlying SQL execution failed.
     #[error("sql: {0}")]
     Sql(String),

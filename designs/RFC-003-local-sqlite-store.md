@@ -143,7 +143,18 @@ Database file lives at `dirs::data_dir()/axiotask/axiotask.sqlite`.
   its data (no wipe); opening a DB stamped with an incompatible fingerprint
   exports every table to a timestamped JSON file beside the DB, then wipes and
   recreates it from `schema.sql`. Old-schema fixtures (including a parent with a
-  subtask) prove the export captures the full subtree before the wipe.
+  subtask) prove the export captures the full subtree before the wipe. The
+  export is written with `sync_all` (file + parent directory) so it is durably
+  on disk before the wipe runs (#129).
+- **Durable-backup gate on wipe (#129)**: the destructive wipe must not run
+  unless the pre-wipe backup is durably on disk. If the backup write fails and
+  the store holds data Google does not have — a local-only list, or an unpushed
+  dirty/deleted row, or a queued move / in-flight create — `open` **fails open**:
+  it returns a `WipeAborted` error with a clear message and leaves the data
+  intact rather than destroying it. A fully-synced ("clean") cache holds nothing
+  Google lacks, so it may still be wiped best-effort even when the backup fails.
+  Both paths are covered red-first. The at-risk probe is schema-agnostic and
+  conservative: a probe that cannot inspect an old table is treated as at-risk.
 - **Repository tests**: in-memory DB per test (`SqlitePool::connect(":memory:")`); coverage target = every public method.
 - **Tree query**: property test — generate arbitrary tree shapes, round-trip insert → `load_tree` → assert structure.
 - **Dirty queue**: assert ordering invariants (creates before updates before deletes for the same row).
