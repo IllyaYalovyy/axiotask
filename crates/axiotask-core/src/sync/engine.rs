@@ -1085,11 +1085,13 @@ impl SyncEngine {
         // pull that landed a middle row's demotion without re-fetching the
         // grandchild still repairs it; the all-clean guard in `third_level_ids`
         // keeps an un-pushed optimistic demote from triggering a bogus repair.
-        if self.config.push_enabled {
-            let local = self.store.list_tasks(&list.id).await?;
-            let third_level = reconcile::third_level_ids(&local);
-            self.repair_third_level(&list.id, &third_level, out).await?;
-        }
+        // ALWAYS runs — invariant #1 (strictly one level) is absolute and does
+        // not depend on whether this sync may write to the server. A read-only
+        // sync still flattens the row LOCALLY; only the corrective server move
+        // inside `repair_third_level` is gated on push (#137).
+        let local = self.store.list_tasks(&list.id).await?;
+        let third_level = reconcile::third_level_ids(&local);
+        self.repair_third_level(&list.id, &third_level, out).await?;
 
         // Ghost detection: remove clean local rows absent from server.
         if complete {
@@ -1117,8 +1119,13 @@ impl SyncEngine {
     /// top-level is a no-op the server accepts (no depth cap), so another
     /// device's promotion landing first cannot corrupt anything — and once a
     /// grandchild is promoted it is no longer detected, so a quiescent re-run
-    /// is a no-op (P7). Gated on push: a read-only sync makes no server writes,
-    /// so it leaves the rare cross-device third level until push is enabled.
+    /// is a no-op (P7). Only the corrective SERVER move is gated on push (#137):
+    /// a read-only sync makes no server writes, but it STILL flattens the row
+    /// locally — invariant #1 is absolute regardless of push. The server keeps
+    /// the nesting until a push-enabled run sends the deferred move; the local
+    /// grandchild re-nests and re-flattens on each read-only pull (its etag is
+    /// dropped, so the row is re-examined), so the local view is one level
+    /// throughout and no task is lost (see RFC-009 §F, stale-parent note).
     async fn repair_third_level(
         &self,
         list_id: &str,
@@ -1129,7 +1136,18 @@ impl SyncEngine {
             let Some(before) = self.store.find_task_any(id).await? else {
                 continue; // vanished between detection and repair
             };
-            if before.task.etag.is_some() {
+            if before.task.etag.is_some() && !self.config.push_enabled {
+                // Read-only sync: a synced grandchild really sits on the server
+                // under a subtask, but this run may not write to the server.
+                // Flatten it LOCALLY now anyway — invariant #1 is absolute — and
+                // DROP the clean etag so the next pull re-examines it (P6); the
+                // server keeps the nesting until a push-enabled run sends the
+                // corrective move (same local shape as the failed-move path).
+                self.promote_and_detach(id).await?;
+                out.conflicts += 1;
+                out.mark_list_changed(list_id);
+                debug!(id = %id, "D7: read-only sync — flattened a synced third level locally, server move deferred");
+            } else if before.task.etag.is_some() {
                 // A synced grandchild really sits on the server under a subtask
                 // (§F residual, or a §G create that already landed). Push the
                 // corrective move so the server converges too — a local-only
@@ -3347,11 +3365,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pull_multilevel_nesting_is_fk_safe() {
+    async fn pull_multilevel_nesting_is_fk_safe_and_d7_flattens_the_third_level() {
         // The API allows >1 level of nesting; the pull batch can arrive in any
         // order. Children inserting before their own parent breaks the FK.
         // Seed in the hostile order — grandchild first, root last (the seed_*
-        // helpers are fixtures, so a forward reference is fine).
+        // helpers are fixtures, so a forward reference is fine). `engine()` has
+        // push DISABLED — a read-only sync.
         let (client, eng) = engine().await;
         client.seed_list("L1", "Inbox");
         client.seed_task_with_parent("L1", "leaf", "leaf", "1", Some("mid"));
@@ -3361,19 +3380,11 @@ mod tests {
         let out = eng.run().await.unwrap();
         assert_eq!(
             out.pulled, 3,
-            "all three levels pulled despite hostile order"
+            "all three levels pulled despite hostile order (FK-safe)"
         );
         let tasks = eng.store.list_tasks("L1").await.unwrap();
-        assert_eq!(
-            tasks
-                .iter()
-                .find(|t| t.task.id == "leaf")
-                .unwrap()
-                .task
-                .parent
-                .as_deref(),
-            Some("mid")
-        );
+        // `mid` is a legal one-level subtask (its parent `root` is top-level),
+        // so it is relinked to exactly the parent the server gave it.
         assert_eq!(
             tasks
                 .iter()
@@ -3384,6 +3395,25 @@ mod tests {
                 .as_deref(),
             Some("root")
         );
+        // `leaf` would be a third level (root > mid > leaf). D7 flattens it to
+        // top-level LOCALLY even though push is off (#137) — invariant #1 is
+        // absolute regardless of push; only the corrective server move waits for
+        // a push-enabled run.
+        assert_eq!(
+            tasks
+                .iter()
+                .find(|t| t.task.id == "leaf")
+                .unwrap()
+                .task
+                .parent,
+            None,
+            "the pulled third level is flattened locally on a read-only sync"
+        );
+        assert_eq!(
+            out.conflicts, 1,
+            "the flattened third level is counted as a conflict"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
     }
 
     #[tokio::test]
@@ -4806,6 +4836,114 @@ mod tests {
             "no further corrective move"
         );
         assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_flattens_a_pulled_third_level_locally_even_with_push_disabled() {
+        // #137: invariant #1 (strictly one level) is ABSOLUTE — it does not
+        // depend on whether this sync may write to the server. A read-only sync
+        // (push disabled) that pulls a server-side third level must still flatten
+        // it LOCALLY; only the corrective server move is gated on push. The old
+        // code skipped the whole D7 repair when push was off, so the third level
+        // lingered in the local view — the exact regression this pins.
+        use crate::api::in_memory::Method;
+        let client = Arc::new(InMemoryClient::new());
+        let pool = open_memory().await.unwrap();
+        let store = Store::new(pool);
+
+        // Establish P > T landed on the server (§F): a push-enabled engine over
+        // the SAME store demotes T under P and pushes it.
+        let pusher = SyncEngine::with_push(client.clone(), store.clone(), true);
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        pusher.run().await.unwrap();
+        local_move(&pusher, "T", Some("P"), None).await;
+        pusher.run().await.unwrap();
+        assert_eq!(
+            remote_parent(&client, "L1", "T").await,
+            Some("P".into()),
+            "precondition: T is a subtask of P on the server"
+        );
+
+        // Another device hangs C under the already-demoted T — server now holds
+        // P > T > C.
+        client.seed_task_with_parent("L1", "C", "remote grandchild", "00000000000003", Some("T"));
+
+        // A READ-ONLY engine over the same store performs the reconciling sync.
+        let reader = SyncEngine::with_push(client.clone(), store.clone(), false);
+        let moves_before = client.call_count(Method::MoveTask);
+        let out = reader.run().await.unwrap();
+
+        // No server write of any kind — push is disabled.
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            moves_before,
+            "read-only sync issues no corrective move"
+        );
+        assert_eq!(out.pushed, 0, "read-only sync pushes nothing");
+        assert_eq!(
+            remote_parent(&client, "L1", "C").await,
+            Some("T".into()),
+            "the server still nests C — the corrective move is deferred to a push-enabled run"
+        );
+
+        // …yet the LOCAL view is one level: C was flattened.
+        assert_eq!(
+            out.conflicts, 1,
+            "the third level is resolved as a conflict"
+        );
+        assert_eq!(out.errors, 0, "flattening locally is not an error");
+        let c = store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            c.task.parent, None,
+            "C is promoted to top-level locally despite push being off"
+        );
+        assert_eq!(
+            c.task.etag, None,
+            "the clean grandchild's etag is dropped so the next pull re-examines it (P6)"
+        );
+        assert_eq!(
+            store
+                .find_task_any("T")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("P"),
+            "the demote of T survives — nothing is discarded"
+        );
+        assert_at_most_one_level(&reader, "L1").await;
+        assert!(
+            local_order(&reader, "L1").await.contains(&"C".to_string()),
+            "C now renders as a top-level list row"
+        );
+
+        // Convergence gate: the local view stays one level across further
+        // read-only pulls (the server still nests C, so C re-nests and
+        // re-flattens each run — invariant #1 holds throughout).
+        let out2 = reader.run().await.unwrap();
+        assert_eq!(out2.pushed, 0);
+        assert_at_most_one_level(&reader, "L1").await;
+
+        // Enabling push finally converges the server too.
+        let out3 = pusher.run().await.unwrap();
+        assert_eq!(
+            remote_parent(&client, "L1", "C").await,
+            None,
+            "a push-enabled run sends the deferred corrective move"
+        );
+        assert_at_most_one_level(&pusher, "L1").await;
+        // Quiescent afterwards (P7).
+        let _ = out3;
+        let out4 = pusher.run().await.unwrap();
+        assert_eq!(
+            out4.conflicts, 0,
+            "no repair re-fires once the server converged"
+        );
+        assert_at_most_one_level(&pusher, "L1").await;
     }
 
     #[tokio::test]

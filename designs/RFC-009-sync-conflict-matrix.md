@@ -333,6 +333,21 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   both vectors); the soak also surfaced a latent FK crash — `apply_pushed_task`
   adopting a parent this device no longer holds — now detached like the pull's
   unknown-parent case.
+  **Stale-parent partial pull (read-only, #137):** the local flatten does NOT
+  depend on push. Detection + `promote_and_detach` run on EVERY pull, and only
+  the corrective server move is gated on `push_enabled`; a read-only sync (push
+  disabled) that pulls a server-side third level still flattens it locally so
+  invariant #1 holds — it just leaves the server's nesting for the next
+  push-enabled run. The consequence is benign churn: the dropped clean etag
+  makes the next pull re-fetch the grandchild, which the still-stale server
+  re-nests under the (unchanged) parent, so D7 re-detects and re-flattens it
+  each read-only run — never a fixpoint on the server, but the LOCAL view is one
+  level throughout and no task is lost. On a partial read-only pull ghost
+  removal is skipped, so this holds even before a complete pull. The former
+  behavior — skipping the whole D7 repair when push was off, leaving a third
+  level rendered locally — violated invariant #1 and is gone (mistakes leave no
+  trace). Pinned by
+  `d7_flattens_a_pulled_third_level_locally_even_with_push_disabled`.
 - Promote/detach (parent cleared) × remote deleted the row → rejected → drop
   intent; row ghost-deletes (P4); the old parent is untouched. `settled` (#109)
 - Promote × remote reparented the same row elsewhere → last-writer-wins (P5);
