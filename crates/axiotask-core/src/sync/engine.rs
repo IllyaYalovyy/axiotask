@@ -1080,9 +1080,143 @@ impl SyncEngine {
             out.mark_list_changed(&list.id);
         }
 
+        // D7: flatten any server-side third level this list holds. Detected
+        // over the LOCAL store after upsert (not the fetched batch), so a paged
+        // pull that landed a middle row's demotion without re-fetching the
+        // grandchild still repairs it; the all-clean guard in `third_level_ids`
+        // keeps an un-pushed optimistic demote from triggering a bogus repair.
+        if self.config.push_enabled {
+            let local = self.store.list_tasks(&list.id).await?;
+            let third_level = reconcile::third_level_ids(&local);
+            self.repair_third_level(&list.id, &third_level, out).await?;
+        }
+
         // Ghost detection: remove clean local rows absent from server.
         if complete {
             self.remove_ghosts(&list.id, &remote_ids, out).await?;
+        }
+        Ok(())
+    }
+
+    /// Flatten any server-side third level in this list (RFC-009 §F/§G, D7
+    /// **ratified**). Google does not cap nesting depth (probe 3), so two
+    /// vectors no push-side guard can close — the demote is unseen until the
+    /// pull — leave a grandchild `C` under `P > T`: a remote-born subtask that
+    /// arrived after our demote already landed (§F residual), and our own
+    /// queued subtask create that raced a remote demote of its parent (§G).
+    ///
+    /// Each grandchild is promoted to top-level in its list AND the corrective
+    /// move is pushed, so the server converges too: a local-only promotion
+    /// would be overwritten by the very next pull (the server still holds the
+    /// nesting) and re-trigger every run — never a fixpoint (P7). The repair is
+    /// counted as a conflict: it can only arise from a concurrent change, and
+    /// it must be visible, never silent. Promoting `C` discards neither task —
+    /// `C` keeps its content, the user's demote of `T` survives.
+    ///
+    /// Idempotent under racing repairs: moving an already-top-level row to
+    /// top-level is a no-op the server accepts (no depth cap), so another
+    /// device's promotion landing first cannot corrupt anything — and once a
+    /// grandchild is promoted it is no longer detected, so a quiescent re-run
+    /// is a no-op (P7). Gated on push: a read-only sync makes no server writes,
+    /// so it leaves the rare cross-device third level until push is enabled.
+    async fn repair_third_level(
+        &self,
+        list_id: &str,
+        third_level: &[String],
+        out: &mut SyncOutcome,
+    ) -> Result<(), SyncError> {
+        for id in third_level {
+            let Some(before) = self.store.find_task_any(id).await? else {
+                continue; // vanished between detection and repair
+            };
+            if before.task.etag.is_some() {
+                // A synced grandchild really sits on the server under a subtask
+                // (§F residual, or a §G create that already landed). Push the
+                // corrective move so the server converges too — a local-only
+                // promotion would be overwritten by the next pull and re-fire
+                // every run (P7).
+                match self.client.move_task(list_id, id, None, None).await {
+                    Ok(remote) => {
+                        self.apply_move_response(Some(&before), &remote).await?;
+                        // A clean row adopts the move body (parent → None). A
+                        // row carrying a pending edit only meta-adopts, so make
+                        // it top-level locally too, keeping its edit — otherwise
+                        // the local third level would linger until the edit
+                        // pushed.
+                        self.promote_local_if_nested(id).await?;
+                        out.conflicts += 1;
+                        out.mark_list_changed(list_id);
+                        debug!(id = %id, "D7: promoted a synced third level to top-level");
+                    }
+                    Err(e) => {
+                        // The corrective move did not land. Either way the LOCAL
+                        // third level must NOT linger — invariant #1 is absolute,
+                        // even mid-flight (the soak checks it right after a
+                        // partial pull). Promote locally now and DROP the etag so
+                        // the next pull re-examines the row instead of
+                        // etag-skipping it:
+                        //   * transient (rate-limited / 5xx) — the server still
+                        //     nests the row, so the re-pull re-nests it, D7
+                        //     re-detects and retries the move until the server
+                        //     converges too (P7); and
+                        //   * permanent (the grandchild is gone on the server —
+                        //     its parent's delete cascaded it) — the row is absent
+                        //     from the next complete pull, so ghost removal drops
+                        //     the stale local row.
+                        // Counting it keeps the resolution visible, never silent.
+                        self.promote_and_detach(id).await?;
+                        out.conflicts += 1;
+                        out.mark_list_changed(list_id);
+                        if e.is_transient() {
+                            warn!(id = %id, err = %e, "D7: transient error moving third level; promoted locally, will re-push");
+                        } else {
+                            warn!(id = %id, err = %e, "D7: server rejected the third-level move; promoted locally, next pull reconciles the stale row");
+                        }
+                    }
+                }
+            } else {
+                // An un-pushed subtask create whose parent was demoted out from
+                // under it (§G, before the create pushes). It has no server id
+                // to move — promote it locally so it pushes as a TOP-LEVEL
+                // create next, keeping the local tree at one level immediately.
+                self.promote_local_if_nested(id).await?;
+                out.conflicts += 1;
+                out.mark_list_changed(list_id);
+                debug!(id = %id, "D7: promoted a queued third-level create to top-level");
+            }
+        }
+        Ok(())
+    }
+
+    /// Set a still-nested local row to top-level, preserving everything else
+    /// (its pending edit or create intent, etag, content). Used by the D7
+    /// repair so a grandchild whose server move only meta-adopted, or a
+    /// still-queued create, does not leave a third level in the local view.
+    async fn promote_local_if_nested(&self, id: &str) -> Result<(), SyncError> {
+        if let Some(mut row) = self.store.find_task_any(id).await?
+            && row.task.parent.is_some()
+        {
+            row.task.parent = None;
+            self.store.upsert_task(&row).await?;
+        }
+        Ok(())
+    }
+
+    /// Promote a nested local row to top-level AND drop its etag. Used by the
+    /// D7 repair when the corrective server move did NOT land: the local third
+    /// level must go flat immediately (invariant #1), and clearing the etag
+    /// guarantees the next pull re-examines the row rather than etag-skipping
+    /// it — so a transient failure re-nests + re-detects until the server
+    /// converges (P7), and a permanent one (the grandchild is gone on the
+    /// server) is ghost-removed on the next complete pull. Same shape as the
+    /// pull's unknown-parent detach (a cleared etag never freezes a lie, P6).
+    async fn promote_and_detach(&self, id: &str) -> Result<(), SyncError> {
+        if let Some(mut row) = self.store.find_task_any(id).await?
+            && row.task.parent.is_some()
+        {
+            row.task.parent = None;
+            row.task.etag = None;
+            self.store.upsert_task(&row).await?;
         }
         Ok(())
     }
@@ -4576,6 +4710,377 @@ mod tests {
             local_order(&eng, "L1").await.contains(&"T".to_string()),
             "T is back to being a top-level row, not a hidden grandchild"
         );
+    }
+
+    #[tokio::test]
+    async fn d7_repairs_a_remote_born_third_level_after_our_demote_landed() {
+        // §F residual (D7 ratified). No push-side guard can catch this: our
+        // demote of T under P LANDS while T is childless, so the server holds
+        // P > T. Only THEN does another device add C under T — the server now
+        // has a third level (P > T > C) we never asked for. The pull is the
+        // one place with the full picture, so D7 promotes C to top-level AND
+        // pushes the corrective move so the server converges too, counting it
+        // as a conflict.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+
+        // Our demote lands: T becomes a subtask of P on the server.
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        assert_eq!(
+            remote_parent(&client, "L1", "T").await,
+            Some("P".into()),
+            "our demote landed — T is a subtask of P server-side"
+        );
+
+        // Another device now hangs C under the (already-demoted) T.
+        client.seed_task_with_parent("L1", "C", "remote grandchild", "00000000000003", Some("T"));
+        let moves_before = client.call_count(Method::MoveTask);
+
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(
+            out.conflicts, 1,
+            "the third level is resolved as a conflict"
+        );
+        assert_eq!(out.errors, 0, "repairing is not an error");
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            moves_before + 1,
+            "exactly one corrective move — C promoted to top-level"
+        );
+        // Local: C is a top-level row, T is still P's subtask.
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(c.task.parent, None, "C is promoted to top-level locally");
+        assert_eq!(c.sync_state, SyncState::Clean);
+        assert_eq!(
+            eng.store
+                .find_task_any("T")
+                .await
+                .unwrap()
+                .unwrap()
+                .task
+                .parent
+                .as_deref(),
+            Some("P"),
+            "the user's demote of T survives — nothing is discarded"
+        );
+        assert!(
+            local_order(&eng, "L1").await.contains(&"C".to_string()),
+            "C now renders as a top-level list row"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+        // Server converged too — C is top-level there, coherent etag (P6).
+        assert_eq!(
+            remote_parent(&client, "L1", "C").await,
+            None,
+            "the corrective move reached the server"
+        );
+        assert_eq!(
+            c.task.etag,
+            client.get_task("L1", "C").await.unwrap().etag,
+            "etag stays coherent with content (P6) — no frozen row"
+        );
+
+        // P7: a second run against the quiescent server is a no-op — the
+        // repair does not re-fire every pull.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0, "no repair re-fires once converged");
+        assert_eq!(out2.pushed, 0);
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            moves_before + 1,
+            "no further corrective move"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_repairs_our_queued_subtask_create_under_a_remotely_demoted_parent() {
+        // §G (D7 ratified). The most practical third-level vector: an offline
+        // device has a queued subtask create under T; meanwhile another device
+        // demotes T under P. Push runs before pull, so the queued insert cannot
+        // know its parent is now a subtask — the server accepts it (no depth
+        // cap, probed) and WE create the third level. The following pull's D7
+        // repair catches it within one round-trip.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "target parent", "00000000000002");
+        eng.run().await.unwrap();
+
+        // Another device demotes T under P on the server. Locally T is still a
+        // top-level row (the demote is unseen until the pull).
+        client.move_task("L1", "T", Some("P"), None).await.unwrap();
+
+        // Our still-queued subtask create under T — legal locally, since T is
+        // top-level in our view.
+        let mut c = dirty_task("local-c", "L1", "create");
+        c.task.parent = Some("T".into());
+        c.task.title = "queued grandchild".into();
+        eng.store.upsert_task(&c).await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        // The insert landed under T (server P > T > C), then the pull promoted C.
+        assert_eq!(out.conflicts, 1, "the third level we created is repaired");
+        assert_eq!(out.errors, 0);
+
+        // C's local id was remapped by the insert; find it by its unique title.
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        let c = rows
+            .iter()
+            .find(|r| r.task.title == "queued grandchild")
+            .expect("the created subtask is present");
+        assert_eq!(c.task.parent, None, "our queued subtask ends up top-level");
+        assert_eq!(c.sync_state, SyncState::Clean);
+        assert_at_most_one_level(&eng, "L1").await;
+        assert_eq!(
+            remote_parent(&client, "L1", &c.task.id).await,
+            None,
+            "the server converged to the promotion too"
+        );
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0, "converged in one round-trip");
+        assert_eq!(out2.pushed, 0);
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_promotes_a_still_unpushed_subtask_create_locally() {
+        // §G before the create pushes: the subtask create is HELD (the UI has
+        // its editor open), so it stays queued while the pull lands its parent's
+        // remote demote. There is no server id to move — D7 must promote the
+        // create LOCALLY so the tree is one level immediately, and it then
+        // pushes as a top-level create.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "target parent", "00000000000002");
+        eng.run().await.unwrap();
+        client.move_task("L1", "T", Some("P"), None).await.unwrap();
+
+        // A queued subtask create under T, held so its create push is deferred.
+        let mut c = dirty_task("held-c", "L1", "create");
+        c.task.parent = Some("T".into());
+        c.task.title = "held grandchild".into();
+        eng.store.upsert_task(&c).await.unwrap();
+
+        let held = SyncEngine::with_push(client.clone(), eng.store.clone(), true)
+            .hold_create_id(Some("held-c".into()));
+        let moves_before = client.call_count(Method::MoveTask);
+        let out = held.run().await.unwrap();
+
+        // No server move — the create has no id yet — but the local tree is
+        // already flat: the held create is now top-level.
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            moves_before,
+            "no corrective move: an un-pushed create has no server id to move"
+        );
+        assert_eq!(out.conflicts, 1, "promoting the queued third level counts");
+        let c = eng.store.find_task_any("held-c").await.unwrap().unwrap();
+        assert_eq!(c.task.parent, None, "the held create is promoted locally");
+        assert_eq!(c.sync_state, SyncState::Dirty, "still a queued create");
+        assert_eq!(c.pending_op.as_deref(), Some("create"));
+        assert_at_most_one_level(&eng, "L1").await;
+
+        // Release the hold: the create pushes as a TOP-LEVEL task and converges.
+        eng.run().await.unwrap();
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        let c = rows
+            .iter()
+            .find(|r| r.task.title == "held grandchild")
+            .expect("the created task is present");
+        assert_eq!(c.task.parent, None, "it landed top-level on the server too");
+        assert_eq!(c.sync_state, SyncState::Clean);
+        assert_eq!(remote_parent(&client, "L1", &c.task.id).await, None);
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_third_level_repair_defers_to_a_racing_promotion_pulled_first() {
+        // Idempotency, path 1 (D7): another device sees the same third level
+        // and promotes C first. Its promotion changed C's etag, so our pull
+        // ADOPTS the top-level C before D7 even inspects the row — D7 then finds
+        // no grandchild and issues no redundant move. At-most-one-level holds
+        // and the run converges, with no double promotion.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "subtask", "00000000000002");
+        eng.run().await.unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        client.seed_task_with_parent("L1", "C", "grandchild", "00000000000003", Some("T"));
+
+        // The other device wins the race: it promotes C on the server before
+        // our pull runs.
+        client.move_task("L1", "C", None, None).await.unwrap();
+        let moves_before = client.call_count(Method::MoveTask);
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a racing repair is not an error");
+        assert_eq!(
+            client.call_count(Method::MoveTask),
+            moves_before,
+            "no redundant corrective move — the pull already adopted the promotion"
+        );
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(c.task.parent, None, "C is top-level, exactly once");
+        assert_at_most_one_level(&eng, "L1").await;
+        assert_eq!(remote_parent(&client, "L1", "C").await, None);
+        assert_eq!(
+            c.task.etag,
+            client.get_task("L1", "C").await.unwrap().etag,
+            "etag/content stay coherent even through the racing promotion (P6)"
+        );
+
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0, "quiescent afterwards");
+        assert_eq!(out2.pushed, 0);
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_corrective_move_on_an_already_top_level_row_is_an_accepted_no_op() {
+        // Idempotency, path 2 (D7): the guarantee the repair leans on when two
+        // devices race. If another device promoted C first, our corrective
+        // move(parent=None) lands on an already top-level C — Google accepts it
+        // (no depth cap; a move issues a fresh etag but changes no placement),
+        // so a second repair can never corrupt the row or wedge. This pins the
+        // exact API contract D7 depends on.
+        let client = InMemoryClient::new();
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "C", "already top-level", "00000000000001");
+
+        let first = client.move_task("L1", "C", None, None).await.unwrap();
+        assert_eq!(first.parent, None, "C stays top-level");
+        // A racing repair promotes it AGAIN — still fine, still top-level.
+        let second = client.move_task("L1", "C", None, None).await.unwrap();
+        assert_eq!(second.parent, None, "a redundant promotion is a no-op");
+        assert_eq!(
+            client.get_task("L1", "C").await.unwrap().parent,
+            None,
+            "the server never nests C from a repeated promote"
+        );
+    }
+
+    #[tokio::test]
+    async fn d7_transient_move_failure_still_flattens_locally_then_converges() {
+        // D7 failure path (found by the §F/§G soak): the corrective move is
+        // rate-limited. The LOCAL third level must NOT linger — invariant #1 is
+        // absolute even mid-flight — so the grandchild is promoted locally now
+        // and its etag dropped; the server, still nesting it, is caught by the
+        // next pull's re-detect + retry (P7), never stranded.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        client.seed_task_with_parent("L1", "C", "grandchild", "00000000000003", Some("T"));
+
+        // The corrective move is rate-limited (transient) this run.
+        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited {
+            retry_after: None,
+        });
+        let out = eng.run().await.unwrap();
+
+        // Local: flat immediately, even though the server move did not land.
+        assert_eq!(out.conflicts, 1, "resolving the third level counts");
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(c.task.parent, None, "C is promoted to top-level locally");
+        assert_eq!(
+            c.task.etag, None,
+            "etag dropped so the next pull re-examines it"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+        // Server still nests C — the move was refused this run.
+        assert_eq!(
+            remote_parent(&client, "L1", "C").await,
+            Some("T".into()),
+            "the server is still nested; it must be caught next run (P7)"
+        );
+
+        // Next run: the fault is gone, so the re-pull re-detects and the retry
+        // lands — server and local converge, at one level.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 1, "the retry resolves it on the server too");
+        assert_eq!(
+            remote_parent(&client, "L1", "C").await,
+            None,
+            "server converged"
+        );
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(c.task.parent, None);
+        assert_at_most_one_level(&eng, "L1").await;
+
+        // And it is a fixpoint afterwards.
+        let out3 = eng.run().await.unwrap();
+        assert_eq!(out3.conflicts, 0, "no repair re-fires once converged");
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_permanent_move_failure_flattens_locally_on_a_partial_pull() {
+        // The exact soak failure. A grandchild `C` was pulled in nested under a
+        // clean subtask `T`, then DELETED on the server (its own delete, or a
+        // cascade), so the corrective move is rejected permanently (400 — the
+        // id is unknown on the server). On a PARTIAL pull ghost removal is
+        // skipped, so without the fix the stale nested row lingers — a third
+        // level in the store right after the pull. D7 must promote it locally
+        // regardless; the next COMPLETE pull ghost-removes the vanished row.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+
+        // A clean local grandchild under T that the server does NOT hold — the
+        // residual after a demote landed and the grandchild was then deleted
+        // remotely. Its move will be a permanent 400 (unknown id).
+        let mut c = dirty_task("C", "L1", "create");
+        c.task.parent = Some("T".into());
+        c.task.title = "vanished grandchild".into();
+        c.task.etag = Some("e-c".into());
+        c.sync_state = SyncState::Clean;
+        c.pending_op = None;
+        eng.store.upsert_task(&c).await.unwrap();
+
+        // Partial pull: page the list and fail the last page so ghost removal
+        // (which would otherwise mask the fix) is skipped this run.
+        client.set_page_size(1);
+        client.fail_list_tasks_page(1, || ApiError::Server { status: 503 });
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(out.conflicts, 1, "the third level is resolved locally");
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            c.task.parent, None,
+            "C is flat locally despite the rejection"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+
+        // Heal: a complete pull ghost-removes the vanished row and converges.
+        client.clear_faults();
+        client.set_page_size(100);
+        eng.run().await.unwrap();
+        assert!(
+            eng.store.find_task_any("C").await.unwrap().is_none(),
+            "the vanished grandchild is ghost-removed on the next complete pull"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
     }
 
     #[tokio::test]
