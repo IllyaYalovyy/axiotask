@@ -1812,6 +1812,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_parent_tombstones_the_whole_subtree_locally() {
+        // #138: deleting a synced parent tombstones the WHOLE subtree in one
+        // transaction — the children die WITH the parent immediately, not only
+        // after the delete syncs (D3 REJECTED; a subtask shares its parent's
+        // fate, invariant #3). The root carries the pushable delete; each
+        // descendant is a LOCAL-only tombstone (never pushed — the server's own
+        // DELETE cascade takes them remotely, verified live #106). Undo before
+        // the push restores parent AND children in place.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "1");
+        client.seed_task_with_parent("L1", "C1", "kid one", "2", Some("P"));
+        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("P"));
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        state.run_sync().await.unwrap();
+
+        let token = crate::commands::delete_task_inner(&state, "P".into())
+            .await
+            .unwrap();
+        assert_eq!(token.subtree.len(), 2, "descendants captured for undo");
+
+        // Immediately (BEFORE any sync): the whole subtree is gone from the
+        // view — no child lingers as a live orphan under a tombstoned parent.
+        assert!(
+            state.store.list_tasks("L1").await.unwrap().is_empty(),
+            "parent and both subtasks vanish at delete time"
+        );
+        for id in ["P", "C1", "C2"] {
+            let row = state
+                .store
+                .find_task_any(id)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| panic!("{id} row still present as a tombstone"));
+            assert_eq!(row.sync_state, SyncState::Deleted, "{id} is tombstoned");
+        }
+
+        // Push still deletes ONLY the root: the children carry no pending op.
+        let dirty = state.store.drain_dirty().await.unwrap();
+        let deletes: Vec<_> = dirty
+            .iter()
+            .filter(|r| r.pending_op.as_deref() == Some("delete"))
+            .map(|r| r.task.id.as_str())
+            .collect();
+        assert_eq!(
+            deletes,
+            vec!["P"],
+            "only the root's delete is queued to push"
+        );
+        for id in ["C1", "C2"] {
+            let c = dirty.iter().find(|r| r.task.id == id).unwrap();
+            assert_eq!(
+                c.pending_op, None,
+                "{id} is a local-only tombstone, never pushed"
+            );
+        }
+
+        // Undo BEFORE the delete pushes restores the whole subtree in place,
+        // children re-attached to their parent.
+        crate::commands::undo_delete_inner(&state, token)
+            .await
+            .unwrap();
+        let tasks = state.store.list_tasks("L1").await.unwrap();
+        let mut ids: Vec<_> = tasks.iter().map(|t| t.task.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            vec!["C1", "C2", "P"],
+            "undo brings the whole subtree back"
+        );
+        for id in ["C1", "C2"] {
+            let c = tasks.iter().find(|t| t.task.id == id).unwrap();
+            assert_eq!(
+                c.task.parent.as_deref(),
+                Some("P"),
+                "{id} re-attached to its parent"
+            );
+        }
+
+        // And it converges on the server: nothing stranded, nothing lost.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.errors, 0);
+        assert_eq!(
+            client.list_tasks("L1", None).await.unwrap().items.len(),
+            3,
+            "subtree survives the undo end to end"
+        );
+    }
+
+    #[tokio::test]
     async fn undo_recreate_with_dead_parent_falls_back_to_top_level() {
         // The subtask's parent was deleted separately before the undo — the
         // recreate must not fail the FK; it lands at top level instead.

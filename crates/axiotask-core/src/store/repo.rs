@@ -601,6 +601,50 @@ impl Store {
         Ok(())
     }
 
+    /// Tombstone `root_id` and its whole subtree in ONE transaction (RFC-009
+    /// §D: "deleting a parent tombstones the whole subtree"; D3 REJECTED —
+    /// children die with the parent, never promoted; invariant #3).
+    ///
+    /// The root keeps `pending_op = 'delete'` so its delete pushes; Google's
+    /// own DELETE cascade takes the children remotely (verified live, #106), so
+    /// each descendant becomes a LOCAL-ONLY tombstone with `pending_op = NULL`
+    /// — never pushed ("push deletes only the root"), kept out of every view
+    /// and out of the pull (a `deleted` row is in the skip-set, so it cannot be
+    /// resurrected as an orphan). The FK `ON DELETE CASCADE` clears the child
+    /// tombstones when the confirmed root delete hard-deletes the root row.
+    ///
+    /// `descendant_ids` are the subtree the caller already walked (top-level +
+    /// its one legal level of subtasks, invariant #1); the caller is
+    /// responsible for the walk so the same snapshot backs the undo token.
+    pub async fn tombstone_subtree(
+        &self,
+        root_id: &str,
+        descendant_ids: &[String],
+        now: &str,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE tasks SET sync_state = 'deleted', pending_op = 'delete', local_updated = ?2
+             WHERE id = ?1",
+        )
+        .bind(root_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        for id in descendant_ids {
+            sqlx::query(
+                "UPDATE tasks SET sync_state = 'deleted', pending_op = NULL, local_updated = ?2
+                 WHERE id = ?1",
+            )
+            .bind(id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Hard-delete a list row.
     pub async fn delete_list_hard(&self, id: &str) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM task_lists WHERE id = ?")
@@ -1667,6 +1711,44 @@ mod tests {
         assert_eq!(s.list_tasks("L1").await.unwrap().len(), 1);
         s.delete_task_hard("T1").await.unwrap();
         assert!(s.list_tasks("L1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn tombstone_subtree_marks_root_pushable_and_children_local_only() {
+        // #138: one transaction tombstones the whole subtree. The root keeps a
+        // pushable 'delete'; each descendant is a local-only tombstone with no
+        // pending op (the server's own cascade takes them remotely), and none
+        // of the subtree is visible anymore.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("P", "L1", None, "1")).await.unwrap();
+        s.upsert_task(&task("C1", "L1", Some("P"), "2"))
+            .await
+            .unwrap();
+        s.upsert_task(&task("C2", "L1", Some("P"), "3"))
+            .await
+            .unwrap();
+
+        s.tombstone_subtree("P", &["C1".into(), "C2".into()], "2026-02-02T00:00:00Z")
+            .await
+            .unwrap();
+
+        assert!(
+            s.list_tasks("L1").await.unwrap().is_empty(),
+            "the whole subtree drops out of the view"
+        );
+        let p = s.find_task_any("P").await.unwrap().unwrap();
+        assert_eq!(p.sync_state, SyncState::Deleted);
+        assert_eq!(
+            p.pending_op.as_deref(),
+            Some("delete"),
+            "root delete pushes"
+        );
+        for id in ["C1", "C2"] {
+            let c = s.find_task_any(id).await.unwrap().unwrap();
+            assert_eq!(c.sync_state, SyncState::Deleted, "{id} tombstoned");
+            assert_eq!(c.pending_op, None, "{id} is a local-only tombstone");
+        }
     }
 
     #[tokio::test]
