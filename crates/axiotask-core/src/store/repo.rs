@@ -204,7 +204,11 @@ impl Store {
     /// turns a `clean` row `dirty` records the pre-edit content as its base
     /// (`tasks.*` on the RHS is the OLD row in an `ON CONFLICT DO UPDATE`), and
     /// every later edit preserves it — so the base always holds the content as
-    /// of the last server agreement until the row goes clean again.
+    /// of the last server agreement until the row goes clean again. Any write
+    /// that lands the row `clean` clears the base (#139): a clean row carries no
+    /// base snapshot (schema invariant, §B), so the 412 `ConflictedCopy`
+    /// resolver overwriting a dirty id with the canonical remote row must not
+    /// leave a stale base behind.
     pub async fn upsert_task(&self, t: &StoredTask) -> Result<(), StoreError> {
         sqlx::query(
             r"INSERT INTO tasks
@@ -215,13 +219,17 @@ impl Store {
                 list_id = excluded.list_id,
                 parent_id = excluded.parent_id,
                 position = excluded.position,
-                base_title  = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                base_title  = CASE WHEN excluded.sync_state = 'clean' THEN NULL
+                                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
                                    THEN tasks.title  ELSE tasks.base_title  END,
-                base_notes  = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                base_notes  = CASE WHEN excluded.sync_state = 'clean' THEN NULL
+                                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
                                    THEN tasks.notes  ELSE tasks.base_notes  END,
-                base_due    = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                base_due    = CASE WHEN excluded.sync_state = 'clean' THEN NULL
+                                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
                                    THEN tasks.due    ELSE tasks.base_due    END,
-                base_status = CASE WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
+                base_status = CASE WHEN excluded.sync_state = 'clean' THEN NULL
+                                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty'
                                    THEN tasks.status ELSE tasks.base_status END,
                 title = excluded.title,
                 notes = excluded.notes,
@@ -2307,6 +2315,47 @@ mod tests {
         assert!(
             s.base_snapshot("T1").await.unwrap().is_none(),
             "clean again → base cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_landing_a_dirty_row_clean_clears_its_base() {
+        // #139: the 412 `ConflictedCopy` resolver overwrites the canonical id
+        // with the remote row via `upsert_task` (a dirty→clean transition).
+        // Before #139 that transition fell into the ELSE branch and KEPT the
+        // stale base snapshot, leaving a clean row that still carried a base —
+        // a schema invariant violation (`clean row carries no base`, §B) that
+        // would make a future 412 compare the refetched remote against stale
+        // content. Landing a row clean must clear its base.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+
+        // A clean row, then a local edit → dirty with a captured base.
+        let mut clean = task("T1", "L1", None, "1");
+        clean.task.title = "old".into();
+        clean.task.etag = Some("e1".into());
+        s.upsert_task(&clean).await.unwrap();
+        let mut edited = s.find_task_any("T1").await.unwrap().unwrap();
+        edited.task.title = "mine".into();
+        edited.sync_state = SyncState::Dirty;
+        edited.pending_op = Some("update".into());
+        s.upsert_task(&edited).await.unwrap();
+        assert!(
+            s.base_snapshot("T1").await.unwrap().is_some(),
+            "the dirty edit captured a base"
+        );
+
+        // The 412 resolver overwrites the id with the canonical remote row,
+        // clean, via `upsert_task`.
+        let mut canonical = task("T1", "L1", None, "1");
+        canonical.task.title = "theirs".into();
+        canonical.task.etag = Some("e2".into());
+        canonical.sync_state = SyncState::Clean;
+        s.upsert_task(&canonical).await.unwrap();
+
+        assert!(
+            s.base_snapshot("T1").await.unwrap().is_none(),
+            "landing clean via upsert_task clears the base"
         );
     }
 
