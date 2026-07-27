@@ -1202,20 +1202,29 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// Promote a nested local row to top-level AND drop its etag. Used by the
-    /// D7 repair when the corrective server move did NOT land: the local third
-    /// level must go flat immediately (invariant #1), and clearing the etag
-    /// guarantees the next pull re-examines the row rather than etag-skipping
-    /// it — so a transient failure re-nests + re-detects until the server
-    /// converges (P7), and a permanent one (the grandchild is gone on the
-    /// server) is ghost-removed on the next complete pull. Same shape as the
-    /// pull's unknown-parent detach (a cleared etag never freezes a lie, P6).
+    /// Promote a nested local row to top-level, dropping its etag only for a
+    /// CLEAN row. Used by the D7 repair when the corrective server move did NOT
+    /// land: the local third level must go flat immediately (invariant #1). For
+    /// a clean row, clearing the etag guarantees the next pull re-examines it
+    /// rather than etag-skipping it — so a transient failure re-nests +
+    /// re-detects until the server converges (P7), and a permanent one (the
+    /// grandchild is gone on the server) is ghost-removed on the next complete
+    /// pull. Same shape as the pull's unknown-parent detach (a cleared etag
+    /// never freezes a lie, P6).
+    ///
+    /// A DIRTY grandchild keeps its etag (same guard as [`revert_local_move`]):
+    /// its own content push governs the etag, and clearing it would turn that
+    /// retry's guarded `If-Match` patch into an unconditional one — silently
+    /// clobbering a concurrent remote edit. Its own push re-examines the row and
+    /// adopts the response body anyway, so it needs no etag drop here.
     async fn promote_and_detach(&self, id: &str) -> Result<(), SyncError> {
         if let Some(mut row) = self.store.find_task_any(id).await?
             && row.task.parent.is_some()
         {
             row.task.parent = None;
-            row.task.etag = None;
+            if row.sync_state == SyncState::Clean {
+                row.task.etag = None;
+            }
             self.store.upsert_task(&row).await?;
         }
         Ok(())
@@ -5079,6 +5088,100 @@ mod tests {
         assert!(
             eng.store.find_task_any("C").await.unwrap().is_none(),
             "the vanished grandchild is ghost-removed on the next complete pull"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_dirty_grandchild_keeps_its_etag_so_the_retry_push_stays_guarded() {
+        // D7 failure path × a DIRTY grandchild (RFC-009 §F/§G, invariant P6).
+        // When the corrective move is refused, the LOCAL third level must still
+        // flatten immediately (invariant #1) — but a grandchild carrying a
+        // pending edit KEEPS its etag, because its own content push governs the
+        // etag. Dropping it (as a clean row does) would turn the retry patch's
+        // guarded `If-Match` into an unconditional overwrite, silently
+        // clobbering a concurrent remote edit — the same guard
+        // `revert_local_move` applies.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        // T is now a clean subtask of P, both locally and on the server.
+
+        // A synced grandchild C under T (§F residual) that ALSO carries a
+        // pending local edit: dirty, but holding the server etag it synced at.
+        let seeded =
+            client.seed_task_with_parent("L1", "C", "grandchild", "00000000000003", Some("T"));
+        let c_etag = seeded.etag.clone().unwrap();
+        let mut c = dirty_task("C", "L1", "update");
+        c.task.parent = Some("T".into());
+        c.task.title = "my local edit".into();
+        c.task.etag = Some(c_etag.clone());
+        c.task.web_view_link = Some("https://tasks.google.com/task/C".into());
+        eng.store.upsert_task(&c).await.unwrap();
+
+        // This run both the content push AND the corrective move are refused
+        // (rate-limited). C stays dirty; D7 must flatten it locally now.
+        client.fail_next_for_id(Method::PatchTask, "C", || ApiError::RateLimited {
+            retry_after: None,
+        });
+        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited {
+            retry_after: None,
+        });
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 1, "resolving the third level counts");
+
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            c.task.parent, None,
+            "C is flattened to top-level locally (invariant #1)"
+        );
+        assert_eq!(
+            c.sync_state,
+            SyncState::Dirty,
+            "the pending edit survives the repair"
+        );
+        assert_eq!(
+            c.task.etag.as_deref(),
+            Some(c_etag.as_str()),
+            "a dirty grandchild keeps its etag so its retry push stays If-Match-guarded"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+
+        // The behavioral consequence: a concurrent remote edit bumps C's server
+        // etag. Because the retained etag makes the retry push If-Match-guarded,
+        // that push 412s and BOTH edits survive — the remote is not clobbered.
+        client
+            .patch_task(
+                "L1",
+                "C",
+                TaskPatch {
+                    title: Some("their remote edit".into()),
+                    ..Default::default()
+                },
+                Some(&c_etag),
+            )
+            .await
+            .unwrap();
+
+        let out2 = eng.run().await.unwrap();
+        assert!(
+            out2.conflicts >= 1,
+            "the guarded retry hits a 412 and resolves it, never a silent clobber"
+        );
+        let rows = eng.store.list_tasks("L1").await.unwrap();
+        assert!(
+            rows.iter().any(|t| t.task.title == "their remote edit"),
+            "the concurrent remote edit survives as the canonical row (no lost update)"
+        );
+        assert!(
+            rows.iter()
+                .any(|t| t.task.title == "my local edit (conflicted copy)"),
+            "the local edit is preserved as a conflicted copy, nothing discarded"
         );
         assert_at_most_one_level(&eng, "L1").await;
     }

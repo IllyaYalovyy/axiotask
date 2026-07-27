@@ -320,12 +320,16 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   the grandchild still repairs it, and the clean-middle guard ignores an
   un-pushed optimistic demote. `SyncEngine::repair_third_level` moves a synced
   grandchild and promotes a still-queued create locally. When the corrective
-  move does not land it still flattens the row **locally** and drops its etag
+  move does not land it still flattens the row **locally**
   (`promote_and_detach`), because invariant #1 is absolute even mid-flight (the
   soak asserts it right after a partial pull, where ghost removal is skipped): a
   transient failure re-nests + re-detects until the server converges too (P7); a
   permanent one (the grandchild is gone on the server) is ghost-removed on the
-  next complete pull. Red-first + 2000-case soak (a new `RemoteDemote` op drives
+  next complete pull. It drops the etag only for a **Clean** row (same guard as
+  `revert_local_move`, #130): a dirty grandchild keeps its etag so its own
+  content push stays `If-Match`-guarded (P6) rather than blind-overwriting a
+  concurrent remote edit; that push re-examines the row and adopts the response
+  body anyway. Red-first + 2000-case soak (a new `RemoteDemote` op drives
   both vectors); the soak also surfaced a latent FK crash — `apply_pushed_task`
   adopting a parent this device no longer holds — now detached like the pull's
   unknown-parent case.
