@@ -36,6 +36,38 @@ impl state::SyncNotifier for TauriSyncNotifier {
     }
 }
 
+/// Builds the initialization script that hands a fatal startup error to the
+/// frontend. Injected before any page script runs, so `main.js` can render it
+/// (`window.__STARTUP_ERROR__`) instead of loading a dead app. The message is
+/// JSON-encoded, so quotes/newlines/markup in a `StoreError` are always safely
+/// quoted rather than breaking the script.
+fn startup_error_script(message: &str) -> String {
+    format!(
+        "window.__STARTUP_ERROR__ = {};",
+        serde_json::to_string(message).unwrap_or_else(|_| "\"axiotask could not start\"".into())
+    )
+}
+
+/// Surfaces a fatal startup failure (store `WipeAborted`, or any `open()`
+/// error) in a minimal window instead of vanishing. A release build has no
+/// console and `windows_subsystem = "windows"` swallows a panic, so this is the
+/// only way the user learns why the app refused to start. No state is managed
+/// and no sync is wired: this window is the whole app until it is closed, and
+/// the process then exits.
+fn show_startup_error(
+    app: &tauri::App,
+    window_title: &str,
+    message: &str,
+) -> tauri::Result<tauri::WebviewWindow> {
+    tracing::error!("app failed to start: {message}");
+    WebviewWindowBuilder::new(app, "startup-error", WebviewUrl::default())
+        .title(format!("{window_title} — startup error"))
+        .inner_size(560.0, 380.0)
+        .resizable(true)
+        .initialization_script(startup_error_script(message))
+        .build()
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -87,12 +119,14 @@ fn main() {
                 let _ = std::fs::create_dir_all(parent);
             }
 
-            // Block on state init — this runs before the window loads content
-            let app_state = tauri::async_runtime::block_on(async {
-                AppState::new(&db_path)
-                    .await
-                    .expect("failed to initialize app state")
-            });
+            // Block on state init — this runs before the window loads content.
+            let app_state = match tauri::async_runtime::block_on(AppState::new(&db_path)) {
+                Ok(s) => s,
+                Err(e) => {
+                    show_startup_error(app, &window_title, &e)?;
+                    return Ok(());
+                }
+            };
             let state = Arc::new(app_state);
             app.manage(state.clone());
 
@@ -162,4 +196,49 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::startup_error_script;
+
+    /// The user must see the actual failure reason. A real WipeAborted message
+    /// (quotes, parentheses, a full sentence) must survive into the injected
+    /// global verbatim after JSON decoding — not be truncated or mangled.
+    #[test]
+    fn startup_error_script_carries_the_message_verbatim() {
+        let message = "Refusing to reset the local store after a schema change: it holds \
+             local-only or unsynced changes (\"dirty\") not yet saved to Google. Your data \
+             has been left untouched.";
+        let script = startup_error_script(message);
+
+        let json = script
+            .strip_prefix("window.__STARTUP_ERROR__ = ")
+            .and_then(|s| s.strip_suffix(';'))
+            .expect("script shape: window.__STARTUP_ERROR__ = <json>;");
+        let decoded: String = serde_json::from_str(json).expect("value must be valid JSON");
+        assert_eq!(decoded, message);
+    }
+
+    /// The script is injected via the webview's script API (not spliced into an
+    /// HTML `<script>` tag), so the risk is a JS *syntax* break: a raw quote or
+    /// newline in the message would terminate the string literal early and
+    /// leave the app with no error at all. Those must be escaped and the message
+    /// must round-trip intact.
+    #[test]
+    fn startup_error_script_escapes_js_string_breakers() {
+        let message = "open db: \"boom\" happened\non line two";
+        let script = startup_error_script(message);
+
+        assert!(
+            !script.contains('\n'),
+            "a raw newline would break the JS statement: {script}"
+        );
+        let json = script
+            .strip_prefix("window.__STARTUP_ERROR__ = ")
+            .and_then(|s| s.strip_suffix(';'))
+            .expect("script shape");
+        let decoded: String = serde_json::from_str(json).expect("valid JSON");
+        assert_eq!(decoded, message, "message must round-trip intact");
+    }
 }
