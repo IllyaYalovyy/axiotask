@@ -1147,9 +1147,12 @@ mod tests {
 
     #[test]
     fn d1_does_not_leak_into_orphan_adoption() {
-        // D1 relaxes CONFLICT resolution only. `same_content` still counts
-        // status, so a crashed create never adopts a remote row that merely
-        // looks similar — adoption must stay exact.
+        // D1 relaxes CONFLICT resolution only. This is the TOP-LEVEL content
+        // match (`find_orphan` / `same_content`), which still counts status, so a
+        // crashed top-level create never adopts a remote row that merely looks
+        // similar. (The subtask path `find_orphan_by_base` deliberately tolerates
+        // a completed remote — the insert-under-completed-parent cascade — so
+        // "exact" is specific to this path, not to adoption in general.)
         let local = task("local-uuid");
         let mut committed = task("server-id");
         committed.title = local.title.clone();
