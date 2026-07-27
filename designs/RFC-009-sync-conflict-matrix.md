@@ -633,6 +633,22 @@ User review 2026-07-24: **D1, D2, D4, D5, D6 and P2 ratified by the user.**
   nothing is duplicated or lost. Covers both vectors: a remote-born subtask
   after our demote (§F) and our own queued create under a remotely-demoted
   parent (§G). Implementation: #119.
+- **D8** — **`decide` — NOT RATIFIED. Do not implement until a human marks
+  this ratified.** Proposed refinement of D1, enabled by the #124 base
+  snapshot (which post-dates D1's ratification): on a 412, when a base
+  exists and `remote.status == base.status`, the remote provably never
+  changed the checkbox — so a **local** status toggle wins (row stays dirty,
+  re-pushes next run) instead of being silently reverted by adopting the
+  remote row. When `remote.status != base.status` (a real remote change, or
+  the completed-parent cascade — which coerces status server-side and
+  therefore always differs from base), D1 stands unchanged: remote wins, no
+  copy. Motivating defect (#132): complete a task offline, another device
+  merely reorders the list (move bumps the etag, probe 5) → push 412s →
+  current code adopts the remote row and the completion flips back, though
+  the remote never touched it. `base_status` already exists in the schema,
+  so no schema change is needed. *(proposed: local status wins when the base
+  proves the remote didn't change it; alternative: keep D1 literal — any
+  412 status difference resolves remote-wins even when only we changed it.)*
 - **P2 itself** — **RATIFIED by user (2026-07-24), with a boundary carved by
   the D3 rejection:** remote events never destroy rows the server has never
   seen — *except a subtask, which always shares its parent's fate.* P2's
