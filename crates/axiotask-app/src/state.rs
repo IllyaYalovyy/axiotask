@@ -80,15 +80,23 @@ fn classify_permanent_failure(
     }
 }
 
-/// A user-safe description of a *permanent* sync failure (#128).
+/// A user-safe description of a sync failure (#128, #135).
 ///
 /// The `last_error` this produces is rendered verbatim in the "Sync failed"
-/// toast and the Properties dialog. A store failure carries raw sqlx text
-/// ("sql: no such column: …") that is noise to the user, so it is replaced with
-/// a calm sentence pointing at the log — the full typed error is still written
-/// to the log at the call site. API-level failures are already human and never
-/// carry SQL, so their text is kept.
+/// toast and the Properties dialog. Anything that carries internal detail is
+/// replaced with a calm sentence pointing at the log — the full typed error is
+/// still written to the log at the call site:
+///
+/// - A store failure carries raw sqlx text ("sql: no such column: …").
+/// - An internal error carries an assertion/bug string.
+/// - `ApiError::Network` carries raw reqwest text, which can embed the full
+///   request URL and its query params (#135).
+///
+/// The remaining API failures (5xx, rate-limit, precondition, …) are already
+/// human and carry no internals, so their text is kept — the user still sees
+/// "server error: 503" rather than a generic sentence.
 fn sync_user_message(e: &axiotask_core::sync::SyncError) -> String {
+    use axiotask_core::api::ApiError;
     use axiotask_core::sync::SyncError;
     match e {
         SyncError::Store(_) => {
@@ -96,6 +104,9 @@ fn sync_user_message(e: &axiotask_core::sync::SyncError) -> String {
         }
         SyncError::Internal(_) => {
             "Sync hit an unexpected internal error — the details are in the log.".into()
+        }
+        SyncError::Api(ApiError::Network(_)) => {
+            "Can't reach Google right now — the details are in the log.".into()
         }
         SyncError::Api(_) => e.to_string(),
     }
@@ -717,9 +728,12 @@ impl AppState {
                         // A blip that clears itself (network / 5xx / rate-limit)
                         // — keep retrying silently at the base cadence. This is
                         // the "transient behavior unchanged" path: no attention,
-                        // no backoff, the streak is left untouched.
+                        // no backoff, the streak is left untouched. The full
+                        // typed error (a `Network` variant embeds raw reqwest
+                        // text with the request URL) goes to the log; the user
+                        // only ever sees the sanitized sentence (#135).
                         tracing::warn!("transient sync failure, will retry: {e}");
-                        status.last_error = Some(e.to_string());
+                        status.last_error = Some(sync_user_message(e));
                     } else {
                         // Permanent: fails identically on every retry until
                         // something changes. Surface it as "needs attention" and
@@ -1361,6 +1375,42 @@ mod tests {
         // user still sees "server error: 503" rather than a generic sentence.
         let e = SyncError::Api(ApiError::Server { status: 503 });
         assert_eq!(sync_user_message(&e), "server error: 503");
+    }
+
+    #[test]
+    fn network_sync_failure_hides_the_reqwest_url_from_the_user() {
+        use axiotask_core::api::ApiError;
+        use axiotask_core::sync::SyncError;
+        // #135: `ApiError::Network` embeds raw reqwest text, which can include
+        // the full request URL (and query params). `last_error` is rendered
+        // verbatim in the "Sync failed" toast, so it must carry NONE of that —
+        // only a calm sentence. The full typed error still goes to the log.
+        let raw = "error sending request for url \
+                   (https://tasks.googleapis.com/tasks/v1/users/@me/lists?key=SECRET): \
+                   connection reset by peer";
+        let e = SyncError::Api(ApiError::Network(raw.into()));
+        assert!(
+            e.to_string().contains("https://"),
+            "precondition: the raw error leaks the URL"
+        );
+
+        let shown = sync_user_message(&e);
+        assert!(
+            !shown.contains("https://"),
+            "no URL reaches the user: {shown}"
+        );
+        assert!(
+            !shown.contains("googleapis"),
+            "no host reaches the user: {shown}"
+        );
+        assert!(
+            !shown.contains("SECRET"),
+            "no query param reaches the user: {shown}"
+        );
+        assert!(
+            shown.to_lowercase().contains("google"),
+            "the calm message names Google so the user knows what's unreachable: {shown}"
+        );
     }
 
     // ─── Permanent-failure backoff / attention ───────────────────────────────

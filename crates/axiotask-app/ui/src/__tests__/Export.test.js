@@ -91,11 +91,15 @@ describe("Export / backup", () => {
     ).toBeInTheDocument();
   });
 
-  it("surfaces an error toast when the export command fails", async () => {
+  it("surfaces a calm redacted error toast when the export command fails (#135)", async () => {
+    // The raw "disk full" carries no authored marker, so the allowlist guard
+    // redacts it to a calm family sentence rather than leaking it.
     mockBackend({ exportError: true });
     await clickExport();
     await waitFor(() =>
-      expect(screen.getByText(/Failed: export_backup/)).toBeInTheDocument(),
+      expect(screen.getByText(/export your backup/i)).toBeInTheDocument(),
     );
+    expect(screen.getByRole("alert").textContent).not.toContain("disk full");
+    expect(screen.getByRole("alert").textContent.toLowerCase()).toContain("log");
   });
 });

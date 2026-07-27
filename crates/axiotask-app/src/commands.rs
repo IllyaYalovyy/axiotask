@@ -1180,15 +1180,21 @@ pub async fn import_backup(
 }
 
 /// Sanitize a command-layer error for display, logging the full detail first
-/// (#128).
+/// (#128, #135).
 ///
 /// A command's `Err` string is rendered verbatim in a frontend toast. A raw
-/// sqlx/SQL error ("sql: UNIQUE constraint failed: tasks.id") means nothing to
-/// the user, so it is replaced with a calm, per-command-family sentence while
-/// the full detail is written to the log. Two kinds of message pass through
-/// untouched: the auth/session signals the frontend substring-matches to flip
-/// its auth UI, and the deliberate human validation messages we author (which
-/// explain a refusal and carry no internal detail).
+/// sqlx/SQL error ("sql: UNIQUE constraint failed: tasks.id") or a reqwest
+/// transport error (which can embed the full request URL) means nothing to the
+/// user, so it is replaced with a calm, per-command-family sentence while the
+/// full detail is written to the log.
+///
+/// The guard is an **allowlist** (#135), not a denylist: only messages we
+/// positively recognize as user-authored reach the toast — the auth/session
+/// signals the frontend substring-matches to flip its auth UI, and the
+/// deliberate human validation messages we author. Everything else — including
+/// a future internal `Display` we never classified — defaults to the calm
+/// sentence, so a forgotten variant shows a bland message instead of leaking
+/// internals verbatim.
 pub(crate) fn user_error(command: &str, raw: String) -> String {
     // Signals the frontend keys on (`ipc.js` friendlyError) to switch auth
     // state — they must survive verbatim.
@@ -1198,36 +1204,43 @@ pub(crate) fn user_error(command: &str, raw: String) -> String {
     {
         return raw;
     }
-    if is_internal_detail(&raw) {
-        tracing::error!(command, detail = %raw, "command failed; internal detail hidden from the user");
-        return format!(
-            "Couldn't {} right now — a local error occurred. The details are in the log.",
-            command_action(command)
-        );
+    if is_user_authored(&raw) {
+        // A message we wrote on purpose (validation, "task not found", …):
+        // already human and safe. Still record it, at a lower level, for
+        // support.
+        tracing::debug!(command, detail = %raw, "command failed with a user-facing message");
+        return raw;
     }
-    // A message we wrote on purpose (validation, "task not found", …): already
-    // human and safe. Still record it, at a lower level, for support.
-    tracing::debug!(command, detail = %raw, "command failed with a user-facing message");
-    raw
+    tracing::error!(command, detail = %raw, "command failed; internal detail hidden from the user");
+    format!(
+        "Couldn't {} right now — a local error occurred. The details are in the log.",
+        command_action(command)
+    )
 }
 
-/// Whether an error string carries internal persistence detail that must never
-/// reach a toast. Matches the `StoreError` / core `Error` Display prefixes and
-/// the raw sqlx markers that ride inside them.
-fn is_internal_detail(raw: &str) -> bool {
-    const PREFIXES: [&str; 6] = [
-        "sql:",
-        "decode:",
-        "migrate:",
-        "open db:",
-        "json:",
-        "internal:",
+/// Whether an error string is one WE authored to explain a refusal to the user
+/// — the only class (besides the auth signals handled separately) allowed to
+/// reach a toast verbatim (#135).
+///
+/// Each marker is a distinctive fragment of a message we write on purpose, never
+/// a generic word a raw sqlx/reqwest error could also contain. Anything not
+/// matched here is treated as internal detail and redacted by [`user_error`].
+fn is_user_authored(raw: &str) -> bool {
+    const AUTHORED: [&str; 7] = [
+        "invalid due date",
+        "unknown date move",
+        "cannot nest under a subtask",
+        "cannot make a task with subtasks",
+        "not found in siblings",
+        "no backup file found",
+        "invalid backup file",
     ];
-    let head = raw.trim_start();
-    PREFIXES.iter().any(|p| head.starts_with(p))
-        || raw.contains("error returned from database")
-        || raw.contains("no such table")
-        || raw.contains("no such column")
+    AUTHORED.iter().any(|m| raw.contains(m))
+        // `restore_backup` version guard.
+        || raw.contains("newer than this app supports")
+        // `find_task`'s "task {id} not found" — pinned to that exact shape so a
+        // network error that merely contains "not found" cannot slip through.
+        || (raw.starts_with("task ") && raw.ends_with(" not found"))
 }
 
 /// The human clause used in the fallback message, grouped by command family so
