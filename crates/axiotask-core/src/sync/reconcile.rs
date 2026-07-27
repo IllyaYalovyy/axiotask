@@ -719,6 +719,60 @@ pub fn plan_pull_row(task: &Task, ctx: &PullRowContext<'_>) -> PullRowAction {
     }
 }
 
+/// Ids of the local rows that sit a third level deep — a grandchild, i.e. a
+/// row whose parent is a **clean** subtask (RFC-009 §F/§G, D7 **ratified**).
+///
+/// Google does not cap nesting depth (probe 3: a `move` that deepens the tree
+/// returns 200), so invariant #1 (subtasks are strictly one level) is ours to
+/// enforce client-side. Two vectors reach the server-side third level and no
+/// push-side guard can close either — the demote is unseen until the pull:
+///   * §F residual — a remote-born subtask arrives *after* our demote already
+///     landed, so the server holds `P > T > C` we never asked for; and
+///   * §G — our own queued subtask create races a remote demote of its parent,
+///     so the create lands (or is still queued) under a row the server has
+///     since made a subtask.
+///
+/// The pull is the one place with the full server picture, so D7 promotes each
+/// grandchild to top-level and, for a synced row, pushes the corrective move
+/// (see [`super::engine::SyncEngine::repair_third_level`]).
+///
+/// Detects over the LOCAL store after the pull's upsert, not the fetched batch:
+/// a paged pull can land a middle row's demotion (`T` gains parent `P`) while
+/// the grandchild `C` sits on a page a transient error dropped — so `C` never
+/// appears in this batch, yet it is a third level the moment `T`'s demotion is
+/// stored. The local store is the only place that sees the whole chain.
+///
+/// The **clean-middle guard** is what makes local detection safe: the PARENT
+/// (`T`) must be `Clean`. A clean parent link is server-confirmed, so a row that
+/// looks nested purely because of an un-pushed optimistic demote of the middle
+/// (a refused move that stayed put while `T` was dirty) is never mistaken for a
+/// real third level and never triggers a bogus repair. The grandchild `C`
+/// itself may be in any state — clean, a pending edit, or a still-queued create
+/// under a just-demoted parent (§G) — because that only changes HOW it is
+/// promoted, not WHETHER it is a third level. A create can only sit under `T`
+/// because `T` was top-level when it was made, and a synced row can never be
+/// optimistically re-parented under a subtask (the demote gate refuses it), so
+/// `C`'s link to a clean `T` is always real.
+///
+/// Structural only — no IO. Promoting exactly these ids to top-level heals any
+/// tree to at most one level: a great-grandchild `D` under a promoted `C`
+/// becomes a legal one-level subtask once `C` is top-level.
+pub fn third_level_ids(rows: &[StoredTask]) -> Vec<String> {
+    let by_id: HashMap<&str, &StoredTask> = rows.iter().map(|r| (r.task.id.as_str(), r)).collect();
+    rows.iter()
+        .filter(|r| {
+            r.task
+                .parent
+                .as_deref()
+                .and_then(|p| by_id.get(p))
+                .is_some_and(|parent| {
+                    parent.sync_state == SyncState::Clean && parent.task.parent.is_some()
+                })
+        })
+        .map(|r| r.task.id.clone())
+        .collect()
+}
+
 /// Whether a remote task is already up to date locally.
 pub fn is_up_to_date<S: BuildHasher>(
     id: &str,
@@ -2103,5 +2157,87 @@ mod tests {
         let mut status = b.clone();
         status.status = TaskStatus::Completed;
         assert!(!same_content(&a, &status));
+    }
+
+    /// A clean local row with a parent, for the depth-detection tests below.
+    fn child(id: &str, parent: Option<&str>) -> StoredTask {
+        let mut t = task(id);
+        t.parent = parent.map(ToString::to_string);
+        stored(t)
+    }
+
+    #[test]
+    fn third_level_ids_flags_only_the_grandchild() {
+        // P (top) > T (subtask) > C (grandchild). Only C sits a third level
+        // deep — T is a legal one-level subtask, P is top-level.
+        let rows = vec![
+            child("P", None),
+            child("T", Some("P")),
+            child("C", Some("T")),
+        ];
+        assert_eq!(third_level_ids(&rows), vec!["C".to_string()]);
+    }
+
+    #[test]
+    fn third_level_ids_is_empty_for_a_legal_one_level_tree() {
+        // A parent with two direct subtasks is invariant #1's happy shape;
+        // nothing to repair.
+        let rows = vec![
+            child("P", None),
+            child("A", Some("P")),
+            child("B", Some("P")),
+        ];
+        assert!(third_level_ids(&rows).is_empty());
+    }
+
+    #[test]
+    fn third_level_ids_ignores_a_row_whose_parent_is_absent() {
+        // A detached child (parent not present) is not a grandchild — its
+        // parent chain stops at the missing row, so depth cannot exceed one.
+        let rows = vec![child("C", Some("gone"))];
+        assert!(third_level_ids(&rows).is_empty());
+    }
+
+    #[test]
+    fn third_level_ids_skips_an_optimistic_demote_of_the_middle_row() {
+        // The false-positive guard: T looks like a subtask (parent = P) purely
+        // because of an un-pushed / refused-but-not-reverted optimistic demote,
+        // so its row is still DIRTY. Its parent link is not server-confirmed,
+        // so C must NOT be treated as a real third level — repairing it would
+        // rewrite a server that is actually one level.
+        let mut t = child("T", Some("P"));
+        t.sync_state = SyncState::Dirty;
+        let rows = vec![child("P", None), t, child("C", Some("T"))];
+        assert!(third_level_ids(&rows).is_empty());
+    }
+
+    #[test]
+    fn third_level_ids_flags_a_still_queued_subtask_create_under_a_clean_subtask() {
+        // §G before the create pushes: C is a queued subtask create (no etag)
+        // whose parent T is a clean, server-confirmed subtask. It IS a third
+        // level — the leaf's state only changes HOW it is promoted (locally,
+        // since it has no server id yet), not that it must be flagged.
+        let mut c = child("C", Some("T"));
+        c.sync_state = SyncState::Dirty;
+        c.pending_op = Some("create".into());
+        c.task.etag = None;
+        let rows = vec![child("P", None), child("T", Some("P")), c];
+        assert_eq!(third_level_ids(&rows), vec!["C".to_string()]);
+    }
+
+    #[test]
+    fn third_level_ids_flags_every_clean_row_below_the_first_level() {
+        // A pathological four-deep chain P > T > C > D, all clean. Both C and D
+        // have a parent that is itself a subtask, so both are flagged; promoting
+        // them to top-level flattens the chain to at most one level.
+        let rows = vec![
+            child("P", None),
+            child("T", Some("P")),
+            child("C", Some("T")),
+            child("D", Some("C")),
+        ];
+        let mut got = third_level_ids(&rows);
+        got.sort();
+        assert_eq!(got, vec!["C".to_string(), "D".to_string()]);
     }
 }

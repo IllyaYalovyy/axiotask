@@ -309,12 +309,26 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   reverts to the server's placement via `revert_local_move`. `settled` (#109).
   **Residual race** — the remote-born subtask arrives *after* our demote
   already landed: the server holds a grandchild we never asked for. Repaired
-  per **D7** (ratified): the pull detects any row at depth ≥ 2, promotes the
-  grandchild to top-level in its list, pushes the corrective move so the
+  per **D7** (ratified): the pull detects any row a third level deep, promotes
+  the grandchild to top-level in its list, pushes the corrective move so the
   server converges (a local-only repair would re-trigger every pull, P7),
   and counts the repair as a **conflict** in the sync outcome — visible,
-  never silent. The repair must be idempotent under racing repairs. `gap`
-  (#119)
+  never silent. The repair is idempotent under racing repairs. `settled`
+  (#119) — `reconcile::third_level_ids` detects a grandchild under a **clean**
+  (server-confirmed) subtask over the local store after upsert — not the
+  fetched batch, so a paged pull that lands the demotion without re-fetching
+  the grandchild still repairs it, and the clean-middle guard ignores an
+  un-pushed optimistic demote. `SyncEngine::repair_third_level` moves a synced
+  grandchild and promotes a still-queued create locally. When the corrective
+  move does not land it still flattens the row **locally** and drops its etag
+  (`promote_and_detach`), because invariant #1 is absolute even mid-flight (the
+  soak asserts it right after a partial pull, where ghost removal is skipped): a
+  transient failure re-nests + re-detects until the server converges too (P7); a
+  permanent one (the grandchild is gone on the server) is ghost-removed on the
+  next complete pull. Red-first + 2000-case soak (a new `RemoteDemote` op drives
+  both vectors); the soak also surfaced a latent FK crash — `apply_pushed_task`
+  adopting a parent this device no longer holds — now detached like the pull's
+  unknown-parent case.
 - Promote/detach (parent cleared) × remote deleted the row → rejected → drop
   intent; row ghost-deletes (P4); the old parent is untouched. `settled` (#109)
 - Promote × remote reparented the same row elsewhere → last-writer-wins (P5);
@@ -387,7 +401,10 @@ Remote conditions on the same row (or its surroundings) since our last sync:
   since the demote is unseen until the pull). This is the most practical
   3rd-level vector: an offline device with a queued subtask create racing a
   demote from another device. No push-side guard can close it; the pull-side
-  D7 repair (§F) catches it within one round-trip. `gap` (#119)
+  D7 repair (§F) catches it within one round-trip. `settled` (#119) — if the
+  create already landed it is moved to top-level; if it is still queued (its
+  push held) it is promoted locally so the tree is one level immediately and it
+  pushes as a top-level create.
 - Subtask create × parent **completed** remotely → the insert is **accepted**
   and the child is created **already completed**, in the insert response body
   (probed). The row converges to `completed` in the same run and no wedge
@@ -839,7 +856,7 @@ Ordered; each step has its own GitHub issue.
   Steps 3, 5, 6 and 8 are unblocked. The two rows they falsified were both
   subsequently closed: §B×deleted settled by outcome in #107 (fake-path caveat
   recorded inline; real soft-delete modelling is #114), and the §F 3rd-level
-  guard shipped in #109 (residual arrival race tracked as #119).
+  guard shipped in #109 (residual arrival race repaired by D7 in #119).
 - [x] **Q2** — D6 ratification. **Answered.** **D1** is ratified (2026-07-23,
   shipped with #107), **P2, D2 and D3** (2026-07-24, shipped with #110),
   **D4, D5** (2026-07-24, shipped with #111) and **D6** (2026-07-24, shipped

@@ -513,13 +513,29 @@ impl Store {
         remote: &Task,
         expected_local_updated: &str,
     ) -> Result<(), StoreError> {
+        // A pushed/refetched response can name a `parent` this device no longer
+        // holds: another device demoted the row while its parent was moved to
+        // another list or deleted here. Adopting that parent_id blindly violates
+        // the FK (found by the §F/§G soak). Detach instead — exactly the pull's
+        // unknown-parent handling (RFC-009 §A) — and DROP the etag so the row is
+        // not etag-skipped and re-links to the server's real parent on a later
+        // pull (P6 stays coherent: a cleared etag never freezes a lie in place).
+        // `?4 IS NOT NULL` and the parent-exists probe (which counts tombstones,
+        // whose delete cascades the child anyway) confine this to the true
+        // missing-parent case; every other adoption is byte-for-byte unchanged.
         sqlx::query(
             r"UPDATE tasks
-              SET etag = COALESCE(?1, etag),
+              SET etag = CASE WHEN ?4 IS NOT NULL AND local_updated = ?3 AND NOT EXISTS
+                                (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
+                                AND NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = ?4)
+                              THEN NULL ELSE COALESCE(?1, etag) END,
                   updated = ?2,
                   parent_id    = CASE WHEN local_updated = ?3 AND NOT EXISTS
                                    (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
-                                 THEN ?4 ELSE parent_id END,
+                                 THEN CASE WHEN ?4 IS NULL OR EXISTS
+                                        (SELECT 1 FROM tasks p WHERE p.id = ?4)
+                                      THEN ?4 ELSE NULL END
+                                 ELSE parent_id END,
                   position     = CASE WHEN local_updated = ?3 AND NOT EXISTS
                                    (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id)
                                  THEN ?5 ELSE position END,
@@ -1401,6 +1417,66 @@ mod tests {
         assert_eq!(rows[0].sync_state, SyncState::Dirty);
         assert_eq!(rows[0].pending_op.as_deref(), Some("update"));
         assert_eq!(rows[0].task.etag.as_deref(), Some("e-move"));
+    }
+
+    #[tokio::test]
+    async fn apply_pushed_task_detaches_when_the_adopted_parent_is_absent() {
+        // A push/refetch response can name a parent this device no longer holds
+        // (another device demoted the row while its parent was moved to another
+        // list or deleted here). Adopting that parent_id blindly would violate
+        // the FK; instead the row detaches and drops its etag so a later pull
+        // re-links it — the same handling the pull uses. Found by the §F/§G soak.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut row = task("T1", "L1", None, "1");
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        s.upsert_task(&row).await.unwrap();
+
+        // The server's response says T1 now sits under "ghost", which is not in
+        // the local store at all.
+        let mut server = row.task.clone();
+        server.parent = Some("ghost".into());
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, &row.local_updated)
+            .await
+            .expect("no FK violation");
+
+        let got = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(got.task.parent, None, "detached, not pointed at a ghost");
+        assert_eq!(
+            got.task.etag, None,
+            "etag dropped so the pull re-links (P6)"
+        );
+        assert_eq!(got.sync_state, SyncState::Clean, "the push still landed");
+    }
+
+    #[tokio::test]
+    async fn apply_pushed_task_keeps_a_parent_that_is_present() {
+        // The guard is confined to the missing-parent case: when the server's
+        // parent DOES exist locally, it is adopted exactly as before.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("P", "L1", None, "1")).await.unwrap();
+        let mut row = task("T1", "L1", None, "2");
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        s.upsert_task(&row).await.unwrap();
+
+        let mut server = row.task.clone();
+        server.parent = Some("P".into());
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, &row.local_updated)
+            .await
+            .unwrap();
+
+        let got = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(got.task.parent.as_deref(), Some("P"), "real parent adopted");
+        assert_eq!(
+            got.task.etag.as_deref(),
+            Some("e2"),
+            "etag adopted normally"
+        );
     }
 
     #[tokio::test]

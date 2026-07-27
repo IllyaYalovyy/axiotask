@@ -142,6 +142,12 @@ mod tests {
         RemoteDelete(u8),
         /// §A pull mirror: another device adds a task to the i-th pushed list.
         RemoteCreate(u8),
+        /// §F/§G residual: another device demotes the i-th pushed top-level
+        /// task under a pushed top-level sibling on the SERVER. Google does not
+        /// cap depth, so if that task already carries a subtask this lands a
+        /// third level (`P > T > C`) no push-side guard can catch — the D7
+        /// pull-side repair must flatten it.
+        RemoteDemote(u8),
         /// §I remote side: another device renames the i-th pushed list (D6).
         RemoteRenameList(u8),
         /// §I remote side / P2: another device deletes the i-th pushed list.
@@ -634,6 +640,35 @@ mod tests {
                         self.names.push(title);
                     }
                 }
+                Op::RemoteDemote(i) => {
+                    // Another device demotes a pushed top-level task under a
+                    // pushed top-level sibling on the server. If the task
+                    // already has a subtask, this makes the server hold a third
+                    // level — the exact §F/§G residual D7 repairs on the pull.
+                    let pushed = self.pushed().await;
+                    let Some(t) = pick(&pushed, i) else { return };
+                    if t.task.parent.is_some() {
+                        return; // only a top-level row can be demoted here
+                    }
+                    // A different pushed top-level row in the same list. Both
+                    // ends are top-level, so the reparent can never form a
+                    // cycle. No `If-Match`: another device's move always lands.
+                    let siblings: Vec<&StoredTask> = pushed
+                        .iter()
+                        .filter(|r| {
+                            r.list_id == t.list_id
+                                && r.task.parent.is_none()
+                                && r.task.id != t.task.id
+                        })
+                        .collect();
+                    let Some(parent) = pick(&siblings, i) else {
+                        return;
+                    };
+                    let _ = self
+                        .client
+                        .move_task(&t.list_id, &t.task.id, Some(&parent.task.id), None)
+                        .await;
+                }
                 Op::RemoteRenameList(i) => {
                     let lists = self.pushed_lists().await;
                     let Some(l) = pick(&lists, i) else { return };
@@ -958,6 +993,7 @@ mod tests {
             2 => any::<u8>().prop_map(Op::RemoteComplete),
             2 => any::<u8>().prop_map(Op::RemoteDelete),
             2 => any::<u8>().prop_map(Op::RemoteCreate),
+            2 => any::<u8>().prop_map(Op::RemoteDemote),
             1 => any::<u8>().prop_map(Op::RemoteRenameList),
             1 => any::<u8>().prop_map(Op::RemoteDeleteList),
             2 => any::<u8>().prop_map(Op::OpenPanel),

@@ -1242,7 +1242,7 @@ mod tests {
         client.seed_list("L2", "Personal");
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "sub one", "2", Some("P"));
-        client.seed_task_with_parent("L1", "C2", "sub two", "3", Some("C1")); // 2 levels deep
+        client.seed_task_with_parent("L1", "C2", "sub two", "3", Some("P")); // one level (invariant #1)
         let state = Arc::new(
             AppState::new_memory_with_push(client.clone())
                 .await
@@ -1255,12 +1255,12 @@ mod tests {
 
         // Locally: the whole subtree exists in L2 with its shape intact.
         let l2 = state.store.list_tasks("L2").await.unwrap();
-        assert_eq!(l2.len(), 3, "parent + both descendants moved");
+        assert_eq!(l2.len(), 3, "parent + both subtasks moved");
         let parent = l2.iter().find(|t| t.task.title == "parent").unwrap();
         let c1 = l2.iter().find(|t| t.task.title == "sub one").unwrap();
         let c2 = l2.iter().find(|t| t.task.title == "sub two").unwrap();
         assert_eq!(c1.task.parent.as_deref(), Some(parent.task.id.as_str()));
-        assert_eq!(c2.task.parent.as_deref(), Some(c1.task.id.as_str()));
+        assert_eq!(c2.task.parent.as_deref(), Some(parent.task.id.as_str()));
 
         // After sync: everything lives in remote L2; nothing remains in L1.
         state.run_sync().await.unwrap();
@@ -1386,7 +1386,7 @@ mod tests {
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid", "2", Some("P"));
-        client.seed_task_with_parent("L1", "C2", "grandkid", "3", Some("C1"));
+        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("P"));
         let state = Arc::new(
             AppState::new_memory_with_push(client.clone())
                 .await
@@ -1770,7 +1770,7 @@ mod tests {
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "P", "parent", "1");
         client.seed_task_with_parent("L1", "C1", "kid one", "2", Some("P"));
-        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("C1"));
+        client.seed_task_with_parent("L1", "C2", "kid two", "3", Some("P"));
         let state = Arc::new(
             AppState::new_memory_with_push(client.clone())
                 .await
@@ -1802,9 +1802,9 @@ mod tests {
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert_eq!(tasks.len(), 3, "parent + both descendants restored");
         let kid = tasks.iter().find(|t| t.task.title == "kid one").unwrap();
-        let grandkid = tasks.iter().find(|t| t.task.title == "kid two").unwrap();
+        let kid_two = tasks.iter().find(|t| t.task.title == "kid two").unwrap();
         assert_eq!(kid.task.parent.as_deref(), Some("P"));
-        assert_eq!(grandkid.task.parent.as_deref(), Some("C1"));
+        assert_eq!(kid_two.task.parent.as_deref(), Some("P"));
 
         let out = state.run_sync().await.unwrap();
         assert_eq!(out.errors, 0);
