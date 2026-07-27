@@ -365,17 +365,20 @@ pub(crate) async fn delete_task_inner(state: &AppState, id: String) -> Result<De
         .await
         .map_err(|e| e.to_string())?
     {
-        let mut t = t;
-        t.sync_state = SyncState::Deleted;
-        t.pending_op = Some("delete".into());
-        t.local_updated = now_str();
+        // Tombstone the WHOLE subtree in one transaction (#138): the root gets
+        // the pushable delete; each descendant becomes a local-only tombstone
+        // that dies with the parent immediately and is never pushed — Google's
+        // own DELETE cascade takes the children remotely (invariant #3, D3
+        // rejected). The subtree we snapshotted above is exactly what to fold.
+        let descendant_ids: Vec<String> = token.subtree.iter().map(|e| e.id.clone()).collect();
         state
             .store
-            .upsert_task(&t)
+            .tombstone_subtree(&id, &descendant_ids, &now_str())
             .await
             .map_err(|e| e.to_string())?;
     } else {
-        // Never pushed and no insert in flight — just hard-delete locally.
+        // Never pushed and no insert in flight — hard-delete locally; the FK
+        // `ON DELETE CASCADE` takes the whole subtree with it (invariant #3).
         state
             .store
             .delete_task_hard(&id)
@@ -485,26 +488,39 @@ pub(crate) async fn undo_delete_inner(state: &AppState, token: DeleteToken) -> R
     Ok(())
 }
 
-/// Recreate the descendants captured at delete time that no longer exist
-/// locally (the push of the parent's delete cascaded them away, both on the
-/// server and via the local FK). Entries are ordered parents-before-children,
-/// and each is revived as a fresh dirty CREATE — the old remote ids are dead.
-/// Descendants that still exist (delete never pushed) are left untouched.
+/// Restore the descendants captured at delete time. Entries are ordered
+/// parents-before-children, so the parent id each row names is revived first.
+///
+/// A descendant still present locally is a tombstone the parent's delete has
+/// not yet pushed (#138 tombstones the whole subtree at delete time): revive it
+/// in place, mirroring the root — preserving its etag — so the un-pushed local
+/// delete simply never fires. One whose row is gone was cascaded away when the
+/// parent's delete pushed (server + local FK); it is recreated as a fresh dirty
+/// CREATE, since the old remote id is dead.
 async fn restore_subtree(state: &AppState, token: &DeleteToken, now: &str) -> Result<(), String> {
     for e in &token.subtree {
-        if state
-            .store
-            .find_task_any(&e.id)
-            .await
-            .map_err(|err| err.to_string())?
-            .is_some()
-        {
-            continue;
-        }
         let status = match e.status.as_str() {
             "completed" => TaskStatus::Completed,
             _ => TaskStatus::NeedsAction,
         };
+        if let Some(mut existing) = state
+            .store
+            .find_task_any(&e.id)
+            .await
+            .map_err(|err| err.to_string())?
+        {
+            existing.task.status = status;
+            existing.task.completed = None;
+            existing.local_updated = now.to_string();
+            existing.sync_state = SyncState::Dirty;
+            existing.pending_op = Some(dirty_op(existing.task.etag.as_deref()));
+            state
+                .store
+                .upsert_task(&existing)
+                .await
+                .map_err(|err| err.to_string())?;
+            continue;
+        }
         let stored = StoredTask {
             task: axiotask_core::model::Task {
                 id: e.id.clone(),
