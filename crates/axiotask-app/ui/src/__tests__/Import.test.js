@@ -89,12 +89,16 @@ describe("Import / restore", () => {
     ).toBeInTheDocument();
   });
 
-  it("surfaces an error toast when the import command fails", async () => {
+  it("surfaces a calm redacted error toast when the import command fails (#135)", async () => {
+    // The raw "file not found" carries no authored marker, so the allowlist
+    // guard redacts it to a calm family sentence rather than leaking it.
     mockBackend({ importError: true });
     await clickRestore();
     await waitFor(() =>
-      expect(screen.getByText(/Failed: import_backup/)).toBeInTheDocument(),
+      expect(screen.getByText(/restore your backup/i)).toBeInTheDocument(),
     );
+    expect(screen.getByRole("alert").textContent).not.toContain("file not found");
+    expect(screen.getByRole("alert").textContent.toLowerCase()).toContain("log");
   });
 
   it("reloads tasks after a successful restore", async () => {

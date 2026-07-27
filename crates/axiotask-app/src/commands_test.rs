@@ -4561,6 +4561,72 @@ mod tests {
             assert_eq!(user_error("move_task", msg.into()), msg);
             let nf = "task abc not found";
             assert_eq!(user_error("rename_task", nf.into()), nf);
+            // Every authored validation clause is on the allowlist.
+            for authored in [
+                "invalid due date: garbage",
+                "unknown date move: sideways",
+                "cannot make a task with subtasks into a subtask",
+                "not found in siblings",
+                "no backup file found to restore",
+                "invalid backup file: trailing comma",
+                "backup version 9 is newer than this app supports (1)",
+            ] {
+                assert_eq!(
+                    user_error("import_backup", authored.into()),
+                    authored,
+                    "authored message must survive verbatim"
+                );
+            }
+        }
+
+        #[test]
+        fn unknown_error_with_no_known_marker_is_never_shown_verbatim() {
+            // #135: the guard is now an ALLOWLIST. A future error `Display` we
+            // never classified — carrying no SQL prefix, so the old denylist
+            // waved it straight through — must NOT reach the toast verbatim.
+            let raw = "kaboom widget 42: the frobnicator overheated".to_string();
+            let shown = user_error("create_task", raw.clone());
+            assert_ne!(shown, raw, "an unclassified error must not pass verbatim");
+            assert!(
+                !shown.contains("kaboom"),
+                "no raw detail reaches the user: {shown}"
+            );
+            assert!(
+                !shown.contains("frobnicator"),
+                "no raw detail reaches the user: {shown}"
+            );
+            assert!(
+                shown.to_lowercase().contains("log"),
+                "the message points the user at the log: {shown}"
+            );
+        }
+
+        #[test]
+        fn raw_network_url_is_never_shown_verbatim() {
+            // #135: a manual sync that fails with a transport error reaches
+            // `user_error` as `network: <reqwest text>` — which can embed the
+            // full request URL. The old denylist had no marker for it, so it
+            // leaked. The allowlist redacts it.
+            let raw = "network: error sending request for url \
+                       (https://tasks.googleapis.com/tasks/v1/lists?key=SECRET): reset"
+                .to_string();
+            let shown = user_error("sync_now", raw);
+            assert!(
+                !shown.contains("https://"),
+                "no URL reaches the user: {shown}"
+            );
+            assert!(
+                !shown.contains("googleapis"),
+                "no host reaches the user: {shown}"
+            );
+            assert!(
+                !shown.contains("SECRET"),
+                "no query param reaches the user: {shown}"
+            );
+            assert!(
+                shown.to_lowercase().contains("log"),
+                "the message points the user at the log: {shown}"
+            );
         }
     }
 }

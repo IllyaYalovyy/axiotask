@@ -53,7 +53,10 @@ describe("GH#23: Error feedback toast", () => {
     expect(toast).toHaveClass("toast-error");
   });
 
-  it("displays command name and error in the toast", async () => {
+  it("redacts an unrecognized backend error to a calm family message (#135)", async () => {
+    // #135: the guard is an ALLOWLIST. "Server timeout" carries no authored
+    // marker, so it is NOT passed through verbatim — the user sees a calm
+    // sentence for the action they were doing, pointing at the log.
     mockBackend([task("t1", "My Task")], "toggle_complete", "Server timeout");
     render(App);
     await waitFor(() => expect(screen.getByText("My Task")).toBeInTheDocument());
@@ -62,8 +65,9 @@ describe("GH#23: Error feedback toast", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
     const toast = screen.getByRole("alert");
-    expect(toast.textContent).toContain("toggle_complete");
-    expect(toast.textContent).toContain("Server timeout");
+    expect(toast.textContent).not.toContain("Server timeout");
+    expect(toast.textContent.toLowerCase()).toContain("save your change");
+    expect(toast.textContent.toLowerCase()).toContain("log");
   });
 
   it("auto-dismisses error toast after 5 seconds", async () => {
@@ -92,7 +96,8 @@ describe("GH#23: Error feedback toast", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 
-  it("shows error toast for delete_task failure", async () => {
+  it("shows a calm redacted toast for a delete_task failure (#135)", async () => {
+    // An unrecognized error from delete_task is redacted, not shown verbatim.
     mockBackend([task("t1", "Delete me")], "delete_task", "Permission denied");
     render(App);
     await waitFor(() => expect(screen.getByText("Delete me")).toBeInTheDocument());
@@ -101,8 +106,8 @@ describe("GH#23: Error feedback toast", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
     const toast = screen.getByRole("alert");
-    expect(toast.textContent).toContain("delete_task");
-    expect(toast.textContent).toContain("Permission denied");
+    expect(toast.textContent).not.toContain("Permission denied");
+    expect(toast.textContent.toLowerCase()).toContain("log");
   });
 
   it("hides a raw SQL/sqlx error from the toast, showing a human message (#128)", async () => {
@@ -124,6 +129,49 @@ describe("GH#23: Error feedback toast", () => {
     expect(toast.textContent).not.toMatch(/constraint/i);
     expect(toast.textContent).not.toMatch(/tasks\.id/i);
     // Still tells the user something happened and where the detail lives.
+    expect(toast.textContent.toLowerCase()).toContain("log");
+  });
+
+  it("never renders a synthetic no-marker error raw in the toast (#135)", async () => {
+    // The allowlist's whole point: a brand-new error string we never taught
+    // the guard about — no SQL prefix, so the old denylist waved it through —
+    // must be redacted, not leaked. Red against the denylist.
+    mockBackend(
+      [task("t1", "My Task")],
+      "toggle_complete",
+      "kaboom widget 42: the frobnicator overheated",
+    );
+    render(App);
+    await waitFor(() => expect(screen.getByText("My Task")).toBeInTheDocument());
+
+    await fireEvent.keyDown(window, { key: " " });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    const toast = screen.getByRole("alert");
+    expect(toast.textContent).not.toMatch(/kaboom/i);
+    expect(toast.textContent).not.toMatch(/frobnicator/i);
+    expect(toast.textContent.toLowerCase()).toContain("log");
+  });
+
+  it("never renders raw reqwest network text (with a URL) in the toast (#135)", async () => {
+    // A transport failure reaches the frontend as raw reqwest text that can
+    // embed the full request URL. It carries no authored marker, so it is
+    // redacted to a calm sentence.
+    mockBackend(
+      [task("t1", "My Task")],
+      "toggle_complete",
+      "network: error sending request for url (https://tasks.googleapis.com/tasks/v1/lists?key=SECRET): reset",
+    );
+    render(App);
+    await waitFor(() => expect(screen.getByText("My Task")).toBeInTheDocument());
+
+    await fireEvent.keyDown(window, { key: " " });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    const toast = screen.getByRole("alert");
+    expect(toast.textContent).not.toMatch(/https:\/\//);
+    expect(toast.textContent).not.toMatch(/googleapis/i);
+    expect(toast.textContent).not.toMatch(/SECRET/);
     expect(toast.textContent.toLowerCase()).toContain("log");
   });
 

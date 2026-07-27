@@ -28,18 +28,28 @@ export class InvokeTimeoutError extends Error {
   }
 }
 
-// Markers of an internal persistence error (raw SQL/sqlx text, schema/decode
-// failures) that must never be shown in a toast (#128). The backend already
-// sanitizes command errors before they cross IPC; this is the last-line guard
-// so a raw string from any path never reaches the user verbatim.
-const INTERNAL_ERROR_MARKERS = [
-  "sql:", "decode:", "migrate:", "open db:", "json:", "internal:",
-  "error returned from database", "no such table", "no such column",
+// Fragments of the messages WE author to explain a refusal to the user — the
+// only strings (besides the auth signals handled in friendlyError) allowed to
+// reach a toast verbatim (#135). This is an ALLOWLIST, the inverse of the old
+// marker denylist: the backend already sanitizes command errors before they
+// cross IPC, and this last-line guard now DEFAULTS to redacting, so a future
+// internal Display or raw reqwest/network text (which can embed the request
+// URL) never reaches the user verbatim from any path. Each fragment is
+// distinctive to an authored message, never a generic word a raw error could
+// also contain.
+const USER_AUTHORED_MARKERS = [
+  "invalid due date", "unknown date move",
+  "cannot nest under a subtask", "cannot make a task with subtasks",
+  "not found in siblings", "no backup file found",
+  "invalid backup file", "newer than this app supports",
 ];
 
-function looksInternal(msg) {
+function isUserAuthored(msg) {
   const m = msg.toLowerCase();
-  return INTERNAL_ERROR_MARKERS.some((marker) => m.includes(marker));
+  if (USER_AUTHORED_MARKERS.some((marker) => m.includes(marker))) return true;
+  // "task {id} not found" from the backend — pinned to that exact shape so a
+  // network error that merely contains "not found" cannot slip through.
+  return /^task .+ not found$/.test(m.trim());
 }
 
 // A human clause per command family, so a redacted error reads naturally for
@@ -64,8 +74,8 @@ export function friendlyError(name, e) {
   if (msg.includes("not authenticated")) return "Not signed in - use Sign in with Google to sync.";
   if (msg.includes("session expired")) return "Google session expired - sign in again to resume sync.";
   if (e instanceof InvokeTimeoutError) return `${name} is taking too long. The app is still responsive; try again or restart if it keeps happening.`;
-  if (looksInternal(msg)) return `Couldn't ${familyAction(name)} — a local error occurred. The details are in the log.`;
-  return `Failed: ${name} - ${msg}`;
+  if (isUserAuthored(msg)) return msg;
+  return `Couldn't ${familyAction(name)} — a local error occurred. The details are in the log.`;
 }
 
 export async function invokeWithTimeout(name, args = {}, timeoutMs = timeoutFor(name)) {
