@@ -963,12 +963,13 @@ mod tests {
     /// clean row with a lingering base would make a future 412 compare the
     /// refetched remote against stale content.
     ///
-    /// Wired into `prop_crashed_creates_never_duplicate` only: #134 clears base on
-    /// clean CREATE landings (`finish_create`, both the push and crash-adoption
-    /// paths). The broader op mix in `prop_local_converges_with_server` also trips
-    /// a separate 412 `ConflictedCopy` leak (the canonical row lands clean via a
-    /// dirty→clean `upsert_task`, which does not clear base) — filed as its own
-    /// defect, out of scope here.
+    /// #134 clears base on clean CREATE landings (`finish_create`, both the push
+    /// and crash-adoption paths). #139 closed the remaining leak in the broader
+    /// op mix: the 412 `ConflictedCopy` resolver lands the canonical row clean
+    /// via a dirty→clean `upsert_task`, which now clears the base. So this is
+    /// wired into BOTH the crash-recovery property AND the convergence/fixpoint
+    /// soak (`prop_local_converges_with_server`) — a fixpoint over the full op
+    /// mix must leave every clean row base-free.
     async fn assert_base_null_when_clean(h: &Harness, ctx: &str) {
         let dump = h.dump().await;
         for t in h.all_rows().await {
@@ -1166,6 +1167,7 @@ mod tests {
                 h.heal().await;
                 assert_converged(&h, &format!("after {ops:?}")).await;
                 assert_parent_integrity(&h, "after convergence").await;
+                assert_base_null_when_clean(&h, "after convergence").await;
             });
         });
     }
