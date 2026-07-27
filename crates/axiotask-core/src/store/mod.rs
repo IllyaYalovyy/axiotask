@@ -181,9 +181,15 @@ async fn any_row_matches(pool: &SqlitePool, table: &str, predicate: &str) -> boo
     matched.map_or(true, |n| n != 0)
 }
 
-/// Drop every user table so the schema can be recreated from scratch. Foreign
-/// keys are disabled for the drop (and restored after) so tables can go in any
-/// order without tripping a reference constraint.
+/// Drop every user object — tables, views, AND triggers — so the schema can be
+/// recreated from scratch. Dropping only tables is not enough: a standalone
+/// view (and any INSTEAD OF trigger on it) is not attached to a table, so it
+/// would survive a table-only wipe and linger as a stale object in the
+/// recreated database (#133). Triggers are dropped first, then views, then
+/// tables; `IF EXISTS` makes the order safe even when dropping a table or view
+/// has already cascaded away a dependent trigger. Foreign keys are disabled for
+/// the drop (and restored after) so tables can go in any order without tripping
+/// a reference constraint.
 async fn wipe(pool: &SqlitePool) -> Result<(), StoreError> {
     let mut conn = pool
         .acquire()
@@ -193,18 +199,22 @@ async fn wipe(pool: &SqlitePool) -> Result<(), StoreError> {
         .execute(&mut *conn)
         .await
         .map_err(|e| StoreError::Migrate(e.to_string()))?;
-    let tables: Vec<(String,)> = sqlx::query_as(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-    )
-    .fetch_all(&mut *conn)
-    .await
-    .map_err(|e| StoreError::Migrate(e.to_string()))?;
-    for (name,) in tables {
-        // `name` comes from sqlite_master, not user input; quote it defensively.
-        sqlx::query(&format!("DROP TABLE IF EXISTS \"{name}\""))
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| StoreError::Migrate(e.to_string()))?;
+    // (object_type, kind-keyword) pairs, dropped in dependency-safe order.
+    for (kind, keyword) in [("trigger", "TRIGGER"), ("view", "VIEW"), ("table", "TABLE")] {
+        let objects: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type = ?1 AND name NOT LIKE 'sqlite_%'",
+        )
+        .bind(kind)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|e| StoreError::Migrate(e.to_string()))?;
+        for (name,) in objects {
+            // `name` comes from sqlite_master, not user input; quote it defensively.
+            sqlx::query(&format!("DROP {keyword} IF EXISTS \"{name}\""))
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| StoreError::Migrate(e.to_string()))?;
+        }
     }
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&mut *conn)
@@ -521,6 +531,46 @@ mod tests {
             json.contains("Child subtask"),
             "child subtask must be in the backup"
         );
+    }
+
+    #[tokio::test]
+    async fn wipe_and_recreate_drops_stale_views_and_triggers() {
+        // #133: a schema change wipes-and-recreates, but `wipe()` historically
+        // dropped only TABLES. A standalone VIEW — and any INSTEAD OF trigger
+        // defined on it — is not attached to any table, so a table-only wipe
+        // leaves both behind. They then linger in the recreated database as
+        // stale objects that can shadow or collide with a future schema. The
+        // wipe must drop views and triggers too. Non-happy path: the old DB
+        // carries schema objects the current schema does not define at all.
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("axiotask.sqlite");
+        let pool = old_schema_db(&db).await;
+        sqlx::query(
+            "CREATE VIEW v_legacy AS SELECT id, title FROM tasks;
+             CREATE TRIGGER trg_legacy INSTEAD OF INSERT ON v_legacy
+                 BEGIN SELECT 1; END;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        // Reopen through the real entry point: fingerprint mismatch ⇒ the
+        // stale DB is backed up, wiped, and recreated from the current schema.
+        let store = Store::new(open(&db).await.expect("wipe-and-recreate"));
+
+        let views: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='view'")
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+        assert_eq!(views, 0, "a schema wipe must drop stale views");
+
+        let triggers: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(triggers, 0, "a schema wipe must drop stale triggers");
     }
 
     #[tokio::test]

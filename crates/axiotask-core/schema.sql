@@ -1,5 +1,15 @@
 -- The whole local-store schema, in one file.
 --
+-- !!! BYTE-CHANGE WARNING !!!
+-- The schema fingerprint is a hash of the ENTIRE RAW BYTES of this file — every
+-- comment, blank line, and trailing space included (see `schema_fingerprint`).
+-- ANY edit here changes the fingerprint, and on the next launch every existing
+-- user's local database no longer matches, so it is backed up to JSON and then
+-- wiped-and-recreated from scratch. That is intended for a real schema change,
+-- but it means a purely cosmetic edit (fixing a typo in a comment, reflowing
+-- whitespace) triggers the same destructive reset for no benefit. Do NOT touch
+-- this file unless you mean to change the schema; keep incidental churn out.
+--
 -- Pre-1.0 there are NO migrations (see designs/RFC-003-local-sqlite-store.md).
 -- The local store is a CACHE of Google Tasks plus per-row sync metadata, and
 -- Google is the source of truth. A schema change therefore does not migrate
