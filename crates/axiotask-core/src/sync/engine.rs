@@ -465,15 +465,15 @@ impl SyncEngine {
             // row instead of retrying the create and duplicating it (#122). A
             // row with no base (legacy marker) falls back to current content.
             let base = self.store.base_snapshot(&local_id).await?;
-            // A SUBTASK create's committed row may have been stored completed by
-            // the insert-under-completed-parent cascade, or completed later when
-            // the parent was — so tolerate a completed orphan for any row that
-            // has a parent (RFC-009 §G). A top-level create keeps status strict.
-            let has_parent = local.task.parent.is_some();
+            // Adoption keys on the parent we named (#145): the orphan must sit
+            // under the same remote parent, else an identical-content row from
+            // another device is mis-adopted. A SUBTASK's committed row may also
+            // be stored completed by the insert-under-completed-parent cascade,
+            // so a completed orphan under our parent is still ours (RFC-009 §G);
+            // top-level keeps status strict.
+            let parent = local.task.parent.as_deref();
             let orphan = match &base {
-                Some(base) => {
-                    reconcile::find_orphan_by_base(base, has_parent, &remote, &local_id_set)
-                }
+                Some(base) => reconcile::find_orphan_by_base(base, parent, &remote, &local_id_set),
                 None => reconcile::find_orphan(&local.task, &remote, &local_id_set),
             };
 

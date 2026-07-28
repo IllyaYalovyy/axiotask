@@ -328,18 +328,17 @@ pub fn on_create_error(e: &ApiError) -> CreateFailure {
     }
 }
 
-/// The remote task an interrupted create already committed, if any: our
-/// content under an id we never recorded. Scoped strictly to the row behind
-/// an in-flight marker, so it never merges unrelated tasks (duplicate titles
-/// are legal — this is not content dedup).
+/// The remote task an interrupted create already committed, if any: our content
+/// under an id we never recorded, under the SAME parent we named (#145). Scoped
+/// to the in-flight row, so it never merges unrelated same-title tasks (legal).
 pub fn find_orphan<'a, S: BuildHasher>(
     local: &Task,
     remote: &'a [Task],
     known_local_ids: &HashSet<String, S>,
 ) -> Option<&'a Task> {
-    remote
-        .iter()
-        .find(|r| !known_local_ids.contains(&r.id) && same_content(local, r))
+    remote.iter().find(|r| {
+        !known_local_ids.contains(&r.id) && r.parent == local.parent && same_content(local, r)
+    })
 }
 
 /// Like [`find_orphan`] but matches on the create's **base snapshot** — the
@@ -349,37 +348,38 @@ pub fn find_orphan<'a, S: BuildHasher>(
 /// server row; without this the drifted content misses and the create is
 /// retried, duplicating the task.
 ///
-/// `has_parent` tolerates the one status coercion Google applies on insert that
-/// the payload cannot predict: a subtask inserted under a completed parent is
-/// stored **already completed**, and a later parent-complete cascades onto it
-/// too (RFC-009 §G, probe). So for any SUBTASK create, a completed remote is
-/// still our child — status is not required to match (the parent's completion
-/// state can itself change between the insert and recovery, so we cannot key on
-/// it). Everything the user typed always must match. For a top-level create
-/// (`has_parent == false`) status stays strict, since no cascade can touch it —
-/// so a crashed create never adopts an unrelated same-title row (the
-/// d1-does-not-leak guarantee).
+/// `parent` is the remote parent id our insert named (`None` = top-level); the
+/// orphan must sit under it (#145). A SUBTASK's committed row also tolerates the
+/// one status coercion Google applies on insert that the payload cannot predict:
+/// a subtask inserted under a completed parent is stored **already completed**,
+/// and a later parent-complete cascades onto it too (RFC-009 §G, probe) — so a
+/// completed remote under our parent is still our child (status need not match).
+/// Everything the user typed always must match. For a top-level create status
+/// stays strict — no cascade can touch it (the d1-does-not-leak guarantee).
 pub fn find_orphan_by_base<'a, S: BuildHasher>(
     base: &BaseSnapshot,
-    has_parent: bool,
+    parent: Option<&str>,
     remote: &'a [Task],
     known_local_ids: &HashSet<String, S>,
 ) -> Option<&'a Task> {
     remote
         .iter()
-        .find(|r| !known_local_ids.contains(&r.id) && base_matches_create(base, has_parent, r))
+        .find(|r| !known_local_ids.contains(&r.id) && base_matches_create(base, parent, r))
 }
 
 /// A create's base against a committed remote row (see [`find_orphan_by_base`]).
-/// Typed content (title/notes/due) must always match; status must match unless
-/// the subtask completion cascade explains a completed remote.
-fn base_matches_create(base: &BaseSnapshot, has_parent: bool, r: &Task) -> bool {
+/// PARENT identity must match (#145) — a same-content row under a different
+/// parent is not our orphan. Typed content (title/notes/due) always must match;
+/// status must match unless the subtask completion cascade explains a completed
+/// remote.
+fn base_matches_create(base: &BaseSnapshot, parent: Option<&str>, r: &Task) -> bool {
     let due = |d: &Option<String>| d.as_deref().and_then(crate::dates::normalize_due);
     let notes = |n: &Option<String>| n.clone().filter(|s| !s.is_empty());
-    base.title == r.title
+    r.parent.as_deref() == parent
+        && base.title == r.title
         && notes(&base.notes) == notes(&r.notes)
         && due(&base.due) == due(&r.due)
-        && (base.status == r.status || (has_parent && r.status == TaskStatus::Completed))
+        && (base.status == r.status || (parent.is_some() && r.status == TaskStatus::Completed))
 }
 
 // ─── §E/§F — position and parent moves ───────────────────────────────────────
@@ -670,7 +670,7 @@ pub fn pull_batch<S: BuildHasher>(
         .filter(|t| {
             !inflight
                 .iter()
-                .any(|f| base_matches_create(&f.base, f.parent.is_some(), t))
+                .any(|f| base_matches_create(&f.base, f.parent.as_deref(), t))
         })
         .collect();
     order_parents_first(filtered)
@@ -1224,7 +1224,7 @@ mod tests {
         assert_eq!(
             find_orphan_by_base(
                 &base,
-                false,
+                None,
                 std::slice::from_ref(&committed),
                 &HashSet::new()
             )
@@ -1233,7 +1233,7 @@ mod tests {
             "the base still adopts it"
         );
         // A row we already track locally is never re-adopted.
-        assert!(find_orphan_by_base(&base, false, &[committed], &ids(&["server-id"])).is_none());
+        assert!(find_orphan_by_base(&base, None, &[committed], &ids(&["server-id"])).is_none());
     }
 
     #[test]
@@ -1249,24 +1249,136 @@ mod tests {
             due: None,
             status: TaskStatus::NeedsAction, // what we sent
         };
-        let mut committed = task("server-sub");
-        committed.title = "sub".into();
-        committed.status = TaskStatus::Completed; // what the server stored
+        let mut sub = task("server-sub");
+        sub.title = "sub".into();
+        sub.parent = Some("P1".into()); // committed under our named parent
+        sub.status = TaskStatus::Completed; // what the server stored
         // Parent completed → the coercion is explained → adopt.
         assert_eq!(
             find_orphan_by_base(
                 &base,
-                true,
-                std::slice::from_ref(&committed),
+                Some("P1"),
+                std::slice::from_ref(&sub),
                 &HashSet::new()
             )
             .map(|t| t.id.as_str()),
             Some("server-sub"),
         );
-        // Parent NOT completed → a completed same-title row is unrelated → miss.
+        // A TOP-LEVEL create keeps status strict: a completed same-title row is
+        // unrelated (no completed-parent explanation).
+        let mut toplevel = task("server-top");
+        toplevel.title = "sub".into();
+        toplevel.status = TaskStatus::Completed;
         assert!(
-            find_orphan_by_base(&base, false, &[committed], &HashSet::new()).is_none(),
+            find_orphan_by_base(&base, None, &[toplevel], &HashSet::new()).is_none(),
             "status stays strict without a completed-parent explanation"
+        );
+    }
+
+    #[test]
+    fn find_orphan_requires_matching_parent() {
+        // #145: a crashed SUBTASK create under P1 must not adopt an
+        // identical-content row created on another device top-level or under a
+        // different parent — the foreign row's parent/position would be claimed
+        // as ours and our subtask would never land under P1.
+        let mut local = task("local-uuid");
+        local.parent = Some("P1".into());
+
+        let mut foreign_top = task("foreign-top");
+        foreign_top.title = local.title.clone();
+        foreign_top.parent = None; // identical content, but top-level
+        assert!(
+            find_orphan(&local, std::slice::from_ref(&foreign_top), &HashSet::new()).is_none(),
+            "a top-level row is not our P1 subtask orphan"
+        );
+
+        let mut foreign_p2 = task("foreign-p2");
+        foreign_p2.title = local.title.clone();
+        foreign_p2.parent = Some("P2".into()); // identical content, wrong parent
+        assert!(
+            find_orphan(&local, std::slice::from_ref(&foreign_p2), &HashSet::new()).is_none(),
+            "a different parent is not our orphan"
+        );
+
+        // The genuine orphan under P1 is still adopted.
+        let mut ours = task("server-sub");
+        ours.title = local.title.clone();
+        ours.parent = Some("P1".into());
+        assert_eq!(
+            find_orphan(&local, &[foreign_top, foreign_p2, ours], &HashSet::new())
+                .map(|t| t.id.as_str()),
+            Some("server-sub"),
+            "the parent-matching candidate is preferred over identical-content decoys"
+        );
+    }
+
+    #[test]
+    fn find_orphan_by_base_requires_matching_parent() {
+        // #145 at the base-snapshot layer: adoption must key on parent identity,
+        // so a mid-flight-edited subtask create still never adopts a foreign
+        // same-content row under the wrong parent (or none).
+        let base = BaseSnapshot {
+            title: "sub".into(),
+            notes: None,
+            due: None,
+            status: TaskStatus::NeedsAction,
+        };
+        let mut foreign_top = task("foreign-top");
+        foreign_top.title = "sub".into();
+        foreign_top.parent = None;
+        assert!(
+            find_orphan_by_base(&base, Some("P1"), &[foreign_top], &HashSet::new()).is_none(),
+            "a top-level row is not our P1 subtask orphan"
+        );
+        let mut foreign_p2 = task("foreign-p2");
+        foreign_p2.title = "sub".into();
+        foreign_p2.parent = Some("P2".into());
+        assert!(
+            find_orphan_by_base(&base, Some("P1"), &[foreign_p2], &HashSet::new()).is_none(),
+            "a different parent is not our orphan"
+        );
+        let mut ours = task("server-sub");
+        ours.title = "sub".into();
+        ours.parent = Some("P1".into());
+        assert_eq!(
+            find_orphan_by_base(&base, Some("P1"), &[ours], &HashSet::new()).map(|t| t.id.as_str()),
+            Some("server-sub"),
+        );
+        // A top-level create must never adopt a row that lives under a parent.
+        let mut child = task("child");
+        child.title = "sub".into();
+        child.parent = Some("P9".into());
+        assert!(
+            find_orphan_by_base(&base, None, &[child], &HashSet::new()).is_none(),
+            "a top-level create never adopts a parented row"
+        );
+    }
+
+    #[test]
+    fn pull_batch_pulls_a_foreign_duplicate_under_a_different_parent() {
+        // #145 at the pull layer: an identical-content row under a DIFFERENT
+        // parent is NOT our inflight orphan, so the pull must bring it in as a
+        // normal new row rather than withholding it for a recovery that would
+        // never adopt it (leaving the foreign row invisible forever).
+        let foreign_parent = task("P2");
+        let mut foreign = task("foreign");
+        foreign.title = "sub".into();
+        foreign.parent = Some("P2".into());
+        let inflight = InflightBase {
+            base: BaseSnapshot {
+                title: "sub".into(),
+                notes: None,
+                due: None,
+                status: TaskStatus::NeedsAction,
+            },
+            parent: Some("P1".into()), // our create named a different parent
+        };
+        let batch = pull_batch(vec![foreign_parent, foreign], &HashSet::new(), &[inflight]);
+        let got: Vec<&str> = batch.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            got,
+            vec!["P2", "foreign"],
+            "the foreign duplicate is pulled, not withheld"
         );
     }
 
