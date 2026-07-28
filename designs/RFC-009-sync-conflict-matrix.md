@@ -87,6 +87,36 @@ to silently drop.
   between per-row operations leaves a state the next run drives to the same
   fixpoint — no duplicates (in-flight markers), no loss.
 
+## Mechanism ledger (complexity cap)
+
+Sync correctness has degraded through mechanism *accumulation*: every added
+mechanism multiplies the crossings this matrix must pin. The subsystem
+therefore runs on exactly **seven** mechanisms, and this list is a cap, not
+an inventory:
+
+1. **Per-row dirty state** (`sync_state`, `pending_op`) — what needs pushing.
+2. **Etag `If-Match` guards** — the conflict-detection primitive (P1/P6).
+3. **`base_*` snapshots** — last-server-agreement content; NULL while clean.
+4. **`inflight_creates` markers** — crash-safe non-idempotent inserts (P8).
+5. **Pull-side repair passes** — ghost removal, unknown-parent detach,
+   re-home (D2), third-level flatten (D7).
+6. **Conflicted-copy forking** (P3).
+7. **Failure backoff + needs-attention** surfacing.
+
+Rules, enforced by the local quality gate:
+
+- **No eighth mechanism.** A fix that appears to require a new table, marker
+  column, repair pass, or failure state is a design defect — it stops and
+  escalates to a human. Replacing a mechanism with a simpler one (net code
+  reduction, oracle green) is the preferred class of change.
+- **Production code under `sync/` + `api/` may not grow.** The gate holds a
+  line-count ratchet that only moves down; raising it is a human-only
+  decision. Test code and the in-memory fake are exempt — test fidelity may
+  grow freely.
+- **Definition of done is the deep property soak** (the oracle), not review
+  rounds. While it is green, sync changes are limited to net-negative
+  simplifications and defects with a concrete data-loss scenario.
+
 ## Vocabulary
 
 Local pending state of a row (how UI operations decompose):
