@@ -155,8 +155,8 @@ impl TryFrom<TaskWire> for Task {
     }
 }
 
-fn map_status(status: StatusCode, retry_after: Option<Duration>) -> ApiError {
-    map_status_with_body(status, retry_after, "")
+fn map_status(status: StatusCode) -> ApiError {
+    map_status_with_body(status, "")
 }
 
 /// Map an HTTP status to an [`ApiError`], using the error body to split 403:
@@ -165,14 +165,14 @@ fn map_status(status: StatusCode, retry_after: Option<Duration>) -> ApiError {
 /// as transient-with-backoff — while a permission 403 (revoked scope) is
 /// permanent. Treating quota 403s as permanent would mark every pending change
 /// "rejected" the moment a burst hits the quota.
-fn map_status_with_body(status: StatusCode, retry_after: Option<Duration>, body: &str) -> ApiError {
+fn map_status_with_body(status: StatusCode, body: &str) -> ApiError {
     match status.as_u16() {
         401 => ApiError::Unauthorized,
-        403 if is_rate_limit_body(body) => ApiError::RateLimited { retry_after },
+        403 if is_rate_limit_body(body) => ApiError::RateLimited,
         403 => ApiError::Other(format!("403 forbidden: {}", body_reason(body))),
         404 => ApiError::NotFound,
         409 | 412 => ApiError::PreconditionFailed,
-        429 => ApiError::RateLimited { retry_after },
+        429 => ApiError::RateLimited,
         500..=599 => ApiError::Server {
             status: status.as_u16(),
         },
@@ -232,19 +232,21 @@ where
         if status.is_success() {
             return Ok(resp);
         }
+        // Read the Retry-After hint before `resp.text()` consumes the response.
         let retry_after = retry_after_from(resp.headers());
         // 403 needs the body to tell quota exhaustion (transient) from a real
         // permission failure (permanent); other statuses map without it.
         let err = if status.as_u16() == 403 {
             let body = resp.text().await.unwrap_or_default();
-            map_status_with_body(status, retry_after, &body)
+            map_status_with_body(status, &body)
         } else {
-            map_status(status, retry_after)
+            map_status(status)
         };
         if !err.is_transient() || attempt >= max_retries {
             return Err(err);
         }
         attempt += 1;
+        // Honor a server-sent Retry-After when present; else exponential backoff.
         let delay = retry_after.unwrap_or_else(|| backoff(attempt));
         tokio::time::sleep(delay).await;
     }
@@ -533,19 +535,19 @@ mod tests {
     #[test]
     fn map_status_categorizes_correctly() {
         assert!(matches!(
-            map_status(StatusCode::UNAUTHORIZED, None),
+            map_status(StatusCode::UNAUTHORIZED),
             ApiError::Unauthorized
         ));
         assert!(matches!(
-            map_status(StatusCode::PRECONDITION_FAILED, None),
+            map_status(StatusCode::PRECONDITION_FAILED),
             ApiError::PreconditionFailed
         ));
         assert!(matches!(
-            map_status(StatusCode::TOO_MANY_REQUESTS, None),
-            ApiError::RateLimited { .. }
+            map_status(StatusCode::TOO_MANY_REQUESTS),
+            ApiError::RateLimited
         ));
         assert!(matches!(
-            map_status(StatusCode::SERVICE_UNAVAILABLE, None),
+            map_status(StatusCode::SERVICE_UNAVAILABLE),
             ApiError::Server { status: 503 }
         ));
     }
@@ -706,7 +708,7 @@ mod tests {
             .await;
         let client = plain_client(&server.uri());
         let err = client.delete_task("L1", "T1").await.unwrap_err();
-        assert!(matches!(err, ApiError::RateLimited { .. }), "got {err:?}");
+        assert!(matches!(err, ApiError::RateLimited), "got {err:?}");
         assert!(err.is_transient());
     }
 

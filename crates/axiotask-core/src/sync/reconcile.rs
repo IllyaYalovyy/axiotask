@@ -975,10 +975,7 @@ mod tests {
             push_failure(&ApiError::Server { status: 503 }),
             PushFailure::Retry
         );
-        assert_eq!(
-            push_failure(&ApiError::RateLimited { retry_after: None }),
-            PushFailure::Retry
-        );
+        assert_eq!(push_failure(&ApiError::RateLimited), PushFailure::Retry);
         assert_eq!(
             push_failure(&ApiError::Network("reset".into())),
             PushFailure::Retry

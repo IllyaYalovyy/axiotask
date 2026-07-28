@@ -53,7 +53,7 @@ mod tests {
     fn transient_only_for_retryable_api_errors() {
         assert!(SyncError::Api(ApiError::Server { status: 503 }).is_transient());
         assert!(SyncError::Api(ApiError::Network("reset".into())).is_transient());
-        assert!(SyncError::Api(ApiError::RateLimited { retry_after: None }).is_transient());
+        assert!(SyncError::Api(ApiError::RateLimited).is_transient());
 
         // Permanent API rejections are NOT transient.
         assert!(!SyncError::Api(ApiError::Other("bad json".into())).is_transient());

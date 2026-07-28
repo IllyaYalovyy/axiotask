@@ -200,17 +200,13 @@ mod tests {
         (Method::InsertTask, || ApiError::Network("reset".into())),
         (Method::PatchTask, || ApiError::Server { status: 500 }),
         (Method::DeleteTask, || ApiError::Network("timeout".into())),
-        (Method::MoveTask, || ApiError::RateLimited {
-            retry_after: None,
-        }),
+        (Method::MoveTask, || ApiError::RateLimited),
         (Method::ListTaskLists, || ApiError::Server { status: 502 }),
         // §I list ops fail transiently too, and a half-pushed list is the
         // state the create/rename/delete rows have to survive.
         (Method::InsertTaskList, || ApiError::Network("reset".into())),
         (Method::PatchTaskList, || ApiError::Server { status: 500 }),
-        (Method::DeleteTaskList, || ApiError::RateLimited {
-            retry_after: None,
-        }),
+        (Method::DeleteTaskList, || ApiError::RateLimited),
     ];
 
     const DATE_MOVES: [&str; 5] = ["Today", "Tomorrow", "NextWeek", "NextMonth", "Clear"];
