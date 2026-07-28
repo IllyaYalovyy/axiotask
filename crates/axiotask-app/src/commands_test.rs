@@ -4200,13 +4200,13 @@ mod tests {
 
     #[tokio::test]
     async fn status_only_divergence_over_a_remote_reorder_never_forks_a_copy() {
-        // The D1 guard (RFC-009 §C) with a base snapshot present: a status-only
-        // difference must never produce a "(conflicted copy)". The user ticks a
+        // RFC-009 D8 (ratified) with a base snapshot present: the user ticks a
         // task complete while another device merely reorders it (etag bumped,
-        // content — including status — unchanged from our base). Whole-row
-        // resolution with no base could read the etag bump as a remote status
-        // change and, combined with our toggle, fork a copy; the base shows the
-        // server never diverged, so our tick lands with no copy.
+        // content — including status — unchanged from our base). The base proves
+        // the remote never touched the checkbox, so the local completion WINS
+        // (the row re-pushes and converges), and — status-only being cheap — a
+        // "(conflicted copy)" is never forked. This is the #132 defect: pre-D8,
+        // whole-row resolution adopted the remote row and the tick flipped back.
         let client = Arc::new(InMemoryClient::new());
         client.seed_list("L1", "Inbox");
         client.seed_task("L1", "T1", "chore", "00000000000001");
@@ -4250,13 +4250,13 @@ mod tests {
         );
         let chore: Vec<_> = tasks.iter().filter(|t| t.task.title == "chore").collect();
         assert_eq!(chore.len(), 1, "exactly one row, never a copy");
-        // D1 (ratified): a status-only difference resolves remote-wins — the
-        // server never changed the status (only reordered), but whole-row
-        // resolution adopts the remote row, so the tick is dropped. A lost
-        // checkbox click is cheap; a duplicate task is not. The invariant this
-        // guards is "no conflicted copy", which holds.
-        assert_eq!(chore[0].task.status, TaskStatus::NeedsAction);
+        // D8 (ratified): the base proves the reorder never touched the status,
+        // so the local completion wins and converges — the tick is NOT dropped.
+        assert_eq!(chore[0].task.status, TaskStatus::Completed);
         assert_eq!(chore[0].sync_state, SyncState::Clean);
+        // And it reached the server — the completion persists across sync.
+        let remote = client.get_task("L1", "T1").await.unwrap();
+        assert_eq!(remote.status, TaskStatus::Completed);
     }
 
     #[tokio::test]
