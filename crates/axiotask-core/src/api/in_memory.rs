@@ -20,6 +20,11 @@
 //!   with a permanent 400. Accepted values are normalized to
 //!   `YYYY-MM-DDT00:00:00.000Z` in responses. An empty string clears it.
 //! - inserting under a nonexistent `parent` is a permanent 400.
+//! - `title` over 1024 characters, or `notes` over 8192 characters, is a
+//!   permanent 400 ("invalid argument") on both insert and patch — the same
+//!   permanent-rejection shape a bare `due` draws, so an oversize edit drives
+//!   the engine's forever-`Reject` push path (#146). Google counts characters,
+//!   not bytes. Limits are from the Google Tasks docs, verified 2026-07-28.
 //! - deleting a parent task deletes its descendants server-side.
 //! - completing a parent task auto-completes its whole subtree server-side,
 //!   and re-opening a subtask whose parent is still completed returns 200 but
@@ -317,6 +322,31 @@ fn validate_due(due: Option<String>) -> Result<Option<String>, ApiError> {
     }
 }
 
+/// Live-API field-size limits, from the Google Tasks docs (verified 2026-07-28,
+/// `developers.google.com/tasks/reference/rest/v1/tasks`): `title` ≤ 1024
+/// characters, `notes` ≤ 8192 characters. Either overflow is a permanent 400
+/// ("invalid argument"), the same permanent-rejection shape as a bare `due` —
+/// so an oversize edit drives the engine's `PushFailure::Reject` path (#146).
+const MAX_TITLE_CHARS: usize = 1024;
+const MAX_NOTES_CHARS: usize = 8192;
+
+/// Reject a `title`/`notes` that exceeds the documented length. Google counts
+/// characters, not bytes, so this counts `char`s. `None` (field absent from the
+/// request) passes through untouched.
+fn validate_sizes(title: Option<&str>, notes: Option<&str>) -> Result<(), ApiError> {
+    if title.is_some_and(|t| t.chars().count() > MAX_TITLE_CHARS) {
+        return Err(ApiError::Other(
+            "400: Request contains an invalid argument. (title too long)".into(),
+        ));
+    }
+    if notes.is_some_and(|n| n.chars().count() > MAX_NOTES_CHARS) {
+        return Err(ApiError::Other(
+            "400: Request contains an invalid argument. (notes too long)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// In-memory test double. Cheap to clone the handle (interior `Mutex`).
 #[derive(Debug, Default)]
 pub struct InMemoryClient {
@@ -611,6 +641,7 @@ impl GoogleTasksClient for InMemoryClient {
         {
             return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
         }
+        validate_sizes(Some(&new.title), new.notes.as_deref())?;
         let due = validate_due(new.due)?;
         // Live-API rule: a task inserted under a COMPLETED parent is completed
         // by the server's cascade immediately — the insert RESPONSE already
@@ -697,6 +728,10 @@ impl GoogleTasksClient for InMemoryClient {
         if let Some(e) = s.next_targeted_fault(Method::PatchTask, &FaultTarget::Id(id.into())) {
             return Err(e);
         }
+        // Argument validation precedes resource lookup on the live API: an
+        // oversize title/notes is a permanent 400 regardless of the target row's
+        // state (live, deleted, or absent).
+        validate_sizes(patch.title.as_deref(), patch.notes.as_deref())?;
         if !s.lists.iter().any(|l| l.id == list_id) {
             return Err(ApiError::NotFound);
         }
@@ -1050,6 +1085,93 @@ mod tests {
             "first",
             "the edit was silently ignored server-side"
         );
+    }
+
+    #[tokio::test]
+    async fn oversize_title_and_notes_are_permanent_400s() {
+        // Live-API limits (Google Tasks docs, verified 2026-07-28): title ≤ 1024
+        // chars, notes ≤ 8192 chars. One character past either bound is a
+        // permanent 400 on both insert and patch; the exact boundary is
+        // accepted. Google counts characters, not bytes.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+
+        // Insert: the boundary lengths are accepted.
+        let ok = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "t".repeat(MAX_TITLE_CHARS),
+                    notes: Some("n".repeat(MAX_NOTES_CHARS)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("title=1024, notes=8192 are exactly at the limit → accepted");
+
+        // Insert: one char over the title limit is a permanent 400.
+        let title_err = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "t".repeat(MAX_TITLE_CHARS + 1),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(title_err, ApiError::Other(_)), "got {title_err:?}");
+        assert!(!title_err.is_transient(), "an oversize title never retries");
+
+        // Insert: one char over the notes limit is a permanent 400.
+        let notes_err = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "ok".into(),
+                    notes: Some("n".repeat(MAX_NOTES_CHARS + 1)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(notes_err, ApiError::Other(_)), "got {notes_err:?}");
+        assert!(!notes_err.is_transient(), "an oversize note never retries");
+
+        // Patch: an oversize notes edit on an existing row is the same 400 —
+        // and it does NOT mutate the stored row (the reject is total).
+        let patch_err = c
+            .patch_task(
+                "L1",
+                &ok.id,
+                TaskPatch {
+                    notes: Some("n".repeat(MAX_NOTES_CHARS + 1)),
+                    ..Default::default()
+                },
+                ok.etag.as_deref(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(patch_err, ApiError::Other(_)), "got {patch_err:?}");
+        assert!(!patch_err.is_transient());
+        assert_eq!(
+            c.get_task("L1", &ok.id).await.unwrap().etag,
+            ok.etag,
+            "a rejected oversize patch leaves the row (and its etag) untouched"
+        );
+
+        // Multi-byte characters count as characters, not bytes: 1024 emoji
+        // (~4 bytes each) is within the title limit even though the byte length
+        // is far over 1024.
+        c.insert_task(
+            "L1",
+            NewTask {
+                title: "😀".repeat(MAX_TITLE_CHARS),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("1024 multi-byte chars is 1024 chars, within the limit");
     }
 
     #[tokio::test]
