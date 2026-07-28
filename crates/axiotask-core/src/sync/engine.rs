@@ -3272,6 +3272,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversize_field_push_is_rejected_every_run_never_wedges() {
+        // #146: a permanently-rejected push (here a note past Google's
+        // documented 8192-char limit) is a 400 → PushFailure::Reject: counted,
+        // logged, row stays dirty, run continues. The point this pins is that
+        // the row re-pushes and re-fails EVERY run, forever — there is no
+        // give-up state, and the loop must never abort the run nor wedge a
+        // healthy row. (Surfacing that forever-loop to the user is proposed in
+        // the task report, not implemented here — no 8th mechanism.)
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        eng.run().await.unwrap();
+
+        let mut big = dirty_task("local-big", "L1", "create");
+        big.task.notes = Some("x".repeat(8193));
+        big.local_updated = "2026-06-01T00:00:00Z".into();
+        eng.store.upsert_task(&big).await.unwrap();
+        // A healthy create in the same list must still push in the same run.
+        let mut ok = dirty_task("local-ok", "L1", "create");
+        ok.local_updated = "2026-06-01T00:00:01Z".into();
+        eng.store.upsert_task(&ok).await.unwrap();
+
+        // Run 1: healthy row lands on the server; oversize row is rejected.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 1, "oversize create counted as a rejection");
+        assert!(out.pushed >= 1, "the healthy row still pushed");
+
+        let insert_calls_after_first = client.call_count(Method::InsertTask);
+        // Two or three more runs: with nothing new to push, the oversize row
+        // is the only remaining push each run. It re-pushes and re-fails every
+        // single run — the forever-Reject loop — never aborting the run.
+        for _ in 0..3 {
+            let out = eng.run().await.unwrap();
+            assert_eq!(out.errors, 1, "still rejected, still counted, every run");
+            assert_eq!(out.pushed, 0, "no healthy work left to push");
+        }
+        assert_eq!(
+            client.call_count(Method::InsertTask),
+            insert_calls_after_first + 3,
+            "the oversize row is re-attempted once per run — it never gives up"
+        );
+
+        // The oversize row is still dirty (never dropped, never lost); the
+        // healthy row is clean and pushed.
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let big = tasks.iter().find(|t| t.task.id == "local-big").unwrap();
+        assert_eq!(
+            big.sync_state,
+            SyncState::Dirty,
+            "the rejected row stays dirty for retry/visibility, forever"
+        );
+        assert!(
+            tasks
+                .iter()
+                .filter(|t| t.task.id != "local-big")
+                .all(|t| t.sync_state == SyncState::Clean),
+            "the healthy row is clean — one poisoned row does not wedge the queue"
+        );
+    }
+
+    #[tokio::test]
     async fn push_multiple_edits_coalesce() {
         let (client, eng) = engine_with_push().await;
         client.seed_list("L1", "Inbox");

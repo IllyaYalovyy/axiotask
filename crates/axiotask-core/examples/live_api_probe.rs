@@ -26,6 +26,8 @@
 //!   accepted and normalized to `...T00:00:00.000Z`; `""` clears it.
 //! - stale `If-Match` → 412 PreconditionFailed.
 //! - inserting under an unknown `parent` → permanent 400.
+//! - `title` > 1024 chars or `notes` > 8192 chars → permanent 400 (insert and
+//!   patch); the boundary length is accepted (#146).
 //! - deleting a parent deletes its descendants server-side.
 //! - the API accepts nesting deeper than one level (our app self-limits to one).
 //! - completing a parent auto-completes its subtree; re-opening a child of a
@@ -385,6 +387,7 @@ async fn main() {
 
 async fn run_probes(client: &HttpClient, raw: &Raw, lid: &str, r: &mut Report) {
     probe_dates_and_conflict(client, lid, r).await;
+    probe_field_size_limits(client, lid, r).await;
     probe_hierarchy_and_completion(client, lid, r).await;
     // RFC-009 (#106) rows.
     probe_delete_visibility(client, raw, lid, r).await;
@@ -480,6 +483,86 @@ async fn probe_dates_and_conflict(client: &HttpClient, lid: &str, r: &mut Report
         matches!(&orphan, Err(e) if is_bad_request(e)),
         format!("{orphan:?}"),
     );
+}
+
+/// Field-size limits (#146). The Google Tasks docs state `title` ≤ 1024 chars
+/// and `notes` ≤ 8192 chars; `in_memory.rs` now models one char over either as
+/// a permanent 400. This probe pins that the live service agrees — the boundary
+/// length is accepted, one char over is a permanent 400, on both insert and
+/// patch.
+async fn probe_field_size_limits(client: &HttpClient, lid: &str, r: &mut Report) {
+    const MAX_TITLE: usize = 1024;
+    const MAX_NOTES: usize = 8192;
+
+    // Boundary lengths are accepted.
+    let at_limit = client
+        .insert_task(
+            lid,
+            NewTask {
+                title: "t".repeat(MAX_TITLE),
+                notes: Some("n".repeat(MAX_NOTES)),
+                ..Default::default()
+            },
+        )
+        .await;
+    r.check(
+        "insert with title=1024, notes=8192 (exactly at the limit) is accepted",
+        at_limit.is_ok(),
+        format!("{at_limit:?}"),
+    );
+
+    // One char over the title limit → permanent 400.
+    let big_title = client
+        .insert_task(
+            lid,
+            NewTask {
+                title: "t".repeat(MAX_TITLE + 1),
+                ..Default::default()
+            },
+        )
+        .await;
+    r.check(
+        "insert with a 1025-char title is a permanent 400",
+        matches!(&big_title, Err(e) if is_bad_request(e)),
+        format!("{big_title:?}"),
+    );
+
+    // One char over the notes limit → permanent 400.
+    let big_notes = client
+        .insert_task(
+            lid,
+            NewTask {
+                title: "ok".into(),
+                notes: Some("n".repeat(MAX_NOTES + 1)),
+                ..Default::default()
+            },
+        )
+        .await;
+    r.check(
+        "insert with an 8193-char note is a permanent 400",
+        matches!(&big_notes, Err(e) if is_bad_request(e)),
+        format!("{big_notes:?}"),
+    );
+
+    // The same limit applies to a PATCH of an existing row.
+    if let Ok(row) = at_limit {
+        let patch_big = client
+            .patch_task(
+                lid,
+                &row.id,
+                TaskPatch {
+                    notes: Some("n".repeat(MAX_NOTES + 1)),
+                    ..Default::default()
+                },
+                row.etag.as_deref(),
+            )
+            .await;
+        r.check(
+            "patch to an 8193-char note is a permanent 400 (same limit as insert)",
+            matches!(&patch_big, Err(e) if is_bad_request(e)),
+            format!("{patch_big:?}"),
+        );
+    }
 }
 
 async fn probe_hierarchy_and_completion(client: &HttpClient, lid: &str, r: &mut Report) {
