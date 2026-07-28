@@ -407,6 +407,40 @@ impl AppState {
         &self.token_store
     }
 
+    /// Rebuild state as if the process had died and relaunched over the SAME
+    /// on-disk store. What a real restart keeps and what it loses is the whole
+    /// point: the persisted SQLite store (tombstoned deletes, dirty rows,
+    /// in-flight-create markers), the auth tokens, and the config file all
+    /// survive — so the new instance shares the same store, client and
+    /// token-store handles. Everything that lived only in process memory is
+    /// reset to its process-start default: the held create (the open panel's
+    /// deferred insert), the needs-reauth flag, the backoff streak and the sync
+    /// stats. Undo tokens are not in `AppState` at all — they live in the
+    /// frontend and die with the window — so a restart drops them simply by the
+    /// caller discarding the token it held.
+    #[cfg(test)]
+    pub(crate) fn simulate_restart(&self) -> Self {
+        Self {
+            store: self.store.clone(),
+            client: self.client.clone(),
+            token_store: self.token_store.clone(),
+            oauth_config: self.oauth_config.clone(),
+            sync_notify: Arc::new(Notify::new()),
+            sync_guard: Arc::new(Mutex::new(())),
+            push_enabled: AtomicBool::new(self.push_enabled.load(Ordering::Relaxed)),
+            // The one create the open panel was holding is gone with the panel.
+            held_create_id: std::sync::Mutex::new(None),
+            auto_sync_on_start: AtomicBool::new(self.auto_sync_on_start.load(Ordering::Relaxed)),
+            // Recomputed by the next sync against the live grant.
+            needs_reauth: AtomicBool::new(false),
+            attention_streak: AtomicU32::new(0),
+            config_path: self.config_path.clone(),
+            db_path: self.db_path.clone(),
+            sync_status: Mutex::new(SyncStatus::default()),
+            sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
+        }
+    }
+
     /// Collect every task list and its tasks into a lossless backup snapshot.
     ///
     /// Pure data gathering — no IO beyond the store reads — so it can be unit
