@@ -138,10 +138,13 @@ struct State {
     page_size: Option<usize>,
     /// Number of recorded calls per method.
     calls: [u32; 10],
-    /// When set, the next `insert_task` commits the task server-side but then
-    /// returns a network error — models a response timeout after the server
-    /// already created the row (the at-least-once create hazard).
-    commit_then_fail_insert: bool,
+    /// Methods whose next call commits its mutation server-side and THEN returns
+    /// a network error — models a response lost after the server already applied
+    /// the change (the at-least-once hazard). Fired and consumed per method, so
+    /// arming several methods loses one response each. Generalizes the historic
+    /// insert-only lost-response fault to every mutating method, so a lost
+    /// PATCH/DELETE/MOVE response can be exercised, not just a lost create.
+    commit_then_fail: Vec<Method>,
 }
 
 impl State {
@@ -175,6 +178,17 @@ impl State {
 
     fn record(&mut self, m: Method) {
         self.calls[m as usize] += 1;
+    }
+
+    /// Consume a "commit then fail" arming for `m` if one is pending, returning
+    /// whether THIS call's response should be lost after its mutation committed.
+    fn take_commit_then_fail(&mut self, m: Method) -> bool {
+        if let Some(pos) = self.commit_then_fail.iter().position(|&x| x == m) {
+            self.commit_then_fail.remove(pos);
+            true
+        } else {
+            false
+        }
     }
 
     /// Compute the opaque, lexicographically-sortable `position` for a task
@@ -409,21 +423,31 @@ impl InMemoryClient {
         self.inner.lock().unwrap().page_size = Some(size);
     }
 
-    /// Make the next `insert_task` commit the task server-side but return a
-    /// network error — models a response timeout after the server committed.
-    pub fn commit_then_fail_next_insert(&self) {
-        self.inner.lock().unwrap().commit_then_fail_insert = true;
+    /// Arm a lost-response fault on the next call to `m`: it commits its
+    /// mutation server-side, then returns a network error — the at-least-once
+    /// hazard where a response is lost after the server already applied the
+    /// change. Defined for the mutating methods (`insert`/`patch`/`delete`/
+    /// `move`); arming a read-only method has no committed mutation to preserve,
+    /// so its call simply never checks the arming.
+    pub fn commit_then_fail_next(&self, m: Method) {
+        self.inner.lock().unwrap().commit_then_fail.push(m);
     }
 
-    /// Disarm every queued fault — untargeted, targeted, and the pending
-    /// commit-then-fail insert. Lets a test switch from a chaotic phase to a
+    /// Back-compat shorthand for the insert-only lost-response fault — the same
+    /// as `commit_then_fail_next(Method::InsertTask)`.
+    pub fn commit_then_fail_next_insert(&self) {
+        self.commit_then_fail_next(Method::InsertTask);
+    }
+
+    /// Disarm every queued fault — untargeted, targeted, and every pending
+    /// commit-then-fail lost response. Lets a test switch from a chaotic phase to a
     /// provably healthy one: an armed-but-never-fired fault would otherwise
     /// still be waiting in the queue and fire during the recovery phase.
     pub fn clear_faults(&self) {
         let mut s = self.inner.lock().unwrap();
         s.faults.clear();
         s.targeted_faults.clear();
-        s.commit_then_fail_insert = false;
+        s.commit_then_fail.clear();
     }
 
     /// Soft-delete a task server-side, the way another client's `DELETE`
@@ -620,8 +644,7 @@ impl GoogleTasksClient for InMemoryClient {
             web_view_link,
         };
         s.tasks.push((list_id.into(), task.clone()));
-        if s.commit_then_fail_insert {
-            s.commit_then_fail_insert = false;
+        if s.take_commit_then_fail(Method::InsertTask) {
             return Err(ApiError::Network("response timeout after commit".into()));
         }
         Ok(task)
@@ -764,6 +787,13 @@ impl GoogleTasksClient for InMemoryClient {
         if cascade_complete {
             s.cascade_complete_descendants(&result.id);
         }
+        // Lost-response hazard: the patch committed above (new etag, new
+        // content), but its response is dropped. Our retry meets a 412 whose
+        // remote already carries OUR OWN content — the self-content 412 the
+        // engine must absorb by adopting the remote etag, with no copy.
+        if s.take_commit_then_fail(Method::PatchTask) {
+            return Err(ApiError::Network("response timeout after commit".into()));
+        }
         Ok(result)
     }
 
@@ -784,6 +814,12 @@ impl GoogleTasksClient for InMemoryClient {
         // #106). The server cascades to descendants, so the whole subtree goes.
         if s.soft_delete_subtree(id) == 0 {
             return Err(ApiError::NotFound);
+        }
+        // Lost-response hazard: the subtree is already soft-deleted, but the
+        // response is dropped. Our retry meets a 404 (the row is gone), which
+        // the engine treats as a completed delete — it must converge, not fail.
+        if s.take_commit_then_fail(Method::DeleteTask) {
+            return Err(ApiError::Network("response timeout after commit".into()));
         }
         Ok(())
     }
@@ -849,6 +885,12 @@ impl GoogleTasksClient for InMemoryClient {
         let result = t.clone();
         if dest_completed {
             s.cascade_complete_descendants(&result.id);
+        }
+        // Lost-response hazard: the move committed above (new parent/position/
+        // etag), but the response is dropped. Our retry re-sends the same move;
+        // it must reconverge to the state the server already holds, not wedge.
+        if s.take_commit_then_fail(Method::MoveTask) {
+            return Err(ApiError::Network("response timeout after commit".into()));
         }
         Ok(result)
     }
