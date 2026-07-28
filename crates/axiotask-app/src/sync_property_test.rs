@@ -142,6 +142,11 @@ mod tests {
         RemoteDelete(u8),
         /// §A pull mirror: another device adds a task to the i-th pushed list.
         RemoteCreate(u8),
+        /// §G/#145: another device creates a task whose CONTENT duplicates the
+        /// i-th live SUBTASK of ours, but TOP-LEVEL — a different parent
+        /// identity. If our subtask is mid-flight, recovery must adopt only the
+        /// orphan under OUR parent, never this same-content look-alike.
+        RemoteCreateDup(u8),
         /// §F/§G residual: another device demotes the i-th pushed top-level
         /// task under a pushed top-level sibling on the SERVER. Google does not
         /// cap depth, so if that task already carries a subtask this lands a
@@ -654,6 +659,30 @@ mod tests {
                         self.names.push(title);
                     }
                 }
+                Op::RemoteCreateDup(i) => {
+                    // Reuse a live SUBTASK's current title as the foreign row's
+                    // content and insert it TOP-LEVEL — a different parent
+                    // identity than the subtask carries. When our subtask is
+                    // mid-flight, the next recovery must NOT adopt this
+                    // look-alike (#145). Untracked on purpose: it duplicates a
+                    // title, so it can't join the title-keyed handle list;
+                    // id-keyed convergence still covers it.
+                    let live = self.live().await;
+                    let subs: Vec<&StoredTask> =
+                        live.iter().filter(|t| t.task.parent.is_some()).collect();
+                    let Some(t) = pick(&subs, i) else { return };
+                    let (list_id, title) = (t.list_id.clone(), t.task.title.clone());
+                    let _ = self
+                        .client
+                        .insert_task(
+                            &list_id,
+                            NewTask {
+                                title,
+                                ..NewTask::default()
+                            },
+                        )
+                        .await;
+                }
                 Op::RemoteDemote(i) => {
                     // Another device demotes a pushed top-level task under a
                     // pushed top-level sibling on the server. If the task
@@ -1073,6 +1102,7 @@ mod tests {
             2 => any::<u8>().prop_map(Op::RemoteComplete),
             2 => any::<u8>().prop_map(Op::RemoteDelete),
             2 => any::<u8>().prop_map(Op::RemoteCreate),
+            2 => any::<u8>().prop_map(Op::RemoteCreateDup),
             2 => any::<u8>().prop_map(Op::RemoteDemote),
             1 => any::<u8>().prop_map(Op::RemoteRenameList),
             1 => any::<u8>().prop_map(Op::RemoteDeleteList),
@@ -1438,6 +1468,74 @@ mod tests {
                 assert_no_stranded_children(&h, "after a complete pull").await;
                 assert_converged(&h, &format!("parent relink, {ops:?}")).await;
             });
+        });
+    }
+
+    /// PARENT-IDENTITY ADOPTION (#145), end to end. A subtask create whose
+    /// insert is LOST PRE-COMMIT (`FlakySync(1)` → `Method::InsertTask`
+    /// transient, so nothing commits and the create stays in-flight) coincides
+    /// with another device inserting an identical-content row TOP-LEVEL. The
+    /// only remote look-alike at recovery is the foreign top-level row.
+    ///
+    /// This is deterministic, not a property, on purpose: after a mis-adoption
+    /// the following pull heals local and server into AGREEMENT (our subtask is
+    /// silently swallowed into the foreign row), so the convergence oracle
+    /// cannot see the loss. The catchable signal is STRUCTURAL — our subtask
+    /// must still exist under its own parent AND the foreign row must survive as
+    /// its own top-level task. Before #145 adoption ignored parent identity and
+    /// claimed the foreign row as ours, so exactly one of those two rows
+    /// vanished. `RemoteCreateDup` also rides the general soak (`any_ops`) for
+    /// breadth: duplicate content must flow through adoption and pull with no
+    /// panic and no divergence.
+    #[test]
+    fn orphan_adoption_never_claims_a_foreign_parent() {
+        run_case(|| async move {
+            let mut h = Harness::new().await;
+            // Two synced top-level parents in the same list.
+            h.apply(Op::CreateTop(0)).await; // t001 = P1
+            h.apply(Op::CreateTop(0)).await; // t002 = P2
+            h.apply(Op::Sync).await;
+            let p1_id = h
+                .live()
+                .await
+                .into_iter()
+                .find(|t| t.task.title == "t001")
+                .expect("P1 pushed")
+                .task
+                .id;
+
+            // A subtask under P1 whose insert is lost pre-commit → in-flight,
+            // nothing committed server-side.
+            h.apply(Op::CreateSub(0)).await; // t003 under P1
+            h.apply(Op::FlakySync(1)).await; // its insert fails pre-commit
+            // Another device inserts an identical-content row TOP-LEVEL.
+            h.apply(Op::RemoteCreateDup(0)).await; // foreign top-level "t003"
+
+            h.heal().await;
+
+            let server = h.server_rows().await;
+            let ours = server
+                .iter()
+                .filter(|r| r.title == "t003" && r.parent.as_deref() == Some(p1_id.as_str()))
+                .count();
+            let foreign = server
+                .iter()
+                .filter(|r| r.title == "t003" && r.parent.is_none())
+                .count();
+            assert_eq!(
+                ours,
+                1,
+                "our subtask must land under P1, not be swallowed by the foreign row\n{}",
+                h.dump().await
+            );
+            assert_eq!(
+                foreign,
+                1,
+                "the foreign top-level look-alike must survive as its own row\n{}",
+                h.dump().await
+            );
+            assert_converged(&h, "after #145 recovery").await;
+            assert_parent_integrity(&h, "after #145 recovery").await;
         });
     }
 }
