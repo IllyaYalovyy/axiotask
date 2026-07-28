@@ -161,10 +161,12 @@ mod tests {
         Sync,
         /// A sync run with one transient fault armed (5xx / network drop).
         FlakySync(u8),
-        /// A sync run where an insert commits server-side but the response is
-        /// lost — the at-least-once create hazard that leaves an in-flight
-        /// marker behind.
-        CrashSync,
+        /// A sync run where one mutating call commits server-side but its
+        /// response is lost — the at-least-once hazard. The `u8` selects WHICH
+        /// method (insert / patch / delete / move) loses its response, so the
+        /// generalization covers a lost create (in-flight marker), a lost edit
+        /// (self-content 412), a lost delete (retry 404s) and a lost move.
+        CrashSync(u8),
     }
 
     /// Transient faults only: a permanent rejection would legitimately leave a
@@ -701,8 +703,19 @@ mod tests {
                     self.client.fail_next(m, e);
                     self.state.run_sync().await.expect("flaky sync");
                 }
-                Op::CrashSync => {
-                    self.client.commit_then_fail_next_insert();
+                Op::CrashSync(k) => {
+                    // Lose the response of ONE mutating call after the server
+                    // commits it — the at-least-once hazard, generalized past
+                    // inserts to edits, deletes and moves. The next run must
+                    // reconverge with no duplicate and no lost edit.
+                    const LOST: [Method; 4] = [
+                        Method::InsertTask,
+                        Method::PatchTask,
+                        Method::DeleteTask,
+                        Method::MoveTask,
+                    ];
+                    self.client
+                        .commit_then_fail_next(LOST[k as usize % LOST.len()]);
                     self.state.run_sync().await.expect("crash sync");
                 }
             }
@@ -1031,7 +1044,7 @@ mod tests {
             2 => Just(Op::ClosePanel),
             5 => Just(Op::Sync),
             3 => any::<u8>().prop_map(Op::FlakySync),
-            1 => Just(Op::CrashSync),
+            1 => any::<u8>().prop_map(Op::CrashSync),
         ]
     }
 
@@ -1049,6 +1062,14 @@ mod tests {
     /// snapshot now recording the insert payload, orphan adoption matches on it
     /// and the edit survives as a pending update — no duplicate. Before #124
     /// this op family was deliberately kept out because it duplicated the task.
+    ///
+    /// The crash here is deliberately the LOST-INSERT one (`CrashSync(0)` →
+    /// `Method::InsertTask`): this test's invariant is "a crashed create never
+    /// duplicates", asserted as an exact title set. A lost PATCH is a different
+    /// (also legitimate) shape — a divergent re-edit over a committed-but-lost
+    /// edit forks a conflicted copy (P3), which is an EXTRA title by design and
+    /// so is exercised in the general convergence properties (`any_ops`), not
+    /// this create-duplication one.
     fn crash_ops() -> impl Strategy<Value = Vec<Op>> {
         prop::collection::vec(
             prop_oneof![
@@ -1059,7 +1080,7 @@ mod tests {
                 2 => (any::<u8>(), any::<u8>()).prop_map(|(i, d)| Op::SetDue(i, d)),
                 2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveToList(i, j)),
                 1 => Just(Op::CreateList),
-                3 => Just(Op::CrashSync),
+                3 => Just(Op::CrashSync(0)),
                 2 => Just(Op::Sync),
                 2 => any::<u8>().prop_map(Op::FlakySync),
             ],

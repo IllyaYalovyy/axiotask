@@ -2065,6 +2065,70 @@ mod tests {
         assert_eq!(tasks[0].sync_state, SyncState::Clean);
     }
 
+    #[tokio::test]
+    async fn lost_patch_response_self_content_412_converges_no_copy() {
+        use crate::api::in_memory::Method;
+        // The at-least-once PATCH hazard, end to end through the REAL lost-
+        // response fault (not a hand-forged stale etag): we rename a task, the
+        // server APPLIES the patch (new content, new etag), then the response is
+        // lost. Our row keeps its stale etag and stays dirty, so the retry meets
+        // a 412 whose remote already carries OUR OWN edit — a "self-content"
+        // 412. It must converge by adopting the remote etag, preserving the
+        // edit, with NO conflicted copy. Motivated by #132 (D8) / #118.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "old", "1");
+        eng.run().await.unwrap();
+
+        // Edit as the UI does: dirty the row (captures its base) with a rename.
+        let mut row = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        row.task.title = "renamed".into();
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        row.local_updated = "2026-06-02T00:00:00Z".into();
+        eng.store.upsert_task(&row).await.unwrap();
+
+        // Arm the lost PATCH response, then push: the server commits the rename
+        // but the client sees a network error.
+        client.commit_then_fail_next(Method::PatchTask);
+        let out1 = eng.run().await.unwrap();
+
+        // The commit landed on the server despite the lost response…
+        let server = client.get_task("L1", "T1").await.unwrap();
+        assert_eq!(server.title, "renamed", "the server applied the lost patch");
+        // …but our row is still dirty on its stale etag — nothing was pushed.
+        let mid = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(out1.pushed, 0, "the lost response is not a successful push");
+        assert_eq!(mid.sync_state, SyncState::Dirty, "row stays dirty to retry");
+        assert!(
+            eng.store.base_snapshot("T1").await.unwrap().is_some(),
+            "the base survives the retry-pending row"
+        );
+
+        // Retry: the stale etag now 412s, the conflict refetch sees our own
+        // content on the remote, and the row converges clean.
+        let gets_before = client.call_count(Method::GetTask);
+        let out2 = eng.run().await.unwrap();
+        assert!(
+            client.call_count(Method::GetTask) > gets_before,
+            "the 412 forced a conflict refetch — the self-content path ran"
+        );
+        assert_eq!(out2.conflicts, 0, "a self-content 412 makes no copy");
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert_eq!(tasks.len(), 1, "no conflicted copy — exactly one row");
+        assert_eq!(tasks[0].task.title, "renamed", "the edit survived");
+        assert_eq!(tasks[0].sync_state, SyncState::Clean, "converged clean");
+        assert_eq!(
+            tasks[0].task.etag, server.etag,
+            "adopted the remote etag (P6: etag matches content)"
+        );
+        assert!(
+            eng.store.base_snapshot("T1").await.unwrap().is_none(),
+            "base is NULL once the row is clean (#134/#139)"
+        );
+    }
+
     // ─── RFC-009 §B/§C matrix: edit and complete crossings ───────────────────
     //
     // One test per row of `designs/RFC-009-sync-conflict-matrix.md` §B (local
