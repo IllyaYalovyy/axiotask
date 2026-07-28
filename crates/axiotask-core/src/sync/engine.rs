@@ -4185,6 +4185,54 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn pull_first_page_failure_is_empty_but_incomplete_not_a_server_wipe() {
+        // The catastrophic partial-pull edge: the VERY FIRST page of a
+        // multi-page list drops, so `fetch_all_tasks` returns zero rows AND
+        // `complete = false`. An empty remote set is exactly what a total
+        // server-side wipe looks like — so a naive "no rows came back ⇒ the
+        // list was emptied" reading would ghost-remove EVERY local clean row.
+        // The `complete` guard must treat empty-but-incomplete as "we learned
+        // nothing", never as "everything is gone".
+        let (client, eng) = engine().await;
+        client.seed_list("L1", "Inbox");
+        for i in 0..6 {
+            client.seed_task(
+                "L1",
+                &format!("T{i}"),
+                &format!("task {i}"),
+                &format!("{i:014}"),
+            );
+        }
+        // 6 tasks at 2 per page = 3 pages, so page 0 is genuinely the first of
+        // several — a dropped page 0 leaves real un-fetched pages behind.
+        client.set_page_size(2);
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pulled, 6);
+        assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 6);
+
+        // Second sync: the first page itself drops, so nothing is fetched.
+        client.fail_list_tasks_page(0, || ApiError::Server { status: 503 });
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.pulled, 0, "a dropped first page fetches nothing");
+        assert_eq!(
+            out.deleted, 0,
+            "empty-but-incomplete must never be read as a server-side wipe"
+        );
+        assert_eq!(
+            eng.store.list_tasks("L1").await.unwrap().len(),
+            6,
+            "every row must survive a first-page failure that returned zero rows"
+        );
+
+        // Heal: a complete pull is a no-op — nothing was actually deleted
+        // server-side, so no row is added or removed (P7 convergence).
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 0);
+        assert_eq!(out.pulled, 0);
+        assert_eq!(eng.store.list_tasks("L1").await.unwrap().len(), 6);
+    }
+
     // ─── Ghost detection ─────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -4260,6 +4308,53 @@ mod tests {
         assert_eq!(out.deleted, 1);
         assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
         assert_eq!(eng.store.list_tasks("L2").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ghost_removal_completeness_is_isolated_per_list() {
+        // Completeness is decided per list, never once for the whole run. In a
+        // single sync, list A's pull drops (incomplete) while list B's pull
+        // succeeds (complete). BOTH rows are really gone server-side, but only
+        // the list we scanned to the end may act on that: A's row is kept
+        // (we never confirmed its absence), B's ghost is removed. A leaked
+        // global `complete` flag would either wipe A's unverified row or spare
+        // B's confirmed ghost — this pins the isolation.
+        let (client, eng) = engine().await;
+        client.seed_list("L-A", "Work");
+        client.seed_list("L-B", "Personal");
+        client.seed_task("L-A", "A1", "work", "1");
+        client.seed_task("L-B", "B1", "personal", "1");
+        eng.run().await.unwrap();
+
+        // Both tasks vanish server-side (deleted by another client).
+        client.delete_task_from_state("L-A", "A1");
+        client.delete_task_from_state("L-B", "B1");
+
+        // L-A is pulled first (seed order); its first page drops, so its pull
+        // is incomplete. The fault is consumed on that first match, so L-B's
+        // page 0 succeeds and its pull completes.
+        client.fail_list_tasks_page(0, || ApiError::Server { status: 503 });
+        let out = eng.run().await.unwrap();
+
+        assert_eq!(
+            out.deleted, 1,
+            "only the completely-pulled list may ghost-remove"
+        );
+        assert_eq!(
+            eng.store.list_tasks("L-A").await.unwrap().len(),
+            1,
+            "an incomplete list keeps its row even though it is really gone server-side"
+        );
+        assert!(
+            eng.store.list_tasks("L-B").await.unwrap().is_empty(),
+            "a completely-pulled list still ghost-removes despite a sibling's incomplete pull"
+        );
+
+        // Heal: once L-A's pull completes, its vanished row is ghost-removed too
+        // — no permanent divergence (P7).
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1);
+        assert!(eng.store.list_tasks("L-A").await.unwrap().is_empty());
     }
 
     // ─── Idempotency & transient handling ────────────────────────────────────
