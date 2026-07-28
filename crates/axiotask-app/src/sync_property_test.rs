@@ -167,6 +167,18 @@ mod tests {
         /// generalization covers a lost create (in-flight marker), a lost edit
         /// (self-content 412), a lost delete (retry 404s) and a lost move.
         CrashSync(u8),
+        /// A sync run that dies FATALLY partway through the push (RFC-009
+        /// P7/P8). An auth error aborts the whole run: `run_sync` returns
+        /// `Err`, every push step after the failing call is skipped, and the
+        /// pull never runs at all — the run is left partly applied. Unlike
+        /// `FlakySync` (a transient just leaves one row dirty and the run still
+        /// completes `Ok`), this is the abrupt-death crash window. The `u8`
+        /// selects WHICH method takes the fatal error, which varies the abort
+        /// point: a list/insert abort strands the task pushes queued behind it,
+        /// while a patch/delete/move abort lands the earlier creates first — a
+        /// genuine partial push. The heal + convergence oracles then prove the
+        /// crash window drains with no duplicate and no loss.
+        AbortSync(u8),
     }
 
     /// Transient faults only: a permanent rejection would legitimately leave a
@@ -718,6 +730,30 @@ mod tests {
                         .commit_then_fail_next(LOST[k as usize % LOST.len()]);
                     self.state.run_sync().await.expect("crash sync");
                 }
+                Op::AbortSync(k) => {
+                    // A FATAL error mid-push: an auth failure is classified
+                    // `Abort` on every push path, so it propagates out of the
+                    // engine and `run_sync` returns `Err`. The run is left
+                    // partly applied — steps before the failing call committed,
+                    // everything after (including the whole pull) did not — so
+                    // the harness must TOLERATE the error rather than
+                    // `.expect()` it (that is exactly the state being tested).
+                    const FATAL: [Method; 5] = [
+                        Method::InsertTask,
+                        Method::PatchTask,
+                        Method::DeleteTask,
+                        Method::MoveTask,
+                        Method::PatchTaskList,
+                    ];
+                    self.client
+                        .fail_next(FATAL[k as usize % FATAL.len()], || ApiError::Unauthorized);
+                    let _ = self.state.run_sync().await;
+                    // The fatal condition lasts one run (a token refresh or a
+                    // restart clears it). A run that never called the armed
+                    // method leaves the fault queued; disarm it so it can't
+                    // fire — and abort — a later op that DOES `.expect()`.
+                    self.client.clear_faults();
+                }
             }
         }
 
@@ -1045,6 +1081,7 @@ mod tests {
             5 => Just(Op::Sync),
             3 => any::<u8>().prop_map(Op::FlakySync),
             1 => any::<u8>().prop_map(Op::CrashSync),
+            1 => any::<u8>().prop_map(Op::AbortSync),
         ]
     }
 

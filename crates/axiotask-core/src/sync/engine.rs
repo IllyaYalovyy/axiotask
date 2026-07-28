@@ -6853,6 +6853,130 @@ mod tests {
         assert!(local[0].task.etag.is_some(), "adopted the server's row");
     }
 
+    #[tokio::test]
+    async fn a_fatal_abort_mid_push_leaves_a_partial_push_the_next_run_heals() {
+        // RFC-009 P7/P8, the AbortSync crash window (#143). A run dies FATALLY
+        // partway through the push: an auth error is classified `Abort` on
+        // every push path, so it propagates out of the engine — `run()` returns
+        // `Err`, the push steps queued behind the failing call are skipped, and
+        // the pull never runs at all. The run is left PARTLY applied. The
+        // create ahead of the abort must have committed (P6 — the response
+        // body, etag and all, is adopted and its base snapshot cleared, #134),
+        // the delete that took the error must still be pending, and a single
+        // healthy run must then drain the leftover and converge: no duplicate
+        // of the pushed row, no loss of the pending one.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "goner", "delete me", "1");
+        eng.run().await.unwrap();
+
+        // A brand-new create (creates push FIRST) plus a delete of the synced
+        // row (deletes push AFTER creates, in the same run) — so the abort
+        // lands mid-push with the create already applied.
+        let mut keeper = dirty_task("local-keeper", "L1", "create");
+        keeper.task.title = "keep me".into();
+        eng.store.upsert_task(&keeper).await.unwrap();
+        let mut goner = eng.store.find_task_any("goner").await.unwrap().unwrap();
+        goner.sync_state = SyncState::Deleted;
+        goner.pending_op = Some("delete".into());
+        eng.store.upsert_task(&goner).await.unwrap();
+
+        // The delete call is fatal: an auth error aborts the whole run.
+        client.fail_next(crate::api::in_memory::Method::DeleteTask, || {
+            ApiError::Unauthorized
+        });
+        let err = eng
+            .run()
+            .await
+            .expect_err("the fatal auth error aborts the run");
+        assert!(
+            matches!(err, SyncError::Api(ApiError::Unauthorized)),
+            "aborted on the auth error, got {err:?}"
+        );
+
+        // The create COMMITTED before the abort: on the server exactly once,
+        // clean locally, with the server's etag adopted and no base snapshot.
+        let server = client.list_tasks("L1", None).await.unwrap().items;
+        assert_eq!(
+            server.iter().filter(|t| t.title == "keep me").count(),
+            1,
+            "the create ahead of the abort landed on the server"
+        );
+        let keeper_row = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.task.title == "keep me")
+            .expect("keeper still local");
+        assert_eq!(
+            keeper_row.sync_state,
+            SyncState::Clean,
+            "the committed create is clean, not left mid-flight"
+        );
+        assert!(
+            keeper_row.task.etag.is_some(),
+            "the create adopted the server's etag (P6)"
+        );
+        assert!(
+            eng.store
+                .base_snapshot(&keeper_row.task.id)
+                .await
+                .unwrap()
+                .is_none(),
+            "a clean row carries no lingering base snapshot (#134)"
+        );
+        assert!(
+            eng.store.inflight_creates().await.unwrap().is_empty(),
+            "the aborted run left no in-flight create marker behind"
+        );
+
+        // The delete did NOT apply — its row is still present on both sides,
+        // still carrying its pending delete.
+        let goner_local = eng.store.find_task_any("goner").await.unwrap();
+        assert_eq!(
+            goner_local.as_ref().map(|r| r.pending_op.as_deref()),
+            Some(Some("delete")),
+            "the aborted delete stayed pending on its row"
+        );
+        assert!(
+            server.iter().any(|t| t.id == "goner"),
+            "and the delete's row is still on the server"
+        );
+
+        // A single healthy run (the fault was one-shot and is spent) drains the
+        // leftover delete and converges both sides.
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.deleted, 1, "the pending delete finally pushed");
+        let local: Vec<String> = eng
+            .store
+            .list_tasks("L1")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.task.title)
+            .collect();
+        assert_eq!(
+            local,
+            vec!["keep me".to_string()],
+            "delete applied locally: only the keeper remains"
+        );
+        let server_after: Vec<String> = client
+            .list_tasks("L1", None)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        assert_eq!(
+            server_after,
+            vec!["keep me".to_string()],
+            "server converged: exactly one keeper, goner gone"
+        );
+    }
+
     // ─── RFC-009 §I matrix: local list ops × remote ──────────────────────────
     //
     // One test per row of §I. Lists have no conflict machinery at all: probe 8
