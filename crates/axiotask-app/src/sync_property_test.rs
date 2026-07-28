@@ -184,6 +184,13 @@ mod tests {
         /// genuine partial push. The heal + convergence oracles then prove the
         /// crash window drains with no duplicate and no loss.
         AbortSync(u8),
+        /// Process death and relaunch over the SAME persisted store. The store
+        /// survives (tombstoned deletes, dirty rows, in-flight-create markers),
+        /// but everything in process memory dies: the panel's held create and
+        /// the undo token the frontend was holding. The store alone must carry
+        /// enough state to converge — an unpushed delete pushed EXACTLY once,
+        /// the released create landed, no row resurrected.
+        Restart,
     }
 
     /// Transient faults only: a permanent rejection would legitimately leave a
@@ -783,6 +790,14 @@ mod tests {
                     // fire — and abort — a later op that DOES `.expect()`.
                     self.client.clear_faults();
                 }
+                Op::Restart => {
+                    // Relaunch over the same store. The held create and any
+                    // undo token die with the process; the store's pending
+                    // work (tombstones, dirty rows, in-flight markers) is all
+                    // that survives to drive convergence.
+                    self.state = Arc::new(self.state.simulate_restart());
+                    self.held = None;
+                }
             }
         }
 
@@ -1112,6 +1127,7 @@ mod tests {
             3 => any::<u8>().prop_map(Op::FlakySync),
             1 => any::<u8>().prop_map(Op::CrashSync),
             1 => any::<u8>().prop_map(Op::AbortSync),
+            1 => Just(Op::Restart),
         ]
     }
 
@@ -1536,6 +1552,145 @@ mod tests {
             );
             assert_converged(&h, "after #145 recovery").await;
             assert_parent_integrity(&h, "after #145 recovery").await;
+        });
+    }
+
+    /// RESTART — HELD CREATE DIES WITH THE PROCESS. A create held by an open
+    /// panel never pushes while the panel is up (its id must stay stable for
+    /// the UI). But the panel lives only in process memory: when the process
+    /// dies, so does the hold, and the surviving store row must push on its
+    /// own. Deterministic on purpose — the interesting window (a create still
+    /// unpushed at the instant of death) is a fixed shape, not a distribution.
+    #[test]
+    fn restart_drops_the_held_create_which_then_pushes() {
+        run_case(|| async move {
+            let mut h = Harness::new().await;
+            h.apply(Op::CreateTop(0)).await; // t001: a fresh, unpushed create.
+            h.apply(Op::OpenPanel(0)).await; // the panel now HOLDS its create.
+
+            // A sync with the panel open leaves the held create unpushed: no
+            // etag locally, absent on the server.
+            h.state.run_sync().await.expect("held sync");
+            let held = h
+                .live()
+                .await
+                .into_iter()
+                .find(|t| t.task.title == "t001")
+                .expect("t001 live");
+            assert!(
+                held.task.etag.is_none(),
+                "the held create must stay unpushed while the panel holds it\n{}",
+                h.dump().await
+            );
+            assert!(
+                !h.server_rows().await.iter().any(|r| r.title == "t001"),
+                "the held create must not reach the server while the panel holds it\n{}",
+                h.dump().await
+            );
+
+            // Process death: the panel and its hold vanish with the window.
+            h.apply(Op::Restart).await;
+
+            // Drive sync DIRECTLY — not `heal()`, which would itself drop the
+            // hold — so the ONLY thing that can release this create is the
+            // restart. If the hold survived the process, these runs push
+            // nothing and the assertions below fail.
+            for _ in 0..3 {
+                h.state.run_sync().await.expect("post-restart sync");
+            }
+            assert!(
+                h.server_rows().await.iter().any(|r| r.title == "t001"),
+                "the once-held create must push after the restart drops the hold\n{}",
+                h.dump().await
+            );
+            assert_eq!(
+                h.state.pending_push_count().await.expect("pending"),
+                0,
+                "restart must leave no create parked behind a dead hold\n{}",
+                h.dump().await
+            );
+            assert_converged(&h, "after restart releases the held create").await;
+        });
+    }
+
+    /// RESTART — UNDO TOKEN DIES, DELETE PUSHES EXACTLY ONCE. Deleting a pushed
+    /// task tombstones it locally and hands the frontend an undo token; the
+    /// delete has not pushed yet. If the process dies here, the token (held only
+    /// in the frontend) is gone — the delete can no longer be undone — but the
+    /// persisted tombstone must still reach Google, exactly once, and the row
+    /// must never come back. Non-happy path: the death lands in the delete's
+    /// pending window, and the store alone has to carry it home.
+    #[test]
+    fn restart_kills_the_undo_token_and_pushes_the_delete_exactly_once() {
+        run_case(|| async move {
+            let mut h = Harness::new().await;
+            h.apply(Op::CreateTop(0)).await; // t001
+            h.apply(Op::Sync).await; // push it to the server.
+
+            let t = h
+                .pushed()
+                .await
+                .into_iter()
+                .find(|t| t.task.title == "t001")
+                .expect("t001 pushed");
+            let id = t.task.id.clone();
+
+            // Delete it: the command tombstones the row and returns an undo
+            // token. The delete has NOT pushed — the server still holds t001.
+            let token = crate::commands::delete_task_inner(&h.state, id.clone())
+                .await
+                .expect("delete");
+            assert!(
+                h.server_rows().await.iter().any(|r| r.id == id),
+                "the server must still hold t001 before the delete pushes"
+            );
+            let deletes_before = h.client.call_count(Method::DeleteTask);
+
+            // Process death: the undo token dies with the frontend. Model it
+            // by dropping the token and never calling undo_delete.
+            h.apply(Op::Restart).await;
+            drop(token);
+
+            // The surviving tombstone is all that drives the delete now.
+            h.heal().await;
+
+            // Exactly once: the drain issued a single successful DELETE.
+            assert_eq!(
+                h.client.call_count(Method::DeleteTask),
+                deletes_before + 1,
+                "the surviving tombstone must push its delete exactly once\n{}",
+                h.dump().await
+            );
+            // Gone on the server AND locally — no resurrection, no stray row.
+            assert!(
+                !h.server_rows().await.iter().any(|r| r.id == id),
+                "t001 must be deleted on the server after the restart\n{}",
+                h.dump().await
+            );
+            assert!(
+                h.state
+                    .store
+                    .find_task_any(&id)
+                    .await
+                    .expect("find")
+                    .is_none(),
+                "the local tombstone must be cleared once the delete pushes\n{}",
+                h.dump().await
+            );
+            assert_converged(&h, "after restart pushes the delete").await;
+
+            // And never again: a further run neither re-pushes nor resurrects.
+            let out = h.state.run_sync().await.expect("extra sync");
+            assert!(
+                is_noop(&out),
+                "a post-drain sync re-touched the deleted row: {out:?}\n{}",
+                h.dump().await
+            );
+            assert_eq!(
+                h.client.call_count(Method::DeleteTask),
+                deletes_before + 1,
+                "the delete must never push a second time"
+            );
         });
     }
 }
