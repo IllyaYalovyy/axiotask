@@ -1150,6 +1150,8 @@ fn stored_task_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<StoredTask, Sto
             etag: row.try_get("etag").map_err(StoreError::from)?,
             updated: row.try_get("updated").map_err(StoreError::from)?,
             web_view_link: row.try_get("web_view_link").map_err(StoreError::from)?,
+            // A stored row is never a tombstone — a deleted row is hard-removed.
+            deleted: false,
         },
         list_id: row.try_get("list_id").map_err(StoreError::from)?,
         sync_state,
@@ -1213,6 +1215,7 @@ mod tests {
                 etag: Some("e1".into()),
                 updated: "2026-01-01T00:00:00Z".into(),
                 web_view_link: None,
+                deleted: false,
             },
             list_id: list_id.into(),
             sync_state: SyncState::Clean,

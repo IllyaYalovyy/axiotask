@@ -127,6 +127,7 @@ struct TaskWire {
     updated: Option<String>,
     #[serde(rename = "webViewLink")]
     web_view_link: Option<String>,
+    deleted: Option<bool>,
 }
 
 impl TryFrom<TaskWire> for Task {
@@ -149,6 +150,7 @@ impl TryFrom<TaskWire> for Task {
             etag: w.etag,
             updated: w.updated.unwrap_or_default(),
             web_view_link: w.web_view_link,
+            deleted: w.deleted.unwrap_or_default(),
         })
     }
 }

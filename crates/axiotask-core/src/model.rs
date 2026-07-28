@@ -55,6 +55,14 @@ pub struct Task {
         skip_serializing_if = "Option::is_none"
     )]
     pub web_view_link: Option<String>,
+    /// Google's soft-delete tombstone flag. Output-only, and meaningful ONLY on
+    /// a by-id refetch: a soft-deleted task still answers `200` flagged
+    /// `deleted: true` (verified live, RFC-009 §B/§D). Carried through so the
+    /// `412`-conflict refetch resolves a delete×edit race as P4 delete-wins
+    /// instead of resurrecting the row. Always `false` for stored/listed rows —
+    /// a locally deleted row is hard-removed, never persisted as a tombstone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 /// Completion status for a task.
@@ -217,6 +225,7 @@ mod tests {
             etag: None,
             updated: "2026-05-23T00:00:00Z".into(),
             web_view_link: None,
+            deleted: false,
         };
         let json = serde_json::to_string(&t).unwrap();
         assert!(json.contains("\"status\":\"needsAction\""), "got: {json}");
