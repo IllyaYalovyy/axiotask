@@ -184,16 +184,11 @@ pub fn conflicted_copy(local: &StoredTask, remote: &Task, new_id: String) -> Sto
     StoredTask {
         task: Task {
             id: new_id,
-            parent: local.task.parent.clone(),
-            position: local.task.position.clone(),
             title: format!("{} (conflicted copy)", local.task.title),
-            notes: local.task.notes.clone(),
-            status: local.task.status,
-            due: local.task.due.clone(),
-            completed: local.task.completed.clone(),
             etag: None,
             updated: remote.updated.clone(),
             web_view_link: None,
+            ..local.task.clone()
         },
         list_id: local.list_id.clone(),
         sync_state: SyncState::Dirty,
@@ -935,6 +930,7 @@ mod tests {
             etag: Some(format!("etag-{id}")),
             updated: "2026-01-01T00:00:00.000Z".into(),
             web_view_link: Some(format!("https://tasks.google.com/{id}")),
+            deleted: false,
         }
     }
 

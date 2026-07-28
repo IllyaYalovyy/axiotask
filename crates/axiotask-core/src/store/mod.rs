@@ -839,6 +839,7 @@ mod tests {
                 etag: None,
                 updated: "2026-01-01T00:00:00Z".into(),
                 web_view_link: None,
+                deleted: false,
             },
             list_id: list_id.into(),
             sync_state: SyncState::Clean,

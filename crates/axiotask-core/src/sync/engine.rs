@@ -817,6 +817,9 @@ impl SyncEngine {
         out: &mut SyncOutcome,
     ) -> Result<(), SyncError> {
         let remote = match self.client.get_task(&local.list_id, &local.task.id).await {
+            // 412×delete race: a tombstone refetch (`deleted: true`) is P4 delete
+            // wins, no resurrected copy — same outcome as the refetch-404 below.
+            Ok(t) if t.deleted => return Ok(self.store.delete_task_hard(&local.task.id).await?),
             Ok(t) => t,
             Err(e) => {
                 return match reconcile::on_conflict_refetch_error(&e) {
@@ -1377,6 +1380,7 @@ mod tests {
                 etag: None,
                 updated: "2026-06-01T00:00:00Z".into(),
                 web_view_link: None,
+                deleted: false,
             },
             list_id: list_id.into(),
             sync_state: if op == "delete" {
@@ -2239,6 +2243,49 @@ mod tests {
             eng.store.list_tasks("L1").await.unwrap().is_empty(),
             "row gone locally, edit discarded"
         );
+    }
+
+    #[tokio::test]
+    async fn edit_412_then_refetch_tombstone_delete_wins_no_resurrected_copy() {
+        // §B × the 412×delete RACE (#141). Our content edit's PATCH raced the
+        // row's still-live etag and 412'd; before the conflict refetch, another
+        // client deleted the row. The refetch is therefore a SOFT-DELETE
+        // tombstone — a 200 flagged `deleted:true`, NOT a 404. Unless that flag
+        // is carried through the refetch, the tombstone reads as a live remote
+        // and the row is resurrected (adopted or forked as a conflicted copy).
+        // P4 requires delete-wins, no copy. Modeled by injecting the PATCH 412
+        // (the race artifact) while the row is already soft-deleted, so the
+        // conflict refetch GET returns the tombstone.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "exists", "1");
+        eng.run().await.unwrap();
+
+        // Another client soft-deletes T1 (a by-id refetch still 200s,
+        // `deleted:true`); our local edit is queued afterward.
+        client.delete_task_from_state("L1", "T1");
+        stage_edit(&eng, "T1", false, |r| r.task.title = "edited".into()).await;
+
+        // The PATCH raced the still-live row and 412'd; the conflict refetch then
+        // lands on the tombstone.
+        client.fail_next(Method::PatchTask, || ApiError::PreconditionFailed);
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.errors, 0, "a remote delete is not a sync error");
+        assert_eq!(
+            out.conflicts, 0,
+            "delete×edit never forks a conflicted copy"
+        );
+        assert!(
+            eng.store.list_tasks("L1").await.unwrap().is_empty(),
+            "P4 delete-wins: row gone, edit discarded — never resurrected"
+        );
+
+        // A second, quiescent run is a no-op (P7/P8): nothing reappears.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0);
+        assert!(eng.store.list_tasks("L1").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -6216,6 +6263,7 @@ mod tests {
                     etag: None,
                     updated: "2026-01-01T00:00:00Z".into(),
                     web_view_link: None,
+                    deleted: false,
                 },
                 list_id: "local-1".into(),
                 sync_state: SyncState::Clean,

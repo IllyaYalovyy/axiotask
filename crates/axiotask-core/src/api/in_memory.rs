@@ -377,6 +377,7 @@ impl InMemoryClient {
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
             web_view_link: Some(format!("https://tasks.google.com/task/{id}")),
+            deleted: false,
         };
         s.tasks.push((list_id.into(), task.clone()));
         task
@@ -642,6 +643,7 @@ impl GoogleTasksClient for InMemoryClient {
             etag: Some(etag),
             updated: "2026-01-01T00:00:00Z".into(),
             web_view_link,
+            deleted: false,
         };
         s.tasks.push((list_id.into(), task.clone()));
         if s.take_commit_then_fail(Method::InsertTask) {
@@ -663,15 +665,19 @@ impl GoogleTasksClient for InMemoryClient {
             return Ok(t.clone());
         }
         // Live-API behavior: a soft-deleted task still answers 200 on a direct
-        // get (flagged `deleted:true` server-side). Our wire type drops that
-        // flag, so the typed client sees a normal `Task` — what actually
-        // converges the row is its absence from `list_tasks` (ghost detection).
+        // get (flagged `deleted:true` server-side, now carried on the wire).
+        // Normal §B×deleted still converges via ghost detection on the pull; the
+        // flag only matters when a 412 conflict refetch lands on a tombstone
+        // (the delete×edit race, #141) — then it resolves P4 delete-wins.
         if let Some((_, t)) = s
             .deleted
             .iter()
             .find(|(lid, t)| lid == list_id && t.id == id)
         {
-            return Ok(t.clone());
+            return Ok(Task {
+                deleted: true,
+                ..t.clone()
+            });
         }
         Err(ApiError::NotFound)
     }
