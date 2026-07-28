@@ -5526,9 +5526,7 @@ mod tests {
         client.seed_task_with_parent("L1", "C", "grandchild", "00000000000003", Some("T"));
 
         // The corrective move is rate-limited (transient) this run.
-        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited {
-            retry_after: None,
-        });
+        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited);
         let out = eng.run().await.unwrap();
 
         // Local: flat immediately, even though the server move did not land.
@@ -5653,12 +5651,8 @@ mod tests {
 
         // This run both the content push AND the corrective move are refused
         // (rate-limited). C stays dirty; D7 must flatten it locally now.
-        client.fail_next_for_id(Method::PatchTask, "C", || ApiError::RateLimited {
-            retry_after: None,
-        });
-        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited {
-            retry_after: None,
-        });
+        client.fail_next_for_id(Method::PatchTask, "C", || ApiError::RateLimited);
+        client.fail_next_for_id(Method::MoveTask, "C", || ApiError::RateLimited);
         let out = eng.run().await.unwrap();
         assert_eq!(out.conflicts, 1, "resolving the third level counts");
 

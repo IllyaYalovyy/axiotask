@@ -1,6 +1,5 @@
 //! Typed errors surfaced by [`super::GoogleTasksClient`].
 
-use std::time::Duration;
 use thiserror::Error;
 
 /// API-level errors. The sync engine matches on these to decide whether to
@@ -28,12 +27,10 @@ pub enum ApiError {
     #[error("precondition failed (etag mismatch)")]
     PreconditionFailed,
 
-    /// Server is rate-limiting. Honor the optional `retry_after` hint.
-    #[error("rate limited (retry after {retry_after:?})")]
-    RateLimited {
-        /// Suggested delay before retrying.
-        retry_after: Option<Duration>,
-    },
+    /// Server is rate-limiting; transient. The `Retry-After` header, when
+    /// present, is honored directly by the retry loop (see `http.rs`).
+    #[error("rate limited")]
+    RateLimited,
 
     /// Server returned a 5xx; transient.
     #[error("server error: {status}")]
@@ -56,7 +53,7 @@ impl ApiError {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::RateLimited { .. } | Self::Server { .. } | Self::Network(_)
+            Self::RateLimited | Self::Server { .. } | Self::Network(_)
         )
     }
 }
@@ -68,7 +65,7 @@ mod tests {
     #[test]
     fn transient_classification() {
         assert!(ApiError::Server { status: 503 }.is_transient());
-        assert!(ApiError::RateLimited { retry_after: None }.is_transient());
+        assert!(ApiError::RateLimited.is_transient());
         assert!(ApiError::Network("connect refused".into()).is_transient());
         assert!(!ApiError::Unauthorized.is_transient());
         assert!(!ApiError::AuthExpired("invalid_grant".into()).is_transient());
