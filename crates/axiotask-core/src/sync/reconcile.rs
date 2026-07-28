@@ -2251,6 +2251,53 @@ mod tests {
     // ─── content comparison ──────────────────────────────────────────────
 
     #[test]
+    fn conflicted_copy_stacks_its_suffix_and_survives_an_empty_title() {
+        // Value-domain pin for the "(conflicted copy)" suffix. It is a plain
+        // string append with no dedup or idempotency:
+        //  - an empty title yields a bare " (conflicted copy)" (leading space),
+        //    never a panic or a dropped copy — an untitled edit is still saved;
+        //  - copying a task that is ALREADY a conflicted copy stacks the suffix.
+        //    A conflicted copy is a fresh unpushed create; once pushed it can
+        //    conflict again, so stacking is reachable and is the current,
+        //    intended behavior (P2: never destroy an unpushed local edit).
+        let remote = task("t1");
+
+        let mut empty = stored(task("t1"));
+        empty.task.title = String::new();
+        assert_eq!(
+            conflicted_copy(&empty, &remote, "id-a".into()).task.title,
+            " (conflicted copy)"
+        );
+
+        let mut once = stored(task("t1"));
+        once.task.title = "buy milk (conflicted copy)".into();
+        assert_eq!(
+            conflicted_copy(&once, &remote, "id-b".into()).task.title,
+            "buy milk (conflicted copy) (conflicted copy)"
+        );
+    }
+
+    #[test]
+    fn content_comparison_treats_empty_notes_as_cleared_notes() {
+        // `Some("")` ≡ `None` for notes everywhere content is compared. Google
+        // returns cleared notes as absent, so a local "" that the user cleared
+        // must NOT read as divergence from a remote `None` — otherwise every
+        // note-clear would fork a phantom "(conflicted copy)".
+        let mut cleared = task("t1");
+        cleared.notes = Some(String::new());
+        let mut absent = task("t1");
+        absent.notes = None;
+        assert!(same_content(&cleared, &absent));
+        assert!(same_typed_content(&cleared, &absent));
+
+        // A non-empty note is still a real difference.
+        let mut real = task("t1");
+        real.notes = Some("keep".into());
+        assert!(!same_content(&cleared, &real));
+        assert!(!same_typed_content(&cleared, &real));
+    }
+
+    #[test]
     fn same_content_covers_exactly_title_notes_due_status() {
         let a = task("x");
         let mut b = task("y"); // different id and etag
