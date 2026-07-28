@@ -205,6 +205,42 @@ mod normalize_tests {
         assert_eq!(normalize_due(""), None);
         assert_eq!(normalize_due("tomorrow"), None);
         assert_eq!(normalize_due("2026-13-45"), None);
+        // A calendar-invalid day (Feb 30) parses as far as the shape but fails
+        // the date check — rejected, not silently clamped.
+        assert_eq!(normalize_due("2026-02-30"), None);
+    }
+
+    #[test]
+    fn import_uses_the_leading_ten_chars_and_floors_the_rest() {
+        // Normalization is prefix-based: whatever a remote/import value carries
+        // after the `YYYY-MM-DD` head — a time, sub-second precision, a timezone
+        // offset, even trailing junk — is discarded and the date is floored to
+        // the canonical Google form. This is what lets an imported Google
+        // timestamp round-trip without manufacturing a phantom due mismatch.
+        for raw in [
+            "2026-08-02T23:59:59-07:00", // wall time + tz offset
+            "2026-08-02T00:00:00.123456Z",
+            "2026-08-02 anything at all",
+        ] {
+            assert_eq!(
+                normalize_due(raw).as_deref(),
+                Some("2026-08-02T00:00:00.000Z"),
+                "{raw}"
+            );
+        }
+        // But the date MUST be at the front: leading whitespace or garbage
+        // shifts the parseable prefix and is rejected outright, never guessed.
+        assert_eq!(normalize_due(" 2026-08-02"), None);
+        assert_eq!(normalize_due("due:2026-08-02"), None);
+    }
+
+    #[test]
+    fn short_or_multibyte_input_returns_none_without_panicking() {
+        // `get(..10)` is byte-indexed; a multibyte or too-short string must not
+        // slice a char boundary and panic — it degrades to None.
+        assert_eq!(normalize_due("📅"), None);
+        assert_eq!(normalize_due("2026-8-2"), None); // unpadded: too short + malformed
+        assert_eq!(normalize_due("2026"), None);
     }
 
     #[test]

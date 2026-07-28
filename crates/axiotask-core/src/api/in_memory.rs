@@ -1175,6 +1175,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_notes_patch_clears_the_field_to_none() {
+        // Live-API rule (RFC-009): sending `notes: ""` CLEARS the field — the
+        // server stores and returns absent notes, never a stored empty string.
+        // The fake mirrors this so a note-clear round-trips as `None`, which is
+        // what `same_content` compares against (no phantom conflict).
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let t = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: "has notes".into(),
+                    notes: Some("something".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(t.notes.as_deref(), Some("something"));
+
+        let cleared = c
+            .patch_task(
+                "L1",
+                &t.id,
+                TaskPatch {
+                    notes: Some(String::new()),
+                    ..Default::default()
+                },
+                t.etag.as_deref(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cleared.notes, None, "empty-string notes clears to None");
+        // And the stored row (not just the echo) is cleared.
+        assert_eq!(c.get_task("L1", &t.id).await.unwrap().notes, None);
+    }
+
+    #[tokio::test]
+    async fn empty_title_is_accepted_not_rejected() {
+        // Google Tasks allows an untitled task: a just-created task starts with
+        // an empty title and gets named later. An empty title is a valid value,
+        // NOT the "invalid argument" that an oversize title is — so neither
+        // insert nor patch may reject it. (Contrast with
+        // `oversize_title_and_notes_are_permanent_400s`.)
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        let t = c
+            .insert_task(
+                "L1",
+                NewTask {
+                    title: String::new(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("an empty title is a valid untitled task, not a 400");
+        assert_eq!(t.title, "");
+
+        let renamed = c
+            .patch_task(
+                "L1",
+                &t.id,
+                TaskPatch {
+                    title: Some("named now".into()),
+                    ..Default::default()
+                },
+                t.etag.as_deref(),
+            )
+            .await
+            .unwrap();
+        // And clearing a title back to empty is likewise accepted, not a 400.
+        let recleared = c
+            .patch_task(
+                "L1",
+                &t.id,
+                TaskPatch {
+                    title: Some(String::new()),
+                    ..Default::default()
+                },
+                renamed.etag.as_deref(),
+            )
+            .await
+            .expect("clearing a title to empty is accepted");
+        assert_eq!(recleared.title, "");
+    }
+
+    #[tokio::test]
     async fn patch_of_a_deleted_task_with_a_stale_etag_still_200s_no_412() {
         // P4 guard: a delete/edit race must never fork. The engine cannot see
         // the `deleted` flag through the typed client, so if a stale-etag PATCH
