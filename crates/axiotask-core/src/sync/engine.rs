@@ -833,28 +833,28 @@ impl SyncEngine {
             }
         };
 
-        // #118: if the server left the TYPED content (title/notes/due) unchanged
-        // relative to our base snapshot, it never diverged from us on content —
-        // the etag bumped for a bare reorder or a status cascade. If we ALSO hold
-        // a pending typed edit the server has not got, our edit wins: keep it,
-        // adopt the remote STATUS (a status change we did not make is the
-        // remote's — D1) and the fresh etag, and re-push next run. No conflicted
-        // copy, no reverted edit. When our typed content already matches the
-        // remote, this is skipped and the normal path adopts the row (resolving
-        // any status difference remote-wins per D1). A row with no base falls
-        // through to whole-row resolution.
+        // #118 + D8: the server left the TYPED content (title/notes/due) unchanged
+        // vs our base, so a bare reorder or status cascade bumped the etag — no
+        // content divergence. Our typed edit wins, and the checkbox too when the
+        // base PROVES the remote never moved it (`remote.status == base.status`,
+        // D8); a real remote status change or the completed-parent cascade still
+        // wins (D1, always != base). If anything local survives, keep it and adopt
+        // the etag to re-push; else fall through and adopt the row whole (clean).
         if let Some(base) = self.store.base_snapshot(&local.task.id).await?
             && reconcile::only_local_diverged(&remote, &base)
-            && !reconcile::same_typed_content(&local.task, &remote)
         {
             let mut merged = local.clone();
-            merged.task.status = remote.status;
-            merged.task.completed = remote.completed.clone();
-            merged.task.etag = remote.etag.clone();
-            merged.task.updated = remote.updated.clone();
-            self.store.upsert_task(&merged).await?;
-            out.mark_list_changed(&local.list_id);
-            return Ok(());
+            if remote.status != base.status {
+                merged.task.status = remote.status;
+                merged.task.completed = remote.completed.clone();
+            }
+            if !reconcile::same_content(&merged.task, &remote) {
+                merged.task.etag = remote.etag.clone();
+                merged.task.updated = remote.updated.clone();
+                self.store.upsert_task(&merged).await?;
+                out.mark_list_changed(&local.list_id);
+                return Ok(());
+            }
         }
 
         match reconcile::resolve_conflict(&local.task, &remote) {
@@ -2287,6 +2287,128 @@ mod tests {
         let out2 = eng.run().await.unwrap();
         assert_eq!(out2.pushed, 0);
         assert_eq!(out2.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn d8_status_only_toggle_survives_a_bare_remote_reorder() {
+        // §C, D8 (ratified in RFC-009, motivating defect #132): the user
+        // completed a task offline; another device MERELY REORDERED the list —
+        // a move bumps the etag (probe 5) so our push 412s, but the checkbox is
+        // untouched. The base snapshot proves it (remote.status == base.status),
+        // so the local completion WINS: the row stays dirty and re-pushes,
+        // instead of being reverted by adopting the remote row (the pre-D8 bug).
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        client.seed_task("L1", "T2", "anchor", "2");
+        eng.run().await.unwrap();
+
+        // The user completes T1 locally with a now-stale etag.
+        stage_edit(&eng, "T1", true, completed).await;
+
+        // Another device just drags T1 after T2 — status and content untouched,
+        // etag bumped.
+        client
+            .move_task("L1", "T1", None, Some("T2"))
+            .await
+            .unwrap();
+        let remote = client.get_task("L1", "T1").await.unwrap();
+        assert_eq!(
+            remote.status,
+            TaskStatus::NeedsAction,
+            "the remote reorder never touched the checkbox"
+        );
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0, "a bare reorder is not a content conflict");
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.ends_with("(conflicted copy)")),
+            "no conflicted copy fabricated"
+        );
+        let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(
+            t1.task.status,
+            TaskStatus::Completed,
+            "local completion wins — the base proved the remote didn't move it (D8)"
+        );
+        assert_eq!(
+            t1.sync_state,
+            SyncState::Dirty,
+            "stays dirty to re-push the completion"
+        );
+        assert_eq!(t1.task.etag, remote.etag, "adopts the fresh etag (P6)");
+
+        // Next run pushes the completion; the server converges and the row
+        // finally goes clean — no perpetual dirty, no drift (P7).
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0);
+        let remote2 = client.get_task("L1", "T1").await.unwrap();
+        assert_eq!(
+            remote2.status,
+            TaskStatus::Completed,
+            "the completion reaches the server"
+        );
+        let t1 = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(t1.sync_state, SyncState::Clean, "converged");
+    }
+
+    #[tokio::test]
+    async fn d8_rename_and_completion_both_survive_a_bare_remote_reorder() {
+        // §B+§C, D8 riding on the #118 merge: the user renamed AND completed a
+        // task offline; another device merely reordered the list. The base
+        // proves the remote changed neither the content nor the checkbox, so
+        // BOTH local edits win — the rename (as #118 always did) and the
+        // completion (D8). Pre-D8 the rename survived but the merge adopted the
+        // remote status and the completion silently flipped back.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "buy milk", "1");
+        client.seed_task("L1", "T2", "anchor", "2");
+        eng.run().await.unwrap();
+
+        stage_edit(&eng, "T1", true, |r| {
+            r.task.title = "buy oat milk".into();
+            completed(r);
+        })
+        .await;
+
+        client
+            .move_task("L1", "T1", None, Some("T2"))
+            .await
+            .unwrap();
+        let remote = client.get_task("L1", "T1").await.unwrap();
+
+        let out = eng.run().await.unwrap();
+        assert_eq!(out.conflicts, 0);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !tasks
+                .iter()
+                .any(|t| t.task.title.ends_with("(conflicted copy)"))
+        );
+        let t1 = tasks.iter().find(|t| t.task.id == "T1").unwrap();
+        assert_eq!(t1.task.title, "buy oat milk", "local rename wins (#118)");
+        assert_eq!(
+            t1.task.status,
+            TaskStatus::Completed,
+            "local completion wins too (D8)"
+        );
+        assert_eq!(t1.sync_state, SyncState::Dirty);
+        assert_eq!(t1.task.etag, remote.etag);
+
+        // Both reach the server and the row converges clean.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.conflicts, 0);
+        let remote2 = client.get_task("L1", "T1").await.unwrap();
+        assert_eq!(remote2.title, "buy oat milk");
+        assert_eq!(remote2.status, TaskStatus::Completed);
+        let t1 = eng.store.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(t1.sync_state, SyncState::Clean);
     }
 
     #[tokio::test]
