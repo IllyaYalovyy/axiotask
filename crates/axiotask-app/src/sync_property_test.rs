@@ -89,6 +89,15 @@ mod tests {
     /// not "slow" — it is stuck, which is exactly what these tests hunt for.
     const MAX_HEAL_RUNS: usize = 16;
 
+    /// Upper bound on the ROUNDS a two-device fixpoint may take, where a round
+    /// drains device A to its own fixpoint and then device B. Each round after
+    /// the first can only exist because the previous round's drain changed the
+    /// server in a way the other device must still pull (a conflict fork, a D7
+    /// flatten repair). A correct engine settles that hand-off in a couple of
+    /// rounds; a system still churning after this many is not slow — it is a
+    /// non-terminating reconcile, which is exactly what the dual soak hunts.
+    const MAX_DUAL_ROUNDS: usize = 16;
+
     /// Sequences explored per invariant on a normal `cargo test`. Sized so all
     /// six together stay well under a minute — a property suite that makes the
     /// default test run painful gets skipped, which protects nothing. Deep
@@ -226,12 +235,25 @@ mod tests {
         /// The task id the detail panel currently holds, mirrored so a
         /// cross-list move can re-point it the way the UI does.
         held: Option<String>,
+        /// Prefix stamped onto every title and list-title this engine mints.
+        /// Empty for a lone engine (so the single-engine suite keeps its
+        /// `t001`/`L001` handles verbatim). The dual harness gives its two
+        /// engines DISTINCT namespaces so their handles never collide on the
+        /// one shared server they both push to.
+        namespace: &'static str,
     }
 
     impl Harness {
         async fn new() -> Self {
             let client = Arc::new(InMemoryClient::new());
             client.seed_list(LIST, "Inbox");
+            Self::on_shared_client(client, "").await
+        }
+
+        /// Build one engine over an ALREADY-SEEDED shared client, tagging its
+        /// handles with `namespace`. The dual harness builds two of these on
+        /// one client; a lone engine passes `""`.
+        async fn on_shared_client(client: Arc<InMemoryClient>, namespace: &'static str) -> Self {
             let state = Arc::new(
                 AppState::new_memory_with_push(client.clone())
                     .await
@@ -247,19 +269,20 @@ mod tests {
                 names: Vec::new(),
                 next_name: 0,
                 held: None,
+                namespace,
             }
         }
 
         fn fresh_name(&mut self) -> String {
             self.next_name += 1;
-            format!("t{:03}", self.next_name)
+            format!("{}t{:03}", self.namespace, self.next_name)
         }
 
         /// A list title. Distinct namespace from task titles so a list can
         /// never shadow a task handle.
         fn fresh_list_name(&mut self) -> String {
             self.next_name += 1;
-            format!("L{:03}", self.next_name)
+            format!("{}L{:03}", self.namespace, self.next_name)
         }
 
         /// Set (or clear) the panel hold, keeping the harness's mirror of it
@@ -980,6 +1003,147 @@ mod tests {
             && o.changed_list_ids.is_empty()
     }
 
+    // ─── Dual harness: two devices, one server ───────────────────────────────
+
+    /// Which of the two devices an op is aimed at.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Side {
+        A,
+        B,
+    }
+
+    impl Side {
+        fn other(self) -> Side {
+            match self {
+                Side::A => Side::B,
+                Side::B => Side::A,
+            }
+        }
+    }
+
+    /// One step of a two-device interleaving.
+    #[derive(Debug, Clone)]
+    enum DualOp {
+        /// The interleaved RUN LOOP: apply a single op to one device. Syncs are
+        /// ordinary `Op::Sync`/`FlakySync`/`CrashSync` values, so the two
+        /// devices' pushes and pulls land against the one shared server in
+        /// whatever order the generator drew — the interleaving nobody writes
+        /// down by hand.
+        Step(Side, Op),
+        /// An OFFLINE BATCH: one device goes offline and applies a run of local
+        /// mutations WITH NO SYNC OF ITS OWN, while the OTHER device stays
+        /// online and syncs after each edit — so the server advances underneath
+        /// the offline one. The batch is reconciled only when a later
+        /// `Step(side, Op::Sync)` or the final `heal` reconnects the device,
+        /// which is where the two divergent histories merge (the classic
+        /// two-devices-edited-offline crossing).
+        Offline(Side, Vec<Op>),
+    }
+
+    /// Two whole app instances — separate stores and sync engines — pushing to
+    /// and pulling from ONE shared fake Google. The invariant that makes the
+    /// n:1 oracle sound: whatever the server converges to, BOTH devices pull
+    /// it, so a correct pair each mirrors the server exactly. The only way
+    /// `dump A == dump B == server` can break is a REAL engine bug — a device
+    /// that believes it is clean while diverging from the server (a dropped
+    /// pull, a phantom local row, a row wedged dirty that never drains).
+    struct DualHarness {
+        a: Harness,
+        b: Harness,
+    }
+
+    impl DualHarness {
+        async fn new() -> Self {
+            let client = Arc::new(InMemoryClient::new());
+            client.seed_list(LIST, "Inbox");
+            // Build A first, so its bootstrap "My Tasks" reaches the server;
+            // B then ADOPTS that list by title on its own first pull instead
+            // of forking a duplicate (`adoptable_list`, reconcile.rs). Distinct
+            // namespaces keep every task and list handle disjoint across the
+            // two devices sharing this one server. `a.client` and `b.client`
+            // are this same shared handle.
+            let a = Harness::on_shared_client(client.clone(), "a").await;
+            let b = Harness::on_shared_client(client.clone(), "b").await;
+            Self { a, b }
+        }
+
+        fn side(&mut self, s: Side) -> &mut Harness {
+            match s {
+                Side::A => &mut self.a,
+                Side::B => &mut self.b,
+            }
+        }
+
+        async fn apply(&mut self, dop: &DualOp) {
+            match dop {
+                DualOp::Step(s, op) => self.side(*s).apply(*op).await,
+                DualOp::Offline(s, batch) => {
+                    for op in batch {
+                        self.side(*s).apply(*op).await;
+                        // The other device stays online, advancing the server
+                        // underneath the offline one. Tolerate any fault an op
+                        // left armed on the shared client (a transient leaves
+                        // the run `Ok`; a stray fatal is cleared at heal).
+                        let other = s.other();
+                        let _ = self.side(other).state.run_sync().await;
+                    }
+                }
+            }
+        }
+
+        async fn apply_all(&mut self, ops: &[DualOp]) {
+            for op in ops {
+                self.apply(op).await;
+            }
+        }
+
+        /// Drive both devices to a shared fixpoint. Each round drains A to its
+        /// own fixpoint (`Harness::heal`), then B; when a round finds BOTH
+        /// already drained — each device's first run a no-op — no pending work
+        /// remains on either side and neither changed the server, so the server
+        /// and both caches agree. `Harness::heal` clears faults and drops holds
+        /// on each device first.
+        async fn heal(&mut self) {
+            for _round in 0..MAX_DUAL_ROUNDS {
+                let ra = self.a.heal().await;
+                let rb = self.b.heal().await;
+                if ra == 1 && rb == 1 {
+                    return;
+                }
+            }
+            panic!(
+                "no two-device fixpoint after {MAX_DUAL_ROUNDS} rounds\n== A ==\n{}\n== B ==\n{}",
+                self.a.dump().await,
+                self.b.dump().await
+            );
+        }
+    }
+
+    /// The n:1 FIXPOINT ORACLE: after a shared fixpoint, each device's cache
+    /// equals the server field-for-field — and therefore each other. A device
+    /// that dropped a pull, kept a phantom row, or wedged a row dirty shows up
+    /// here as a set that differs from the server the other device agrees with.
+    async fn assert_dual_converged(d: &DualHarness, ctx: &str) {
+        let server = d.a.server_rows().await;
+        let a = d.a.local_rows().await;
+        let b = d.b.local_rows().await;
+        // a == server && b == server ⇒ a == b == server (the n:1 fixpoint).
+        assert_eq!(
+            a,
+            server,
+            "{ctx}: device A diverges from the server\n== A local ==\n{}\n== B local ==\n{}",
+            d.a.dump().await,
+            d.b.dump().await
+        );
+        assert_eq!(
+            b,
+            server,
+            "{ctx}: device B diverges from the server\n== A local ==\n{}\n== B local ==\n{}",
+            d.a.dump().await,
+            d.b.dump().await
+        );
+    }
+
     // ─── Universal structural invariants ─────────────────────────────────────
 
     /// No child ever points at a parent that isn't in the same list, and the
@@ -1165,6 +1329,56 @@ mod tests {
             ],
             2..18,
         )
+    }
+
+    // ─── Dual strategies ─────────────────────────────────────────────────────
+
+    fn side() -> impl Strategy<Value = Side> {
+        prop_oneof![Just(Side::A), Just(Side::B)]
+    }
+
+    /// The LOCAL user vocabulary only — no `Sync`/`FlakySync`/`CrashSync`/
+    /// `AbortSync`/`Restart`, and none of the `Remote*` phantom-device ops.
+    /// An offline batch is one device editing its own cache with the wire
+    /// down; a sync inside the batch would defeat the point, and a phantom
+    /// remote hit would be a THIRD device, which the interleaved `Step` ops
+    /// already supply. Weighted like `any_op`'s local core so batches build a
+    /// real tree to mutate rather than churning empty indices.
+    fn local_mutation_op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            6 => any::<u8>().prop_map(Op::CreateTop),
+            4 => any::<u8>().prop_map(Op::CreateSub),
+            3 => any::<u8>().prop_map(Op::Rename),
+            3 => (any::<u8>(), any::<u8>()).prop_map(|(i, d)| Op::SetDue(i, d)),
+            3 => any::<u8>().prop_map(Op::Toggle),
+            2 => any::<u8>().prop_map(Op::Delete),
+            2 => (any::<u8>(), any::<bool>()).prop_map(|(i, u)| Op::Reorder(i, u)),
+            2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveAfter(i, j)),
+            2 => any::<u8>().prop_map(Op::Demote),
+            2 => any::<u8>().prop_map(Op::Promote),
+            2 => (any::<u8>(), any::<u8>()).prop_map(|(i, j)| Op::MoveToList(i, j)),
+            2 => Just(Op::CreateList),
+            1 => any::<u8>().prop_map(Op::RenameList),
+            1 => any::<u8>().prop_map(Op::DeleteList),
+            2 => any::<u8>().prop_map(Op::OpenPanel),
+            2 => Just(Op::ClosePanel),
+        ]
+    }
+
+    /// One dual step: mostly interleaved single ops on either device (`any_op`,
+    /// so syncs, crashes and phantom-remote events are all in the mix on both
+    /// sides), with a minority of offline batches on one device while the other
+    /// stays live.
+    fn dual_op() -> impl Strategy<Value = DualOp> {
+        prop_oneof![
+            8 => (side(), any_op()).prop_map(|(s, op)| DualOp::Step(s, op)),
+            2 => (side(), prop::collection::vec(local_mutation_op(), 2..8))
+                .prop_map(|(s, batch)| DualOp::Offline(s, batch)),
+        ]
+    }
+
+    fn dual_ops() -> impl Strategy<Value = Vec<DualOp>> {
+        prop::collection::vec(dual_op(), 1..24)
     }
 
     /// Deterministic, reproducible property runner. Every invocation explores
@@ -1686,6 +1900,120 @@ mod tests {
                 h.client.call_count(Method::DeleteTask),
                 deletes_before + 1,
                 "the delete must never push a second time"
+            );
+        });
+    }
+
+    // ─── Dual-engine invariants (#152) ───────────────────────────────────────
+
+    /// TWO-DEVICE CONVERGENCE — the n:1 fixpoint. Two real app instances edit
+    /// the SAME server over a random interleaving of per-device ops and offline
+    /// batches. Once both drain and mutually pull to a shared fixpoint, each
+    /// device's cache equals the server field-for-field — so `dump A == dump B
+    /// == server`. This is the crossing the single-engine soak cannot see: a
+    /// device that silently diverges from what ANOTHER device already agreed
+    /// with the server on. Structural and metadata invariants (parent tree,
+    /// `base_* NULL iff clean`, zero pending work) are asserted on BOTH devices.
+    #[test]
+    fn prop_dual_two_devices_converge_on_the_server() {
+        check(DEFAULT_CASES, dual_ops(), |ops| {
+            run_case(|| async move {
+                let mut d = DualHarness::new().await;
+                d.apply_all(&ops).await;
+                d.heal().await;
+
+                assert_dual_converged(&d, &format!("after {ops:?}")).await;
+                // Neither device is left holding pending work once the shared
+                // fixpoint is reached (P7/P8 — convergence in finite runs).
+                for (name, h) in [("A", &d.a), ("B", &d.b)] {
+                    assert_eq!(
+                        h.state.pending_push_count().await.expect("pending"),
+                        0,
+                        "device {name} left pending work at the fixpoint for {ops:?}\n{}",
+                        h.dump().await
+                    );
+                    assert_parent_integrity(h, &format!("device {name} after dual convergence"))
+                        .await;
+                    assert_base_null_when_clean(
+                        h,
+                        &format!("device {name} after dual convergence"),
+                    )
+                    .await;
+                }
+
+                // Idempotency at the shared fixpoint: one more run on either
+                // device touches nothing (a second run against a quiescent
+                // remote is a no-op).
+                let extra_a = d.a.state.run_sync().await.expect("A extra");
+                let extra_b = d.b.state.run_sync().await.expect("B extra");
+                assert!(
+                    is_noop(&extra_a) && is_noop(&extra_b),
+                    "a run after the dual fixpoint was not a no-op (A={extra_a:?} B={extra_b:?}) for {ops:?}"
+                );
+            });
+        });
+    }
+
+    /// TWO DEVICES EDIT THE SAME TASK OFFLINE, then both reconnect — the
+    /// canonical crossing, pinned deterministically so the merge is exact and
+    /// not left to the generator to stumble on. Device A and device B each
+    /// rename the one shared task while the wire is down; when both sync, the
+    /// engine resolves the 412 (last-writer's push meets a stale `If-Match`)
+    /// and BOTH caches settle onto whatever the server holds. The oracle proves
+    /// they agree; the count proves the resolution did not spawn an unbounded
+    /// pile of conflicted copies.
+    #[test]
+    fn dual_two_devices_edit_the_same_task_offline_then_converge() {
+        run_case(|| async move {
+            let mut d = DualHarness::new().await;
+
+            // A creates one task in the shared Inbox and pushes it; B pulls it,
+            // so both devices now hold the same server row. A tracks the handle
+            // (its own creation); the id is server-assigned after A's push.
+            d.a.create_top_in(LIST).await; // "at001"
+            d.a.state.run_sync().await.expect("A push");
+            d.b.state.run_sync().await.expect("B pull");
+            let shared_id =
+                d.a.live()
+                    .await
+                    .into_iter()
+                    .find(|t| t.task.title == "at001")
+                    .expect("A pushed the shared task")
+                    .task
+                    .id
+                    .clone();
+            assert!(
+                d.b.all_rows()
+                    .await
+                    .iter()
+                    .any(|r| r.task.id == shared_id && r.task.title == "at001"),
+                "B must have pulled the shared task before editing it\n{}",
+                d.b.dump().await
+            );
+
+            // Both edit it OFFLINE (no sync): A sets a due date, B renames it.
+            d.a.apply(Op::SetDue(0, 0)).await; // "Today" on A's copy
+            crate::commands::rename_task_inner(&d.b.state, shared_id.clone(), "renamed".into())
+                .await
+                .expect("B rename");
+
+            // Reconnect both and drive to the shared fixpoint.
+            d.heal().await;
+
+            assert_dual_converged(&d, "after both devices edited the same task offline").await;
+            // The shared task still exists exactly once on the server — the
+            // merge converged, it did not lose the row or fork it endlessly.
+            let survivors =
+                d.a.server_rows()
+                    .await
+                    .into_iter()
+                    .filter(|r| r.id == shared_id)
+                    .count();
+            assert_eq!(
+                survivors,
+                1,
+                "the shared task must survive the offline merge exactly once\n{}",
+                d.a.dump().await
             );
         });
     }
