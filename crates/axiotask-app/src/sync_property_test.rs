@@ -1978,6 +1978,38 @@ mod tests {
     /// device that silently diverges from what ANOTHER device already agreed
     /// with the server on. Structural and metadata invariants (parent tree,
     /// `base_* NULL iff clean`, zero pending work) are asserted on BOTH devices.
+    /// PARENT-CYCLE FK CRASH (#155, the dual-engine oracle's 20k
+    /// counterexample, minimized). Two devices each demote the opposite end of
+    /// a parent/child pair from stale views: A holds `P > C` and reparents `P`
+    /// under `C`. Google's forest model rejects a task becoming its own
+    /// descendant (a 400, evaluated against current server state), so the server
+    /// can never hold the cycle `P → C → P`. Before the fake modeled that, the
+    /// cyclic pair reached the OTHER device's pull, where `order_parents_first`
+    /// cannot order a cycle — a child landed before its parent and aborted
+    /// `run_sync` with a foreign-key violation. This is the exact op sequence
+    /// proptest shrank to; pinned deterministically so the crash cannot silently
+    /// return. It must run clean and both devices converge on the server.
+    #[test]
+    fn dual_racing_demotes_never_form_a_parent_cycle() {
+        run_case(|| async move {
+            let mut d = DualHarness::new().await;
+            let ops = vec![
+                DualOp::Offline(Side::A, vec![Op::CreateTop(0), Op::CreateSub(0)]),
+                DualOp::Step(Side::A, Op::Sync),
+                DualOp::Step(Side::A, Op::MoveAfter(29, 2)),
+                DualOp::Step(Side::A, Op::RemoteDemote(32)),
+                DualOp::Step(Side::B, Op::Sync),
+            ];
+            d.apply_all(&ops).await;
+            d.heal().await;
+
+            assert_dual_converged(&d, "after racing demotes").await;
+            for (name, h) in [("A", &d.a), ("B", &d.b)] {
+                assert_parent_integrity(h, &format!("device {name} after racing demotes")).await;
+            }
+        });
+    }
+
     #[test]
     fn prop_dual_two_devices_converge_on_the_server() {
         check(DEFAULT_CASES, dual_ops(), |ops| {
