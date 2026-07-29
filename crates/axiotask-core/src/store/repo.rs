@@ -1543,6 +1543,147 @@ mod tests {
         );
     }
 
+    // --- apply_pushed_task guard triad (#151) -------------------------------
+    // Three ways a row can change under a push that is already in flight. The
+    // drained snapshot (`expected_local_updated`) is the arbiter: the landing
+    // must never clobber a change made after the drain.
+
+    #[tokio::test]
+    async fn apply_pushed_task_reedited_row_stays_dirty_and_rebases_to_server_body() {
+        // Guard 1 — stale snapshot re-base. The user typed more while the PATCH
+        // was in flight, so `local_updated` no longer equals the drained
+        // snapshot. The landing must NOT mark the row clean (the newer content
+        // is still unpushed): it keeps its dirty flag and its own content, and
+        // re-bases base_* to the body the server now holds (#124) so a later 412
+        // diffs against reality, not the pre-push base.
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut row = task("T1", "L1", None, "1");
+        row.task.title = "typed more while pushing".into();
+        row.task.notes = Some("local note".into());
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        row.local_updated = "2026-01-01T00:00:09Z".into(); // newer than the drain
+        s.upsert_task(&row).await.unwrap();
+
+        // The body the earlier push actually stored (pre-re-edit content).
+        let mut server = row.task.clone();
+        server.title = "buy milk".into();
+        server.notes = Some("server note".into());
+        server.due = Some("2026-03-01".into());
+        server.status = TaskStatus::Completed;
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, "2026-01-01T00:00:00Z") // drained snapshot, now stale
+            .await
+            .unwrap();
+
+        let got = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(got.sync_state, SyncState::Dirty, "re-edit must stay queued");
+        assert_eq!(got.pending_op.as_deref(), Some("update"));
+        assert_eq!(
+            got.task.title, "typed more while pushing",
+            "local content is preserved, not overwritten by the stale body"
+        );
+        assert_eq!(got.task.notes.as_deref(), Some("local note"));
+
+        let base = s
+            .base_snapshot("T1")
+            .await
+            .unwrap()
+            .expect("a dirty row keeps a base for the next 412 compare");
+        assert_eq!(
+            base.title, "buy milk",
+            "base re-based to what the server now holds"
+        );
+        assert_eq!(base.notes.as_deref(), Some("server note"));
+        assert_eq!(base.due.as_deref(), Some("2026-03-01"));
+        assert_eq!(base.status, TaskStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn apply_pushed_task_does_not_resurrect_a_row_deleted_mid_push() {
+        // Guard 2 — delete during push. The push was drained, then the user
+        // deleted the task before the response arrived: `tombstone_subtree`
+        // bumped `local_updated` and set sync_state='deleted'/pending_op='delete'.
+        // The late landing must leave the tombstone intact — never flip it back
+        // to clean — so the delete still pushes and the row cannot reappear
+        // (invariant #3).
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        let mut row = task("T1", "L1", None, "1");
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        row.local_updated = "2026-01-01T00:00:00Z".into(); // == the drain snapshot
+        s.upsert_task(&row).await.unwrap();
+
+        // Deleted mid-push — this bumps local_updated past the drained snapshot.
+        s.tombstone_subtree("T1", &[], "2026-01-01T00:00:05Z")
+            .await
+            .unwrap();
+
+        let mut server = row.task.clone();
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, "2026-01-01T00:00:00Z") // stale snapshot
+            .await
+            .unwrap();
+
+        let got = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(
+            got.sync_state,
+            SyncState::Deleted,
+            "the tombstone survives the late landing"
+        );
+        assert_eq!(
+            got.pending_op.as_deref(),
+            Some("delete"),
+            "the delete is still queued to push"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_pushed_task_keeps_a_pending_move_intact() {
+        // Guard 3 — move during push. A structural move is queued in
+        // pending_moves (the task now sits under A at a new position) but has not
+        // been pushed. A content push lands whose response still reflects the
+        // pre-move parent/position. Adopting that body would clobber the queued
+        // move, so `apply_pushed_task` refuses to touch parent_id/position while a
+        // pending move exists. Content still lands (local_updated matches).
+        let s = fresh().await;
+        s.upsert_list(&list("L1")).await.unwrap();
+        s.upsert_task(&task("A", "L1", None, "1")).await.unwrap();
+        s.upsert_task(&task("B", "L1", None, "2")).await.unwrap();
+        let mut row = task("T1", "L1", Some("A"), "9"); // moved under A locally
+        row.sync_state = SyncState::Dirty;
+        row.pending_op = Some("update".into());
+        row.local_updated = "2026-01-01T00:00:00Z".into(); // == the drain snapshot
+        s.upsert_task(&row).await.unwrap();
+        s.record_move("T1", "L1", Some("A"), None).await.unwrap();
+
+        // The push response reflects the parent/position from BEFORE the move.
+        let mut server = row.task.clone();
+        server.parent = Some("B".into());
+        server.position = "1".into();
+        server.title = "server title".into();
+        server.etag = Some("e2".into());
+        s.apply_pushed_task(&server, "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+
+        let got = s.find_task_any("T1").await.unwrap().unwrap();
+        assert_eq!(
+            got.task.parent.as_deref(),
+            Some("A"),
+            "queued move's parent survives the landing"
+        );
+        assert_eq!(
+            got.task.position, "9",
+            "queued move's position survives the landing"
+        );
+        // The content still lands (the drain snapshot matched), proving the
+        // guard is scoped to structure, not the whole row.
+        assert_eq!(got.task.title, "server title", "content still adopted");
+    }
+
     #[tokio::test]
     async fn finish_create_rewrites_self_and_children_and_marks_clean() {
         let s = fresh().await;
