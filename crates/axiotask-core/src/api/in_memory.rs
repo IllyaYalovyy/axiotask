@@ -347,10 +347,45 @@ fn validate_sizes(title: Option<&str>, notes: Option<&str>) -> Result<(), ApiErr
     Ok(())
 }
 
+/// A hook fired at the START of every [`GoogleTasksClient`] call on this
+/// client — receiving the client itself and the [`Method`] about to run,
+/// BEFORE that call takes the state lock or does any work. It exists to
+/// interleave a server-side mutation (another device racing us) at a precise
+/// point INSIDE one sync run: the engine makes many calls per run, and the
+/// existing fault/`*_from_state` helpers only mutate at op boundaries, never
+/// between the engine's own list/get/push/pull calls. The hook receives
+/// `&InMemoryClient` so it can drive the same synchronous helpers
+/// (`seed_task`/`seed_list`/`delete_task_from_state`/`delete_list_from_state`).
+///
+/// It is `FnMut` and SYNCHRONOUS (the trait methods are async, but the hook is
+/// not, so it must use the sync helpers above, not the async trait methods).
+/// It fires with its own slot emptied, so a re-entrant client call from inside
+/// the hook does NOT re-fire it — no recursion and no deadlock on the inner
+/// lock.
+type OnCall = Box<dyn FnMut(&InMemoryClient, Method) + Send>;
+
 /// In-memory test double. Cheap to clone the handle (interior `Mutex`).
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct InMemoryClient {
     inner: Mutex<State>,
+    /// Optional per-call interleave hook; see [`OnCall`] and
+    /// [`InMemoryClient::set_on_call`]. Held under its OWN mutex, separate from
+    /// `inner`, so the hook can re-enter and lock `inner` without deadlocking.
+    on_call: Mutex<Option<OnCall>>,
+}
+
+// Hand-written because `OnCall` (a boxed closure) is not `Debug`; we report
+// only whether a hook is currently armed.
+impl std::fmt::Debug for InMemoryClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryClient")
+            .field("inner", &self.inner)
+            .field(
+                "on_call_armed",
+                &self.on_call.lock().map(|g| g.is_some()).unwrap_or(true),
+            )
+            .finish()
+    }
 }
 
 impl InMemoryClient {
@@ -358,6 +393,36 @@ impl InMemoryClient {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(State::new()),
+            on_call: Mutex::new(None),
+        }
+    }
+
+    /// Install (or replace) the per-call interleave hook. See [`OnCall`] for
+    /// the contract; [`InMemoryClient::clear_on_call`] removes it.
+    pub fn set_on_call<F>(&self, hook: F)
+    where
+        F: FnMut(&InMemoryClient, Method) + Send + 'static,
+    {
+        *self.on_call.lock().unwrap() = Some(Box::new(hook));
+    }
+
+    /// Remove any installed on_call hook.
+    pub fn clear_on_call(&self) {
+        *self.on_call.lock().unwrap() = None;
+    }
+
+    /// Fire the on_call hook (if armed) for method `m`. Taken out of its slot
+    /// while running so a re-entrant call from inside the hook sees an empty
+    /// slot instead of recursing or deadlocking, then restored unless the hook
+    /// replaced or cleared it.
+    fn fire_on_call(&self, m: Method) {
+        let taken = self.on_call.lock().unwrap().take();
+        if let Some(mut hook) = taken {
+            hook(self, m);
+            let mut slot = self.on_call.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(hook);
+            }
         }
     }
 
@@ -493,6 +558,39 @@ impl InMemoryClient {
         self.inner.lock().unwrap().soft_delete_subtree(task_id);
     }
 
+    /// Insert a task server-side the way another client's create would, but
+    /// TOLERANT of a racing delete: if `list_id` no longer exists (our own
+    /// in-flight run may have deleted it moments earlier) the insert is a safe
+    /// no-op instead of a panic. This is the create counterpart to
+    /// [`InMemoryClient::delete_task_from_state`] and, like it, records no call
+    /// and consumes no fault — so it can be driven from an on_call hook to model
+    /// "another device created a task mid-run". (Setup-time seeding should still
+    /// use [`InMemoryClient::seed_task`], whose assertion catches typos.)
+    pub fn seed_task_if_list_exists(&self, list_id: &str, id: &str, title: &str, position: &str) {
+        let mut s = self.inner.lock().unwrap();
+        if !s.lists.iter().any(|l| l.id == list_id) {
+            return;
+        }
+        let etag = s.fresh_etag();
+        s.tasks.push((
+            list_id.into(),
+            Task {
+                id: id.into(),
+                parent: None,
+                position: position.into(),
+                title: title.into(),
+                notes: None,
+                status: TaskStatus::NeedsAction,
+                due: None,
+                completed: None,
+                etag: Some(etag),
+                updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: Some(format!("https://tasks.google.com/task/{id}")),
+                deleted: false,
+            },
+        ));
+    }
+
     /// Remove a list (and its tasks) from internal state, simulating a list
     /// deleted server-side by another client. Single-task/list methods against
     /// it then naturally return [`ApiError::NotFound`], and a pull will not
@@ -513,6 +611,7 @@ impl InMemoryClient {
 #[async_trait]
 impl GoogleTasksClient for InMemoryClient {
     async fn list_tasklists(&self) -> Result<Vec<TaskList>, ApiError> {
+        self.fire_on_call(Method::ListTaskLists);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::ListTaskLists);
         if let Some(e) = s.next_fault(Method::ListTaskLists) {
@@ -522,6 +621,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn insert_tasklist(&self, title: &str) -> Result<TaskList, ApiError> {
+        self.fire_on_call(Method::InsertTaskList);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::InsertTaskList);
         if let Some(e) = s.next_fault(Method::InsertTaskList) {
@@ -540,6 +640,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn patch_tasklist(&self, id: &str, title: &str) -> Result<TaskList, ApiError> {
+        self.fire_on_call(Method::PatchTaskList);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::PatchTaskList);
         if let Some(e) = s.next_fault(Method::PatchTaskList) {
@@ -555,6 +656,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn delete_tasklist(&self, id: &str) -> Result<(), ApiError> {
+        self.fire_on_call(Method::DeleteTaskList);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::DeleteTaskList);
         if let Some(e) = s.next_fault(Method::DeleteTaskList) {
@@ -575,6 +677,7 @@ impl GoogleTasksClient for InMemoryClient {
         list_id: &str,
         page_token: Option<&str>,
     ) -> Result<Page<Task>, ApiError> {
+        self.fire_on_call(Method::ListTasks);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::ListTasks);
         // Decode the page cursor first — it identifies which page a per-page
@@ -626,6 +729,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn insert_task(&self, list_id: &str, new: NewTask) -> Result<Task, ApiError> {
+        self.fire_on_call(Method::InsertTask);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::InsertTask);
         if let Some(e) = s.next_fault(Method::InsertTask) {
@@ -684,6 +788,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn get_task(&self, list_id: &str, id: &str) -> Result<Task, ApiError> {
+        self.fire_on_call(Method::GetTask);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::GetTask);
         if let Some(e) = s.next_fault(Method::GetTask) {
@@ -720,6 +825,7 @@ impl GoogleTasksClient for InMemoryClient {
         patch: TaskPatch,
         etag: Option<&str>,
     ) -> Result<Task, ApiError> {
+        self.fire_on_call(Method::PatchTask);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::PatchTask);
         if let Some(e) = s.next_fault(Method::PatchTask) {
@@ -839,6 +945,7 @@ impl GoogleTasksClient for InMemoryClient {
     }
 
     async fn delete_task(&self, list_id: &str, id: &str) -> Result<(), ApiError> {
+        self.fire_on_call(Method::DeleteTask);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::DeleteTask);
         if let Some(e) = s.next_fault(Method::DeleteTask) {
@@ -872,6 +979,7 @@ impl GoogleTasksClient for InMemoryClient {
         parent: Option<&str>,
         previous: Option<&str>,
     ) -> Result<Task, ApiError> {
+        self.fire_on_call(Method::MoveTask);
         let mut s = self.inner.lock().unwrap();
         s.record(Method::MoveTask);
         if let Some(e) = s.next_fault(Method::MoveTask) {

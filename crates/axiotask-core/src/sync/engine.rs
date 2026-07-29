@@ -7603,4 +7603,116 @@ mod tests {
             "completing a child does not touch the parent"
         );
     }
+
+    // ─── Mid-run interleave (on_call hook) ───────────────────────────────────
+    // These exercise the fake's `set_on_call` hook: another device mutating the
+    // SERVER *between two of the engine's own calls in ONE run* — a race the
+    // op-boundary remote helpers (which mutate before/after a whole run) cannot
+    // express. The pull lists in list-insertion order (L1 then L2), so a hook
+    // keyed on the Nth `list_tasks` fires at a known point mid-pull.
+
+    #[tokio::test]
+    async fn remote_delete_between_two_pull_lists_is_invisible_this_run_then_reconciles() {
+        // S1 (in L1) is listed and reconciled clean on the pull's FIRST
+        // list_tasks. A remote delete of S1 then lands on the SECOND list_tasks
+        // (L2's) — after L1 was already snapshotted. This run cannot see it, so
+        // S1 must still be present locally; the NEXT healthy run ghost-detects
+        // and removes it. Proves the engine tolerates the server moving under it
+        // mid-run and converges, and pins that the race window is real.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "One");
+        client.seed_list("L2", "Two");
+        client.seed_task("L1", "S1", "alpha", "1");
+        client.seed_task("L2", "S2", "beta", "1");
+        eng.run().await.unwrap();
+
+        // Fire on the SECOND list_tasks (L2's) of the coming run: delete S1,
+        // which L1's earlier list_tasks already snapshotted this run.
+        let mut list_calls = 0u32;
+        client.set_on_call(move |c, m| {
+            if m == crate::api::in_memory::Method::ListTasks {
+                list_calls += 1;
+                if list_calls == 2 {
+                    c.delete_task_from_state("L1", "S1");
+                }
+            }
+        });
+
+        let out = eng.run().await.unwrap();
+        client.clear_on_call();
+        // The delete arrived after L1's snapshot, so this run did NOT ghost it.
+        assert_eq!(out.deleted, 0, "the mid-run delete is invisible this run");
+        let l1 = eng.store.list_tasks("L1").await.unwrap();
+        assert!(
+            l1.iter().any(|t| t.task.id == "S1"),
+            "S1 still present locally this run — the race window is real"
+        );
+
+        // The next healthy run sees S1 gone from L1 and reconciles it away.
+        let out2 = eng.run().await.unwrap();
+        assert_eq!(out2.deleted, 1, "S1 is ghost-detected and removed next run");
+        let l1 = eng.store.list_tasks("L1").await.unwrap();
+        assert!(
+            !l1.iter().any(|t| t.task.id == "S1"),
+            "S1 removed locally after convergence"
+        );
+        assert!(
+            eng.store
+                .list_tasks("L2")
+                .await
+                .unwrap()
+                .iter()
+                .any(|t| t.task.id == "S2"),
+            "the untouched other list is unaffected"
+        );
+        // Fixpoint reached: a further run changes nothing.
+        assert_eq!(
+            eng.run().await.unwrap().deleted,
+            0,
+            "idempotent once converged"
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_create_landing_mid_pull_is_pulled_in_the_same_run() {
+        // Another device inserts a task into L2 on the pull's FIRST list_tasks
+        // (L1's) — before L2 is itself listed. Because it exists by the time
+        // L2's list_tasks reads, the SAME run pulls it. Proves the hook can grow
+        // server state mid-run and the engine picks it up without a second run.
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "One");
+        client.seed_list("L2", "Two");
+        client.seed_task("L1", "S1", "alpha", "1");
+        eng.run().await.unwrap();
+        assert!(
+            eng.store.list_tasks("L2").await.unwrap().is_empty(),
+            "L2 starts empty locally"
+        );
+
+        let mut list_calls = 0u32;
+        client.set_on_call(move |c, m| {
+            if m == crate::api::in_memory::Method::ListTasks {
+                list_calls += 1;
+                if list_calls == 1 {
+                    // Fires before L2's own list_tasks, so the new row is
+                    // visible when L2 is scrolled — pulled this very run.
+                    c.seed_task("L2", "NEW", "gamma", "1");
+                }
+            }
+        });
+
+        eng.run().await.unwrap();
+        client.clear_on_call();
+        let l2 = eng.store.list_tasks("L2").await.unwrap();
+        let new = l2
+            .iter()
+            .find(|t| t.task.id == "NEW")
+            .expect("the mid-run remote create is pulled in the same run");
+        assert_eq!(new.task.title, "gamma");
+        assert_eq!(
+            new.sync_state,
+            SyncState::Clean,
+            "landed clean, nothing to push"
+        );
+    }
 }

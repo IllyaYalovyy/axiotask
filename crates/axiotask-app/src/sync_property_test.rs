@@ -175,6 +175,14 @@ mod tests {
         Sync,
         /// A sync run with one transient fault armed (5xx / network drop).
         FlakySync(u8),
+        /// A sync run during which ANOTHER device mutates the server MID-RUN —
+        /// between two of the engine's own calls in one cycle, a race the
+        /// op-boundary `Remote*` events cannot express. The fake's on_call hook
+        /// fires the mutation on the pull's first `list_tasks` (after our push
+        /// committed): the `u8` picks a remote DELETE of a pushed task or a
+        /// remote CREATE into a pushed list. heal + the convergence oracle then
+        /// prove the run still settles with no loss and no duplicate.
+        InterleaveSync(u8),
         /// A sync run where one mutating call commits server-side but its
         /// response is lost — the at-least-once hazard. The `u8` selects WHICH
         /// method (insert / patch / delete / move) loses its response, so the
@@ -770,6 +778,60 @@ mod tests {
                     self.client.fail_next(m, e);
                     self.state.run_sync().await.expect("flaky sync");
                 }
+                Op::InterleaveSync(k) => {
+                    // Another device races us WITHIN one run. The on_call hook
+                    // fires on the pull's first `list_tasks` — after our push
+                    // has committed — so the injected mutation lands between the
+                    // engine's own calls, which no op-boundary event can do.
+                    let pushed = self.pushed().await;
+                    let lists = self.pushed_lists().await;
+                    if pushed.is_empty() || lists.is_empty() {
+                        // Nothing on the server to race against yet.
+                        self.state.run_sync().await.expect("interleave sync");
+                        return;
+                    }
+                    if k % 2 == 0 {
+                        // A remote DELETE of a pushed task (server cascades its
+                        // subtree, #106). Fired on the FIRST pull list_tasks. A
+                        // delete of an already-gone id is a safe no-op, so this
+                        // never panics even if our own run drops the task first.
+                        let victim = &pushed[k as usize % pushed.len()];
+                        let (list_id, id) = (victim.list_id.clone(), victim.task.id.clone());
+                        let mut list_calls = 0u32;
+                        self.client.set_on_call(move |c, m| {
+                            if m == Method::ListTasks {
+                                list_calls += 1;
+                                if list_calls == 1 {
+                                    c.delete_task_from_state(&list_id, &id);
+                                }
+                            }
+                        });
+                    } else {
+                        // A remote CREATE into a pushed list, landing mid-pull.
+                        // It joins the handle set so the oracle tracks that the
+                        // pull actually lands it (no loss). The tolerant seed
+                        // no-ops if our own run deleted the list first — then the
+                        // untracked-because-absent name simply drops out of
+                        // `live()`, so the oracle stays honest either way.
+                        let list_id = lists[k as usize % lists.len()].list.id.clone();
+                        let title = self.fresh_name();
+                        self.names.push(title.clone());
+                        let id = format!("il-{title}");
+                        let mut list_calls = 0u32;
+                        self.client.set_on_call(move |c, m| {
+                            if m == Method::ListTasks {
+                                list_calls += 1;
+                                if list_calls == 1 {
+                                    c.seed_task_if_list_exists(&list_id, &id, &title, "1");
+                                }
+                            }
+                        });
+                    }
+                    let out = self.state.run_sync().await;
+                    // Disarm before anything else can trip the (now inert) hook.
+                    self.client.clear_on_call();
+                    out.expect("interleave sync");
+                }
                 Op::CrashSync(k) => {
                     // Lose the response of ONE mutating call after the server
                     // commits it — the at-least-once hazard, generalized past
@@ -830,6 +892,7 @@ mod tests {
         /// Returns the number of runs the fixpoint took.
         async fn heal(&mut self) -> usize {
             self.client.clear_faults();
+            self.client.clear_on_call();
             self.hold(None);
             for run in 1..=MAX_HEAL_RUNS {
                 let out = self.state.run_sync().await.expect("healthy sync");
@@ -1285,6 +1348,7 @@ mod tests {
             2 => Just(Op::ClosePanel),
             5 => Just(Op::Sync),
             3 => any::<u8>().prop_map(Op::FlakySync),
+            2 => any::<u8>().prop_map(Op::InterleaveSync),
             1 => any::<u8>().prop_map(Op::CrashSync),
             1 => any::<u8>().prop_map(Op::AbortSync),
             1 => Just(Op::Restart),
