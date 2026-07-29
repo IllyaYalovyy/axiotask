@@ -2017,4 +2017,294 @@ mod tests {
             );
         });
     }
+
+    // ─── Dual-engine scenario pins (#153) ────────────────────────────────────
+
+    /// The suffix the conflicted-copy resolver stamps onto the losing edit
+    /// (`reconcile::conflicted_copy`). A server row carrying it is a forked
+    /// copy; counting them is how termination is asserted.
+    const CONFLICTED_SUFFIX: &str = " (conflicted copy)";
+
+    /// TWO-SIDED CONFLICTED-COPY TERMINATION + AGREEMENT. Both devices rename
+    /// the SAME shared task to DISTINCT titles while offline — a two-sided
+    /// title divergence, the crossing that forces the 412 resolver to fork a
+    /// "(conflicted copy)" rather than silently adopt one side (P3: nothing is
+    /// discarded). The pin proves three things a lone-engine soak cannot see at
+    /// once: (1) AGREEMENT — both caches and the server end field-for-field
+    /// equal; (2) TERMINATION — the fork count settles at exactly ONE, the
+    /// loser's edit, and does not breed copies-of-copies; (3) NO DATA LOSS —
+    /// both renamed titles survive, one as the canonical row and one as the
+    /// conflicted copy. Idempotency then proves the resolved state is a genuine
+    /// fixpoint: another full round on either device neither forks again nor
+    /// changes anything (P7/P8).
+    #[test]
+    fn dual_two_sided_conflicted_copy_terminates_and_agrees() {
+        run_case(|| async move {
+            let mut d = DualHarness::new().await;
+
+            // A creates one task in the shared Inbox and pushes it; B pulls it,
+            // so both devices hold the same server row under the same id.
+            d.a.create_top_in(LIST).await; // "at001"
+            d.a.state.run_sync().await.expect("A push");
+            d.b.state.run_sync().await.expect("B pull");
+            let shared_id =
+                d.a.live()
+                    .await
+                    .into_iter()
+                    .find(|t| t.task.title == "at001")
+                    .expect("A pushed the shared task")
+                    .task
+                    .id
+                    .clone();
+            assert!(
+                d.b.all_rows()
+                    .await
+                    .iter()
+                    .any(|r| r.task.id == shared_id && r.task.title == "at001"),
+                "B must have pulled the shared task before editing it\n{}",
+                d.b.dump().await
+            );
+
+            // Both rename it OFFLINE to DISTINCT titles — a two-sided title
+            // divergence. Whoever's push lands first wins the row; the other
+            // meets a 412 and must fork its edit as a conflicted copy.
+            crate::commands::rename_task_inner(&d.a.state, shared_id.clone(), "shared-A".into())
+                .await
+                .expect("A rename");
+            crate::commands::rename_task_inner(&d.b.state, shared_id.clone(), "shared-B".into())
+                .await
+                .expect("B rename");
+
+            // Reconnect both and drive to the shared fixpoint.
+            d.heal().await;
+            assert_dual_converged(&d, "after a two-sided offline title edit").await;
+
+            // TERMINATION: exactly ONE conflicted copy on the server — the
+            // resolver forked the loser once and stopped, it did not breed
+            // copies of the copy.
+            let server = d.a.server_rows().await;
+            let copies: Vec<&Row> = server
+                .iter()
+                .filter(|r| r.title.ends_with(CONFLICTED_SUFFIX))
+                .collect();
+            assert_eq!(
+                copies.len(),
+                1,
+                "expected exactly one conflicted copy, got {}\n{}",
+                copies.len(),
+                d.a.dump().await
+            );
+
+            // NO DATA LOSS (P3): both renamed titles survive — one as the
+            // canonical row, one as the forked copy — regardless of which side
+            // won the etag race. Compare the SET so the pin does not couple to
+            // heal order.
+            let copy_base = copies[0]
+                .title
+                .strip_suffix(CONFLICTED_SUFFIX)
+                .expect("suffix present")
+                .to_string();
+            let canonical: HashSet<String> = server
+                .iter()
+                .filter(|r| !r.title.ends_with(CONFLICTED_SUFFIX))
+                .map(|r| r.title.clone())
+                .collect();
+            assert!(
+                canonical.contains("shared-A") || canonical.contains("shared-B"),
+                "the winning edit must survive as a canonical row\n{}",
+                d.a.dump().await
+            );
+            let survived: HashSet<String> = canonical
+                .into_iter()
+                .filter(|t| t == "shared-A" || t == "shared-B")
+                .chain(std::iter::once(copy_base))
+                .collect();
+            assert_eq!(
+                survived,
+                HashSet::from(["shared-A".to_string(), "shared-B".to_string()]),
+                "both offline edits must survive the fork (one canonical, one copy)\n{}",
+                d.a.dump().await
+            );
+
+            // Both devices are drained and structurally sound at the fixpoint.
+            for (name, h) in [("A", &d.a), ("B", &d.b)] {
+                assert_eq!(
+                    h.state.pending_push_count().await.expect("pending"),
+                    0,
+                    "device {name} left pending work after the fork\n{}",
+                    h.dump().await
+                );
+                assert_base_null_when_clean(h, &format!("device {name} after the fork")).await;
+            }
+
+            // IDEMPOTENCY / no re-forking: a further full round on either device
+            // is a no-op and the copy count is still exactly one.
+            let extra_a = d.a.state.run_sync().await.expect("A extra");
+            let extra_b = d.b.state.run_sync().await.expect("B extra");
+            assert!(
+                is_noop(&extra_a) && is_noop(&extra_b),
+                "a run after the fork was not a no-op (A={extra_a:?} B={extra_b:?})"
+            );
+            let copies_after =
+                d.a.server_rows()
+                    .await
+                    .into_iter()
+                    .filter(|r| r.title.ends_with(CONFLICTED_SUFFIX))
+                    .count();
+            assert_eq!(
+                copies_after,
+                1,
+                "the conflicted copy must not re-fork on a quiescent re-run\n{}",
+                d.a.dump().await
+            );
+        });
+    }
+
+    /// RACING D7 REPAIRS WITH A BOUNDED MOVE COUNT. A third level (`P > T > C`)
+    /// is planted on the ONE shared server — the §F/§G residual Google's
+    /// depth-uncapped `move` lets exist — while BOTH devices hold `T > C` and
+    /// `P` synced. Each device's next pull re-nests `C` under `T` and D7 fires
+    /// the corrective flatten `move`, so the two engines RACE to repair the same
+    /// grandchild. The engine documents this as "idempotent under racing
+    /// repairs" (`repair_third_level`): moving an already-top-level row to
+    /// top-level is a no-op the server accepts, and a flattened grandchild is no
+    /// longer detected. This pin makes that claim load-bearing: the total number
+    /// of corrective `move` calls the pair issues is BOUNDED by a small constant
+    /// — a buggy repair that re-fired every run, or two engines that ping-ponged
+    /// the row, would blow the bound long before it blew the round cap. Both
+    /// devices converge and neither is left holding a two-level tree
+    /// (invariant #1).
+    #[test]
+    #[allow(clippy::too_many_lines)] // one linear scenario reads best undivided
+    fn dual_racing_d7_repairs_have_a_bounded_move_count() {
+        run_case(|| async move {
+            let mut d = DualHarness::new().await;
+            let client = d.a.client.clone(); // the one shared server
+
+            // A builds `T > C` and a sibling `P`, all top-level except C, then
+            // pushes; B pulls, so both devices hold the flat tree synced clean.
+            d.a.create_top_in(LIST).await; // "at001" == T
+            d.a.state.run_sync().await.expect("A push T");
+            let t_id =
+                d.a.live()
+                    .await
+                    .into_iter()
+                    .find(|t| t.task.title == "at001")
+                    .expect("T pushed")
+                    .task
+                    .id
+                    .clone();
+            crate::commands::create_task_inner(
+                &d.a.state,
+                LIST.to_string(),
+                Some(t_id.clone()),
+                "at002".into(), // C, subtask of T
+            )
+            .await
+            .expect("A create C");
+            d.a.names.push("at002".into());
+            crate::commands::create_task_inner(
+                &d.a.state,
+                LIST.to_string(),
+                None,
+                "at003".into(), // P, top-level sibling
+            )
+            .await
+            .expect("A create P");
+            d.a.names.push("at003".into());
+            d.a.state.run_sync().await.expect("A push C+P");
+            d.b.state.run_sync().await.expect("B pull tree");
+
+            let c_id =
+                d.a.live()
+                    .await
+                    .into_iter()
+                    .find(|t| t.task.title == "at002")
+                    .expect("C pushed")
+                    .task
+                    .id
+                    .clone();
+            let p_id =
+                d.a.live()
+                    .await
+                    .into_iter()
+                    .find(|t| t.task.title == "at003")
+                    .expect("P pushed")
+                    .task
+                    .id
+                    .clone();
+
+            // Plant the third level ON THE SERVER: demote T under P (another
+            // device's move, no If-Match). The server now holds `P > T > C`, a
+            // grandchild no push-side guard can catch — exactly what D7 flattens
+            // on the pull. Snapshot the move counter AFTER this setup move so
+            // only the corrective repairs are counted.
+            client
+                .move_task(LIST, &t_id, Some(&p_id), None)
+                .await
+                .expect("server demote T under P");
+            assert!(
+                d.b.all_rows().await.iter().any(|r| r.task.id == c_id),
+                "B must still hold C before the race\n{}",
+                d.b.dump().await
+            );
+            let moves_before = client.call_count(Method::MoveTask);
+
+            // Force a genuine TWO-SIDED race: arm the next corrective move to
+            // fail transiently, so device A flattens C locally and defers its
+            // server move (the server stays `P > T > C`), then device B pulls
+            // the STILL-nested tree and issues its own corrective move. Both
+            // engines act on the same grandchild.
+            client.fail_next(Method::MoveTask, || ApiError::RateLimited);
+            d.a.state
+                .run_sync()
+                .await
+                .expect("A repair (move deferred)");
+            d.b.state.run_sync().await.expect("B repair");
+
+            // Drive both to the shared fixpoint and prove convergence.
+            d.heal().await;
+            assert_dual_converged(&d, "after racing D7 repairs").await;
+            for (name, h) in [("A", &d.a), ("B", &d.b)] {
+                assert_parent_integrity(h, &format!("device {name} after racing D7")).await;
+                assert_eq!(
+                    h.state.pending_push_count().await.expect("pending"),
+                    0,
+                    "device {name} left pending work after the D7 race\n{}",
+                    h.dump().await
+                );
+            }
+            // C ended up top-level on both devices — the flatten actually landed
+            // and was not merely deferred forever (P5: moves degrade, never
+            // wedge).
+            for (name, h) in [("A", &d.a), ("B", &d.b)] {
+                let dump = h.dump().await;
+                let c = h
+                    .all_rows()
+                    .await
+                    .into_iter()
+                    .find(|r| r.task.id == c_id)
+                    .unwrap_or_else(|| panic!("device {name} lost C\n{dump}"));
+                assert!(
+                    c.task.parent.is_none(),
+                    "device {name}: C must be top-level after the flatten, parent={:?}\n{dump}",
+                    c.task.parent
+                );
+            }
+
+            // THE BOUND: the two racing engines issue a SMALL, constant number
+            // of corrective moves for the one grandchild — A's deferred attempt,
+            // B's landing move, and at most a couple of re-confirmations as the
+            // caches reconcile. A non-terminating repair would climb toward the
+            // round × heal-run ceiling; 6 sits far below it yet above the real
+            // traffic (measured: 2).
+            let corrective_moves = client.call_count(Method::MoveTask) - moves_before;
+            assert!(
+                corrective_moves <= 6,
+                "racing D7 repairs issued {corrective_moves} corrective moves (expected a small \
+                 bounded count); a repair that re-fires every run is the bug this guards\n{}",
+                d.a.dump().await
+            );
+        });
+    }
 }
