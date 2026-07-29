@@ -880,15 +880,21 @@ impl SyncEngine {
                     .apply_pushed_task(&remote, &local.local_updated)
                     .await?;
             }
-            // Remote becomes canonical, the local edit survives as a copy.
+            // Remote becomes canonical, the local edit survives as a copy. The
+            // canonical landing reuses `apply_pushed_task` (not a raw upsert) so
+            // a refetch naming a parent this device never pulled — another
+            // device demoted the row mid-edit — DETACHES that unknown parent
+            // instead of aborting the run with an FK violation (#155), exactly
+            // the pull's §A handling; the local_updated match makes it a clean
+            // landing that also clears the base snapshot.
             ConflictResolution::ConflictedCopy => {
                 info!(id = %local.task.id, "412 conflict — preserving local edit as conflicted copy");
                 out.conflicts += 1;
-                self.store
-                    .upsert_task(&reconcile::canonical_row(&remote, &local.list_id))
-                    .await?;
                 let copy =
                     reconcile::conflicted_copy(local, &remote, uuid::Uuid::new_v4().to_string());
+                self.store
+                    .apply_pushed_task(&remote, &local.local_updated)
+                    .await?;
                 self.store.upsert_task(&copy).await?;
             }
         }
@@ -2044,6 +2050,88 @@ mod tests {
                 .any(|t| t.task.title == "local-edit (conflicted copy)")
         );
         // Nothing lost.
+    }
+
+    /// FK-SAFE 412 (#155, dual-engine oracle counterexample). A 412 whose
+    /// refetched canonical row names a parent this device has never pulled —
+    /// another device demoted the row under a brand-new parent while we edited
+    /// it — must NOT abort `run_sync` with a foreign-key violation. The
+    /// canonical landing detaches the unknown parent (exactly the pull's §A
+    /// handling) and drops its etag so it re-links once the parent arrives; the
+    /// local edit still survives as its conflicted copy, and both rows keep the
+    /// parent tree intact.
+    #[tokio::test]
+    async fn conflicted_copy_detaches_when_the_remote_parent_is_unknown_locally() {
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "T1", "server-version", "1");
+        eng.run().await.unwrap();
+
+        // We edit T1 locally (dirty, stale etag → the next push draws a 412).
+        let mut local = eng.store.list_tasks("L1").await.unwrap().remove(0);
+        local.task.title = "local-edit".into();
+        local.sync_state = SyncState::Dirty;
+        local.pending_op = Some("update".into());
+        local.task.etag = Some("stale".into());
+        eng.store.upsert_task(&local).await.unwrap();
+
+        // Meanwhile another device demotes T1 under a BRAND-NEW parent P2 this
+        // device has never pulled, and changes T1's content — a real conflict.
+        client.seed_task("L1", "P2", "foreign-parent", "0");
+        client
+            .move_task("L1", "T1", Some("P2"), None)
+            .await
+            .unwrap();
+        client
+            .patch_task(
+                "L1",
+                "T1",
+                TaskPatch {
+                    title: Some("their-version".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Resolve the 412 directly — the push phase runs BEFORE the pull that
+        // would bring P2 in, so the canonical row names a parent absent locally.
+        let mut out = SyncOutcome::default();
+        eng.resolve_conflict(&local, &mut out).await.unwrap();
+        assert_eq!(out.conflicts, 1);
+
+        let tasks = eng.store.list_tasks("L1").await.unwrap();
+        let canonical = tasks
+            .iter()
+            .find(|t| t.task.id == "T1")
+            .expect("canonical T1 survives");
+        assert_eq!(canonical.task.title, "their-version");
+        assert_eq!(canonical.sync_state, SyncState::Clean);
+        assert_eq!(
+            canonical.task.parent, None,
+            "the unknown parent must be detached, not adopted into an FK violation"
+        );
+        assert_eq!(
+            canonical.task.etag, None,
+            "a detached canonical row drops its etag so it re-links on a later pull"
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.task.title == "local-edit (conflicted copy)"),
+            "the local edit must survive as a conflicted copy"
+        );
+        // No child points at a parent that isn't in the store (invariant #3/#4).
+        for t in &tasks {
+            if let Some(p) = t.task.parent.as_deref() {
+                assert!(
+                    tasks.iter().any(|o| o.task.id == p),
+                    "task {} points at a missing parent {p}",
+                    t.task.id
+                );
+            }
+        }
     }
 
     #[tokio::test]

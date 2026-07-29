@@ -1012,6 +1012,28 @@ impl GoogleTasksClient for InMemoryClient {
         {
             return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
         }
+        // A task cannot become its own descendant: Google's model is a forest,
+        // so a move whose target parent is the task itself or anywhere in its
+        // own subtree is a permanent 400 — evaluated against CURRENT server
+        // state, the same "Invalid task ID" as an unknown parent. Two devices
+        // each demoting the opposite end of a pair from stale views (the
+        // classic offline race) otherwise let the fake hold a parent CYCLE
+        // Google never could — a state the pull cannot topologically order, so
+        // a child lands before its parent and fails the FK (#155). Walk up from
+        // the target parent: reaching `id` proves the move closes a cycle.
+        if let Some(p) = parent {
+            let mut cur = Some(p);
+            while let Some(c) = cur {
+                if c == id {
+                    return Err(ApiError::Other("400: Invalid task ID (parent)".into()));
+                }
+                cur = s
+                    .tasks
+                    .iter()
+                    .find(|(_, t)| t.id == c)
+                    .and_then(|(_, t)| t.parent.as_deref());
+            }
+        }
         let new_etag = s.fresh_etag();
         // Real lexicographic placement: derive a `position` that sorts the task
         // into the requested slot among its siblings, exactly like `insert`.
@@ -1465,6 +1487,40 @@ mod tests {
             after[0].parent, None,
             "the rejected move left the task where it was"
         );
+    }
+
+    #[tokio::test]
+    async fn move_task_rejects_a_cycle() {
+        // A task cannot become its own descendant (Google's forest model,
+        // #155). Reparenting T1 under its own child T2 would form a cycle
+        // T1→T2→T1 — a state Google never holds and one our pull cannot
+        // topologically order. It is a permanent 400, and the tree is left
+        // exactly as it was.
+        let c = InMemoryClient::new();
+        c.seed_list("L1", "Inbox");
+        c.seed_task("L1", "T1", "parent", "00000000000001");
+        c.seed_task("L1", "T2", "child", "00000000000002");
+        c.move_task("L1", "T2", Some("T1"), None).await.unwrap(); // T2 under T1
+
+        let err = c
+            .move_task("L1", "T1", Some("T2"), None)
+            .await
+            .expect_err("moving a task under its own child is a cycle");
+        assert!(!err.is_transient(), "a cycle is a permanent rejection");
+
+        // Direct self-parent is rejected the same way.
+        let self_err = c
+            .move_task("L1", "T1", Some("T1"), None)
+            .await
+            .expect_err("a task cannot be its own parent");
+        assert!(!self_err.is_transient());
+
+        // Nothing moved: T1 stayed top-level, T2 stayed under T1.
+        let after = c.list_tasks("L1", None).await.unwrap().items;
+        let t1 = after.iter().find(|t| t.id == "T1").unwrap();
+        let t2 = after.iter().find(|t| t.id == "T2").unwrap();
+        assert_eq!(t1.parent, None, "the rejected cycle left T1 top-level");
+        assert_eq!(t2.parent.as_deref(), Some("T1"), "T2 stayed under T1");
     }
 
     #[tokio::test]

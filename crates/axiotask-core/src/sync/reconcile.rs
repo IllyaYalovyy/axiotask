@@ -167,17 +167,6 @@ pub fn update_patch(row: &StoredTask) -> TaskPatch {
     }
 }
 
-/// The remote row, stored as the new canonical version of a conflicted task.
-pub fn canonical_row(remote: &Task, list_id: &str) -> StoredTask {
-    StoredTask {
-        task: remote.clone(),
-        list_id: list_id.to_string(),
-        sync_state: SyncState::Clean,
-        pending_op: None,
-        local_updated: remote.updated.clone(),
-    }
-}
-
 /// The surviving local edit, as a fresh unpushed "(conflicted copy)" create.
 /// `new_id` is supplied by the caller so this stays pure.
 pub fn conflicted_copy(local: &StoredTask, remote: &Task, new_id: String) -> StoredTask {
@@ -1438,11 +1427,6 @@ mod tests {
         assert!(copy.task.etag.is_none());
         assert_eq!(copy.sync_state, SyncState::Dirty);
         assert_eq!(copy.pending_op.as_deref(), Some("create"));
-
-        let canonical = canonical_row(&remote, &local.list_id);
-        assert_eq!(canonical.task.title, "theirs");
-        assert_eq!(canonical.sync_state, SyncState::Clean);
-        assert!(canonical.pending_op.is_none());
     }
 
     // ─── §D delete ───────────────────────────────────────────────────────
