@@ -128,7 +128,20 @@ impl SyncEngine {
         if self.config.push_enabled {
             self.push_all(out).await?;
         }
-        self.pull_all(out).await
+        self.pull_all(out).await?;
+        // D7 flatten (invariant #1) runs over the LOCAL store after EVERY sync,
+        // not just inside `pull_list`: a push-side 412 resolution can adopt a
+        // server demote onto our canonical row and leave our subtask a third
+        // level, and the same run's pull can be skipped whole by a transient
+        // `list_tasklists` fault (#150). Only the corrective server move inside
+        // `repair_third_level` is gated on push (#137).
+        for list in self.store.all_lists().await? {
+            let rows = self.store.list_tasks(&list.list.id).await?;
+            let third_level = reconcile::third_level_ids(&rows);
+            self.repair_third_level(&list.list.id, &third_level, out)
+                .await?;
+        }
+        Ok(())
     }
 
     // ─── Push ────────────────────────────────────────────────────────────────
@@ -1082,19 +1095,6 @@ impl SyncEngine {
             out.pulled += 1;
             out.mark_list_changed(&list.id);
         }
-
-        // D7: flatten any server-side third level this list holds. Detected
-        // over the LOCAL store after upsert (not the fetched batch), so a paged
-        // pull that landed a middle row's demotion without re-fetching the
-        // grandchild still repairs it; the all-clean guard in `third_level_ids`
-        // keeps an un-pushed optimistic demote from triggering a bogus repair.
-        // ALWAYS runs — invariant #1 (strictly one level) is absolute and does
-        // not depend on whether this sync may write to the server. A read-only
-        // sync still flattens the row LOCALLY; only the corrective server move
-        // inside `repair_third_level` is gated on push (#137).
-        let local = self.store.list_tasks(&list.id).await?;
-        let third_level = reconcile::third_level_ids(&local);
-        self.repair_third_level(&list.id, &third_level, out).await?;
 
         // Ghost detection: remove clean local rows absent from server.
         if complete {
@@ -5613,6 +5613,65 @@ mod tests {
         assert!(
             eng.store.find_task_any("C").await.unwrap().is_none(),
             "the vanished grandchild is ghost-removed on the next complete pull"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+    }
+
+    #[tokio::test]
+    async fn d7_flattens_a_third_level_when_the_pull_is_skipped_by_a_list_fetch_fault() {
+        // The oracle counterexample (#150). A push-side 412 resolution can adopt
+        // a server demote onto our canonical row, leaving a subtask a third
+        // level — and the SAME run's pull can be skipped entirely when
+        // `list_tasklists` fails transiently (a stray fault the property mix
+        // arms). D7 used to run only inside `pull_list`, so a skipped pull left
+        // the third level in the store: invariant #1 violated "immediately
+        // after a partial pull". The flatten is a LOCAL structural repair and
+        // must run after every sync regardless of what the pull did.
+        use crate::api::in_memory::Method;
+        let (client, eng) = engine_with_push().await;
+        client.seed_list("L1", "Inbox");
+        client.seed_task("L1", "P", "parent", "00000000000001");
+        client.seed_task("L1", "T", "to be demoted", "00000000000002");
+        eng.run().await.unwrap();
+        local_move(&eng, "T", Some("P"), None).await;
+        eng.run().await.unwrap();
+        // T is now a clean subtask of P, both locally and on the server.
+
+        // A synced grandchild C under the clean subtask T (§F residual): a real
+        // third level P > T > C sitting in the local store.
+        let seeded =
+            client.seed_task_with_parent("L1", "C", "grandchild", "00000000000003", Some("T"));
+        let mut c = dirty_task("C", "L1", "create");
+        c.task.parent = Some("T".into());
+        c.task.title = "grandchild".into();
+        c.task.etag = seeded.etag.clone();
+        c.task.web_view_link = Some("https://tasks.google.com/task/C".into());
+        c.sync_state = SyncState::Clean;
+        c.pending_op = None;
+        eng.store.upsert_task(&c).await.unwrap();
+
+        // This sync's PULL is skipped whole: `list_tasklists` faults transiently,
+        // so `pull_all` returns before any `pull_list` runs.
+        client.fail_next(Method::ListTaskLists, || ApiError::Server { status: 502 });
+        let out = eng.run().await.unwrap();
+
+        // The local third level is flattened anyway (invariant #1 is absolute).
+        assert_eq!(out.conflicts, 1, "resolving the third level counts");
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            c.task.parent, None,
+            "C is promoted to top-level even though the pull never ran"
+        );
+        assert_at_most_one_level(&eng, "L1").await;
+
+        // And it converges: the corrective move reached the server, so a later
+        // complete pull keeps one level and re-detects nothing.
+        client.clear_faults();
+        eng.run().await.unwrap();
+        let c = eng.store.find_task_any("C").await.unwrap().unwrap();
+        assert_eq!(
+            c.task.parent, None,
+            "C stays top-level after a healthy sync"
         );
         assert_at_most_one_level(&eng, "L1").await;
     }
