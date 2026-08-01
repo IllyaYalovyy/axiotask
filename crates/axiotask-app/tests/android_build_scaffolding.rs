@@ -114,3 +114,31 @@ fn mobile_entry_point_and_data_dir_wiring_are_in_place() {
         "desktop-only startup workarounds (the single-instance lock) must be cfg-gated"
     );
 }
+
+/// Android discards process stdout, so the default `tracing` `fmt` writer makes
+/// every log invisible on device — the first device bug would be undebuggable
+/// (#157). Logcat wiring lives in the `#[cfg(target_os = "android")]` branch of
+/// `init_tracing`, which is not compiled on this desktop host, so a source-string
+/// check is the only guard that keeps it from silently regressing. Desktop
+/// logging is exercised for real by the e2e smoke launch; here we only assert the
+/// mobile branch and its target-gated dependency stay wired.
+#[test]
+fn android_logs_are_routed_to_logcat() {
+    let root = app_root();
+
+    let lib_rs = fs::read_to_string(root.join("src/lib.rs")).expect("src/lib.rs readable");
+    assert!(
+        lib_rs.contains("#[cfg(target_os = \"android\")]")
+            && lib_rs.contains("AndroidLogMakeWriter"),
+        "the tracing subscriber must point at logcat via paranoid_android's \
+         AndroidLogMakeWriter on Android, or on-device logs vanish (#157)"
+    );
+
+    let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml readable");
+    assert!(
+        cargo_toml.contains("[target.'cfg(target_os = \"android\")'.dependencies]")
+            && cargo_toml.contains("paranoid-android"),
+        "the logcat writer must be an Android-only dependency so desktop builds \
+         stay unchanged and free of the ndk-sys chain"
+    );
+}

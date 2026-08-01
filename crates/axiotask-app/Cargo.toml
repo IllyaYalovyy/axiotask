@@ -41,6 +41,13 @@ dirs = { workspace = true }
 reqwest = { workspace = true }
 open = { workspace = true }
 
+# Android discards process stdout, so the default `tracing` `fmt` writer would
+# make every log invisible on device (#157). `paranoid-android` provides a
+# `MakeWriter` that routes the same subscriber to logcat. Android-only so desktop
+# builds never pull in the ndk-sys chain.
+[target.'cfg(target_os = "android")'.dependencies]
+paranoid-android = "0.2"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
