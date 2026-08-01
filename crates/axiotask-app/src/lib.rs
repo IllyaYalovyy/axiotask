@@ -92,6 +92,34 @@ fn resolve_db_path(app: &tauri::App) -> Result<std::path::PathBuf, String> {
     Ok(state::db_path_in(&base))
 }
 
+/// Installs the process-global `tracing` subscriber for this platform.
+///
+/// Desktop keeps the default `fmt` writer (stdout), byte-for-byte what it was
+/// before this split. Android discards process stdout, so that same writer would
+/// make every on-device log invisible — the first device bug would be
+/// undebuggable (#157). There the identical `fmt` subscriber is pointed at
+/// logcat through `paranoid_android::AndroidLogMakeWriter`, so
+/// `tracing::{info,warn,error}!` calls surface in `adb logcat` under the
+/// `axiotask` tag. ANSI is disabled on Android because logcat renders escape
+/// codes as literal noise; the env filter (`RUST_LOG`, default `info`) is shared,
+/// so log lines read the same on both platforms.
+fn init_tracing() {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    #[cfg(target_os = "android")]
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_ansi(false)
+        .with_writer(paranoid_android::AndroidLogMakeWriter::new(
+            "axiotask".to_owned(),
+        ))
+        .init();
+
+    #[cfg(not(target_os = "android"))]
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+}
+
 /// Shared entry point for both the desktop binary and the Android app.
 ///
 /// Desktop-only startup workarounds (the single-instance advisory-lock guard,
@@ -103,12 +131,7 @@ fn resolve_db_path(app: &tauri::App) -> Result<std::path::PathBuf, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[allow(clippy::too_many_lines)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    init_tracing();
 
     // Resolve the instance once, up front. This validates AXIOTASK_PREFIX (it
     // panics here with a clear message if malformed, before any data dir is
