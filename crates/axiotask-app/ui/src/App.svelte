@@ -1292,6 +1292,67 @@
     showMobileDrawer = false;
   }
 
+  // --- Android hardware back button (#159) ---
+  // wry's WryActivity routes the Android system back button through the WebView
+  // history: it calls webView.goBack() when the history can go back, otherwise it
+  // backgrounds the app. We exploit that: whenever a dismissible surface is open
+  // we keep ONE sentinel history entry live, so a back press pops it (firing
+  // `popstate`) instead of backgrounding. On popstate we close the single topmost
+  // surface — precedence drawer > dialog > panel > selection, with the
+  // full-screen help/onboarding overlays and transient popovers slotted above and
+  // among the dialogs — then the arm effect re-pushes a sentinel if anything is
+  // still open. With nothing open there is no sentinel, the WebView can't go
+  // back, and the button backgrounds the app. Desktop has no back button, so the
+  // sentinel is inert there.
+  //
+  // Arm-only, never eager history.back(): a surface closed by other means (Esc,
+  // backdrop tap, a button) leaves the sentinel in place, so the next back over
+  // it is a harmless no-op before the following back backgrounds the app. That is
+  // the safe trade for never mis-popping during a transient close→reopen — e.g.
+  // opening Properties from the drawer momentarily closes the drawer first.
+
+  // The topmost dismissible surface's closer, or null when nothing is open.
+  function topmostSurfaceCloser() {
+    if (showOnboarding) return closeOnboarding;
+    if (showCheatsheet) return () => (showCheatsheet = false);
+    if (showMobileDrawer) return () => (showMobileDrawer = false); // drawer
+    if (contextMenu) return () => (contextMenu = null);
+    if (datePickerTask) return () => (datePickerTask = null);
+    if (confirmDialog) return () => (confirmDialog = null);        // dialog
+    if (showProperties) return () => (showProperties = false);
+    if (bulkAdd) return () => (bulkAdd = null);
+    if (showSearch) return () => (showSearch = false);
+    if (movePickerTask) return () => (movePickerTask = null);
+    if (demoteTask) return () => (demoteTask = null);
+    if (bulkMovePicker) return () => (bulkMovePicker = false);
+    if (detailTask) return () => { closeDetail(); };               // panel
+    if (selectedIds.size > 0) return clearSelection;               // selection
+    return null;
+  }
+
+  let backSentinelArmed = false; // one live history sentinel while a surface is open
+  let anySurfaceOpen = $derived(topmostSurfaceCloser() !== null);
+  $effect(() => {
+    // Arm a sentinel the moment any surface opens; the popstate handler and the
+    // reopen path clear `backSentinelArmed`, so this re-arms after each back.
+    if (anySurfaceOpen && !backSentinelArmed) {
+      backSentinelArmed = true;
+      history.pushState({ axiotaskBackSentinel: true }, "");
+    }
+  });
+  $effect(() => {
+    function onPopState() {
+      const close = topmostSurfaceCloser();
+      // The sentinel was consumed by this back navigation either way.
+      backSentinelArmed = false;
+      // Close the one topmost surface; the arm effect re-arms if more remain.
+      // With nothing open we close nothing and let the app background.
+      if (close) close();
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  });
+
   async function handleKeydown(e) {
     if (showOnboarding) { closeOnboarding(); e.preventDefault(); return; }
     if (showCheatsheet) { showCheatsheet = false; e.preventDefault(); return; }
