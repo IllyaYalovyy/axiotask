@@ -125,9 +125,14 @@ pub async fn create_task(
     parent_id: Option<String>,
     title: String,
 ) -> Result<TaskView, String> {
-    create_task_inner(&state, list_id, parent_id, title)
+    let view = create_task_inner(&state, list_id, parent_id, title)
         .await
-        .map_err(|e| user_error("create_task", e))
+        .map_err(|e| user_error("create_task", e))?;
+    // The only on-device signal the emulator smoke gate (#161) can observe: the
+    // webview swallows its own console output, so a quick-add is invisible in
+    // `adb logcat` without this marker. `info` so it survives the default filter.
+    tracing::info!(id = %view.id, "create_task: created task");
+    Ok(view)
 }
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
