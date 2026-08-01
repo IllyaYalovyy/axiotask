@@ -713,8 +713,22 @@
 
   async function setDue(id, mv) {
     const listId = taskListId(id);
-    await cmd("set_due", { id, mv });
+    const res = await cmd("set_due", { id, mv });
     await refreshLists([listId]);
+    offerDueCascadeUndo(res, listId);
+  }
+
+  // #164: when a date edit dragged other rows to keep parent/subtask dates
+  // consistent, say so in an undoable toast. The whole cascade (the edited row
+  // plus every row it moved) reverts as one unit via the captured token.
+  function offerDueCascadeUndo(res, listId) {
+    if (!res || !res.cascaded) return;
+    const n = res.cascaded;
+    const message = res.cascaded_parent
+      ? "Parent date moved to match"
+      : `${n} subtask date${n === 1 ? "" : "s"} moved to match`;
+    if (undoItem) clearTimeout(undoItem.timer);
+    undoItem = { listId, dueUndo: res.undo, message, timer: setTimeout(() => { undoItem = null; }, 10000) };
   }
 
   // #37: open the calendar popover for a task, and apply the chosen date.
@@ -804,6 +818,9 @@
     } else if (undoItem.deleteToken) {
       // Undo delete — restore via token
       await cmd("undo_delete", { token: undoItem.deleteToken });
+    } else if (undoItem.dueUndo) {
+      // Undo a date edit + its parent/subtask cascade as one unit (#164).
+      await cmd("undo_set_due", { entries: undoItem.dueUndo });
     } else {
       // Fallback: re-create
       await cmd("create_task", { listId: undoItem.listId, parentId: null, title: undoItem.title || "Untitled" });
@@ -1060,11 +1077,12 @@
     const listId = taskListId(id);
     if (title !== undefined) await cmd("rename_task", { id, title });
     if (notes !== undefined) await cmd("set_notes", { id, notes });
+    let dueRes = null;
     if (due !== undefined) {
-      if (due) await cmd("set_due", { id, mv: "raw:" + due });
-      else await cmd("set_due", { id, mv: "Clear" });
+      dueRes = await cmd("set_due", { id, mv: due ? "raw:" + due : "Clear" });
     }
     await refreshLists([listId]);
+    offerDueCascadeUndo(dueRes, listId);
   }
 
   async function handleSearchSelect(task) {
@@ -1606,7 +1624,7 @@
 {#if undoItem || errorToast || infoToast}
   <div class="toast-stack">
     {#if undoItem}
-      <Toast message={undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
+      <Toast message={undoItem.message ?? (undoItem.isMoveToast ? undoItem.title : undoItem.isComplete ? `Completed "${undoItem.title}"` : `Deleted "${undoItem.title || 'task'}"`)} onundo={undoItem.isMoveToast ? null : handleUndo} ondismiss={() => { clearTimeout(undoItem.timer); undoItem = null; }} />
     {/if}
     {#if errorToast}
       <Toast message={errorToast.message} variant="error" ondismiss={() => { clearTimeout(errorToast.timer); errorToast = null; }} />

@@ -244,6 +244,7 @@ pub fn run() {
             commands::delete_task,
             commands::undo_delete,
             commands::set_due,
+            commands::undo_set_due,
             commands::set_notes,
             commands::move_task,
             commands::move_to_list,

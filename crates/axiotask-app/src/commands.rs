@@ -557,12 +557,38 @@ async fn restore_subtree(state: &AppState, token: &DeleteToken, now: &str) -> Re
     Ok(())
 }
 
+/// One row's due date as it stood BEFORE a `set_due` edit, captured so the edit
+/// and its parent/subtask cascade revert together as a single undo unit (#164).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DueUndoEntry {
+    pub id: String,
+    /// The value to restore; `None` means "no explicit date".
+    pub due: Option<String>,
+}
+
+/// Outcome of a `set_due` edit. Beyond the edit itself it reports the
+/// parent/subtask consistency cascade (#164): the undo unit covering the edited
+/// row and every row the cascade moved, and enough about the cascade for the UI
+/// to phrase its toast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetDueResult {
+    /// The edited row's prior date first, then each cascaded row's prior date.
+    /// Feed straight to `undo_set_due` to revert the whole edit as one unit.
+    pub undo: Vec<DueUndoEntry>,
+    /// How many OTHER rows the cascade moved (0 = no cascade, no toast).
+    pub cascaded: u32,
+    /// True when the cascade pulled the PARENT down (a child was set earlier);
+    /// false when it pulled CHILDREN up (a parent was set later). Selects the
+    /// toast wording.
+    pub cascaded_parent: bool,
+}
+
 #[tauri::command]
 pub async fn set_due(
     state: State<'_, Arc<AppState>>,
     id: String,
     mv: String,
-) -> Result<(), String> {
+) -> Result<SetDueResult, String> {
     set_due_inner(&state, id, mv)
         .await
         .map_err(|e| user_error("set_due", e))
@@ -570,17 +596,29 @@ pub async fn set_due(
 
 /// The command's logic, callable without a Tauri runtime so tests exercise the
 /// real behavior instead of a re-implementation.
-pub(crate) async fn set_due_inner(state: &AppState, id: String, mv: String) -> Result<(), String> {
+///
+/// This is the single command-layer primitive every date-entry path funnels
+/// through — detail panel, calendar picker, quick-add NL date, keyboard/row
+/// reschedule, and bulk ops all invoke `set_due`. After writing the edited
+/// row's date it enforces the #164 invariant (a subtask's explicit date is
+/// never before its parent's explicit date) with the editor's intent winning,
+/// so no path can bypass the rule. Sync is untouched: cascaded rows simply
+/// become dirty and push like any other local edit.
+pub(crate) async fn set_due_inner(
+    state: &AppState,
+    id: String,
+    mv: String,
+) -> Result<SetDueResult, String> {
     let mut t = find_task(state, &id).await?;
 
-    if let Some(raw) = mv.strip_prefix("raw:") {
+    let new_due = if let Some(raw) = mv.strip_prefix("raw:") {
         // Direct date string from the calendar picker / detail panel. Must be
         // canonicalized: Google rejects a bare "YYYY-MM-DD" with a permanent
         // 400, which would poison this row's push on every future sync run.
-        t.task.due = Some(
+        Some(
             axiotask_core::dates::normalize_due(raw)
                 .ok_or_else(|| format!("invalid due date: {raw}"))?,
-        );
+        )
     } else {
         let date_move = match mv.as_str() {
             "Today" => DateMove::Today,
@@ -591,18 +629,132 @@ pub(crate) async fn set_due_inner(state: &AppState, id: String, mv: String) -> R
             _ => return Err(format!("unknown date move: {mv}")),
         };
         let today = jiff::Zoned::now().date();
-        let new_due = apply_date_move(today, date_move);
-        t.task.due = new_due.map(|d| format!("{d}T00:00:00.000Z"));
+        apply_date_move(today, date_move).map(|d| format!("{d}T00:00:00.000Z"))
+    };
+
+    // The undo unit opens with the edited row's prior date, then grows by one
+    // entry per row the cascade moves.
+    let mut undo = vec![DueUndoEntry {
+        id: id.clone(),
+        due: t.task.due.clone(),
+    }];
+    let list_id = t.list_id.clone();
+    write_due(state, &mut t, new_due.clone()).await?;
+
+    let mut cascaded_parent = false;
+    // Rows without an explicit date never participate — clearing a date, or a
+    // parent that has no date, makes the rule inert.
+    if let Some(this_due) = new_due.as_deref() {
+        // A task is EITHER a subtask or a possible parent (subtasks are strictly
+        // one level, invariant #1), so exactly one arm runs.
+        let siblings = state
+            .store
+            .list_tasks(&list_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(parent_id) = t.task.parent.clone() {
+            // Editing a CHILD: if its parent sits later, pull the parent DOWN to
+            // match. Other children are all >= the old parent date > this_due, so
+            // lowering the parent cannot violate the rule for them.
+            if let Some(parent) = siblings.iter().find(|p| p.task.id == parent_id)
+                && parent
+                    .task
+                    .due
+                    .as_deref()
+                    .is_some_and(|pd| due_date_before(this_due, pd))
+            {
+                let mut p = parent.clone();
+                undo.push(DueUndoEntry {
+                    id: p.task.id.clone(),
+                    due: p.task.due.clone(),
+                });
+                write_due(state, &mut p, Some(this_due.to_string())).await?;
+                cascaded_parent = true;
+            }
+        } else {
+            // Editing a PARENT: pull UP every child that sits before it. Later
+            // children and children with no explicit date never move.
+            for child in siblings
+                .iter()
+                .filter(|c| c.task.parent.as_deref() == Some(id.as_str()))
+            {
+                if child
+                    .task
+                    .due
+                    .as_deref()
+                    .is_some_and(|cd| due_date_before(cd, this_due))
+                {
+                    let mut c = child.clone();
+                    undo.push(DueUndoEntry {
+                        id: c.task.id.clone(),
+                        due: c.task.due.clone(),
+                    });
+                    write_due(state, &mut c, Some(this_due.to_string())).await?;
+                }
+            }
+        }
     }
 
+    state.schedule_sync();
+    let cascaded = (undo.len() - 1) as u32;
+    Ok(SetDueResult {
+        undo,
+        cascaded,
+        cascaded_parent,
+    })
+}
+
+/// Whether calendar date `a` falls strictly before date `b`. Both are the
+/// Google canonical `YYYY-MM-DDT00:00:00.000Z`, so the date is the leading ten
+/// characters and a lexical compare of those equals a chronological one; equal
+/// dates are deliberately NOT "before" (the invariant allows child == parent).
+fn due_date_before(a: &str, b: &str) -> bool {
+    a.get(..10).unwrap_or(a) < b.get(..10).unwrap_or(b)
+}
+
+/// Write a new due date onto a row as a local edit and persist it. Marks the
+/// row dirty and sets its pending op via [`dirty_op`] (a never-pushed row stays
+/// a `create`); the etag is carried unchanged and `base_due` is managed by
+/// `upsert_task` — a clean→dirty write snapshots the old date, a repeat dirty
+/// write preserves the existing base (invariant #10).
+async fn write_due(
+    state: &AppState,
+    t: &mut StoredTask,
+    new_due: Option<String>,
+) -> Result<(), String> {
+    t.task.due = new_due;
     t.sync_state = SyncState::Dirty;
     t.pending_op = Some(dirty_op(t.task.etag.as_deref()));
     t.local_updated = now_str();
-    state
-        .store
-        .upsert_task(&t)
+    state.store.upsert_task(t).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn undo_set_due(
+    state: State<'_, Arc<AppState>>,
+    entries: Vec<DueUndoEntry>,
+) -> Result<(), String> {
+    undo_set_due_inner(&state, entries)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| user_error("undo_set_due", e))
+}
+
+/// Revert a `set_due` edit and its cascade as one unit by restoring each row's
+/// captured prior date. Restoration deliberately bypasses the consistency
+/// primitive: the pre-edit state was already consistent, so replaying the rule
+/// would be redundant (and, mid-typing, could re-cascade). A row that has since
+/// vanished (deleted, moved lists) is skipped — best-effort, matching
+/// `undo_delete`.
+pub(crate) async fn undo_set_due_inner(
+    state: &AppState,
+    entries: Vec<DueUndoEntry>,
+) -> Result<(), String> {
+    for e in entries {
+        let Ok(mut t) = find_task(state, &e.id).await else {
+            continue;
+        };
+        write_due(state, &mut t, e.due).await?;
+    }
     state.schedule_sync();
     Ok(())
 }
@@ -917,11 +1069,25 @@ pub async fn auth_status(state: State<'_, Arc<AppState>>) -> Result<bool, String
 }
 
 #[tauri::command]
-pub async fn auth_login(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+pub async fn auth_login(
+    // Tauri injects the AppHandle on every platform. Android drives consent +
+    // the deep-link redirect through it (opener plugin, intent-filter bridge);
+    // desktop's loopback flow ignores it. The `#[tauri::command]` macro does not
+    // support a `#[cfg]`-gated parameter, so the handle is taken unconditionally
+    // and simply unused on desktop — the desktop flow itself is unchanged.
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
     // Returns `true` rather than `()`: Tauri resolves a unit Ok as `null`,
     // which is exactly what the frontend's error wrapper returns on failure —
     // a successful login was indistinguishable from a failed one, so the UI
     // never flipped to signed-in until a restart (#45).
+    #[cfg(target_os = "android")]
+    state
+        .start_login_mobile(&app)
+        .await
+        .map_err(|e| user_error("auth_login", e))?;
+    #[cfg(not(target_os = "android"))]
     state
         .start_login()
         .await

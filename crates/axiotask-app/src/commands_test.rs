@@ -67,6 +67,64 @@ mod tests {
         state.store.upsert_task(&task).await.unwrap();
     }
 
+    /// Seed a task with an explicit parent and/or due date. `due` is the
+    /// canonical Google form (`YYYY-MM-DDT00:00:00.000Z`) or `None`.
+    async fn seed_task_full(
+        state: &AppState,
+        id: &str,
+        list_id: &str,
+        parent: Option<&str>,
+        due: Option<&str>,
+    ) {
+        seed_task_status(state, id, list_id, parent, due, TaskStatus::NeedsAction).await;
+    }
+
+    async fn seed_task_status(
+        state: &AppState,
+        id: &str,
+        list_id: &str,
+        parent: Option<&str>,
+        due: Option<&str>,
+        status: TaskStatus,
+    ) {
+        let task = StoredTask {
+            task: axiotask_core::model::Task {
+                id: id.into(),
+                parent: parent.map(str::to_string),
+                position: "00000000000001".into(),
+                title: id.into(),
+                notes: None,
+                status,
+                due: due.map(str::to_string),
+                completed: None,
+                etag: Some("e1".into()),
+                updated: "2026-01-01T00:00:00Z".into(),
+                web_view_link: None,
+                deleted: false,
+            },
+            list_id: list_id.into(),
+            sync_state: SyncState::Clean,
+            local_updated: "2026-01-01T00:00:00Z".into(),
+            pending_op: None,
+        };
+        state.store.upsert_task(&task).await.unwrap();
+    }
+
+    /// The canonical stored form of a bare date, for readable assertions.
+    fn due(date: &str) -> String {
+        format!("{date}T00:00:00.000Z")
+    }
+
+    async fn due_of(state: &AppState, list_id: &str, id: &str) -> Option<String> {
+        let tasks = state.store.list_tasks(list_id).await.unwrap();
+        tasks
+            .into_iter()
+            .find(|t| t.task.id == id)
+            .unwrap()
+            .task
+            .due
+    }
+
     #[tokio::test]
     async fn list_tasklists_returns_seeded_lists() {
         let (_client, state) = setup().await;
@@ -185,9 +243,209 @@ mod tests {
         let tasks = state.store.list_tasks("L1").await.unwrap();
         assert!(tasks[0].task.due.is_some());
         assert_eq!(tasks[0].sync_state, SyncState::Dirty);
-        let due = tasks[0].task.due.as_ref().unwrap();
+        let d = tasks[0].task.due.as_ref().unwrap();
         let tomorrow = today.tomorrow().unwrap();
-        assert!(due.starts_with(&tomorrow.to_string()));
+        assert!(d.starts_with(&tomorrow.to_string()));
+    }
+
+    // --- #164: parent/subtask due-date consistency ---------------------------
+    //
+    // Invariant enforced at the moment of a LOCAL edit: a subtask's explicit due
+    // date may never be before its parent's explicit due date. Every date-entry
+    // path funnels through the single `set_due` command, so exercising
+    // `set_due_inner` (both the `raw:` picker path and the date-move path) proves
+    // no path can bypass the primitive.
+
+    /// Rule 1: setting the PARENT later pulls up only the children that sit
+    /// before it. Later children and children with no date never move.
+    #[tokio::test]
+    async fn parent_edit_pulls_earlier_children_up_only() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C_early", "L1", Some("P"), Some(&due("2026-08-05"))).await;
+        seed_task_full(&state, "C_late", "L1", Some("P"), Some(&due("2026-08-20"))).await;
+        seed_task_full(&state, "C_none", "L1", Some("P"), None).await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "raw:2026-08-15".into())
+            .await
+            .unwrap();
+
+        assert_eq!(due_of(&state, "L1", "P").await, Some(due("2026-08-15")));
+        // Earlier child pulled UP to the parent's new date.
+        assert_eq!(
+            due_of(&state, "L1", "C_early").await,
+            Some(due("2026-08-15"))
+        );
+        // Later child untouched; child with no explicit date never participates.
+        assert_eq!(
+            due_of(&state, "L1", "C_late").await,
+            Some(due("2026-08-20"))
+        );
+        assert_eq!(due_of(&state, "L1", "C_none").await, None);
+        assert_eq!(res.cascaded, 1);
+        assert!(!res.cascaded_parent);
+    }
+
+    /// Rule 2: setting a CHILD before its parent pulls the parent DOWN to match;
+    /// the child's chosen date stands, siblings are untouched.
+    #[tokio::test]
+    async fn child_set_earlier_pulls_parent_down() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C2", "L1", Some("P"), Some(&due("2026-08-25"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "C".into(), "raw:2026-08-05".into())
+            .await
+            .unwrap();
+
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-05")));
+        assert_eq!(due_of(&state, "L1", "P").await, Some(due("2026-08-05")));
+        // The other child is later than the new parent date — untouched.
+        assert_eq!(due_of(&state, "L1", "C2").await, Some(due("2026-08-25")));
+        assert_eq!(res.cascaded, 1);
+        assert!(res.cascaded_parent);
+    }
+
+    /// Rule 3: a parent with no explicit date is inert — setting a child does
+    /// not manufacture a parent date, regardless of the child's date.
+    #[tokio::test]
+    async fn parent_without_date_is_inert() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, None).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-10"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "C".into(), "raw:2026-08-01".into())
+            .await
+            .unwrap();
+
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-01")));
+        assert_eq!(due_of(&state, "L1", "P").await, None);
+        assert_eq!(res.cascaded, 0);
+    }
+
+    /// No-op: a child set LATER than its parent satisfies the invariant already.
+    #[tokio::test]
+    async fn child_set_later_than_parent_does_not_cascade() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-10"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "C".into(), "raw:2026-08-20".into())
+            .await
+            .unwrap();
+
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-20")));
+        assert_eq!(due_of(&state, "L1", "P").await, Some(due("2026-08-10")));
+        assert_eq!(res.cascaded, 0);
+    }
+
+    /// Equal dates are not "before" — no cascade when a child equals its parent.
+    #[tokio::test]
+    async fn equal_dates_do_not_cascade() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-10"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "raw:2026-08-10".into())
+            .await
+            .unwrap();
+        assert_eq!(res.cascaded, 0);
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-10")));
+    }
+
+    /// Clearing a date participates in nothing: a pre-existing violation
+    /// (e.g. arrived from another client) is left displayed as-is, not repaired.
+    #[tokio::test]
+    async fn clearing_a_date_never_cascades() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        // Parent already sits AFTER its child — a violation only a remote client
+        // could create. Clearing the parent must not touch the child.
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-05"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "Clear".into())
+            .await
+            .unwrap();
+        assert_eq!(res.cascaded, 0);
+        assert_eq!(due_of(&state, "L1", "P").await, None);
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-05")));
+    }
+
+    /// The date-MOVE path (keyboard `o`/`t`/`w`/`m`, row strip) routes through
+    /// the same primitive as the picker's `raw:` path.
+    #[tokio::test]
+    async fn date_move_path_also_cascades() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        // Child fixed in the far past so "Today" is always later than it.
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2020-01-01"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "Today".into())
+            .await
+            .unwrap();
+
+        let today = jiff::Zoned::now().date().to_string();
+        assert!(
+            due_of(&state, "L1", "C").await.unwrap().starts_with(&today),
+            "child pulled up to today via the date-move path"
+        );
+        assert_eq!(res.cascaded, 1);
+    }
+
+    /// Completed subtasks are included literally per the ratified rule (#164):
+    /// an earlier completed child is still pulled up when the parent moves.
+    #[tokio::test]
+    async fn completed_subtask_is_included_in_cascade() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_status(
+            &state,
+            "C",
+            "L1",
+            Some("P"),
+            Some(&due("2026-08-01")),
+            TaskStatus::Completed,
+        )
+        .await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "raw:2026-08-15".into())
+            .await
+            .unwrap();
+        assert_eq!(res.cascaded, 1);
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-15")));
+    }
+
+    /// One edit + its cascade is ONE undo unit: undoing reverts both the edited
+    /// row and every row the cascade moved to their prior dates.
+    #[tokio::test]
+    async fn cascade_reverts_as_one_undo_unit() {
+        let (_client, state) = setup().await;
+        seed_list(&state, "L1", "Inbox").await;
+        seed_task_full(&state, "P", "L1", None, Some(&due("2026-08-10"))).await;
+        seed_task_full(&state, "C", "L1", Some("P"), Some(&due("2026-08-05"))).await;
+
+        let res = crate::commands::set_due_inner(&state, "P".into(), "raw:2026-08-15".into())
+            .await
+            .unwrap();
+        assert_eq!(due_of(&state, "L1", "P").await, Some(due("2026-08-15")));
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-15")));
+
+        crate::commands::undo_set_due_inner(&state, res.undo)
+            .await
+            .unwrap();
+
+        // Both rows back to exactly their pre-edit dates.
+        assert_eq!(due_of(&state, "L1", "P").await, Some(due("2026-08-10")));
+        assert_eq!(due_of(&state, "L1", "C").await, Some(due("2026-08-05")));
     }
 
     #[tokio::test]
@@ -513,6 +771,61 @@ mod tests {
 
         assert!(!state.is_authenticated());
         assert!(!state.needs_reauth());
+    }
+
+    #[tokio::test]
+    async fn auth_exposes_three_distinct_states_not_two() {
+        // Invariant #6: auth is a THREE-state machine — signed out, signed in,
+        // and needs_reauth (a dead session: tokens still exist but refresh is
+        // permanently denied). Mobile OAuth must preserve this: a dead session
+        // is NOT the same as signed out, and a sync failure must never hide the
+        // fact that local tokens are still present. This exercises all three.
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+
+        // State 1 — SIGNED OUT: no tokens, no re-auth prompt.
+        assert!(!state.is_authenticated(), "fresh state is signed out");
+        assert!(!state.needs_reauth(), "signed out is not a re-auth prompt");
+
+        // State 2 — SIGNED IN: tokens present (as a completed mobile login would
+        // leave them), no re-auth prompt.
+        state
+            .token_store_for_test()
+            .save(&axiotask_core::auth::StoredTokens {
+                access_token: "at".into(),
+                refresh_token: "rt".into(),
+                access_expires_at: Some(i64::MAX),
+                scope: "tasks".into(),
+            })
+            .unwrap();
+        assert!(state.is_authenticated(), "stored tokens mean signed in");
+        assert!(!state.needs_reauth(), "a healthy session needs no re-auth");
+
+        // State 3 — NEEDS_REAUTH: refresh permanently denied. The tokens are
+        // STILL present (so this is distinct from signed out), and the flag both
+        // trips and rides the sync-status snapshot the main window renders.
+        client.fail_next(Method::ListTaskLists, || {
+            ApiError::AuthExpired("invalid_grant: Token has been expired or revoked.".into())
+        });
+        state.run_sync().await.unwrap_err();
+
+        assert!(state.needs_reauth(), "dead session must be flagged");
+        assert!(
+            state.is_authenticated(),
+            "needs_reauth keeps the tokens — it is NOT the signed-out state"
+        );
+        assert!(
+            state.sync_status().await.needs_reauth,
+            "the re-auth flag must reach the main window via the status snapshot"
+        );
     }
 
     #[tokio::test]
