@@ -1687,7 +1687,15 @@
   :global(body) { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   :global(*, *::before, *::after) { box-sizing: border-box; }
   .app { display: flex; height: 100vh; height: 100dvh; }
-  .sidebar-shell { display: flex; flex: 0 0 auto; min-height: 0; }
+  /* The sidebar (a slide-in drawer on mobile) hugs the top, bottom, and left
+     screen edges, so inset its content past the notch / gesture pill (#160).
+     0px fallbacks keep the desktop column flush when there is no safe area. */
+  .sidebar-shell {
+    display: flex; flex: 0 0 auto; min-height: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
   .content { position: relative; flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
   .pull-refresh {
     position: absolute; top: 0.45rem; left: 50%; transform: translateX(-50%); z-index: 900;
@@ -1695,7 +1703,11 @@
     color: var(--fg-secondary); border: 1px solid var(--border-faint); font-size: 0.75rem;
     box-shadow: 0 4px 14px rgba(0,0,0,0.18); pointer-events: none;
   }
-  .toolbar { padding: 0.4rem 1rem; display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
+  /* Fold the safe-area insets into the toolbar padding so its content clears
+     the status bar / notch (top) and a side notch (left/right) on an
+     edge-to-edge webview (#160). env() carries a 0px fallback so un-notched or
+     legacy webviews keep the original 0.4rem/1rem padding. */
+  .toolbar { padding: calc(0.4rem + env(safe-area-inset-top, 0px)) calc(1rem + env(safe-area-inset-right, 0px)) 0.4rem calc(1rem + env(safe-area-inset-left, 0px)); display: flex; align-items: center; border-bottom: 1px solid var(--bg-elevated); gap: 0.5rem; flex-wrap: wrap; }
   .mobile-nav-btn { display: none; background: none; border: 1px solid var(--border); color: var(--fg-secondary); width: 2rem; height: 2rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
   .mobile-nav-btn:hover { background: var(--bg-hover); color: var(--fg); }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -1729,8 +1741,12 @@
     padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer;
   }
   .search-btn:hover { background: var(--bg-hover); color: var(--fg); }
+  /* Keep the FAB above the bottom gesture pill and off a right-side notch
+     (#160); 0px fallback preserves the original 1rem offsets elsewhere. */
   .mobile-fab {
-    display: none; position: fixed; right: 1rem; bottom: 1rem; z-index: 950;
+    display: none; position: fixed;
+    right: calc(1rem + env(safe-area-inset-right, 0px));
+    bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); z-index: 950;
     width: 3.5rem; height: 3.5rem; border-radius: 50%; border: 0;
     background: var(--accent); color: var(--bg); font-size: 2rem; line-height: 1;
     box-shadow: 0 8px 24px rgba(0,0,0,0.28); cursor: pointer;
@@ -1767,7 +1783,7 @@
   /* Mobile (<700px): sidebar becomes a slide-in drawer. */
   @media (max-width: 700px) {
     .app { flex-direction: column; }
-    .toolbar { padding: 0.3rem 0.75rem; }
+    .toolbar { padding: calc(0.3rem + env(safe-area-inset-top, 0px)) calc(0.75rem + env(safe-area-inset-right, 0px)) 0.3rem calc(0.75rem + env(safe-area-inset-left, 0px)); }
     .quick-add { order: 10; flex-basis: 100%; max-width: none; }
     .mobile-nav-btn { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
     .sidebar-shell {
