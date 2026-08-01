@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "bash ../e2e/run-smoke.sh",
+    "mobile:smoke": "bash ../e2e/mobile-smoke.sh",
     "android:init": "cd .. && cargo tauri android init --skip-targets-install",
     "android:dev": "cd .. && cargo tauri android dev",
     "android:build": "cd .. && cargo tauri android build"

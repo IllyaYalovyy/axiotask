@@ -142,3 +142,95 @@ fn android_logs_are_routed_to_logcat() {
          stay unchanged and free of the ndk-sys chain"
     );
 }
+
+/// `create_task` emits an `info`-level logcat marker on success. This is the
+/// only on-device signal the emulator smoke gate (#161) can observe to prove a
+/// quick-add round-tripped through the backend — the webview swallows its own
+/// console output, so without this line `mobile-smoke.sh` would be asserting on
+/// nothing. Keep it `info` so it survives the default `EnvFilter` on device.
+#[test]
+fn create_task_emits_a_logcat_marker() {
+    let root = app_root();
+    let commands = fs::read_to_string(root.join("src/commands.rs")).expect("commands.rs readable");
+    assert!(
+        commands.contains("create_task: created task"),
+        "create_task must log an info marker so the emulator smoke gate can \
+         observe a quick-add on device (#161)"
+    );
+}
+
+/// The opt-in Android emulator smoke gate (#161). It can only run against a live
+/// emulator/device with the Android SDK present, so it never runs on this
+/// desktop host or in the automatic quality gate. Like the logcat wiring above,
+/// a source-string check is the only thing that keeps its essential steps from
+/// silently regressing: it must install the DEBUG apk for the real package,
+/// launch the real activity, drive a quick-add, and assert BOTH the startup log
+/// and the quick-add `create_task` log in `adb logcat`.
+#[test]
+fn mobile_smoke_gate_is_wired_and_opt_in() {
+    let root = app_root();
+    let script = root.join("e2e/mobile-smoke.sh");
+    assert!(
+        script.is_file(),
+        "the emulator smoke gate `e2e/mobile-smoke.sh` must be checked in (#161)"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&script)
+            .expect("mobile-smoke.sh metadata")
+            .permissions()
+            .mode();
+        assert!(
+            mode & 0o111 != 0,
+            "mobile-smoke.sh must be executable so `./mobile-smoke.sh` runs"
+        );
+    }
+
+    let sh = fs::read_to_string(&script).expect("mobile-smoke.sh readable");
+    for needle in [
+        // installs the DEBUG apk for the real package/activity
+        "adb",
+        "install",
+        "com.axiotask.desktop",
+        ".MainActivity",
+        "am start",
+        "logcat",
+        // launch assertion (startup line from init) + quick-add assertion
+        "starting default instance",
+        "create_task: created task",
+    ] {
+        assert!(
+            sh.contains(needle),
+            "mobile-smoke.sh must contain `{needle}` — a missing step means the \
+             gate no longer proves launch+quick-add on device (#161)"
+        );
+    }
+
+    // Opt-in: the desktop e2e runner must never chain into the emulator gate, so
+    // the always-on quality gate (which invokes run-smoke.sh) can't drag in a
+    // step that needs an emulator.
+    let run_smoke = fs::read_to_string(root.join("e2e/run-smoke.sh")).expect("run-smoke.sh");
+    assert!(
+        !run_smoke.contains("mobile-smoke"),
+        "the desktop e2e runner must not invoke the emulator gate — it is opt-in"
+    );
+
+    // Discoverable through the same entry-point convention as the other Android
+    // developer commands, but distinct from the automatic `test:e2e` gate.
+    let package = read_json(&root.join("ui/package.json"));
+    let scripts = package["scripts"]
+        .as_object()
+        .expect("ui/package.json scripts should be an object");
+    assert_eq!(
+        scripts.get("mobile:smoke").and_then(Value::as_str),
+        Some("bash ../e2e/mobile-smoke.sh"),
+        "ui/package.json should expose the opt-in emulator gate as `mobile:smoke`"
+    );
+    assert_eq!(
+        scripts.get("test:e2e").and_then(Value::as_str),
+        Some("bash ../e2e/run-smoke.sh"),
+        "the automatic e2e gate must stay the desktop smoke, not the emulator gate"
+    );
+}
