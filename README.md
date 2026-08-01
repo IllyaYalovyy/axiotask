@@ -90,6 +90,28 @@ npm run android:build
 `cargo tauri android dev` sets `TAURI_DEV_HOST`; the Vite dev server binds to
 that host so an Android device can reach the desktop development server.
 
+#### Release signing
+
+`npm run android:dev` and the emulator smoke gate use the auto-generated debug
+key, so no setup is needed for testing. A distributable release APK must be
+signed with a private upload key, which never enters the repo:
+
+1. Generate an upload keystore once (keep the `.jks` outside the repo — the root
+   `.gitignore` already excludes `*.jks`/`*.keystore`):
+
+   ```bash
+   keytool -genkey -v -keystore axiotask-upload.jks -alias axiotask \
+           -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. Copy `crates/axiotask-app/gen/android/keystore.properties.example` to
+   `keystore.properties` in the same directory and fill in `storeFile`,
+   `storePassword`, `keyAlias`, and `keyPassword`. That file is gitignored.
+
+When `keystore.properties` is present, `npm run android:build` signs the
+`release` build type with it. When it is absent, the release build stays
+unsigned and debug builds are unaffected.
+
 ### Linux system dependencies
 
 Tauri requires system libraries for WebView and window management:

@@ -159,6 +159,79 @@ fn create_task_emits_a_logcat_marker() {
     );
 }
 
+/// Release signing (#162). Play/sideload release APKs must be signed with a
+/// private upload key, but the keystore and its passwords are secrets that never
+/// enter the repo — they live in a gitignored `keystore.properties` (and the
+/// `.jks`/`.keystore` file it points at). The Gradle build must (a) load that
+/// file when present and sign the `release` build type with it, and (b) fall
+/// back cleanly to an unsigned release when it is absent, so debug builds and
+/// this keystore-less gate host still configure without throwing. Gradle
+/// configuration is not run on this desktop host, so a source-string check is
+/// the only guard that keeps the wiring — and the secret-exclusion — from
+/// silently regressing.
+#[test]
+fn android_release_signing_reads_gitignored_keystore_properties() {
+    let root = app_root();
+
+    let gradle = fs::read_to_string(root.join("gen/android/app/build.gradle.kts"))
+        .expect("app/build.gradle.kts readable");
+
+    // (a) Loads the gitignored secrets file and defines a release signing config
+    // from it — store file, store password, key alias, and key password.
+    assert!(
+        gradle.contains("keystore.properties"),
+        "release build must load signing secrets from a gitignored keystore.properties (#162)"
+    );
+    assert!(
+        gradle.contains("signingConfigs") && gradle.contains("create(\"release\")"),
+        "app/build.gradle.kts must declare a `release` signingConfig (#162)"
+    );
+    for key in ["storeFile", "storePassword", "keyAlias", "keyPassword"] {
+        assert!(
+            gradle.contains(key),
+            "the release signingConfig must read `{key}` from keystore.properties (#162)"
+        );
+    }
+    assert!(
+        gradle.contains("signingConfig = signingConfigs.getByName(\"release\")"),
+        "the release build type must actually apply the release signingConfig (#162)"
+    );
+
+    // (b) Falls back gracefully when keystore.properties is absent (the BLOCKED
+    // state: no keystore has been generated yet). The signing config must be
+    // guarded by an existence check so configuration never throws on a host
+    // without the secrets — debug APKs must keep building.
+    assert!(
+        gradle.contains(".exists()"),
+        "release signing must be guarded by a keystore.properties existence check \
+         so keystore-less hosts still build (debug APKs suffice) (#162)"
+    );
+
+    // The secrets must never be committable: the Android project ignores the
+    // properties file, and the repo root ignores the keystore binaries.
+    let android_gitignore = fs::read_to_string(root.join("gen/android/.gitignore"))
+        .expect("gen/android/.gitignore readable");
+    assert!(
+        android_gitignore.contains("keystore.properties"),
+        "gen/android/.gitignore must exclude keystore.properties so signing secrets never land in the repo (#162)"
+    );
+
+    // A committed, secret-free template documents the required keys for the user
+    // who will generate the keystore. It must not itself be the ignored name.
+    let example = root.join("gen/android/keystore.properties.example");
+    assert!(
+        example.is_file(),
+        "a keystore.properties.example template must be checked in to document the signing keys (#162)"
+    );
+    let example_body = fs::read_to_string(&example).expect("keystore.properties.example readable");
+    for key in ["storeFile", "storePassword", "keyAlias", "keyPassword"] {
+        assert!(
+            example_body.contains(key),
+            "keystore.properties.example must document the `{key}` field (#162)"
+        );
+    }
+}
+
 /// The opt-in Android emulator smoke gate (#161). It can only run against a live
 /// emulator/device with the Android SDK present, so it never runs on this
 /// desktop host or in the automatic quality gate. Like the logcat wiring above,

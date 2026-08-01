@@ -13,9 +13,32 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing secrets live in a gitignored `keystore.properties` (and the
+// `.jks`/`.keystore` file it points at) — never in the repo. When it is absent
+// (no keystore generated yet, or a keystore-less CI/test host) the release build
+// simply stays unsigned so debug APKs and configuration keep working.
+val keystorePropertiesFile = file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+val hasReleaseSigning = keystorePropertiesFile.exists() &&
+    keystoreProperties.getProperty("storeFile") != null
+
 android {
     compileSdk = 36
     namespace = "com.axiotask.desktop"
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.axiotask.desktop"
@@ -44,6 +67,9 @@ android {
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
                     .toList().toTypedArray()
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     kotlinOptions {
