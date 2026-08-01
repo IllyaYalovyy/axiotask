@@ -11,6 +11,14 @@ description = "axiotask desktop app — Tauri shell over axiotask-core."
 [lints]
 workspace = true
 
+# The Tauri wiring lives in a library so both entry points share it: the desktop
+# binary links it as an rlib; the Android `TauriActivity` loads it as a cdylib
+# (named `axiotask_app`) and calls the exported `run` mobile entry point.
+[lib]
+name = "axiotask_app"
+crate-type = ["lib", "cdylib", "staticlib"]
+path = "src/lib.rs"
+
 [[bin]]
 name = "axiotask"
 path = "src/main.rs"

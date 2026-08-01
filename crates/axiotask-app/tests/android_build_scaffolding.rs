@@ -85,3 +85,32 @@ fn android_build_uses_tauri_mobile_entry_points() {
         "Vite should listen on TAURI_DEV_HOST so Android devices can reach the dev server"
     );
 }
+
+/// The Android `TauriActivity` loads a cdylib named `axiotask_app` and calls its
+/// exported `run` mobile entry point. The mobile-only branches below are not
+/// compiled on this desktop host, so these string checks keep the wiring from
+/// silently regressing — losing any one of them means Android cannot start.
+#[test]
+fn mobile_entry_point_and_data_dir_wiring_are_in_place() {
+    let root = app_root();
+
+    let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml readable");
+    assert!(
+        cargo_toml.contains("name = \"axiotask_app\"") && cargo_toml.contains("\"cdylib\""),
+        "the app must expose a cdylib named `axiotask_app` for the Android activity to load"
+    );
+
+    let lib_rs = fs::read_to_string(root.join("src/lib.rs")).expect("src/lib.rs readable");
+    assert!(
+        lib_rs.contains("#[cfg_attr(mobile, tauri::mobile_entry_point)]"),
+        "`run` must be the mobile entry point so Android has a Rust entry"
+    );
+    assert!(
+        lib_rs.contains("#[cfg(mobile)]") && lib_rs.contains("app_data_dir()"),
+        "mobile must resolve its data dir via the Tauri path resolver, not `dirs`"
+    );
+    assert!(
+        lib_rs.contains("#[cfg(desktop)]"),
+        "desktop-only startup workarounds (the single-instance lock) must be cfg-gated"
+    );
+}

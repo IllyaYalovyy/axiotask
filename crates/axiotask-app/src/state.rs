@@ -1,6 +1,6 @@
 //! Application state: store, sync engine, and background scheduler.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
@@ -1184,14 +1184,29 @@ fn build_http_client(
     HttpClient::new(authed)
 }
 
-/// Default database path: `$XDG_DATA_HOME/<app-dir>/axiotask.sqlite`, where
-/// `<app-dir>` is instance-aware (`axiotask` or `axiotask-<prefix>`). The auth
-/// `tokens.json` lives beside it, so isolating this directory isolates the
+/// The instance's database path rooted at `base` — `base/<app-dir>/axiotask.sqlite`,
+/// where `<app-dir>` is instance-aware (`axiotask` or `axiotask-<prefix>`). The
+/// auth `tokens.json` lives beside it, so isolating this directory isolates the
 /// session too.
+///
+/// Split out so the layout is testable without the environment and shared by
+/// both roots: desktop derives `base` from [`dirs::data_dir`]; mobile derives it
+/// from Tauri's path resolver (`app.path().app_data_dir()`), the only writable
+/// per-app location on Android.
+pub fn db_path_in(base: &Path) -> PathBuf {
+    base.join(axiotask_core::config::app_dir_name())
+        .join("axiotask.sqlite")
+}
+
+/// Default database path: `$XDG_DATA_HOME/<app-dir>/axiotask.sqlite`.
+///
+/// Desktop only: `dirs::data_dir()` resolves the XDG/OS data root. On mobile
+/// that root is not app-writable, so the entry point resolves the base through
+/// the Tauri path resolver and calls [`db_path_in`] directly.
+#[cfg(desktop)]
 pub fn default_db_path() -> PathBuf {
     let data = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    data.join(axiotask_core::config::app_dir_name())
-        .join("axiotask.sqlite")
+    db_path_in(&data)
 }
 
 /// Single-instance guard (#48): take an exclusive advisory lock on a file next
@@ -1304,6 +1319,38 @@ mod tests {
             access_expires_at: Some(1_700_000_000),
             scope: "https://www.googleapis.com/auth/tasks".into(),
         }
+    }
+
+    /// The DB layout is `base/<instance-dir>/axiotask.sqlite`, with `base` the
+    /// ONLY variable between platforms: desktop roots it at `dirs::data_dir()`,
+    /// mobile at the Tauri app_data_dir. Both must produce the same subtree so
+    /// the store, tokens, and lock stay co-located wherever the base lands.
+    #[test]
+    fn db_path_in_roots_the_shared_db_layout_under_the_given_base() {
+        let dir_name = axiotask_core::config::app_dir_name();
+        let desktop_base = Path::new("/xdg/data");
+        let mobile_base = Path::new("/data/data/com.axiotask.desktop/files");
+
+        for base in [desktop_base, mobile_base] {
+            let path = db_path_in(base);
+            assert!(path.starts_with(base), "db must live under {base:?}");
+            assert_eq!(path.file_name().unwrap(), "axiotask.sqlite");
+            assert_eq!(
+                path.parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                dir_name,
+                "an instance-named dir sits between the base and the db file",
+            );
+        }
+
+        // Desktop's default path is exactly `db_path_in` rooted at the OS data
+        // dir — the mobile entry point only swaps the base, nothing else.
+        let expected = db_path_in(&dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
+        assert_eq!(default_db_path(), expected);
     }
 
     #[test]
