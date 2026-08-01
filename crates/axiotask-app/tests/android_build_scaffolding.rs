@@ -266,7 +266,7 @@ fn mobile_smoke_gate_is_wired_and_opt_in() {
         // installs the DEBUG apk for the real package/activity
         "adb",
         "install",
-        "com.axiotask.desktop",
+        "com.axiotask.app",
         ".MainActivity",
         "am start",
         "logcat",

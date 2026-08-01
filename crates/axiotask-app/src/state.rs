@@ -1329,7 +1329,7 @@ mod tests {
     fn db_path_in_roots_the_shared_db_layout_under_the_given_base() {
         let dir_name = axiotask_core::config::app_dir_name();
         let desktop_base = Path::new("/xdg/data");
-        let mobile_base = Path::new("/data/data/com.axiotask.desktop/files");
+        let mobile_base = Path::new("/data/data/com.axiotask.app/files");
 
         for base in [desktop_base, mobile_base] {
             let path = db_path_in(base);

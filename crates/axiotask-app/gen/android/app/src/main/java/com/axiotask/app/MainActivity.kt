@@ -1,4 +1,4 @@
-package com.axiotask.desktop
+package com.axiotask.app
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

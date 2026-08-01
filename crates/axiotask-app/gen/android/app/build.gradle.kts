@@ -28,7 +28,7 @@ val hasReleaseSigning = keystorePropertiesFile.exists() &&
 
 android {
     compileSdk = 36
-    namespace = "com.axiotask.desktop"
+    namespace = "com.axiotask.app"
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -41,7 +41,7 @@ android {
     }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.axiotask.desktop"
+        applicationId = "com.axiotask.app"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

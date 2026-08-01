@@ -13,7 +13,7 @@
 #
 # What it does, all through `adb`:
 #   1. builds (unless AXIOTASK_APK points at a prebuilt debug apk) and installs
-#      the DEBUG apk for com.axiotask.desktop
+#      the DEBUG apk for com.axiotask.app
 #   2. clears logcat, launches .MainActivity, and asserts the startup line
 #      ("starting default instance") appears in logcat  → app launched, Rust ran
 #   3. drives a quick-add via `adb shell input` (focus the quick-add field via
@@ -29,7 +29,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 APP="$(cd "$HERE/.." && pwd)"          # crates/axiotask-app
 ROOT="$(cd "$APP/../.." && pwd)"
 
-PKG="com.axiotask.desktop"
+PKG="com.axiotask.app"
 ACTIVITY="$PKG/.MainActivity"
 TAG="axiotask"                          # paranoid_android logcat tag (src/lib.rs)
 LAUNCH_MARK="starting default instance" # emitted by init in src/lib.rs
