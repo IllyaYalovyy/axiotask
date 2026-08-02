@@ -11,6 +11,8 @@ mod store;
 
 pub use client::{AuthedClient, RefreshError, RefreshFn, parse_refresh_response};
 pub use error::AuthError;
-pub use flow::{OAuthConfig, login};
+pub use flow::{
+    MOBILE_REDIRECT_URI, OAuthConfig, build_auth_url, complete_mobile_login, login, parse_redirect,
+};
 pub use pkce::{Pkce, PkceParams, random_state};
 pub use store::{InMemoryTokenStore, KeyringTokenStore, StoredTokens, TokenStore};

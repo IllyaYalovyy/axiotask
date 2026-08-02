@@ -47,6 +47,12 @@ open = { workspace = true }
 # builds never pull in the ndk-sys chain.
 [target.'cfg(target_os = "android")'.dependencies]
 paranoid-android = "0.2"
+# Mobile OAuth (#158): consent opens through the opener plugin and the
+# authorization code returns on the `com.axiotask.app:/oauth2redirect` custom
+# scheme, captured by the deep-link plugin. Android-only so desktop builds stay
+# byte-identical and never pull these in.
+tauri-plugin-deep-link = "2"
+tauri-plugin-opener = "2"
 
 [dev-dependencies]
 tempfile = { workspace = true }
