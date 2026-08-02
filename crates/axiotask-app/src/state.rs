@@ -14,6 +14,19 @@ use axiotask_core::auth::{
 use axiotask_core::store::Store;
 use axiotask_core::sync::{SyncEngine, SyncOutcome};
 
+/// Public Android OAuth **client id**, baked in at build time.
+///
+/// Mobile OAuth clients are public (a secret can't be hidden inside an APK), so
+/// this id ships in the binary with NO secret. It defaults to the app's
+/// registered Android client and can be overridden at build time via the
+/// `AXIOTASK_ANDROID_CLIENT_ID` environment variable — the only "injection"
+/// point, resolved at compile time so no credential is read from disk on device.
+#[cfg(target_os = "android")]
+const ANDROID_OAUTH_CLIENT_ID: &str = match option_env!("AXIOTASK_ANDROID_CLIENT_ID") {
+    Some(id) => id,
+    None => "61486741888-a5alhtbcm86e3e0gd8s9a0j01gn6sum7.apps.googleusercontent.com",
+};
+
 /// Debounce window: coalesce rapid mutations into a single sync.
 const SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
 /// Periodic sync interval to catch remote changes.
@@ -229,6 +242,38 @@ impl SyncNotifier for NoopSyncNotifier {
     fn notify_sync(&self, _status: &SyncStatus) {}
 }
 
+/// Delivers the OAuth deep-link redirect from the intent-filter handler to the
+/// in-flight [`AppState::start_login_mobile`] call.
+///
+/// Registered as Tauri managed state on Android. The login flow `arm()`s it
+/// (installing a one-shot receiver) just before opening consent; the app's
+/// `on_open_url` deep-link handler calls `deliver()` when the OS routes the
+/// `com.axiotask.app:/oauth2redirect` URL back into the process. A stray
+/// redirect with no login in flight is simply dropped.
+#[cfg(target_os = "android")]
+#[derive(Default)]
+pub struct MobileAuthBridge {
+    tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
+}
+
+#[cfg(target_os = "android")]
+impl MobileAuthBridge {
+    /// Install a fresh one-shot channel and return its receiver. Any previously
+    /// armed (abandoned) login is superseded.
+    pub fn arm(&self) -> tokio::sync::oneshot::Receiver<String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.tx.lock().unwrap() = Some(tx);
+        rx
+    }
+
+    /// Hand a delivered redirect URL to the waiting login flow, if one is armed.
+    pub fn deliver(&self, redirect_url: String) {
+        if let Some(tx) = self.tx.lock().unwrap().take() {
+            let _ = tx.send(redirect_url);
+        }
+    }
+}
+
 /// Shared application state managed by Tauri.
 pub struct AppState {
     pub store: Store,
@@ -288,6 +333,12 @@ impl AppState {
         let store = Store::new(pool);
 
         let config = axiotask_core::config::AppConfig::load();
+        // Desktop reads its "Desktop app" client id + secret from the config
+        // file; Android has no per-user config credential — it uses the public
+        // client id compiled in at build time and carries NO secret.
+        #[cfg(target_os = "android")]
+        let oauth_config = OAuthConfig::google_tasks_mobile(ANDROID_OAUTH_CLIENT_ID);
+        #[cfg(not(target_os = "android"))]
         let oauth_config =
             OAuthConfig::google_tasks(&config.google.client_id, &config.google.client_secret);
 
@@ -610,6 +661,66 @@ impl AppState {
             Ok(None) => tracing::error!("tokens NOT persisted after login!"),
             Err(e) => tracing::error!("token store read error: {e}"),
         }
+        Ok(())
+    }
+
+    /// Run the Android OAuth login flow (custom-scheme PKCE, no loopback).
+    ///
+    /// There is no local HTTP server on mobile: consent opens in the system
+    /// browser via the Tauri opener plugin, and Google returns the code on the
+    /// `com.axiotask.app:/oauth2redirect` deep link, which the intent-filter
+    /// routes into [`MobileAuthBridge`]. We arm the bridge, open consent, await
+    /// the delivered redirect URL, then run the same code exchange the desktop
+    /// flow uses — the only difference is how the redirect is delivered.
+    #[cfg(target_os = "android")]
+    pub async fn start_login_mobile(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        use axiotask_core::auth::{MOBILE_REDIRECT_URI, build_auth_url, complete_mobile_login};
+        use axiotask_core::auth::{Pkce, random_state};
+        use tauri::Manager;
+        use tauri_plugin_opener::OpenerExt;
+
+        tracing::info!("starting mobile OAuth login flow...");
+        let pkce = Pkce::generate();
+        let state_param = random_state();
+
+        // Arm the deep-link bridge BEFORE opening consent so no redirect can be
+        // missed, then open the system browser for consent.
+        let bridge = app.state::<MobileAuthBridge>();
+        let redirect_rx = bridge.arm();
+        let auth_url = build_auth_url(
+            &self.oauth_config,
+            MOBILE_REDIRECT_URI,
+            &pkce.challenge,
+            pkce.method,
+            &state_param,
+        );
+        app.opener()
+            .open_url(auth_url, None::<&str>)
+            .map_err(|e| format!("open consent: {e}"))?;
+
+        // Wait for the OS to route the custom-scheme redirect back to us.
+        let redirect_url = redirect_rx
+            .await
+            .map_err(|_| "sign-in was cancelled before the redirect arrived".to_string())?;
+
+        let tokens = complete_mobile_login(
+            &self.oauth_config,
+            &self.token_store,
+            &redirect_url,
+            &state_param,
+            &pkce.verifier,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("mobile login failed: {e}");
+            e.to_string()
+        })?;
+
+        tracing::info!("mobile login successful, switching to HTTP client");
+        let http_client = build_http_client(tokens, self.token_store.clone(), &self.oauth_config);
+        *self.client.lock().await = Arc::new(http_client);
+        // Fresh grant — background syncs may resume.
+        self.needs_reauth.store(false, Ordering::Relaxed);
         Ok(())
     }
 

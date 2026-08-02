@@ -232,6 +232,94 @@ fn android_release_signing_reads_gitignored_keystore_properties() {
     }
 }
 
+/// Mobile OAuth (#158). Android has no loopback server, so the PKCE
+/// authorization code returns on a custom-scheme deep link
+/// (`com.axiotask.app:/oauth2redirect`) instead. Three pieces must stay wired,
+/// and none of them is compiled on this desktop host — the intent-filter lives
+/// in the checked-in manifest, and the plugin registration + mobile login live
+/// in `#[cfg(target_os = "android")]` branches — so source-string checks are the
+/// only guard against a silent regression that would make sign-in impossible on
+/// device. The redirect PARSING and code exchange are covered for real by unit
+/// tests in `axiotask-core::auth::flow`; here we only assert the on-device wiring.
+#[test]
+fn android_oauth_deep_link_and_intent_filter_are_wired() {
+    let root = app_root();
+
+    // (1) The intent-filter routes the custom-scheme redirect back into the app.
+    let manifest = fs::read_to_string(root.join("gen/android/app/src/main/AndroidManifest.xml"))
+        .expect("AndroidManifest.xml readable");
+    assert!(
+        manifest.contains("android.intent.action.VIEW"),
+        "the OAuth redirect intent-filter needs a VIEW action (#158)"
+    );
+    assert!(
+        manifest.contains("android.intent.category.BROWSABLE"),
+        "the OAuth redirect intent-filter must be BROWSABLE so the browser can hand off the redirect (#158)"
+    );
+    assert!(
+        manifest.contains("android:scheme=\"com.axiotask.app\"")
+            && manifest.contains("android:path=\"/oauth2redirect\""),
+        "the intent-filter must match `com.axiotask.app:/oauth2redirect` exactly (#158)"
+    );
+
+    // (2) The deep-link and opener plugins are Android-only dependencies, so
+    // desktop builds stay byte-identical and never pull them in.
+    let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml readable");
+    assert!(
+        cargo_toml.contains("[target.'cfg(target_os = \"android\")'.dependencies]")
+            && cargo_toml.contains("tauri-plugin-deep-link")
+            && cargo_toml.contains("tauri-plugin-opener"),
+        "deep-link + opener must be Android-only deps so desktop is untouched (#158)"
+    );
+
+    // (3) Startup registers both plugins and forwards the redirect into the
+    // in-flight mobile login via the deep-link bridge.
+    let lib_rs = fs::read_to_string(root.join("src/lib.rs")).expect("src/lib.rs readable");
+    assert!(
+        lib_rs.contains("tauri_plugin_deep_link::init()")
+            && lib_rs.contains("tauri_plugin_opener::init()"),
+        "both mobile OAuth plugins must be registered on the Android builder (#158)"
+    );
+    assert!(
+        lib_rs.contains("on_open_url") && lib_rs.contains("MobileAuthBridge"),
+        "the deep-link handler must deliver the redirect to the MobileAuthBridge (#158)"
+    );
+
+    // The mobile login flow and the build-time public client id live in state.rs.
+    let state_rs = fs::read_to_string(root.join("src/state.rs")).expect("src/state.rs readable");
+    assert!(
+        state_rs.contains("start_login_mobile"),
+        "the Android login entry point start_login_mobile must exist (#158)"
+    );
+    assert!(
+        state_rs.contains("google_tasks_mobile")
+            && state_rs.contains("AXIOTASK_ANDROID_CLIENT_ID")
+            && state_rs.contains(
+                "61486741888-a5alhtbcm86e3e0gd8s9a0j01gn6sum7.apps.googleusercontent.com"
+            ),
+        "Android must use the public build-time client id with no secret (#158)"
+    );
+
+    // A platform-scoped capability grants the plugins on Android without touching
+    // the desktop ACL.
+    let cap = read_json(&root.join("capabilities/mobile.json"));
+    assert_eq!(
+        cap["platforms"].as_array().map(Vec::as_slice),
+        Some([Value::String("android".into())].as_slice()),
+        "the mobile OAuth capability must be scoped to android only (#158)"
+    );
+    let perms: Vec<&str> = cap["permissions"]
+        .as_array()
+        .expect("permissions array")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        perms.contains(&"deep-link:default") && perms.contains(&"opener:default"),
+        "the mobile capability must grant deep-link + opener (#158), got {perms:?}"
+    );
+}
+
 /// The opt-in Android emulator smoke gate (#161). It can only run against a live
 /// emulator/device with the Android SDK present, so it never runs on this
 /// desktop host or in the automatic quality gate. Like the logcat wiring above,

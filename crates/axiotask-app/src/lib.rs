@@ -174,7 +174,22 @@ pub fn run() {
         serde_json::to_string(&instance).unwrap_or_else(|_| "null".into())
     );
 
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    // Android OAuth: consent opens through the opener plugin and Google returns
+    // the code on the `com.axiotask.app:/oauth2redirect` deep link, captured by
+    // the deep-link plugin (see the intent-filter in AndroidManifest.xml).
+    // Desktop uses the loopback flow and registers neither plugin, so its
+    // builder is byte-identical to what it was before mobile OAuth.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_deep_link::init());
+    }
+
+    builder
         .setup(move |app| {
             let db_path = match resolve_db_path(app) {
                 Ok(p) => p,
@@ -197,6 +212,23 @@ pub fn run() {
             };
             let state = Arc::new(app_state);
             app.manage(state.clone());
+
+            // Android OAuth deep-link bridge: manage the one-shot bridge and
+            // forward every redirect the OS routes to `com.axiotask.app:/…` into
+            // the in-flight mobile login (see AppState::start_login_mobile).
+            #[cfg(target_os = "android")]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                app.manage(state::MobileAuthBridge::default());
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    use tauri::Manager;
+                    let bridge = handle.state::<state::MobileAuthBridge>();
+                    for url in event.urls() {
+                        bridge.deliver(url.to_string());
+                    }
+                });
+            }
 
             // Wire the Tauri event emitter so background syncs surface in the UI.
             state.set_sync_notifier(Arc::new(TauriSyncNotifier {
