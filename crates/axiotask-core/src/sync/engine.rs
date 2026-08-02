@@ -3509,7 +3509,10 @@ mod tests {
         assert_eq!(out.pushed, 1);
         let page = client.list_tasks("L1", None).await.unwrap();
         assert_eq!(page.items[0].due, None, "due cleared on the server");
-        assert!(eng.store.list_tasks("L1").await.unwrap()[0].sync_state == SyncState::Clean);
+        assert_eq!(
+            eng.store.list_tasks("L1").await.unwrap()[0].sync_state,
+            SyncState::Clean
+        );
     }
 
     #[tokio::test]
