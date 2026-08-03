@@ -41,6 +41,9 @@ For a sub task, it only its own date.
 **Q: How are the three auth states handled?**
 Signed-out, signed-in, and needs-reauth (tokens exist but the refresh token is permanently revoked/expired). A permanently denied refresh surfaces as "session expired" and prompts re-auth, distinct from a transient network failure, and never hides local data.
 
+**Q: Why is Android sign-in different from desktop?**
+Because Google closed the standard path on Android. Desktop uses vendor-neutral OAuth PKCE with a loopback redirect (RFC-001). On Android, Google rejects custom-scheme redirects entirely and deprecates loopback, so Android uses Google's own mechanism: the Play Services `AuthorizationClient` behind a small in-repo Tauri plugin (RFC-010, user-ruled 2026-08-02). Consequence: on Android the app never stores tokens — Play Services owns the grant and hands out access tokens on demand; `AuthedClient` just pulls its `RefreshFn` from the plugin. Devices without Play Services stay in local-only mode, accepted deliberately. Anything auth-shaped must pass a live on-device sign-in before merge — an auth flow validated only against our own mocks is not done.
+
 **Q: Why don't IPC commands return `Ok(())`?**
 Tauri serializes `Ok(())` as `null`, which the frontend cannot tell apart from an error's `null`. Commands return a real value and the frontend re-queries state rather than guessing success from `null`.
 
