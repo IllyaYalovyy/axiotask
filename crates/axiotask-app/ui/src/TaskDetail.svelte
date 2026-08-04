@@ -565,7 +565,15 @@
   .subtask-due:hover { border-color: var(--accent); color: var(--accent); }
 
   @media (max-width: 700px) {
-    .detail-panel { width: 100%; position: fixed; inset: 0; z-index: 3000; }
+    /* Full-screen overlay on phones: pin to every edge, but fold the safe-area
+       insets into the padding so the panel-header (close/nav) clears the status
+       bar / notch and the footer clears the bottom gesture pill (#166). Mirrors
+       the App toolbar/drawer inset contract (#160); every env() carries a 0px
+       fallback so un-notched / legacy webviews keep the plain 1rem padding. */
+    .detail-panel {
+      width: 100%; position: fixed; inset: 0; z-index: 3000;
+      padding: calc(1rem + env(safe-area-inset-top, 0px)) calc(1rem + env(safe-area-inset-right, 0px)) calc(1rem + env(safe-area-inset-bottom, 0px)) calc(1rem + env(safe-area-inset-left, 0px));
+    }
   }
   @media (pointer: coarse) {
     .field input, .field textarea, .field select, .field .due-btn { padding: 0.6rem; font-size: 1rem; min-height: 44px; }

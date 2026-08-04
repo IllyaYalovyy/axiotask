@@ -19,13 +19,18 @@ const read = (rel) => readFileSync(resolve(process.cwd(), rel), "utf8");
 
 const indexHtml = read("index.html");
 const appSvelte = read("src/App.svelte");
+const taskDetailSvelte = read("src/TaskDetail.svelte");
 
-// The <style> block of App.svelte, where the chrome lives — comments stripped
+// The <style> block of a component, where the chrome lives — comments stripped
 // so a `/* … */` before an `@media` can't hide the selector token from the
 // rule-head parser.
-const styleBlock = appSvelte
-  .slice(appSvelte.indexOf("<style>"), appSvelte.indexOf("</style>"))
-  .replace(/\/\*[\s\S]*?\*\//g, "");
+const styleOf = (src) =>
+  src
+    .slice(src.indexOf("<style>"), src.indexOf("</style>"))
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+
+const styleBlock = styleOf(appSvelte);
+const detailStyleBlock = styleOf(taskDetailSvelte);
 
 // Return every CSS declaration body (between `{` and its matching `}`) whose
 // selector list contains `selector`. Recurses into at-rules (@media/@supports)
@@ -94,12 +99,34 @@ describe("#160: safe-area insets for notched / gesture-nav devices", () => {
     expect(joined).toMatch(/env\(safe-area-inset-left/);
   });
 
+  // #166: on mobile the TaskDetail panel drops its docked-sidebar layout for a
+  // full-screen `position: fixed; inset: 0` overlay. Its content is anchored to
+  // the TOP edge (the panel-header with the close/nav buttons is the first
+  // child), so without inset-aware padding the header renders UNDER the status
+  // bar / notch — and the only way to close the panel becomes unreachable. The
+  // full-screen rule must fold all four insets into its padding.
+  it("insets the full-screen TaskDetail panel so its header clears the status bar", () => {
+    const bodies = ruleBodies(detailStyleBlock, ".detail-panel");
+    // The fullscreen override is the rule that pins the panel to every edge.
+    const fullscreen = bodies.filter((b) => /position:\s*fixed/.test(b) && /inset:\s*0/.test(b));
+    expect(fullscreen.length).toBeGreaterThanOrEqual(1);
+    for (const b of fullscreen) {
+      expect(b).toMatch(/env\(safe-area-inset-top/);
+      expect(b).toMatch(/env\(safe-area-inset-right/);
+      expect(b).toMatch(/env\(safe-area-inset-bottom/);
+      expect(b).toMatch(/env\(safe-area-inset-left/);
+    }
+  });
+
   // Non-happy path: a device with NO notch — or a webview that predates env() —
   // must fall back to the original offsets, never collapse to 0. Every inset
   // must carry an explicit fallback so `calc(1rem + env(...))` can't degrade to
-  // `calc(1rem + )` (invalid → whole declaration dropped).
+  // `calc(1rem + )` (invalid → whole declaration dropped). Holds across every
+  // component that ships inset-aware chrome, not just App.
   it("gives every safe-area-inset an explicit fallback for un-notched/legacy webviews", () => {
-    const insets = styleBlock.match(/env\(safe-area-inset-[a-z]+[^)]*\)/g) || [];
+    const insets = [styleBlock, detailStyleBlock].flatMap(
+      (css) => css.match(/env\(safe-area-inset-[a-z]+[^)]*\)/g) || [],
+    );
     expect(insets.length).toBeGreaterThan(0);
     for (const inset of insets) {
       expect(inset).toMatch(/env\(safe-area-inset-[a-z]+\s*,\s*0px\)/);
