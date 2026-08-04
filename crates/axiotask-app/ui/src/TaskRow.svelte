@@ -347,7 +347,15 @@
     .task-widget.swipe-actions-open .actions, .task-widget.swipe-actions-peeking .actions { display: flex; }
     .task-widget.swipe-actions-peeking .main-row { transform: translateX(calc(var(--swipe-reveal) * -0.35)); }
     .actions button { min-width: 44px; min-height: 44px; font-size: 0.8rem; padding: 0.3rem 0.5rem; }
-    .checkbox { width: 1.3rem; height: 1.3rem; min-width: 44px; min-height: 44px; }
+    /* Glyph stays 1.3rem; pad OUT to a 44px tap target. content-box is required
+       because the global reset makes inputs border-box, which would otherwise
+       shrink the drawn glyph by the padding (and a 44px min-* would blow the
+       glyph itself up to 44px — the #167 defect). */
+    .checkbox {
+      box-sizing: content-box;
+      width: 1.3rem; height: 1.3rem;
+      padding: calc((44px - 1.3rem) / 2);
+    }
     .task-widget { padding: 0.6rem 0.5rem; min-height: 44px; }
     .title { font-size: 1rem; }
     .meta-row { font-size: 0.8rem; padding-top: 0.3rem; }
