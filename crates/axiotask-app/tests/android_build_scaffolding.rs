@@ -232,81 +232,109 @@ fn android_release_signing_reads_gitignored_keystore_properties() {
     }
 }
 
-/// Mobile OAuth (#158). Android has no loopback server, so the PKCE
-/// authorization code returns on a custom-scheme deep link
-/// (`com.axiotask.app:/oauth2redirect`) instead. Three pieces must stay wired,
-/// and none of them is compiled on this desktop host — the intent-filter lives
-/// in the checked-in manifest, and the plugin registration + mobile login live
-/// in `#[cfg(target_os = "android")]` branches — so source-string checks are the
+/// Android sign-in via Play Services `AuthorizationClient` (RFC-010, superseding
+/// the #158 custom-scheme flow). None of the on-device wiring is compiled on this
+/// desktop host — the in-repo `tauri-plugin-google-auth` plugin builds for
+/// Android only, and the plugin registration + sign-in live in
+/// `#[cfg(target_os = "android")]` branches — so source-string checks are the
 /// only guard against a silent regression that would make sign-in impossible on
-/// device. The redirect PARSING and code exchange are covered for real by unit
-/// tests in `axiotask-core::auth::flow`; here we only assert the on-device wiring.
+/// device. The Rust token-provider seam (`provider_refresh_fn`) and the sign-in
+/// gesture are covered for real by unit tests in `axiotask-core::auth` and
+/// `state.rs`; here we assert the on-device wiring AND that the erased #158
+/// machinery is gone without trace (RFC-010 G3).
 #[test]
-fn android_oauth_deep_link_and_intent_filter_are_wired() {
+fn android_play_services_auth_is_wired_and_158_is_erased() {
     let root = app_root();
 
-    // (1) The intent-filter routes the custom-scheme redirect back into the app.
+    // (1) The custom-scheme OAuth redirect is ERASED: no VIEW/BROWSABLE
+    // intent-filter, no `com.axiotask.app:/oauth2redirect` scheme+path. The
+    // MAIN/LAUNCHER filter stays; only the OAuth one is gone.
     let manifest = fs::read_to_string(root.join("gen/android/app/src/main/AndroidManifest.xml"))
         .expect("AndroidManifest.xml readable");
     assert!(
-        manifest.contains("android.intent.action.VIEW"),
-        "the OAuth redirect intent-filter needs a VIEW action (#158)"
-    );
-    assert!(
-        manifest.contains("android.intent.category.BROWSABLE"),
-        "the OAuth redirect intent-filter must be BROWSABLE so the browser can hand off the redirect (#158)"
-    );
-    assert!(
-        manifest.contains("android:scheme=\"com.axiotask.app\"")
-            && manifest.contains("android:path=\"/oauth2redirect\""),
-        "the intent-filter must match `com.axiotask.app:/oauth2redirect` exactly (#158)"
+        !manifest.contains("oauth2redirect")
+            && !manifest.contains("android.intent.category.BROWSABLE")
+            && !manifest.contains("android:scheme=\"com.axiotask.app\""),
+        "the #158 custom-scheme OAuth intent-filter must be erased (RFC-010 G3)"
     );
 
-    // (2) The deep-link and opener plugins are Android-only dependencies, so
-    // desktop builds stay byte-identical and never pull them in.
+    // (2) The Play Services plugin is an Android-only dependency (so desktop
+    // builds stay byte-identical), and the erased #158 deps are gone.
     let cargo_toml = fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml readable");
     assert!(
         cargo_toml.contains("[target.'cfg(target_os = \"android\")'.dependencies]")
-            && cargo_toml.contains("tauri-plugin-deep-link")
-            && cargo_toml.contains("tauri-plugin-opener"),
-        "deep-link + opener must be Android-only deps so desktop is untouched (#158)"
+            && cargo_toml.contains("tauri-plugin-google-auth"),
+        "the Play Services plugin must be an Android-only dep (RFC-010 Step 1)"
+    );
+    assert!(
+        !cargo_toml.contains("tauri-plugin-deep-link")
+            && !cargo_toml.contains("tauri-plugin-opener"),
+        "the #158 deep-link + opener deps must be erased (RFC-010 G3)"
     );
 
-    // (3) Startup registers both plugins and forwards the redirect into the
-    // in-flight mobile login via the deep-link bridge.
+    // (3) Startup registers the plugin; the deep-link bridge is gone.
     let lib_rs = fs::read_to_string(root.join("src/lib.rs")).expect("src/lib.rs readable");
     assert!(
-        lib_rs.contains("tauri_plugin_deep_link::init()")
-            && lib_rs.contains("tauri_plugin_opener::init()"),
-        "both mobile OAuth plugins must be registered on the Android builder (#158)"
+        lib_rs.contains("tauri_plugin_google_auth::init()"),
+        "the Play Services plugin must be registered on the Android builder"
     );
     assert!(
-        lib_rs.contains("on_open_url") && lib_rs.contains("MobileAuthBridge"),
-        "the deep-link handler must deliver the redirect to the MobileAuthBridge (#158)"
+        !lib_rs.contains("deep_link")
+            && !lib_rs.contains("on_open_url")
+            && !lib_rs.contains("MobileAuthBridge"),
+        "the #158 deep-link bridge must be erased from startup (RFC-010 G3)"
     );
 
-    // The mobile login flow and the build-time public client id live in state.rs.
+    // (4) The Android sign-in drives the plugin token provider, and the #158
+    // custom-scheme constants/config are gone from state.rs.
     let state_rs = fs::read_to_string(root.join("src/state.rs")).expect("src/state.rs readable");
     assert!(
-        state_rs.contains("start_login_mobile"),
-        "the Android login entry point start_login_mobile must exist (#158)"
+        state_rs.contains("start_login_mobile")
+            && state_rs.contains("PlayServicesTokenProvider"),
+        "start_login_mobile must sign in through the Play Services token provider"
     );
     assert!(
-        state_rs.contains("google_tasks_mobile")
-            && state_rs.contains("AXIOTASK_ANDROID_CLIENT_ID")
-            && state_rs.contains(
-                "61486741888-a5alhtbcm86e3e0gd8s9a0j01gn6sum7.apps.googleusercontent.com"
-            ),
-        "Android must use the public build-time client id with no secret (#158)"
+        !state_rs.contains("google_tasks_mobile")
+            && !state_rs.contains("ANDROID_OAUTH_CLIENT_ID")
+            && !state_rs.contains("61486741888-a5alhtbcm86e3e0gd8s9a0j01gn6sum7"),
+        "no compiled-in Android client id or mobile OAuth config may remain (RFC-010 G3/G4)"
     );
 
-    // A platform-scoped capability grants the plugins on Android without touching
-    // the desktop ACL.
+    // (5) The in-repo plugin crate exists with its Kotlin AuthorizationClient
+    // bridge and the two commands.
+    let plugin = root.join("../tauri-plugin-google-auth");
+    for rel in [
+        "Cargo.toml",
+        "build.rs",
+        "src/lib.rs",
+        "src/mobile.rs",
+        "android/src/main/java/com/axiotask/plugin/googleauth/GoogleAuthPlugin.kt",
+    ] {
+        assert!(
+            plugin.join(rel).is_file(),
+            "plugin file `{rel}` must be checked in (RFC-010 Step 1)"
+        );
+    }
+    let kotlin = fs::read_to_string(
+        plugin.join("android/src/main/java/com/axiotask/plugin/googleauth/GoogleAuthPlugin.kt"),
+    )
+    .expect("GoogleAuthPlugin.kt readable");
+    assert!(
+        kotlin.contains("AuthorizationClient") || kotlin.contains("getAuthorizationClient"),
+        "the Kotlin plugin must drive Play Services' AuthorizationClient (RFC-010)"
+    );
+    assert!(
+        kotlin.contains("auth/tasks"),
+        "the plugin must request the tasks scope only (RFC-010)"
+    );
+
+    // (6) A platform-scoped capability grants the plugin on Android without
+    // touching the desktop ACL, and the #158 perms are gone.
     let cap = read_json(&root.join("capabilities/mobile.json"));
     assert_eq!(
         cap["platforms"].as_array().map(Vec::as_slice),
         Some([Value::String("android".into())].as_slice()),
-        "the mobile OAuth capability must be scoped to android only (#158)"
+        "the mobile auth capability must be scoped to android only"
     );
     let perms: Vec<&str> = cap["permissions"]
         .as_array()
@@ -315,8 +343,10 @@ fn android_oauth_deep_link_and_intent_filter_are_wired() {
         .filter_map(Value::as_str)
         .collect();
     assert!(
-        perms.contains(&"deep-link:default") && perms.contains(&"opener:default"),
-        "the mobile capability must grant deep-link + opener (#158), got {perms:?}"
+        perms.contains(&"google-auth:default")
+            && !perms.contains(&"deep-link:default")
+            && !perms.contains(&"opener:default"),
+        "the mobile capability must grant google-auth and drop the #158 perms, got {perms:?}"
     );
 }
 

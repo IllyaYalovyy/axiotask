@@ -1,0 +1,3 @@
+/target
+# Generated at build time from permissions/*.toml by the tauri-plugin build script.
+/permissions/schemas

@@ -1,0 +1,22 @@
+[package]
+name = "tauri-plugin-google-auth"
+version = "0.1.0"
+description = "Tauri plugin: Google sign-in on Android via Play Services AuthorizationClient (RFC-010)."
+edition = "2021"
+rust-version = "1.77.2"
+authors = ["Illya Yalovyy"]
+license = "Apache-2.0"
+repository = "https://github.com/yalovoy/axiotask"
+# This crate builds for Android only (it wraps Google Play Services); it is
+# deliberately NOT a workspace member so the desktop `--workspace` gate never
+# tries to compile its mobile bindings. The desktop app depends on it only under
+# `[target.'cfg(target_os = "android")'.dependencies]`.
+links = "tauri-plugin-google-auth"
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

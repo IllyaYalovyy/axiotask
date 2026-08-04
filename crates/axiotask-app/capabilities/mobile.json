@@ -1,7 +1,7 @@
 {
-  "identifier": "mobile-oauth",
-  "description": "Android-only: deep-link capture of the OAuth redirect and opening the consent URL. Platform-scoped to android so desktop builds (which register neither plugin) never resolve these permissions.",
+  "identifier": "mobile-auth",
+  "description": "Android-only: Google Play Services sign-in (AuthorizationClient) via the in-repo tauri-plugin-google-auth. Platform-scoped to android so desktop builds (which register no such plugin) never resolve this permission.",
   "platforms": ["android"],
   "windows": ["main"],
-  "permissions": ["deep-link:default", "opener:default"]
+  "permissions": ["google-auth:default"]
 }

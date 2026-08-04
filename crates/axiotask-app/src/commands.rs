@@ -1070,11 +1070,11 @@ pub async fn auth_status(state: State<'_, Arc<AppState>>) -> Result<bool, String
 
 #[tauri::command]
 pub async fn auth_login(
-    // Tauri injects the AppHandle on every platform. Android drives consent +
-    // the deep-link redirect through it (opener plugin, intent-filter bridge);
-    // desktop's loopback flow ignores it. The `#[tauri::command]` macro does not
-    // support a `#[cfg]`-gated parameter, so the handle is taken unconditionally
-    // and simply unused on desktop — the desktop flow itself is unchanged.
+    // Tauri injects the AppHandle on every platform. Android drives Play
+    // Services sign-in through it (the google-auth plugin); desktop's loopback
+    // flow ignores it. The `#[tauri::command]` macro does not support a
+    // `#[cfg]`-gated parameter, so the handle is taken unconditionally and
+    // simply unused on desktop — the desktop flow itself is unchanged.
     #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
 ) -> Result<bool, String> {
@@ -1096,7 +1096,20 @@ pub async fn auth_login(
 }
 
 #[tauri::command]
-pub async fn auth_logout(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn auth_logout(
+    // Android drops the Play Services account association through the plugin
+    // (so the next sign-in shows the picker) before the local logout; desktop
+    // ignores the handle and just clears its tokens. Taken unconditionally
+    // because the command macro cannot `#[cfg]`-gate a parameter.
+    #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return state
+        .sign_out_mobile(&app)
+        .await
+        .map_err(|e| user_error("auth_logout", e));
+    #[cfg(not(target_os = "android"))]
     state
         .logout()
         .await

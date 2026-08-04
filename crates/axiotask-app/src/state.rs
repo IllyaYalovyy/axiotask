@@ -9,23 +9,11 @@ use tokio::sync::{Mutex, Notify};
 
 use axiotask_core::api::{GoogleTasksClient, HttpClient, InMemoryClient};
 use axiotask_core::auth::{
-    AuthedClient, InMemoryTokenStore, OAuthConfig, RefreshFn, StoredTokens, TokenStore,
+    AuthedClient, InMemoryTokenStore, MobileTokenProvider, OAuthConfig, RefreshFn, StoredTokens,
+    TokenStore, provider_refresh_fn,
 };
 use axiotask_core::store::Store;
 use axiotask_core::sync::{SyncEngine, SyncOutcome};
-
-/// Public Android OAuth **client id**, baked in at build time.
-///
-/// Mobile OAuth clients are public (a secret can't be hidden inside an APK), so
-/// this id ships in the binary with NO secret. It defaults to the app's
-/// registered Android client and can be overridden at build time via the
-/// `AXIOTASK_ANDROID_CLIENT_ID` environment variable — the only "injection"
-/// point, resolved at compile time so no credential is read from disk on device.
-#[cfg(target_os = "android")]
-const ANDROID_OAUTH_CLIENT_ID: &str = match option_env!("AXIOTASK_ANDROID_CLIENT_ID") {
-    Some(id) => id,
-    None => "61486741888-a5alhtbcm86e3e0gd8s9a0j01gn6sum7.apps.googleusercontent.com",
-};
 
 /// Debounce window: coalesce rapid mutations into a single sync.
 const SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -246,38 +234,6 @@ impl SyncNotifier for NoopSyncNotifier {
     fn notify_sync(&self, _status: &SyncStatus) {}
 }
 
-/// Delivers the OAuth deep-link redirect from the intent-filter handler to the
-/// in-flight [`AppState::start_login_mobile`] call.
-///
-/// Registered as Tauri managed state on Android. The login flow `arm()`s it
-/// (installing a one-shot receiver) just before opening consent; the app's
-/// `on_open_url` deep-link handler calls `deliver()` when the OS routes the
-/// `com.axiotask.app:/oauth2redirect` URL back into the process. A stray
-/// redirect with no login in flight is simply dropped.
-#[cfg(target_os = "android")]
-#[derive(Default)]
-pub struct MobileAuthBridge {
-    tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>,
-}
-
-#[cfg(target_os = "android")]
-impl MobileAuthBridge {
-    /// Install a fresh one-shot channel and return its receiver. Any previously
-    /// armed (abandoned) login is superseded.
-    pub fn arm(&self) -> tokio::sync::oneshot::Receiver<String> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        *self.tx.lock().unwrap() = Some(tx);
-        rx
-    }
-
-    /// Hand a delivered redirect URL to the waiting login flow, if one is armed.
-    pub fn deliver(&self, redirect_url: String) {
-        if let Some(tx) = self.tx.lock().unwrap().take() {
-            let _ = tx.send(redirect_url);
-        }
-    }
-}
-
 /// Shared application state managed by Tauri.
 pub struct AppState {
     pub store: Store,
@@ -323,6 +279,15 @@ pub struct AppState {
     /// Notified after each sync run (Tauri event emitter in production, no-op in
     /// tests until a spy is installed). Set once at startup.
     sync_notifier: std::sync::RwLock<Arc<dyn SyncNotifier>>,
+    /// Android session flag (RFC-010). On Android the app persists **no** token
+    /// material — Play Services owns the grant — so there is no `tokens.json` to
+    /// derive "signed in" from. This in-memory flag records that an interactive
+    /// Play Services sign-in succeeded this session; [`Self::is_authenticated`]
+    /// reads it on Android. It resets to signed-out on process restart (the user
+    /// re-taps sign-in, which Play Services then completes silently). Desktop
+    /// never touches this field — its `is_authenticated` stays token-store based.
+    #[cfg(target_os = "android")]
+    signed_in: AtomicBool,
 }
 
 impl AppState {
@@ -338,10 +303,13 @@ impl AppState {
 
         let config = axiotask_core::config::AppConfig::load();
         // Desktop reads its "Desktop app" client id + secret from the config
-        // file; Android has no per-user config credential — it uses the public
-        // client id compiled in at build time and carries NO secret.
+        // file and talks to the token endpoint directly. Android identifies no
+        // client at all (RFC-010): Play Services owns the grant and the app only
+        // ever asks its `AuthorizationClient` for access tokens, so the config
+        // carries just the `tasks` scope (for the Properties display) and no
+        // credential or endpoints.
         #[cfg(target_os = "android")]
-        let oauth_config = OAuthConfig::google_tasks_mobile(ANDROID_OAUTH_CLIENT_ID);
+        let oauth_config = OAuthConfig::google_tasks("", "");
         #[cfg(not(target_os = "android"))]
         let oauth_config =
             OAuthConfig::google_tasks(&config.google.client_id, &config.google.client_secret);
@@ -386,6 +354,8 @@ impl AppState {
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
             sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
+            #[cfg(target_os = "android")]
+            signed_in: AtomicBool::new(false),
         };
         state.ensure_default_list().await;
         Ok(state)
@@ -440,14 +410,28 @@ impl AppState {
             db_path: PathBuf::from(":memory:"),
             sync_status: Mutex::new(SyncStatus::default()),
             sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
+            #[cfg(target_os = "android")]
+            signed_in: AtomicBool::new(false),
         };
         state.ensure_default_list().await;
         Ok(state)
     }
 
-    /// Whether we have stored tokens (user is logged in).
+    /// Whether the user is logged in.
+    ///
+    /// Desktop derives this from persisted tokens (`tokens.json`). Android holds
+    /// no token material (RFC-010) — Play Services owns the grant — so it reads
+    /// the in-memory [`Self::signed_in`] session flag instead.
+    #[cfg(not(target_os = "android"))]
     pub fn is_authenticated(&self) -> bool {
         matches!(self.token_store.load(), Ok(Some(_)))
+    }
+
+    /// Whether the user is logged in (Android: an interactive Play Services
+    /// sign-in succeeded this session — see [`Self::signed_in`]).
+    #[cfg(target_os = "android")]
+    pub fn is_authenticated(&self) -> bool {
+        self.signed_in.load(Ordering::Relaxed)
     }
 
     /// Whether the stored session is dead (refresh permanently denied) and the
@@ -460,6 +444,13 @@ impl AppState {
     #[cfg(test)]
     pub fn token_store_for_test(&self) -> &Arc<dyn TokenStore> {
         &self.token_store
+    }
+
+    /// Force the "session dead" flag on, so a test can prove a subsequent
+    /// successful sign-in clears the re-auth state the user sees.
+    #[cfg(test)]
+    pub(crate) fn force_needs_reauth_for_test(&self) {
+        self.needs_reauth.store(true, Ordering::Relaxed);
     }
 
     /// Rebuild state as if the process had died and relaunched over the SAME
@@ -493,6 +484,8 @@ impl AppState {
             db_path: self.db_path.clone(),
             sync_status: Mutex::new(SyncStatus::default()),
             sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
+            #[cfg(target_os = "android")]
+            signed_in: AtomicBool::new(false),
         }
     }
 
@@ -668,64 +661,68 @@ impl AppState {
         Ok(())
     }
 
-    /// Run the Android OAuth login flow (custom-scheme PKCE, no loopback).
+    /// Sign in on Android through Google Play Services (RFC-010).
     ///
-    /// There is no local HTTP server on mobile: consent opens in the system
-    /// browser via the Tauri opener plugin, and Google returns the code on the
-    /// `com.axiotask.app:/oauth2redirect` deep link, which the intent-filter
-    /// routes into [`MobileAuthBridge`]. We arm the bridge, open consent, await
-    /// the delivered redirect URL, then run the same code exchange the desktop
-    /// flow uses — the only difference is how the redirect is delivered.
+    /// There is no browser, no redirect, and no loopback server: the in-repo
+    /// `tauri-plugin-google-auth` plugin drives Play Services'
+    /// `AuthorizationClient`, which shows Google's native account picker +
+    /// consent sheet and returns an access token for the `tasks` scope. The app
+    /// stores NO token material — Play Services owns the grant — so this only
+    /// swaps in a token-provider-backed HTTP client and flips the in-memory
+    /// session flag. Delegates the platform-agnostic half to
+    /// [`Self::start_login_with_provider`] so it is unit-testable with a fake.
     #[cfg(target_os = "android")]
     pub async fn start_login_mobile(&self, app: &tauri::AppHandle) -> Result<(), String> {
-        use axiotask_core::auth::{MOBILE_REDIRECT_URI, build_auth_url, complete_mobile_login};
-        use axiotask_core::auth::{Pkce, random_state};
-        use tauri::Manager;
-        use tauri_plugin_opener::OpenerExt;
+        tracing::info!("starting Play Services sign-in...");
+        let provider: Arc<dyn MobileTokenProvider> =
+            Arc::new(crate::play_services_auth::PlayServicesTokenProvider::new(app.clone()));
+        self.start_login_with_provider(provider).await?;
+        self.signed_in.store(true, Ordering::Relaxed);
+        Ok(())
+    }
 
-        tracing::info!("starting mobile OAuth login flow...");
-        let pkce = Pkce::generate();
-        let state_param = random_state();
-
-        // Arm the deep-link bridge BEFORE opening consent so no redirect can be
-        // missed, then open the system browser for consent.
-        let bridge = app.state::<MobileAuthBridge>();
-        let redirect_rx = bridge.arm();
-        let auth_url = build_auth_url(
-            &self.oauth_config,
-            MOBILE_REDIRECT_URI,
-            &pkce.challenge,
-            pkce.method,
-            &state_param,
-        );
-        app.opener()
-            .open_url(auth_url, None::<&str>)
-            .map_err(|e| format!("open consent: {e}"))?;
-
-        // Wait for the OS to route the custom-scheme redirect back to us.
-        let redirect_url = redirect_rx
-            .await
-            .map_err(|_| "sign-in was cancelled before the redirect arrived".to_string())?;
-
-        let tokens = complete_mobile_login(
-            &self.oauth_config,
-            &self.token_store,
-            &redirect_url,
-            &state_param,
-            &pkce.verifier,
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("mobile login failed: {e}");
+    /// Complete an interactive sign-in against a [`MobileTokenProvider`] and, on
+    /// success, swap the live HTTP client onto the provider-backed refresh path.
+    ///
+    /// Platform-agnostic so the Play Services flow is exercised with a fake in
+    /// tests. The provider's **interactive** `authorize` is the sign-in gesture
+    /// (it may show the account picker); on success the returned access token
+    /// seeds an [`AuthedClient`] whose `401` refresh asks the same provider
+    /// **silently** (see [`provider_refresh_fn`]). Nothing is persisted (no
+    /// token material), and on failure the client is left untouched, so a
+    /// cancelled or denied gesture leaves the app cleanly signed out
+    /// (invariant #6).
+    ///
+    // Live on Android (via `start_login_mobile`) and in tests; the desktop lib
+    // target has no caller, hence the allow.
+    #[allow(dead_code)]
+    pub async fn start_login_with_provider(
+        &self,
+        provider: Arc<dyn MobileTokenProvider>,
+    ) -> Result<(), String> {
+        let access_token = provider.authorize(true).await.map_err(|e| {
+            tracing::error!("Play Services sign-in failed: {e}");
             e.to_string()
         })?;
 
-        tracing::info!("mobile login successful, switching to HTTP client");
-        let http_client = build_http_client(tokens, self.token_store.clone(), &self.oauth_config);
+        tracing::info!("Play Services sign-in successful, switching to HTTP client");
+        let http_client = build_provider_client(access_token, provider, &self.oauth_config);
         *self.client.lock().await = Arc::new(http_client);
         // Fresh grant — background syncs may resume.
         self.needs_reauth.store(false, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Sign out of Play Services on Android: drop the account association (so the
+    /// next sign-in shows the picker), then run the normal local logout.
+    #[cfg(target_os = "android")]
+    pub async fn sign_out_mobile(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        let provider = crate::play_services_auth::PlayServicesTokenProvider::new(app.clone());
+        // Best effort — a failed association drop still logs out locally.
+        if let Err(e) = provider.sign_out().await {
+            tracing::warn!("Play Services sign-out failed (logging out locally anyway): {e}");
+        }
+        self.logout().await
     }
 
     /// Sign out: clear tokens and switch back to in-memory (offline) client.
@@ -741,6 +738,10 @@ impl AppState {
         *self.client.lock().await = offline;
         // Signed out — the expired-session state no longer applies.
         self.needs_reauth.store(false, Ordering::Relaxed);
+        // Android holds its "signed in" state in memory (no token material on
+        // disk); clear it so the UI flips to signed-out.
+        #[cfg(target_os = "android")]
+        self.signed_in.store(false, Ordering::Relaxed);
         Ok(())
     }
 
@@ -1341,6 +1342,30 @@ fn build_http_client(
     HttpClient::new(authed)
 }
 
+/// Build the HTTP client backed by an on-device token provider (Android,
+/// RFC-010). The provider supplies the initial access token and, on every `401`,
+/// a fresh one — silently, through Play Services. No refresh token exists and no
+/// token material is persisted, so the [`AuthedClient`]'s internal store is a
+/// throwaway in-memory one (a rotation write goes nowhere).
+// Live on Android and in tests; no desktop-lib caller, hence the allow.
+#[allow(dead_code)]
+fn build_provider_client(
+    access_token: String,
+    provider: Arc<dyn MobileTokenProvider>,
+    config: &OAuthConfig,
+) -> HttpClient {
+    let tokens = StoredTokens {
+        access_token,
+        refresh_token: String::new(),
+        access_expires_at: None,
+        scope: config.scopes.join(" "),
+    };
+    let store: Arc<dyn TokenStore> = Arc::new(InMemoryTokenStore::new());
+    let refresh = provider_refresh_fn(provider);
+    let authed = AuthedClient::new(reqwest::Client::new(), tokens, store, refresh);
+    HttpClient::new(authed)
+}
+
 /// The instance's database path rooted at `base` — `base/<app-dir>/axiotask.sqlite`,
 /// where `<app-dir>` is instance-aware (`axiotask` or `axiotask-<prefix>`). The
 /// auth `tokens.json` lives beside it, so isolating this directory isolates the
@@ -1466,8 +1491,71 @@ fn latest_backup_in(dir: &std::path::Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axiotask_core::auth::{StoredTokens, TokenStore};
+    use axiotask_core::api::InMemoryClient;
+    use axiotask_core::auth::{FakeTokenProvider, StoredTokens, TokenStore};
     use tempfile::TempDir;
+
+    /// The Play Services sign-in gesture (RFC-010): a live provider signs the
+    /// user in and, crucially, clears the `needs_reauth` state the user sees as
+    /// the "sign in again" banner. This is the user-visible success outcome.
+    #[tokio::test]
+    async fn mobile_sign_in_gesture_clears_needs_reauth() {
+        let state = AppState::new_memory(Arc::new(InMemoryClient::new()))
+            .await
+            .unwrap();
+        // Start from a dead session — the re-auth banner is showing.
+        state.force_needs_reauth_for_test();
+        assert!(state.needs_reauth(), "precondition: session is dead");
+
+        let provider = Arc::new(FakeTokenProvider::with_token("live-access-token"));
+        state
+            .start_login_with_provider(provider.clone())
+            .await
+            .expect("a live grant signs in");
+
+        // The banner clears: background sync may resume.
+        assert!(
+            !state.needs_reauth(),
+            "a successful sign-in must clear the re-auth banner"
+        );
+        // The gesture asked interactively (it may show the account picker); a
+        // sign-in that silently reused a token would be a UX bug.
+        assert_eq!(
+            provider.calls(),
+            vec![true],
+            "sign-in must be the interactive gesture"
+        );
+    }
+
+    /// Non-happy path (invariant #6): the user cancels/denies the account sheet,
+    /// so the interactive authorize reports interaction required. The sign-in
+    /// must fail and leave the re-auth state exactly as it was — never flip the
+    /// app to a false signed-in state.
+    #[tokio::test]
+    async fn cancelled_mobile_sign_in_errors_and_preserves_state() {
+        let state = AppState::new_memory(Arc::new(InMemoryClient::new()))
+            .await
+            .unwrap();
+        state.force_needs_reauth_for_test();
+
+        let provider = Arc::new(FakeTokenProvider::needs_interaction());
+        let err = state
+            .start_login_with_provider(provider.clone())
+            .await
+            .expect_err("a cancelled gesture must fail sign-in");
+        assert!(!err.is_empty(), "the failure must carry a message: {err}");
+
+        // The dead-session banner is untouched — the app is not falsely signed in.
+        assert!(
+            state.needs_reauth(),
+            "a failed sign-in must not clear the re-auth banner"
+        );
+        assert_eq!(
+            provider.calls(),
+            vec![true],
+            "the gesture was attempted interactively before it was declined"
+        );
+    }
 
     fn sample_tokens() -> StoredTokens {
         StoredTokens {

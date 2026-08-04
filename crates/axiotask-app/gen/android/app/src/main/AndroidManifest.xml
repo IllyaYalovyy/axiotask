@@ -22,18 +22,9 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-
-            <!-- Mobile OAuth (#158): Google returns the authorization code on the
-                 custom-scheme redirect `com.axiotask.app:/oauth2redirect`. This
-                 intent-filter routes that URL back into the app, where the
-                 deep-link plugin's on_open_url handler delivers it to the
-                 in-flight PKCE login. No client secret is involved. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="com.axiotask.app" android:path="/oauth2redirect" />
-            </intent-filter>
+            <!-- Android sign-in goes through Google Play Services
+                 (AuthorizationClient, RFC-010): no browser redirect and no
+                 custom scheme, so there is no OAuth intent-filter here. -->
         </activity>
 
         <provider
