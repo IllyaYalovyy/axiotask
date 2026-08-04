@@ -615,6 +615,11 @@
       newestTaskId = task.id;
       await refreshLists([targetList]);
       focusIndex = 0;
+      // The new task takes focus at the top of the list. If the detail panel is
+      // already open, follow the focus so the sidebar shows what's now selected
+      // instead of a stale prior task. If the panel was closed, leave it closed —
+      // creating a task never opens the sidebar on its own.
+      if (detailId !== null) detailId = task.id;
       if (sourceView === "missed" && !explicitDue) {
         showInfoToast(`Added "${trimmedTitle}" to Focus`);
       }
