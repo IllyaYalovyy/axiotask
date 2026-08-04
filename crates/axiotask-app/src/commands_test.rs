@@ -1054,6 +1054,210 @@ mod tests {
         assert_eq!(stored.task.parent.as_deref(), Some("P"));
     }
 
+    // ─── Flush pending pushes on exit (#128 task) ────────────────────────────
+
+    /// Mark a state signed-in so `flush_on_exit` will actually try to push.
+    /// The push client is the injected in-memory fake, so no network happens.
+    fn sign_in(state: &AppState) {
+        state
+            .token_store_for_test()
+            .save(&axiotask_core::auth::StoredTokens {
+                access_token: "at".into(),
+                refresh_token: "rt".into(),
+                access_expires_at: Some(i64::MAX),
+                scope: "tasks".into(),
+            })
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn flush_on_exit_pushes_a_change_made_just_before_quitting() {
+        // The bug: the background loop debounces mutations by 2s, so a task
+        // created and then immediately quit is stranded dirty in local storage
+        // until the next launch. Exit must flush it to Google first.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        sign_in(&state);
+        state.run_sync().await.unwrap(); // pull the list locally
+
+        // A brand-new task, still dirty (the debounce never got to fire).
+        crate::commands::create_task_inner(&state, "L1".into(), None, "buy milk".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            state.pending_push_count().await.unwrap(),
+            1,
+            "precondition: the create is stuck locally, unpushed"
+        );
+
+        // The user quits — exit must flush before the process dies.
+        state.flush_on_exit().await;
+
+        // It reached the server…
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(
+            remote.items.iter().any(|t| t.title == "buy milk"),
+            "the just-created task reached Google on exit, not stranded locally"
+        );
+        // …and nothing is left pending locally.
+        assert_eq!(
+            state.pending_push_count().await.unwrap(),
+            0,
+            "no local change is left stuck after the exit flush"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_on_exit_releases_the_held_create_the_open_panel_was_holding() {
+        // The real-world shape of the bug: creating a task opens the detail
+        // panel ON that task, so it becomes the held create — and a normal sync
+        // deliberately holds that create so an id remap can't invalidate the id
+        // the panel is showing. If the user quits with the panel still open, a
+        // plain sync would leave the create stuck. Exit must release the hold
+        // (the panel is going away) and push it.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        sign_in(&state);
+        state.run_sync().await.unwrap(); // pull the list locally
+
+        let created =
+            crate::commands::create_task_inner(&state, "L1".into(), None, "call dad".into())
+                .await
+                .unwrap();
+        // Detail panel follows the new task → it is the held create.
+        state.set_editing_task(Some(created.id.clone()));
+
+        // Sanity: with the hold in place a normal sync would NOT push it.
+        let out = state.run_sync().await.unwrap();
+        assert_eq!(out.pushed, 0, "precondition: the held create is not pushed");
+        assert_eq!(state.pending_push_count().await.unwrap(), 1);
+
+        // Quit: exit flush must release the hold and push it.
+        state.flush_on_exit().await;
+
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(
+            remote.items.iter().any(|t| t.title == "call dad"),
+            "the held create reached Google on exit"
+        );
+        assert_eq!(
+            state.pending_push_count().await.unwrap(),
+            0,
+            "the held create is no longer stuck after exit"
+        );
+    }
+
+    /// Whether a task with `title` is still dirty (unpushed) in the local store.
+    async fn task_still_dirty(state: &AppState, list_id: &str, title: &str) -> bool {
+        state
+            .store
+            .list_tasks(list_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .any(|t| t.task.title == title && t.sync_state == SyncState::Dirty)
+    }
+
+    #[tokio::test]
+    async fn flush_on_exit_does_nothing_when_signed_out() {
+        // Signed out, the only client is a throwaway offline in-memory one.
+        // Flushing to it would mark local rows clean against a phantom server,
+        // silently discarding the "unpushed" state. Exit must be a no-op.
+        let (client, state) = setup().await; // not signed in, push off
+        seed_list(&state, "L1", "Inbox").await; // a purely local list
+        crate::commands::create_task_inner(&state, "L1".into(), None, "offline task".into())
+            .await
+            .unwrap();
+
+        state.flush_on_exit().await;
+
+        assert!(
+            task_still_dirty(&state, "L1", "offline task").await,
+            "offline change stays pending — nothing was pushed to a phantom server"
+        );
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(
+            !remote.items.iter().any(|t| t.title == "offline task"),
+            "nothing pushed while signed out"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_on_exit_does_nothing_in_read_only_mode() {
+        // Read-only (push disabled) means local changes are intentionally kept
+        // local. Exit must not push them, even signed in.
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        // Push disabled (default new_memory).
+        let state = Arc::new(AppState::new_memory(client.clone()).await.unwrap());
+        sign_in(&state);
+        state.run_sync().await.unwrap(); // pull the list locally
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "read only".into())
+            .await
+            .unwrap();
+
+        state.flush_on_exit().await;
+
+        assert!(
+            task_still_dirty(&state, "L1", "read only").await,
+            "read-only mode keeps the change local on exit"
+        );
+        let remote = client.list_tasks("L1", None).await.unwrap();
+        assert!(
+            !remote.items.iter().any(|t| t.title == "read only"),
+            "nothing pushed to Google in read-only mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn flush_on_exit_does_nothing_with_a_dead_session() {
+        // Invariant #6: needs_reauth is a THIRD auth state (tokens present but
+        // refresh permanently denied). A dead session can't push, so exit must
+        // not churn the token endpoint or block on a doomed sync — it stays a
+        // no-op and the local change is preserved for after re-login.
+        use axiotask_core::api::ApiError;
+        use axiotask_core::api::in_memory::Method;
+
+        let client = Arc::new(InMemoryClient::new());
+        client.seed_list("L1", "Inbox");
+        let state = Arc::new(
+            AppState::new_memory_with_push(client.clone())
+                .await
+                .unwrap(),
+        );
+        sign_in(&state);
+        state.run_sync().await.unwrap(); // pull the list locally
+
+        // Kill the session.
+        client.fail_next(Method::ListTaskLists, || {
+            ApiError::AuthExpired("invalid_grant: revoked".into())
+        });
+        state.run_sync().await.unwrap_err();
+        assert!(state.needs_reauth(), "precondition: session is dead");
+
+        crate::commands::create_task_inner(&state, "L1".into(), None, "after reauth".into())
+            .await
+            .unwrap();
+
+        state.flush_on_exit().await;
+
+        assert!(
+            task_still_dirty(&state, "L1", "after reauth").await,
+            "a dead session keeps the change local on exit (no doomed push)"
+        );
+    }
+
     #[tokio::test]
     async fn set_notes_updates_notes_field() {
         let (_client, state) = setup().await;
