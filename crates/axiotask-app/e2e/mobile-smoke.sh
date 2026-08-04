@@ -34,7 +34,13 @@ ACTIVITY="$PKG/.MainActivity"
 TAG="axiotask"                          # paranoid_android logcat tag (src/lib.rs)
 LAUNCH_MARK="starting default instance" # emitted by init in src/lib.rs
 QUICKADD_MARK="create_task: created task" # emitted by commands::create_task
+SIGNIN_MARK="starting Play Services sign-in" # emitted by AppState::start_login_mobile
 TITLE="MobileSmoke $$"                  # unique-ish per run
+# Step 4 (RFC-010): also assert the sign-in gesture reaches the Play Services
+# plugin (the native account sheet appears). Needs a Google-APIs emulator image
+# (Play Services present); opt in with AXIOTASK_SMOKE_SIGNIN=1 because the
+# default AVD used for the quick-add check has no Play Services.
+SMOKE_SIGNIN="${AXIOTASK_SMOKE_SIGNIN:-0}"
 
 skip() { echo "mobile-smoke: SKIPPED (opt-in) — $1" >&2; exit 2; }
 
@@ -110,6 +116,23 @@ adb shell input text "${TITLE// /%s}"     # %s = space for `input text`
 sleep 0.5
 adb shell input keyevent 66               # KEYCODE_ENTER → submits the form
 wait_for_log "$QUICKADD_MARK" "quick-add round-tripped through create_task" || exit 1
+
+# ── 3) Play Services sign-in gesture (RFC-010 Step 4) ────────────────────────
+# On a Google-APIs image, tapping sign-in must reach the plugin and surface the
+# native account sheet. We assert the Rust marker AppState::start_login_mobile
+# emits when the gesture reaches the Play Services plugin; the sheet itself is
+# Google's own UI (not observable in logcat). Full consent still requires the
+# live on-device merge gate (G5) — this only proves the gesture is wired.
+if [ "$SMOKE_SIGNIN" = "1" ]; then
+  # The sign-in action lives in the account/settings area of the top toolbar
+  # (top-right). Coordinates are a best effort; adjust per AVD profile if needed.
+  SIGNIN_X=$(( W - W / 12 )); SIGNIN_Y=$(( H / 20 ))
+  sleep 0.5
+  adb shell input tap "$SIGNIN_X" "$SIGNIN_Y"
+  wait_for_log "$SIGNIN_MARK" "sign-in gesture reached the Play Services plugin" || exit 1
+else
+  echo "mobile-smoke: sign-in gesture check SKIPPED (set AXIOTASK_SMOKE_SIGNIN=1 on a Google-APIs image)"
+fi
 
 echo
 echo "MOBILE SMOKE TEST PASSED"

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Runtime};
 
-use crate::GoogleAuthExt;
 use crate::models::{AuthorizeRequest, AuthorizeResponse};
+use crate::GoogleAuthExt;
 
 #[tauri::command]
 pub(crate) async fn authorize<R: Runtime>(

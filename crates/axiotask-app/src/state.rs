@@ -674,8 +674,9 @@ impl AppState {
     #[cfg(target_os = "android")]
     pub async fn start_login_mobile(&self, app: &tauri::AppHandle) -> Result<(), String> {
         tracing::info!("starting Play Services sign-in...");
-        let provider: Arc<dyn MobileTokenProvider> =
-            Arc::new(crate::play_services_auth::PlayServicesTokenProvider::new(app.clone()));
+        let provider: Arc<dyn MobileTokenProvider> = Arc::new(
+            crate::play_services_auth::PlayServicesTokenProvider::new(app.clone()),
+        );
         self.start_login_with_provider(provider).await?;
         self.signed_in.store(true, Ordering::Relaxed);
         Ok(())

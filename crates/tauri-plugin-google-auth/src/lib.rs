@@ -14,8 +14,8 @@
 //! unsupported stub so the crate stays coherent on every platform.
 
 use tauri::{
-    Manager, Runtime,
     plugin::{Builder, TauriPlugin},
+    Manager, Runtime,
 };
 
 mod commands;

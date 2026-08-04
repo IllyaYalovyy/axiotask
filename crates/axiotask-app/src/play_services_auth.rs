@@ -32,7 +32,8 @@ impl MobileTokenProvider for PlayServicesTokenProvider {
         // result (interactive) or a GMS round-trip (silent); keep it off the
         // async worker.
         let res = tauri::async_runtime::spawn_blocking(move || {
-            app.google_auth().authorize(AuthorizeRequest { interactive })
+            app.google_auth()
+                .authorize(AuthorizeRequest { interactive })
         })
         .await
         .map_err(|e| TokenProviderError::Unavailable(format!("join: {e}")))?;

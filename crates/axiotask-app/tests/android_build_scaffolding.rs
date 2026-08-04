@@ -289,8 +289,7 @@ fn android_play_services_auth_is_wired_and_158_is_erased() {
     // custom-scheme constants/config are gone from state.rs.
     let state_rs = fs::read_to_string(root.join("src/state.rs")).expect("src/state.rs readable");
     assert!(
-        state_rs.contains("start_login_mobile")
-            && state_rs.contains("PlayServicesTokenProvider"),
+        state_rs.contains("start_login_mobile") && state_rs.contains("PlayServicesTokenProvider"),
         "start_login_mobile must sign in through the Play Services token provider"
     );
     assert!(

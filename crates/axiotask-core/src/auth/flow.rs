@@ -265,13 +265,19 @@ mod tests {
     #[test]
     fn parse_redirect_reports_user_denied_on_error_param() {
         let url = "http://127.0.0.1:54321/?error=access_denied&state=st";
-        assert!(matches!(parse_redirect(url, "st"), Err(AuthError::UserDenied)));
+        assert!(matches!(
+            parse_redirect(url, "st"),
+            Err(AuthError::UserDenied)
+        ));
     }
 
     #[test]
     fn parse_redirect_reports_user_denied_when_no_code_present() {
         let url = "http://127.0.0.1:54321/?state=st";
-        assert!(matches!(parse_redirect(url, "st"), Err(AuthError::UserDenied)));
+        assert!(matches!(
+            parse_redirect(url, "st"),
+            Err(AuthError::UserDenied)
+        ));
     }
 
     // --- consent URL --------------------------------------------------------
