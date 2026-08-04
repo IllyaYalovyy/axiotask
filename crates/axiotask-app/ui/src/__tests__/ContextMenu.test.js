@@ -108,6 +108,21 @@ describe("GH#19: Custom context menu", () => {
       });
     });
 
+    it("does not auto-expand the submenu on hover — only on click", async () => {
+      mockBackend([task("t1", "Test task")]);
+      const { container } = render(App);
+      await waitFor(() => expect(screen.getByText("Test task")).toBeInTheDocument());
+      await openContextMenu(container);
+      const dueItem = screen.getByText("Set due date").closest(".menu-item");
+      // Hovering must NOT reveal the submenu options.
+      await fireEvent.mouseEnter(dueItem);
+      expect(screen.queryByText("Tomorrow")).not.toBeInTheDocument();
+      expect(container.querySelector(".submenu")).not.toBeInTheDocument();
+      // Clicking reveals it.
+      await fireEvent.click(dueItem);
+      await waitFor(() => expect(screen.getByText("Tomorrow")).toBeInTheDocument());
+    });
+
     it("clicking Tomorrow calls set_due", async () => {
       mockBackend([task("t1", "Test task")]);
       const { container } = render(App);

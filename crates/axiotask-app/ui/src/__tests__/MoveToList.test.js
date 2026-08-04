@@ -111,9 +111,9 @@ describe("GH#16: Move task between lists", () => {
       const widget = container.querySelector(".task-widget");
       await fireEvent.contextMenu(widget);
       await waitFor(() => expect(screen.getByText("Move to list")).toBeInTheDocument());
-      // Hover to open submenu
+      // Click to open submenu (submenus expand on click, not hover)
       const moveItem = screen.getByText("Move to list").closest(".menu-item");
-      await fireEvent.mouseEnter(moveItem);
+      await fireEvent.click(moveItem);
       // Find "Personal" inside the context menu's submenu
       const ctxMenu = container.querySelector(".context-menu");
       await waitFor(() => {
@@ -145,7 +145,7 @@ describe("GH#16: Move task between lists", () => {
       await fireEvent.contextMenu(widget);
       await waitFor(() => expect(screen.getByText("Move to list")).toBeInTheDocument());
       const moveItem = screen.getByText("Move to list").closest(".menu-item");
-      await fireEvent.mouseEnter(moveItem);
+      await fireEvent.click(moveItem);
       const ctxMenu = container.querySelector(".context-menu");
       await waitFor(() => {
         const submenu = ctxMenu.querySelector(".submenu");

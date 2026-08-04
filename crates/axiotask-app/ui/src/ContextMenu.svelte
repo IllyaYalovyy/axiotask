@@ -63,7 +63,7 @@
         class:focused={actionIdx === focusIdx}
         class:has-submenu={!!item.submenu}
         onclick={() => handleItemClick(item)}
-        onmouseenter={() => { focusIdx = actionIdx; if (item.submenu) activeSubmenu = item.id; }}
+        onmouseenter={() => { focusIdx = actionIdx; }}
       >
         <span class="icon">{#if item.icon}<Icon name={item.icon} size={14} />{/if}</span>
         <span class="label">{item.label}</span>
