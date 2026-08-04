@@ -31,6 +31,10 @@ const ANDROID_OAUTH_CLIENT_ID: &str = match option_env!("AXIOTASK_ANDROID_CLIENT
 const SYNC_DEBOUNCE: Duration = Duration::from_secs(2);
 /// Periodic sync interval to catch remote changes.
 const SYNC_PERIOD: Duration = Duration::from_secs(60);
+/// Upper bound on the final sync run when the app is exiting. Exit blocks on
+/// this flush, so a hung connection must never hold the window open forever;
+/// on timeout, anything unpushed just syncs on the next launch.
+const EXIT_SYNC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Ceiling for the exponential backoff applied after a *permanent* sync
 /// failure. A dead schema or corrupt store fails identically on every retry,
 /// so the periodic cadence stretches from [`SYNC_PERIOD`] up to this cap
@@ -930,6 +934,48 @@ impl AppState {
     /// task's create push is held; every other create still syncs.
     pub fn set_editing_task(&self, id: Option<String>) {
         *self.held_create_id.lock().unwrap() = id;
+    }
+
+    /// Flush pending local changes to Google before the process exits.
+    ///
+    /// The background sync loop dies with the process, and a mutation is only
+    /// pushed after the 2s debounce ([`SYNC_DEBOUNCE`]) — so a change made and
+    /// then immediately quit is stranded dirty in local storage until the next
+    /// launch. On exit we push it now instead.
+    ///
+    /// The window is closing, so nothing holds an id anymore: the deferred
+    /// create the open detail panel was holding (see `held_create_id`) is
+    /// released first, so it pushes with everything else rather than staying
+    /// held (and stuck). Only acts when it can actually push — signed in, push
+    /// enabled, session alive, and something is pending — otherwise a pointless
+    /// or destructive round trip is skipped (a signed-out flush would push to
+    /// the throwaway offline client and wrongly mark rows clean). Bounded by
+    /// [`EXIT_SYNC_TIMEOUT`] so a hung network can never block the app from
+    /// closing; anything unpushed simply syncs on the next launch, exactly as
+    /// today.
+    pub async fn flush_on_exit(&self) {
+        if !self.is_authenticated() || !self.is_push_enabled() || self.needs_reauth() {
+            return;
+        }
+        // Nothing dirty → don't delay exit on a network round trip.
+        if matches!(self.pending_push_count().await, Ok(0)) {
+            return;
+        }
+        // Release the panel's held create — the panel is gone, so its id may
+        // safely remap now — and push everything.
+        self.set_editing_task(None);
+        match tokio::time::timeout(EXIT_SYNC_TIMEOUT, self.run_sync()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                tracing::warn!("exit sync failed; unpushed changes remain local: {e}");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "exit sync timed out after {}s; unpushed changes remain local until next launch",
+                    EXIT_SYNC_TIMEOUT.as_secs()
+                );
+            }
+        }
     }
 
     /// Run sync only if the user is authenticated. Returns an error if not signed in.

@@ -295,8 +295,24 @@ pub fn run() {
             commands::set_editing,
             commands::set_auto_sync,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Flush pending pushes when the app is quitting. The background sync
+        // loop dies with the process and mutations are debounced by 2s, so a
+        // change made and then immediately quit would otherwise be stranded in
+        // local storage until the next launch. `ExitRequested` fires on every
+        // quit path (last window closed, Cmd+Q, tray quit), so this catches
+        // them all; we block the exit on a bounded final sync so the push
+        // completes before the process goes away. On the startup-error path no
+        // state is managed, so `try_state` returns `None` and we just exit.
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event
+                && let Some(state) = app_handle.try_state::<Arc<AppState>>()
+            {
+                let state = state.inner().clone();
+                tauri::async_runtime::block_on(state.flush_on_exit());
+            }
+        });
 }
 
 #[cfg(test)]

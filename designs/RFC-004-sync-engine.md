@@ -196,6 +196,7 @@ A `pending_move` whose task 404s on the move endpoint drops the stale intent
 | App launch | immediate |
 | Local mutation | 2s debounce (coalesces bursts) |
 | Periodic | 60s |
+| App exit | immediate flush of pending pushes (bounded; releases the held create) |
 | Reconnect | covered by periodic (explicit detection deferred) |
 
 The debounce/period decision (`wait_for_sync_trigger`) is unit-tested with a
