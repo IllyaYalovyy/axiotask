@@ -1,7 +1,9 @@
 package com.axiotask.plugin.googleauth
 
 import android.app.Activity
-import android.content.Intent
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.IntentSenderRequest
+import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -36,9 +38,6 @@ class AuthorizeArgs {
 class GoogleAuthPlugin(private val activity: Activity) : Plugin(activity) {
     private val tasksScope = "https://www.googleapis.com/auth/tasks"
 
-    /** The sign-in gesture's invoke, held while Google's consent UI is up. */
-    private var pendingConsent: Invoke? = null
-
     @Command
     fun authorize(invoke: Invoke) {
         val args = invoke.parseArgs(AuthorizeArgs::class.java)
@@ -68,37 +67,32 @@ class GoogleAuthPlugin(private val activity: Activity) : Plugin(activity) {
             }
     }
 
-    /** Launch Google's account picker + consent via the returned PendingIntent. */
+    /**
+     * Launch Google's account picker + consent via the returned PendingIntent.
+     *
+     * Tauri's plugin framework has NO raw `onActivityResult` forwarding: the
+     * ONLY route is `Plugin.startIntentSenderForResult(invoke, request, name)`,
+     * which launches through the manager's AndroidX `ActivityResultLauncher`
+     * and delivers the result to the `@ActivityCallback` method named `name`,
+     * with the `invoke` carried by the framework. (This routing is the G5
+     * device-validation point.)
+     */
     private fun launchConsent(invoke: Invoke, result: AuthorizationResult) {
         val pendingIntent = result.pendingIntent
             ?: return invoke.reject("authorize reported a resolution with no PendingIntent")
         try {
-            pendingConsent = invoke
-            activity.startIntentSenderForResult(
-                pendingIntent.intentSender,
-                REQUEST_CONSENT,
-                /* fillInIntent = */ null,
-                /* flagsMask = */ 0,
-                /* flagsValues = */ 0,
-                /* extraFlags = */ 0,
-            )
+            val request = IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+            startIntentSenderForResult(invoke, request, "consentResult")
         } catch (e: Exception) {
-            pendingConsent = null
             invoke.reject("failed to launch consent: ${e.message}")
         }
     }
 
-    /**
-     * Consent result. Tauri forwards the hosting activity's `onActivityResult`
-     * to registered plugins; we match our request code and parse the returned
-     * authorization. (This forwarding is the G5 device-validation point.)
-     */
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_CONSENT) return
-        val invoke = pendingConsent ?: return
-        pendingConsent = null
-        if (resultCode != Activity.RESULT_OK || data == null) {
+    /** Consent result, delivered by the framework with the original invoke. */
+    @ActivityCallback
+    private fun consentResult(invoke: Invoke, result: ActivityResult) {
+        val data = result.data
+        if (result.resultCode != Activity.RESULT_OK || data == null) {
             invoke.reject("sign-in was cancelled")
             return
         }
@@ -140,7 +134,4 @@ class GoogleAuthPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve()
     }
 
-    companion object {
-        private const val REQUEST_CONSENT = 0x5A17
-    }
 }

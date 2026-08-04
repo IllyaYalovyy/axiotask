@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, Notify};
 use axiotask_core::api::{GoogleTasksClient, HttpClient, InMemoryClient};
 use axiotask_core::auth::{
     AuthedClient, InMemoryTokenStore, MobileTokenProvider, OAuthConfig, RefreshFn, StoredTokens,
-    TokenStore, provider_refresh_fn,
+    TokenProviderError, TokenStore, provider_refresh_fn,
 };
 use axiotask_core::store::Store;
 use axiotask_core::sync::{SyncEngine, SyncOutcome};
@@ -282,10 +282,13 @@ pub struct AppState {
     /// Android session flag (RFC-010). On Android the app persists **no** token
     /// material — Play Services owns the grant — so there is no `tokens.json` to
     /// derive "signed in" from. This in-memory flag records that an interactive
-    /// Play Services sign-in succeeded this session; [`Self::is_authenticated`]
-    /// reads it on Android. It resets to signed-out on process restart (the user
-    /// re-taps sign-in, which Play Services then completes silently). Desktop
-    /// never touches this field — its `is_authenticated` stays token-store based.
+    /// Play Services holds a live grant; [`Self::is_authenticated`] reads it on
+    /// Android. In-memory only (no token material on disk, G4): set by the
+    /// sign-in gesture, and re-derived after every process restart by the
+    /// startup silent restore ([`Self::restore_session_mobile`]) — Play
+    /// Services, not the app, is the authority on whether the session lives.
+    /// Desktop never touches this field — its `is_authenticated` stays
+    /// token-store based.
     #[cfg(target_os = "android")]
     signed_in: AtomicBool,
 }
@@ -712,6 +715,59 @@ impl AppState {
         // Fresh grant — background syncs may resume.
         self.needs_reauth.store(false, Ordering::Relaxed);
         Ok(())
+    }
+
+    /// Silently restore a previously granted Play Services session at startup.
+    ///
+    /// Android persists no token material (G4), so after a process restart the
+    /// app cannot know locally whether the user ever signed in — but Play
+    /// Services knows: a **non-interactive** `authorize` returns a token iff
+    /// the grant is live. On a token the provider-backed client is swapped in
+    /// exactly as after a sign-in gesture and `true` is returned. Both failure
+    /// shapes return `false` and leave the app quietly signed out with NO
+    /// `needs_reauth` banner: `InteractionRequired` here usually means the user
+    /// simply never signed in (a fresh install must not claim "session
+    /// expired"), and `Unavailable` (GMS updating, no network) is transient —
+    /// the user can still sign in manually, and nothing loops at startup.
+    ///
+    // Live on Android (via `restore_session_mobile`) and in tests; the desktop
+    // lib target has no caller, hence the allow.
+    #[allow(dead_code)]
+    pub async fn restore_login_with_provider(
+        &self,
+        provider: Arc<dyn MobileTokenProvider>,
+    ) -> bool {
+        match provider.authorize(false).await {
+            Ok(access_token) => {
+                tracing::info!("restored Play Services session silently");
+                let http_client = build_provider_client(access_token, provider, &self.oauth_config);
+                *self.client.lock().await = Arc::new(http_client);
+                self.needs_reauth.store(false, Ordering::Relaxed);
+                true
+            }
+            Err(TokenProviderError::InteractionRequired) => {
+                tracing::info!("no live Play Services grant; starting signed out");
+                false
+            }
+            Err(TokenProviderError::Unavailable(m)) => {
+                tracing::warn!("Play Services unavailable at startup ({m}); starting signed out");
+                false
+            }
+        }
+    }
+
+    /// Android startup restore: silent [`Self::restore_login_with_provider`]
+    /// against the real Play Services provider, then flip the in-memory
+    /// signed-in flag so `is_authenticated` (and with it startup auto-sync and
+    /// the background loop) sees the session.
+    #[cfg(target_os = "android")]
+    pub async fn restore_session_mobile(&self, app: &tauri::AppHandle) {
+        let provider: Arc<dyn MobileTokenProvider> = Arc::new(
+            crate::play_services_auth::PlayServicesTokenProvider::new(app.clone()),
+        );
+        if self.restore_login_with_provider(provider).await {
+            self.signed_in.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Sign out of Play Services on Android: drop the account association (so the
@@ -1556,6 +1612,77 @@ mod tests {
             vec![true],
             "the gesture was attempted interactively before it was declined"
         );
+    }
+
+    /// Startup restore (RFC-010): after a process restart the app holds no
+    /// token material, but Play Services still holds the grant — a SILENT
+    /// authorize must recover the session with no user gesture. The banner a
+    /// prior dead session raised clears, and the provider is never asked
+    /// interactively (popping the account picker at launch would be a UX bug).
+    #[tokio::test]
+    async fn silent_restore_recovers_previously_granted_session() {
+        let state = AppState::new_memory(Arc::new(InMemoryClient::new()))
+            .await
+            .unwrap();
+        state.force_needs_reauth_for_test();
+        assert!(state.needs_reauth(), "precondition: banner showing");
+
+        let provider = Arc::new(FakeTokenProvider::with_token("live-access-token"));
+        let restored = state.restore_login_with_provider(provider.clone()).await;
+
+        assert!(restored, "a live grant must restore the session");
+        assert!(
+            !state.needs_reauth(),
+            "a restored session must clear the re-auth banner"
+        );
+        assert_eq!(
+            provider.calls(),
+            vec![false],
+            "startup restore must ask exactly once, silently — never UI"
+        );
+    }
+
+    /// Non-happy path: a fresh install (or a signed-out user) — Play Services
+    /// reports interaction required. The app must stay QUIETLY signed out:
+    /// returning false is fine, but raising `needs_reauth` would show a
+    /// "session expired" banner to someone who never had a session.
+    #[tokio::test]
+    async fn fresh_install_restore_stays_quietly_signed_out() {
+        let state = AppState::new_memory(Arc::new(InMemoryClient::new()))
+            .await
+            .unwrap();
+        assert!(!state.needs_reauth(), "precondition: no banner");
+
+        let provider = Arc::new(FakeTokenProvider::needs_interaction());
+        let restored = state.restore_login_with_provider(provider.clone()).await;
+
+        assert!(!restored, "no grant, nothing to restore");
+        assert!(
+            !state.needs_reauth(),
+            "a never-signed-in user must not see a 'session expired' banner"
+        );
+        assert_eq!(
+            provider.calls(),
+            vec![false],
+            "the restore attempt itself must have been silent"
+        );
+    }
+
+    /// Non-happy path: Play Services is unavailable at launch (updating, no
+    /// network). Same quiet outcome — signed out, no banner, no retry storm —
+    /// and the user can still sign in manually.
+    #[tokio::test]
+    async fn restore_during_gms_outage_stays_offline_without_banner() {
+        let state = AppState::new_memory(Arc::new(InMemoryClient::new()))
+            .await
+            .unwrap();
+
+        let provider = Arc::new(FakeTokenProvider::unavailable("GMS updating"));
+        let restored = state.restore_login_with_provider(provider.clone()).await;
+
+        assert!(!restored, "an outage cannot restore a session");
+        assert!(!state.needs_reauth(), "an outage is not a dead session");
+        assert_eq!(provider.calls(), vec![false], "one silent attempt, no loop");
     }
 
     fn sample_tokens() -> StoredTokens {

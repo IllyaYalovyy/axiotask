@@ -229,7 +229,15 @@ pub fn run() {
 
             // Auto-sync once on startup if authenticated and enabled in config
             let sync_state = state.clone();
+            #[cfg(target_os = "android")]
+            let restore_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // Android holds no token material on disk, so "authenticated"
+                // is only knowable by asking Play Services: restore the session
+                // with a SILENT authorize (never UI) before the auto-sync
+                // decision below reads `is_authenticated`.
+                #[cfg(target_os = "android")]
+                sync_state.restore_session_mobile(&restore_app).await;
                 if sync_state.is_authenticated() && sync_state.auto_sync_on_start() {
                     tracing::info!("auto-sync on startup...");
                     if let Err(e) = sync_state.run_sync_if_authed().await {

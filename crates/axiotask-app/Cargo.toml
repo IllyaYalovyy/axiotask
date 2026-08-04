@@ -52,6 +52,9 @@ paranoid-android = "0.2"
 # in. It is deliberately NOT a workspace member — it only builds for Android, so
 # the desktop `--workspace` gate must not try to compile its mobile bindings.
 tauri-plugin-google-auth = { path = "../tauri-plugin-google-auth" }
+# The android-only PlayServicesTokenProvider implements core's #[async_trait]
+# MobileTokenProvider, so the attribute must expand here too.
+async-trait = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

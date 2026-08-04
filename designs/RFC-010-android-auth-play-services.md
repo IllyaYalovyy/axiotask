@@ -174,9 +174,9 @@ plugin, build the HTTP client with the returned token and the plugin-backed
 
 ## Development Plan
 
-- [ ] **Step 1** — Plugin scaffold (`crates/tauri-plugin-google-auth`): Kotlin `authorize`/`sign_out` over `AuthorizationClient`, Rust bindings, Android-only wiring in `lib.rs` *(prerequisite: —)*
-- [ ] **Step 2** — Rust token-provider trait + fake; Android `RefreshFn` over the plugin; `start_login_mobile` rewritten onto it *(prerequisite: Step 1)*
-- [ ] **Step 3** — Erase #158 custom-scheme machinery (list above), including its tests and doc references *(prerequisite: Step 2)*
+- [x] **Step 1** — Plugin scaffold (`crates/tauri-plugin-google-auth`): Kotlin `authorize`/`sign_out` over `AuthorizationClient`, Rust bindings, Android-only wiring in `lib.rs` *(prerequisite: —)*
+- [x] **Step 2** — Rust token-provider trait + fake; Android `RefreshFn` over the plugin; `start_login_mobile` rewritten onto it; silent startup session restore (no re-tap per launch) *(prerequisite: Step 1)*
+- [x] **Step 3** — Erase #158 custom-scheme machinery (list above), including its tests and doc references *(prerequisite: Step 2)*
 - [ ] **Step 4** — Emulator smoke on a Google-APIs image asserting the sign-in sheet appears *(prerequisite: Step 2)*
 - [ ] **Step 5** — On-device gate: live sign-in + authorized Tasks call on the real phone; only then merge *(prerequisite: Steps 3–4)*
 
