@@ -319,7 +319,7 @@
   .drag-handle:hover { color: var(--accent); }
   .drag-handle:active { cursor: grabbing; }
 
-  .main-row { display: flex; align-items: center; gap: 0.4rem; }
+  .main-row { display: flex; align-items: center; gap: 0.4rem; position: relative; }
 
   .tree-icon { flex-shrink: 0; width: 1rem; }
 
@@ -340,6 +340,38 @@
     min-width: 2rem; min-height: 1.5rem; display: flex; align-items: center; justify-content: center;
   }
   .actions button:hover { background: var(--bg-active); color: var(--accent); }
+
+  /* Desktop (mouse) reveal WITHOUT reflow (#168). The 1.5rem action buttons are
+     taller than the ~0.9rem title line, so toggling the strip in/out of the
+     flex flow with display:none<->flex grew .main-row and the row jumped height
+     on hover/click. Here the strip is lifted OUT OF FLOW (position:absolute) so
+     its box never contributes to the row height, and it is revealed with
+     visibility — the row size is byte-for-byte identical hovered or not.
+     Scoped to a fine pointer + non-narrow width so the coarse swipe path and
+     the <=600px stacked layout below keep their in-flow display toggle. */
+  @media (pointer: fine) and (min-width: 601px) {
+    .actions {
+      display: flex;
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      visibility: hidden;
+      background: var(--bg-hover);
+      border-radius: 4px;
+      padding-left: 0.75rem;
+    }
+    .task-widget:hover .actions,
+    .task-widget.focused .actions,
+    .task-widget.swipe-actions-open .actions,
+    .task-widget.swipe-actions-peeking .actions {
+      visibility: visible;
+    }
+    /* Match the row's active background so the floating strip reads cleanly
+       over a focused/selected row instead of the default hover tint. */
+    .task-widget.focused .actions,
+    .task-widget.selected .actions { background: var(--bg-active); }
+  }
 
   /* Touch/mobile: hide actions until the row is swiped left, then keep 44px tap targets. */
   @media (pointer: coarse) {
