@@ -20,7 +20,12 @@ export function formatDue(due) {
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
   if (diff < 7) return `in ${diff}d`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Show the year only when it isn't the current calendar year: a date in this
+  // year stays compact ("Dec 25"), one in another year is unambiguous
+  // ("Mar 10, 2027"). Relative labels above never carry a year.
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
 }
 
 export function dueClass(due) {

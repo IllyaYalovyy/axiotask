@@ -161,6 +161,27 @@ describe("GH#18: Rich task widget — metadata always visible", () => {
       expect(due.classList.contains("overdue")).toBe(true);
     });
 
+    it("shows the year on the row when the due date is not the current year", () => {
+      // Task 126: an absolute date in a different year must be unambiguous.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 3)); // Aug 3, 2026
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: "2027-03-10T00:00:00.000Z" }) },
+      });
+      expect(container.querySelector(".due").textContent).toMatch(/2027/);
+    });
+
+    it("omits the year on the row for a current-year date", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 3)); // Aug 3, 2026
+      const { container } = render(TaskRow, {
+        props: { ...defaultProps, task: makeTask({ due: "2026-12-25T00:00:00.000Z" }) },
+      });
+      const txt = container.querySelector(".due").textContent;
+      expect(txt).not.toMatch(/2026/);
+      expect(txt).toMatch(/25/);
+    });
+
     it("shows 'no date' when task has no due date", () => {
       const { container } = render(TaskRow, {
         props: { ...defaultProps, task: makeTask({ due: null }) },
