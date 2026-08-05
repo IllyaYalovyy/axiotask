@@ -110,6 +110,11 @@ fn mobile_entry_point_and_data_dir_wiring_are_in_place() {
         "mobile must resolve its data dir via the Tauri path resolver, not `dirs`"
     );
     assert!(
+        lib_rs.contains("#[cfg(mobile)]") && lib_rs.contains("app_config_dir()"),
+        "mobile must resolve its config.toml dir via the Tauri path resolver, not \
+         `dirs` — otherwise preferences can never save on device (#170)"
+    );
+    assert!(
         lib_rs.contains("#[cfg(desktop)]"),
         "desktop-only startup workarounds (the single-instance lock) must be cfg-gated"
     );

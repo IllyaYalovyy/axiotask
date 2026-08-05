@@ -13,12 +13,45 @@
 // It reproduced the geometry hang in pure software rendering (Xephyr, no GPU),
 // so it is hardware-independent and CI-friendly.
 
+import fs from "node:fs";
+
 const DRIVER = process.env.WEBDRIVER_URL || "http://127.0.0.1:4444";
 const BIN = process.env.AXIOTASK_BIN;
 const EKEY = "element-6066-11e4-a52e-4f735466cecf";
 
+// Graceful-exit budget (#169). The final step closes the window through the
+// driver so the REAL binary runs its ExitRequested → flush_on_exit path. The
+// smoke instance is offline (no tokens), so flush_on_exit is a documented
+// no-op and exit is pure teardown: it must be effectively instant. INSTANT is
+// well under flush_on_exit's own 10s network timeout, so a regression that
+// dropped the signed-out guard and let the flush bleed into exit would trip it;
+// HARD is the outer ceiling from the acceptance criterion (must exit < 15s).
+const EXIT_INSTANT_MS = 8000;
+const EXIT_HARD_MS = 15000;
+
 if (!BIN) { console.error("AXIOTASK_BIN not set"); process.exit(2); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Locate the driver-launched app process so we can watch it exit. The whole
+// Xephyr harness is Linux-only, so reading /proc is fine: match each
+// /proc/<pid>/exe symlink against the binary we told the driver to launch.
+const findAppPid = () => {
+  let real;
+  try { real = fs.realpathSync(BIN); } catch { real = BIN; }
+  for (const entry of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const exe = fs.readlinkSync(`/proc/${entry}/exe`).replace(/ \(deleted\)$/, "");
+      if (exe === real) return Number(entry);
+    } catch { /* pid vanished or not ours */ }
+  }
+  return null;
+};
+// Liveness by signal 0: throws ESRCH once the process is reaped, EPERM while it
+// is alive but unsignalable (same user here, so that never happens).
+const pidAlive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
+};
 
 async function wd(method, path, body) {
   // WebKitWebDriver requires a valid JSON body on POSTs (e.g. click), so default
@@ -295,6 +328,37 @@ async function main() {
       return title === `${parent} edited`;
     });
     console.log("ok 8 - search finds a task and opens it in the detail panel");
+
+    // 9) Graceful exit (#169). Close the window through the driver so the real
+    //    binary executes RunEvent::ExitRequested → flush_on_exit (1ee1865) and
+    //    then terminates. Offline instance ⇒ flush is a no-op ⇒ exit is instant;
+    //    a regression that hangs the exit (block_on deadlock, unbounded flush)
+    //    fails the wait below instead of being silently force-killed by the
+    //    runner's cleanup. withGlobalTauri exposes the window API, so a real
+    //    close() drives the same close path a user's window-close would.
+    const appPid = findAppPid();
+    if (!appPid) throw new Error("FAIL: could not locate the running app process to watch its exit");
+    const hasWindowApi = await exec("return !!(window.__TAURI__ && window.__TAURI__.window && window.__TAURI__.window.getCurrentWindow);");
+    if (!hasWindowApi) throw new Error("FAIL: __TAURI__ window API unavailable — cannot close the window via the driver");
+    const t0 = Date.now();
+    // close() tears the webview down, so the execute reply may never arrive;
+    // fire it and cap the wait rather than blocking on a response that dies.
+    await Promise.race([
+      exec("window.__TAURI__.window.getCurrentWindow().close(); return true;").catch(() => {}),
+      sleep(2000),
+    ]);
+    let elapsed = -1;
+    for (let i = 0; i < Math.ceil(EXIT_HARD_MS / 100); i++) {
+      if (!pidAlive(appPid)) { elapsed = Date.now() - t0; break; }
+      await sleep(100);
+    }
+    if (elapsed < 0) {
+      throw new Error(`FAIL: app did not exit within ${EXIT_HARD_MS}ms of window close (ExitRequested/flush hang)`);
+    }
+    if (elapsed > EXIT_INSTANT_MS) {
+      throw new Error(`FAIL: offline app took ${elapsed}ms to exit (> ${EXIT_INSTANT_MS}ms) — exit path is not instant`);
+    }
+    console.log(`ok 9 - window closed via driver; app ran ExitRequested and exited cleanly in ${elapsed}ms`);
 
     console.log("\nSMOKE TEST PASSED");
   } finally {

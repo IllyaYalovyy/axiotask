@@ -1775,8 +1775,11 @@
     box-shadow: 0 8px 24px rgba(0,0,0,0.28); cursor: pointer;
   }
   .toast-stack {
+    /* #172: sit above EVERY modal overlay (pickers top out at 6000) so an error
+       raised from inside Properties / the detail panel / a picker is visible
+       immediately, not hidden until the dialog closes. */
     position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
-    z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    z-index: 7000; display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
     width: min(calc(100vw - 2rem), 36rem); pointer-events: none;
   }
   .toast-stack :global(.toast) { pointer-events: auto; }

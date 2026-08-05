@@ -294,17 +294,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Build state from a database path. Attempts to restore auth from keyring.
-    pub async fn new(db_path: &std::path::Path) -> Result<Self, String> {
-        // Ensure config file exists with defaults
-        axiotask_core::config::AppConfig::write_default_if_missing();
+    /// Build state from a database path and a config-file path. Attempts to
+    /// restore auth from keyring.
+    ///
+    /// Both paths are resolved by the caller (the entry point) so that platform
+    /// path resolution lives in one place: desktop derives them from `dirs`,
+    /// while Android — where `dirs` roots are not app-writable — resolves them
+    /// through the Tauri path resolver (`app_data_dir`/`app_config_dir`). If the
+    /// config path were left to `dirs` on Android, `write_default_if_missing`
+    /// and every `save_sync` would silently no-op and preferences could never
+    /// save on device (#170); routing it here fixes that (mirrors #156 for the DB).
+    pub async fn new(
+        db_path: &std::path::Path,
+        config_path: &std::path::Path,
+    ) -> Result<Self, String> {
+        // Ensure config file exists with defaults at the resolved path.
+        axiotask_core::config::AppConfig::write_default_if_missing_at(config_path);
 
         let pool = axiotask_core::store::open(db_path)
             .await
             .map_err(|e| e.to_string())?;
         let store = Store::new(pool);
 
-        let config = axiotask_core::config::AppConfig::load();
+        let config = axiotask_core::config::AppConfig::load_from(config_path).unwrap_or_default();
         // Desktop reads its "Desktop app" client id + secret from the config
         // file and talks to the token endpoint directly. Android identifies no
         // client at all (RFC-010): Play Services owns the grant and the app only
@@ -353,7 +365,7 @@ impl AppState {
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
             needs_reauth: AtomicBool::new(false),
             attention_streak: AtomicU32::new(0),
-            config_path: axiotask_core::config::AppConfig::default_path(),
+            config_path: config_path.to_owned(),
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
             sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
@@ -1311,23 +1323,39 @@ impl AppState {
     /// Enable or disable pushing local changes to Google (read-write vs.
     /// read-only sync). Takes effect on the next sync and is persisted to the
     /// config file so the choice survives a restart.
+    ///
+    /// Transactional: the config is written to disk FIRST and the runtime flag
+    /// flips only on a successful save. If the write fails, the in-memory
+    /// state stays in agreement with disk (and the UI) instead of silently
+    /// pushing while both say read-only.
     pub fn set_push_enabled(&self, enabled: bool) -> Result<(), String> {
+        self.persist_sync_settings(enabled, self.auto_sync_on_start.load(Ordering::Relaxed))?;
         self.push_enabled.store(enabled, Ordering::Relaxed);
-        self.persist_sync_settings()
+        Ok(())
     }
 
     /// Enable or disable the automatic sync on startup. Persisted to config.
+    ///
+    /// Transactional like [`Self::set_push_enabled`]: persist first, flip the
+    /// runtime flag only if the save succeeds.
     pub fn set_auto_sync_on_start(&self, enabled: bool) -> Result<(), String> {
+        self.persist_sync_settings(self.push_enabled.load(Ordering::Relaxed), enabled)?;
         self.auto_sync_on_start.store(enabled, Ordering::Relaxed);
-        self.persist_sync_settings()
+        Ok(())
     }
 
-    /// Write the current in-memory sync settings to the config file, preserving
-    /// the rest of the file (credentials and comments).
-    fn persist_sync_settings(&self) -> Result<(), String> {
+    /// Write the given sync settings to the config file, preserving the rest of
+    /// the file (credentials and comments). Takes the desired values explicitly
+    /// (not the current atomics) so callers can commit to disk BEFORE flipping
+    /// the runtime flag — the atomic must never lead the persisted state.
+    fn persist_sync_settings(
+        &self,
+        push_enabled: bool,
+        auto_sync_on_start: bool,
+    ) -> Result<(), String> {
         let sync = axiotask_core::config::SyncConfig {
-            push_enabled: self.push_enabled.load(Ordering::Relaxed),
-            auto_sync_on_start: self.auto_sync_on_start.load(Ordering::Relaxed),
+            push_enabled,
+            auto_sync_on_start,
         };
         axiotask_core::config::AppConfig::save_sync_to(&self.config_path, &sync)
             .map_err(|e| format!("failed to save config: {e}"))
@@ -1724,6 +1752,116 @@ mod tests {
         // dir — the mobile entry point only swaps the base, nothing else.
         let expected = db_path_in(&dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
         assert_eq!(default_db_path(), expected);
+    }
+
+    /// The config path is resolved by the caller and threaded all the way
+    /// through `AppState::new`: on Android `dirs::config_dir()` is not
+    /// app-writable, so the entry point resolves an app-writable base and the
+    /// state must (a) write the default config there and (b) persist every
+    /// later preference change to that same file — otherwise preferences can
+    /// never save on device (#170). Uses a temp config path that is NOT the
+    /// desktop default, standing in for the Android app_config_dir.
+    #[tokio::test]
+    async fn new_writes_and_persists_config_at_the_resolved_path() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("axiotask.sqlite");
+        // A path the desktop default_path() would never resolve to — proving
+        // the state uses the resolved path, not dirs::config_dir().
+        let config_path = dir.path().join("resolved").join("config.toml");
+        assert_ne!(
+            config_path,
+            axiotask_core::config::AppConfig::default_path()
+        );
+        assert!(!config_path.exists());
+
+        let state = AppState::new(&db_path, &config_path).await.unwrap();
+
+        // (a) The default config was written at the resolved path.
+        assert!(
+            config_path.exists(),
+            "the default config must be written at the resolved path"
+        );
+        assert_eq!(state.config_path(), config_path.as_path());
+
+        // (b) A preference change persists to that same file and survives a
+        // reload — this is the whole point of the fix.
+        state.set_push_enabled(true).unwrap();
+        let reloaded = axiotask_core::config::AppConfig::load_from(&config_path).unwrap();
+        assert!(
+            reloaded.sync.push_enabled,
+            "toggled preference must persist to the resolved config file"
+        );
+    }
+
+    /// Point a state's config at a path that can never be written (its parent
+    /// is a regular file, so `create_dir_all` fails regardless of uid — safe
+    /// under root too). The setter must then leave the runtime flag alone.
+    fn wedge_config_path(state: &mut AppState, dir: &TempDir) {
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        state.config_path = blocker.join("config.toml");
+    }
+
+    /// #171: `set_push_enabled` must be transactional — persist to disk FIRST,
+    /// flip the atomic only on success. A failed save must NOT leave memory
+    /// pushing while the UI and disk both say read-only.
+    #[tokio::test]
+    async fn set_push_enabled_does_not_flip_when_the_config_write_fails() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("axiotask.sqlite");
+        let good_config = dir.path().join("config.toml");
+        let mut state = AppState::new(&db_path, &good_config).await.unwrap();
+
+        // Establish a durable "enabled" state that disk and memory agree on.
+        state.set_push_enabled(true).unwrap();
+        assert!(state.is_push_enabled());
+        assert!(
+            axiotask_core::config::AppConfig::load_from(&good_config)
+                .unwrap()
+                .sync
+                .push_enabled
+        );
+
+        wedge_config_path(&mut state, &dir);
+
+        // Disabling can no longer persist, so it must fail AND leave the
+        // runtime flag as it was — pushing while both UI and disk still say
+        // enabled would be the exact split #171 forbids.
+        let err = state.set_push_enabled(false).unwrap_err();
+        assert!(err.contains("failed to save config"), "got: {err}");
+        assert!(
+            state.is_push_enabled(),
+            "runtime flag must not flip when the config write fails"
+        );
+
+        // The last durable config on disk is untouched (still enabled): memory
+        // and disk stay in agreement.
+        assert!(
+            axiotask_core::config::AppConfig::load_from(&good_config)
+                .unwrap()
+                .sync
+                .push_enabled,
+            "a failed write must not corrupt the last-saved config"
+        );
+    }
+
+    /// #171: the same transactional guarantee mirrored on `set_auto_sync_on_start`.
+    #[tokio::test]
+    async fn set_auto_sync_does_not_flip_when_the_config_write_fails() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("axiotask.sqlite");
+        let good_config = dir.path().join("config.toml");
+        let mut state = AppState::new(&db_path, &good_config).await.unwrap();
+
+        assert!(state.auto_sync_on_start(), "defaults on");
+        wedge_config_path(&mut state, &dir);
+
+        let err = state.set_auto_sync_on_start(false).unwrap_err();
+        assert!(err.contains("failed to save config"), "got: {err}");
+        assert!(
+            state.auto_sync_on_start(),
+            "runtime flag must not flip when the config write fails"
+        );
     }
 
     #[test]
