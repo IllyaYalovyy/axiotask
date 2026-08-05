@@ -68,6 +68,19 @@ fn app_dir_name_for(prefix: Option<&str>) -> String {
     }
 }
 
+/// The instance's config file path rooted at `base` — `base/<app-dir>/config.toml`,
+/// where `<app-dir>` is instance-aware (`axiotask` or `axiotask-<prefix>`).
+///
+/// Split out so the layout is testable without the environment and shared by
+/// both roots: desktop derives `base` from [`dirs::config_dir`]; mobile derives
+/// it from Tauri's path resolver (`app.path().app_config_dir()`), the only
+/// writable per-app config location on Android — without which preferences can
+/// never save on device (#170). Mirrors the `db_path_in` split done for the
+/// database in #156.
+pub fn config_path_in(base: &std::path::Path) -> PathBuf {
+    base.join(app_dir_name()).join("config.toml")
+}
+
 /// Top-level application configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -133,11 +146,15 @@ impl AppConfig {
     }
 
     /// Default config file path (instance-aware via [`INSTANCE_ENV`]).
+    ///
+    /// Desktop only in practice: `dirs::config_dir()` resolves the XDG/OS config
+    /// root. On Android that root is not app-writable, so the app's entry point
+    /// resolves the base through the Tauri path resolver
+    /// (`app.path().app_config_dir()`) and calls [`config_path_in`] directly —
+    /// without which `write_default_if_missing`/`save_sync` silently no-op and
+    /// preferences can never save on device (#170).
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(app_dir_name())
-            .join("config.toml")
+        config_path_in(&dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")))
     }
 
     /// Write a default config file if none exists.
@@ -208,6 +225,39 @@ mod tests {
         assert_eq!(app_dir_name_for(None), "axiotask");
         assert_eq!(app_dir_name_for(Some("dev")), "axiotask-dev");
         assert_eq!(app_dir_name_for(Some("qa_2")), "axiotask-qa_2");
+    }
+
+    /// The config layout is `base/<instance-dir>/config.toml`, with `base` the
+    /// ONLY variable between platforms: desktop roots it at `dirs::config_dir()`,
+    /// mobile at the Tauri app_config_dir. Both must produce the same subtree so
+    /// preferences land in the instance-scoped config wherever the base lands
+    /// (#170). Mirrors `db_path_in` from #156.
+    #[test]
+    fn config_path_in_roots_the_shared_config_layout_under_the_given_base() {
+        let dir_name = app_dir_name();
+        let desktop_base = std::path::Path::new("/xdg/config");
+        let mobile_base = std::path::Path::new("/data/data/com.axiotask.app/files");
+
+        for base in [desktop_base, mobile_base] {
+            let path = config_path_in(base);
+            assert!(path.starts_with(base), "config must live under {base:?}");
+            assert_eq!(path.file_name().unwrap(), "config.toml");
+            assert_eq!(
+                path.parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                dir_name,
+                "an instance-named dir sits between the base and the config file",
+            );
+        }
+
+        // Desktop's default path is exactly `config_path_in` rooted at the OS
+        // config dir — the mobile entry point only swaps the base, nothing else.
+        let expected = config_path_in(&dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")));
+        assert_eq!(AppConfig::default_path(), expected);
     }
 
     #[test]
