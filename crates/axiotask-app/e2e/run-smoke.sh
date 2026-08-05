@@ -55,6 +55,17 @@ sleep 2.5
 AXIOTASK_BIN="$BIN" node "$HERE/smoke.mjs"
 RC=$?
 
+# The smoke's final step closes the window via the driver so the real binary
+# runs its ExitRequested → flush_on_exit path. A panic there (e.g. block_on
+# inside the async runtime) aborts instead of exiting cleanly; the app inherits
+# the driver's stderr, so a panic anywhere in the run surfaces in this log.
+# Treat it as a failure even if the smoke itself reported ok.
+if grep -qE "thread '[^']*' panicked" /tmp/e2e-tauri-driver.log 2>/dev/null; then
+  echo "--- app panicked during the run (clean-exit assertion #169) ---"
+  grep -nE "thread '[^']*' panicked|panicked at" /tmp/e2e-tauri-driver.log
+  RC=1
+fi
+
 if [ $RC -ne 0 ]; then
   echo "--- tauri-driver log ---"; tail -20 /tmp/e2e-tauri-driver.log
 fi
