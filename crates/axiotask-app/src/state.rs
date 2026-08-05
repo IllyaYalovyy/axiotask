@@ -326,17 +326,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Build state from a database path. Attempts to restore auth from keyring.
-    pub async fn new(db_path: &std::path::Path) -> Result<Self, String> {
-        // Ensure config file exists with defaults
-        axiotask_core::config::AppConfig::write_default_if_missing();
+    /// Build state from a database path and a config-file path. Attempts to
+    /// restore auth from keyring.
+    ///
+    /// Both paths are resolved by the caller (the entry point) so that platform
+    /// path resolution lives in one place: desktop derives them from `dirs`,
+    /// while Android — where `dirs` roots are not app-writable — resolves them
+    /// through the Tauri path resolver (`app_data_dir`/`app_config_dir`). If the
+    /// config path were left to `dirs` on Android, `write_default_if_missing`
+    /// and every `save_sync` would silently no-op and preferences could never
+    /// save on device (#170); routing it here fixes that (mirrors #156 for the DB).
+    pub async fn new(
+        db_path: &std::path::Path,
+        config_path: &std::path::Path,
+    ) -> Result<Self, String> {
+        // Ensure config file exists with defaults at the resolved path.
+        axiotask_core::config::AppConfig::write_default_if_missing_at(config_path);
 
         let pool = axiotask_core::store::open(db_path)
             .await
             .map_err(|e| e.to_string())?;
         let store = Store::new(pool);
 
-        let config = axiotask_core::config::AppConfig::load();
+        let config = axiotask_core::config::AppConfig::load_from(config_path).unwrap_or_default();
         // Desktop reads its "Desktop app" client id + secret from the config
         // file; Android has no per-user config credential — it uses the public
         // client id compiled in at build time and carries NO secret.
@@ -382,7 +394,7 @@ impl AppState {
             auto_sync_on_start: AtomicBool::new(config.sync.auto_sync_on_start),
             needs_reauth: AtomicBool::new(false),
             attention_streak: AtomicU32::new(0),
-            config_path: axiotask_core::config::AppConfig::default_path(),
+            config_path: config_path.to_owned(),
             db_path: db_path.to_owned(),
             sync_status: Mutex::new(SyncStatus::default()),
             sync_notifier: std::sync::RwLock::new(Arc::new(NoopSyncNotifier)),
@@ -1508,6 +1520,45 @@ mod tests {
         // dir — the mobile entry point only swaps the base, nothing else.
         let expected = db_path_in(&dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
         assert_eq!(default_db_path(), expected);
+    }
+
+    /// The config path is resolved by the caller and threaded all the way
+    /// through `AppState::new`: on Android `dirs::config_dir()` is not
+    /// app-writable, so the entry point resolves an app-writable base and the
+    /// state must (a) write the default config there and (b) persist every
+    /// later preference change to that same file — otherwise preferences can
+    /// never save on device (#170). Uses a temp config path that is NOT the
+    /// desktop default, standing in for the Android app_config_dir.
+    #[tokio::test]
+    async fn new_writes_and_persists_config_at_the_resolved_path() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("axiotask.sqlite");
+        // A path the desktop default_path() would never resolve to — proving
+        // the state uses the resolved path, not dirs::config_dir().
+        let config_path = dir.path().join("resolved").join("config.toml");
+        assert_ne!(
+            config_path,
+            axiotask_core::config::AppConfig::default_path()
+        );
+        assert!(!config_path.exists());
+
+        let state = AppState::new(&db_path, &config_path).await.unwrap();
+
+        // (a) The default config was written at the resolved path.
+        assert!(
+            config_path.exists(),
+            "the default config must be written at the resolved path"
+        );
+        assert_eq!(state.config_path(), config_path.as_path());
+
+        // (b) A preference change persists to that same file and survives a
+        // reload — this is the whole point of the fix.
+        state.set_push_enabled(true).unwrap();
+        let reloaded = axiotask_core::config::AppConfig::load_from(&config_path).unwrap();
+        assert!(
+            reloaded.sync.push_enabled,
+            "toggled preference must persist to the resolved config file"
+        );
     }
 
     #[test]

@@ -92,6 +92,31 @@ fn resolve_db_path(app: &tauri::App) -> Result<std::path::PathBuf, String> {
     Ok(state::db_path_in(&base))
 }
 
+/// Resolves the `config.toml` path for this platform.
+///
+/// Desktop derives the base from `dirs::config_dir()` (the XDG/OS config root)
+/// via [`AppConfig::default_path`]. Android has no such app-writable root — the
+/// only per-app writable config location comes from Tauri's path resolver, so
+/// mobile roots the same layout at `app.path().app_config_dir()`. Without this
+/// the default config is never written and preferences (`[sync]`) can never save
+/// on device (#170) — the config mirror of the DB resolution done in #156.
+// Fallible signature kept in parity with the mobile variant, whose path
+// resolution can genuinely fail; on desktop it never does.
+#[cfg(desktop)]
+#[allow(clippy::unnecessary_wraps)]
+fn resolve_config_path(_app: &tauri::App) -> Result<std::path::PathBuf, String> {
+    Ok(axiotask_core::config::AppConfig::default_path())
+}
+
+#[cfg(mobile)]
+fn resolve_config_path(app: &tauri::App) -> Result<std::path::PathBuf, String> {
+    let base = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("resolve app config dir: {e}"))?;
+    Ok(axiotask_core::config::config_path_in(&base))
+}
+
 /// Installs the process-global `tracing` subscriber for this platform.
 ///
 /// Desktop keeps the default `fmt` writer (stdout), byte-for-byte what it was
@@ -202,14 +227,26 @@ pub fn run() {
                 let _ = std::fs::create_dir_all(parent);
             }
 
-            // Block on state init — this runs before the window loads content.
-            let app_state = match tauri::async_runtime::block_on(AppState::new(&db_path)) {
-                Ok(s) => s,
+            // Config path is resolved through the same platform-specific path
+            // resolver as the DB (#170): on Android `dirs` is not app-writable,
+            // so preferences would never persist without this.
+            let config_path = match resolve_config_path(app) {
+                Ok(p) => p,
                 Err(e) => {
                     show_startup_error(app, &window_title, &e)?;
                     return Ok(());
                 }
             };
+
+            // Block on state init — this runs before the window loads content.
+            let app_state =
+                match tauri::async_runtime::block_on(AppState::new(&db_path, &config_path)) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        show_startup_error(app, &window_title, &e)?;
+                        return Ok(());
+                    }
+                };
             let state = Arc::new(app_state);
             app.manage(state.clone());
 
