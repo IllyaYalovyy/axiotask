@@ -27,10 +27,14 @@ one UI, on Linux desktop and Android.
    Sync happens in the background when connectivity is available. Conflicts are resolved
    predictably.
 
-2. **One gesture per action** — Frequent actions take a single interaction: one click or tap to
-   add a task; one click to move a task to tomorrow, next week, next month; swipe left/right on
-   mobile for quick actions. Keyboard shortcuts may exist as a convenience but are never the
-   backbone — the app is fully usable by touch and mouse alone.
+2. **Superior everyday efficiency** — The bar is a UX clearly better than the Google Tasks app,
+   measured by how little effort common actions take. Every useful option is within one or two
+   interactions: one click or tap to add a task; one to move it to tomorrow, next week, next
+   month; swipe left/right quick actions on mobile. Meaningful defaults everywhere — the common
+   case needs no configuration and no extra choices. Keyboard shortcuts may exist as a
+   convenience, but they are not the driving factor: the app must be this efficient by touch
+   and mouse alone. The desktop UX sets this standard today; mobile must be similarly useful
+   and convenient, by touch-native means.
 
 3. **One level of subtasks, always clear** — Google Tasks allows exactly one level of nesting,
    and so do we — permanently. Lists and smart views show top-level tasks only; a parent card
