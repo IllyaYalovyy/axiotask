@@ -95,13 +95,15 @@ class Task {
   /// immutable [Task] by producing a new one (the Dart equivalent of the
   /// reference's in-place `t.task.field = …` mutations). [completed] defaults to
   /// a sentinel so passing an explicit `null` (clearing the completion timestamp
-  /// on re-open) is distinguishable from "leave unchanged".
+  /// on re-open) is distinguishable from "leave unchanged". [notes] uses the
+  /// same sentinel so an explicit `null` (clearing the notes field) is
+  /// distinguishable from omission — Google treats empty notes as absent.
   Task copyWith({
     String? id,
     String? parent,
     String? position,
     String? title,
-    String? notes,
+    Object? notes = _unset,
     TaskStatus? status,
     String? due,
     Object? completed = _unset,
@@ -114,7 +116,7 @@ class Task {
     parent: parent ?? this.parent,
     position: position ?? this.position,
     title: title ?? this.title,
-    notes: notes ?? this.notes,
+    notes: identical(notes, _unset) ? this.notes : notes as String?,
     status: status ?? this.status,
     due: due ?? this.due,
     completed: identical(completed, _unset)

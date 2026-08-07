@@ -232,6 +232,255 @@ void main() {
     });
   });
 
+  group('setNotes', () {
+    test('sets notes, marks dirty, and clears to null on empty', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'task');
+
+      await commands.setNotes('T1', 'remember the milk');
+      var t = (await store.findTaskAny('T1'))!;
+      expect(t.task.notes, 'remember the milk');
+      expect(t.syncState, SyncState.dirty);
+      expect(t.pendingOp, 'update'); // was synced → update
+
+      // Empty clears the field to null (Google treats empty notes as absent).
+      await commands.setNotes('T1', '');
+      t = (await store.findTaskAny('T1'))!;
+      expect(t.task.notes, isNull);
+    });
+  });
+
+  group('deleteTask', () {
+    // delete_task_with_etag_marks_deleted
+    test('a synced task is tombstoned and its delete stays queued', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'doomed'); // has etag e1
+
+      final token = await commands.deleteTask('T1');
+      expect(token.hadEtag, isTrue);
+
+      // Excluded from the visible list…
+      expect(await store.listTasks('L1'), isEmpty);
+      // …but the push still sees the pending delete.
+      final dirty = await store.drainDirty();
+      expect(dirty, hasLength(1));
+      expect(dirty.single.pendingOp, 'delete');
+    });
+
+    // delete_task_without_etag_hard_deletes
+    test(
+      'a never-pushed task is hard-deleted, leaving nothing to push',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store, newId: () => 'local-1');
+        await seedList(store, 'L1');
+        await commands.createTask(listId: 'L1', title: 'ephemeral');
+
+        final token = await commands.deleteTask('local-1');
+        expect(token.hadEtag, isFalse);
+        expect(await store.listTasks('L1'), isEmpty);
+        expect(await store.drainDirty(), isEmpty);
+      },
+    );
+
+    // A never-pushed row with an in-flight create marker MUST tombstone, not
+    // hard-delete: its insert may have committed on Google under an id we never
+    // recorded, and dropping the marker would strand that task (non-happy path,
+    // the serverMayHold in-flight branch).
+    test('a create whose insert is still in flight is tombstoned', () async {
+      final store = await freshStore();
+      final commands = Commands(store, newId: () => 'local-1');
+      await seedList(store, 'L1');
+      await commands.createTask(listId: 'L1', title: 'maybe-on-server');
+      await store.recordInflightCreate('local-1', 'L1', _t0);
+
+      final token = await commands.deleteTask('local-1');
+      expect(token.hadEtag, isFalse);
+      // Tombstoned (not gone): the delete must still reach the orphan.
+      final row = await store.findTaskAny('local-1');
+      expect(row, isNotNull);
+      expect(row!.syncState, SyncState.deleted);
+      expect(row.pendingOp, 'delete');
+    });
+
+    test('deleting a missing task throws the not-found shape', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await expectLater(
+        commands.deleteTask('ghost'),
+        throwsA(
+          isA<CommandError>().having(
+            (e) => e.message,
+            'message',
+            'task ghost not found',
+          ),
+        ),
+      );
+    });
+
+    // delete_parent_tombstones_the_whole_subtree_locally (#138)
+    test('deleting a parent tombstones the whole subtree in one step', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C1', 'L1', 'kid one', parent: 'P');
+      await seedTask(store, 'C2', 'L1', 'kid two', parent: 'P');
+
+      final token = await commands.deleteTask('P');
+      expect(token.subtree, hasLength(2), reason: 'descendants captured');
+
+      // The whole subtree vanishes from the view immediately (no live orphan).
+      expect(await store.listTasks('L1'), isEmpty);
+      for (final id in ['P', 'C1', 'C2']) {
+        final row = await store.findTaskAny(id);
+        expect(row?.syncState, SyncState.deleted, reason: '$id tombstoned');
+      }
+
+      // Only the root's delete is queued; the children are local-only tombstones.
+      final dirty = await store.drainDirty();
+      final deletes = dirty
+          .where((r) => r.pendingOp == 'delete')
+          .map((r) => r.task.id)
+          .toList();
+      expect(deletes, ['P']);
+      for (final id in ['C1', 'C2']) {
+        expect(dirty.firstWhere((r) => r.task.id == id).pendingOp, isNull);
+      }
+    });
+  });
+
+  group('undoDelete', () {
+    // undo_delete_restores_tombstoned_task
+    test('revives a tombstoned task in place with its fields intact', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'restore me');
+      await commands.setNotes('T1', 'important notes');
+
+      final token = await commands.deleteTask('T1');
+      expect(await store.listTasks('L1'), isEmpty);
+
+      await commands.undoDelete(token);
+      final tasks = await store.listTasks('L1');
+      expect(tasks, hasLength(1));
+      expect(tasks.single.task.title, 'restore me');
+      expect(tasks.single.task.notes, 'important notes');
+      expect(tasks.single.syncState, SyncState.dirty);
+      // Was synced (had an etag) → revives as an update, not a duplicate create.
+      expect(tasks.single.pendingOp, 'update');
+    });
+
+    // undo_delete_restores_hard_deleted_local_task
+    test(
+      'recreates a hard-deleted local-only task as a dirty create',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store, newId: () => 'local-1');
+        await seedList(store, 'L1');
+        await commands.createTask(listId: 'L1', title: 'local task');
+        await commands.setNotes('local-1', 'my notes');
+
+        final token = await commands.deleteTask('local-1');
+        expect(
+          await store.findTaskAny('local-1'),
+          isNull,
+          reason: 'hard-deleted',
+        );
+
+        await commands.undoDelete(token);
+        final tasks = await store.listTasks('L1');
+        expect(tasks, hasLength(1));
+        expect(tasks.single.task.title, 'local task');
+        expect(tasks.single.task.notes, 'my notes');
+        expect(tasks.single.pendingOp, 'create');
+      },
+    );
+
+    // undo_after_delete_pushed_restores_the_whole_subtree
+    test('after the delete pushed, undo rebuilds the whole subtree', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C1', 'L1', 'kid one', parent: 'P');
+      await seedTask(store, 'C2', 'L1', 'kid two', parent: 'P');
+
+      final token = await commands.deleteTask('P');
+      // Simulate the delete pushing: the root hard-deletes and the FK cascade
+      // takes the child tombstones (what run_sync does in the reference).
+      await store.deleteTaskHard('P');
+      expect(await store.findTaskAny('C1'), isNull, reason: 'cascaded away');
+
+      await commands.undoDelete(token);
+      final tasks = await store.listTasks('L1');
+      expect(tasks.map((t) => t.task.id).toSet(), {'P', 'C1', 'C2'});
+      for (final id in ['C1', 'C2']) {
+        final kid = tasks.firstWhere((t) => t.task.id == id);
+        expect(kid.task.parent, 'P', reason: '$id re-attached to its parent');
+        // The old remote ids are dead → recreated as fresh dirty creates.
+        expect(kid.pendingOp, 'create');
+      }
+    });
+
+    // undo_recreate_with_dead_parent_falls_back_to_top_level
+    test(
+      'undo of a subtask whose parent is gone lands it at top level',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(store, 'C1', 'L1', 'kid', parent: 'P');
+
+        final kidToken = await commands.deleteTask('C1');
+        await commands.deleteTask('P');
+        // Both deletes push: hard-delete the parent (cascading the kid tombstone).
+        await store.deleteTaskHard('P');
+        expect(await store.findTaskAny('C1'), isNull);
+        expect(await store.findTaskAny('P'), isNull);
+
+        await commands.undoDelete(kidToken);
+        final kid = (await store.listTasks('L1')).single;
+        expect(kid.task.title, 'kid');
+        expect(
+          kid.task.parent,
+          isNull,
+          reason: 'orphaned undo lands at top level',
+        );
+      },
+    );
+
+    // undo_delete_after_unpushed_edit_keeps_the_edit_queued
+    test('reviving after an unpushed edit keeps the edit queued', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'original');
+
+      // Unpushed local edit (dirty update).
+      await commands.renameTask('T1', 'edited offline');
+
+      final token = await commands.deleteTask('T1');
+      await commands.undoDelete(token);
+
+      final revived = (await store.findTaskAny('T1'))!;
+      expect(
+        revived.syncState,
+        SyncState.dirty,
+        reason: 'edit must stay queued',
+      );
+      expect(revived.pendingOp, 'update');
+      expect(revived.task.title, 'edited offline');
+    });
+  });
+
   group('offline create then edit', () {
     // offline_created_then_edited_task_pushes_as_create_not_deleted
     test(
