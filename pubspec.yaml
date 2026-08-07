@@ -62,6 +62,11 @@ dependencies:
   # Android's only app-writable root comes from the platform, without which the
   # store can never open on device. Desktop-Linux uses the XDG env directly.
   path_provider: ^2.1.5
+  # HTTP transport for the Google Tasks REST client (api/http_tasks_api.dart,
+  # T3.1) — the Dart analog of the reference crate's reqwest dependency. Already
+  # transitively locked; promoted to a direct dep because lib/ imports it. Tests
+  # drive it through a scripted fake http.Client (package:http/testing).
+  http: ^1.6.0
   # Routing — go_router, one hand-rolled adaptive shell (RESEARCH §7).
   go_router: ^17.4.0
   # Windowing — size persistence on desktop. Pinned: 0.5.x is mid-migration to
