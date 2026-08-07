@@ -15,8 +15,10 @@ import 'package:go_router/go_router.dart';
 
 import '../store/database.dart';
 import '../store/store.dart';
+import '../store/stored.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'commands.dart';
 import 'config_controller.dart';
 import 'prefs.dart';
 import 'window_title_controller.dart';
@@ -38,6 +40,24 @@ final appDatabaseProvider = Provider<AppDatabase>(
 /// The high-level store over [appDatabaseProvider].
 final storeProvider = Provider<Store>(
   (ref) => Store(ref.watch(appDatabaseProvider)),
+);
+
+/// The command service (create/rename/toggle today) over [storeProvider] — the
+/// mutation surface the widgets drive.
+final commandsProvider = Provider<Commands>(
+  (ref) => Commands(ref.watch(storeProvider)),
+);
+
+/// Live stream of every visible task across all lists — the read behind the
+/// "All Tasks" view. Re-emits on any task write in any list.
+final allTasksProvider = StreamProvider<List<StoredTask>>(
+  (ref) => ref.watch(storeProvider).watchAllTasks(),
+);
+
+/// Live stream of all known lists — quick-add resolves its target list from it
+/// (the first list when the active view imposes none, e.g. a smart view).
+final listsProvider = StreamProvider<List<StoredTaskList>>(
+  (ref) => ref.watch(storeProvider).watchLists(),
 );
 
 /// The config controller (sync toggles, persist-first). Overridden by bootstrap.

@@ -48,6 +48,10 @@ void main() {
           prefsStoreProvider.overrideWithValue(store),
           instancePrefixProvider.overrideWithValue(instancePrefix),
           windowTitleControllerProvider.overrideWithValue(title),
+          // The "all" view now renders the real store-backed list; feed it empty
+          // streams so the shell wiring under test needs no database.
+          allTasksProvider.overrideWith((ref) => const Stream.empty()),
+          listsProvider.overrideWith((ref) => const Stream.empty()),
           if (router != null) routerProvider.overrideWithValue(router),
         ],
         child: const AxiotaskApp(),
