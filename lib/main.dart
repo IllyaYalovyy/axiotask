@@ -7,7 +7,7 @@
 // screen. The window SIZE is restored only AFTER the first frame — never during
 // mount (the geometry-freeze lesson, made structural).
 
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, stdout;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -20,6 +20,7 @@ import 'src/app/logging.dart';
 import 'src/app/platform_paths.dart';
 import 'src/app/providers.dart';
 import 'src/app/startup_error.dart';
+import 'src/app/startup_trace.dart';
 import 'src/app/window_manager_controller.dart';
 import 'src/app/window_service.dart';
 import 'src/app/window_title_controller.dart';
@@ -28,6 +29,11 @@ bool get _isDesktop =>
     !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
 
 Future<void> main() async {
+  // Monotonic clock for the cold-start trace (Stopwatch, not DateTime.now).
+  // Started as early as possible in main so the marker reflects Dart-side
+  // startup; the release measurement harness times spawn → frame externally.
+  final startup = Stopwatch()..start();
+
   WidgetsFlutterBinding.ensureInitialized();
   Log.initLogging();
 
@@ -75,5 +81,15 @@ Future<void> main() async {
           WindowSizePersister(service).attach();
         });
       }
+  }
+
+  // Cold-start trace: on the first rendered frame, print the marker the
+  // release-build measurement harness greps for. Silent unless
+  // AXIOTASK_STARTUP_TRACE=1, so a normal launch prints nothing. Registered
+  // after runApp so the binding exists and the callback fires post-first-frame.
+  if (startupTraceEnabled(Platform.environment)) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      stdout.writeln(firstFrameLine(startup.elapsed));
+    });
   }
 }

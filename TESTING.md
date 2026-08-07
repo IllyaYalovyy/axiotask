@@ -47,8 +47,13 @@ For every test you add:
   content, drive a gesture, assert the tree changed.
 - **golden** — `example_golden_test.dart`: pixel snapshot via alchemist (see
   "Golden discipline").
-- **integration** — `integration_test/example_integration_test.dart`: the app
-  on the real Linux engine, run headless under xvfb by the gate.
+- **integration** — `integration_test/app_smoke_test.dart`: the app on the real
+  Linux engine (real bootstrap, file-backed DB, go_router shell), run headless
+  under xvfb by the gate — launch → DB opens → list renders → CRUD round-trip →
+  clean exit. Desktop integration tests launch a fresh app process per file, and
+  a single `flutter test integration_test/` reliably connects only to the FIRST
+  file's app (the rest die with "log reader stopped"); keep the smoke suite in
+  ONE file, or have the operator switch the gate to a per-file loop.
 
 ## Shared harness (`test/support/`)
 
