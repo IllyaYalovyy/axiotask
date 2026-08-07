@@ -18,9 +18,11 @@ import 'src/app/app.dart';
 import 'src/app/bootstrap.dart';
 import 'src/app/logging.dart';
 import 'src/app/platform_paths.dart';
+import 'src/app/providers.dart';
 import 'src/app/startup_error.dart';
 import 'src/app/window_manager_controller.dart';
 import 'src/app/window_service.dart';
+import 'src/app/window_title_controller.dart';
 
 bool get _isDesktop =>
     !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
@@ -49,7 +51,17 @@ Future<void> main() async {
       runApp(ProviderScope(child: StartupErrorApp(message: message)));
     case BootstrapReady():
       runApp(
-        ProviderScope(overrides: result.overrides, child: const AxiotaskApp()),
+        ProviderScope(
+          overrides: [
+            ...result.overrides,
+            // Real desktop window-title seam; mobile keeps the no-op default.
+            if (_isDesktop)
+              windowTitleControllerProvider.overrideWithValue(
+                const WindowManagerTitleController(),
+              ),
+          ],
+          child: const AxiotaskApp(),
+        ),
       );
       if (_isDesktop) {
         // Restore the persisted window size and start tracking resizes — but

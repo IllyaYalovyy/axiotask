@@ -1,0 +1,146 @@
+// The app shell — the ShellRoute builder that turns the current URL into the
+// adaptive [ListDetailScaffold], wires navigation back into go_router, persists
+// the selected view, and keeps the desktop window title in sync.
+//
+// The panes are SKELETONS at T2.2: [ViewListPane] and [TaskDetailPlaceholder]
+// render structure and labels, not real tasks. The All-Tasks list lands on the
+// real store in T2.3; the detail panel fields in T2.4. What is real here is the
+// shell: adaptive layout, routing, back handling, window title, theme.
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../app/providers.dart';
+import 'list_detail_scaffold.dart';
+import 'router.dart';
+import 'views.dart';
+
+/// The adaptive shell for the current [location], wrapping the list pane [child]
+/// (the ShellRoute child) with navigation chrome and an optional detail pane.
+class AppShell extends ConsumerWidget {
+  const AppShell({required this.location, required this.child, super.key});
+
+  /// The current router location (drives the selected view and detail).
+  final Uri location;
+
+  /// The list pane for the active view (the ShellRoute's swappable child).
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sel = parseShellLocation(location);
+    final prefix = ref.watch(instancePrefixProvider);
+    final titleController = ref.watch(windowTitleControllerProvider);
+
+    // Keep the desktop window title in sync with the active view (no-op on
+    // mobile / under tests via NoopWindowTitleController). Scheduled after the
+    // frame so titling never blocks the first paint (the geometry-freeze lesson
+    // applied to the title too).
+    final title = windowTitleFor(sel.viewId, instancePrefix: prefix);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      titleController.setTitle(title);
+    });
+
+    final selectedIndex =
+        SmartView.byId(sel.viewId)?.index ?? SmartView.all.index;
+
+    return ListDetailScaffold(
+      destinations: [
+        for (final v in SmartView.values)
+          ShellDestination(
+            icon: v.icon,
+            selectedIcon: v.selectedIcon,
+            label: v.label,
+          ),
+      ],
+      selectedIndex: selectedIndex,
+      onDestinationSelected: (i) =>
+          _selectView(context, ref, SmartView.values[i].id),
+      list: child,
+      detail: sel.taskId == null
+          ? null
+          : TaskDetailPlaceholder(
+              taskId: sel.taskId!,
+              onClose: () => context.go(viewPath(sel.viewId)),
+            ),
+      onCloseDetail: () => context.go(viewPath(sel.viewId)),
+    );
+  }
+
+  /// Persist the newly selected view (survives restart, localStorage parity)
+  /// and navigate to it.
+  void _selectView(BuildContext context, WidgetRef ref, String viewId) {
+    final store = ref.read(prefsStoreProvider);
+    store.save(store.load().copyWith(view: viewId));
+    context.go(viewPath(viewId));
+  }
+}
+
+/// Placeholder list pane for a view. Renders the view's label and icon; the real
+/// list on the store lands in T2.3.
+class ViewListPane extends StatelessWidget {
+  const ViewListPane({required this.viewId, super.key});
+
+  /// The view whose (placeholder) list this pane shows.
+  final String viewId;
+
+  @override
+  Widget build(BuildContext context) {
+    final view = SmartView.byId(viewId);
+    final label = viewLabelFor(viewId);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            view?.icon ?? Icons.checklist_outlined,
+            size: 48,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 12),
+          Text(label, style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 4),
+          Text(
+            'Tasks arrive in the next slice.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Placeholder detail pane for a selected task. Real fields land in T2.4; today
+/// it proves the detail routing and the compact back affordance.
+class TaskDetailPlaceholder extends StatelessWidget {
+  const TaskDetailPlaceholder({
+    required this.taskId,
+    required this.onClose,
+    super.key,
+  });
+
+  /// The selected task id.
+  final String taskId;
+
+  /// Close the detail (used by the visible back affordance).
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            tooltip: 'Back',
+            onPressed: onClose,
+          ),
+          title: const Text('Details'),
+        ),
+        Expanded(child: Center(child: Text('Task $taskId'))),
+      ],
+    );
+  }
+}

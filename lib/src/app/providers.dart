@@ -9,12 +9,17 @@
 // missing_provider_scope lint satisfied and makes every dependency swappable in
 // widget tests.
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../store/database.dart';
 import '../store/store.dart';
+import '../ui/router.dart';
+import '../ui/theme.dart';
 import 'config_controller.dart';
 import 'prefs.dart';
+import 'window_title_controller.dart';
 
 Never _mustOverride(String name) => throw StateError(
   '$name was read without a bootstrap override — the app must be launched '
@@ -43,4 +48,28 @@ final configControllerProvider = Provider<ConfigController>(
 /// The UI-preferences store over `prefs.json`. Overridden by the bootstrap.
 final prefsStoreProvider = Provider<PrefsStore>(
   (ref) => _mustOverride('prefsStoreProvider'),
+);
+
+/// A snapshot of the UI preferences read at launch. Defaults to [Prefs] so the
+/// widget tree (theme, initial view) renders even when only the app root is
+/// pumped without bootstrap overrides (widget/integration tests); the bootstrap
+/// overrides it with the real loaded prefs. Unlike [prefsStoreProvider] this
+/// never throws — reading it must be safe at construction time.
+final prefsProvider = Provider<Prefs>((ref) => const Prefs());
+
+/// The resolved [ThemeMode] from the `theme` pref ('system' | 'light' | 'dark').
+final themeModeProvider = Provider<ThemeMode>(
+  (ref) => themeModeFromString(ref.watch(prefsProvider).theme),
+);
+
+/// The window-title seam. Defaults to a no-op (mobile / tests); main.dart
+/// overrides it with the real `window_manager`-backed controller on desktop.
+final windowTitleControllerProvider = Provider<WindowTitleController>(
+  (ref) => const NoopWindowTitleController(),
+);
+
+/// The app's [GoRouter], built once with the view restored from prefs. Held for
+/// the process lifetime (it owns navigation state), so it is a plain Provider.
+final routerProvider = Provider<GoRouter>(
+  (ref) => buildAppRouter(initialViewId: ref.watch(prefsProvider).view),
 );
