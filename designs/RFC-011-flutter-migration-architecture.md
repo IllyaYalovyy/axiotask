@@ -335,9 +335,13 @@ assertion must fail) before any feature code exists:
 - [ ] **Step 8 — Mobile UX**: swipe quick actions, safe areas, IME behavior,
   long-press multi-select, FAB/pull-to-refresh decisions per ux_decisions;
   phone-size goldens *(prerequisite: Step 7)*
-- [ ] **Step 9 — Android auth + on-device gate**: google_sign_in v7 adapter;
-  GCP web client id config; PHYSICAL-PHONE gate: sign-in, sync round-trip,
-  session restore, swipe UX *(prerequisite: Steps 6, 8)*
+- [ ] **Step 9 — Android auth + on-device gate**: google_sign_in v7 adapter.
+  First attempt initializes WITHOUT `serverClientId` (we use only the
+  authorization half; RFC-010's raw AuthorizationClient plugin proved tokens
+  flow with zero client ids) — the Web-type OAuth client is created in GCP
+  only if Google actually refuses (ruled 2026-08-06). PHYSICAL-PHONE gate:
+  sign-in, sync round-trip, session restore, swipe UX
+  *(prerequisite: Steps 6, 8)*
 - [ ] **Step 10 — Parity soak + cutover**: oracle corpus + deep soak
   sustained green; parity checklist signed off by the user; oracle deleted;
   `flutter` replaces `main` *(prerequisite: Steps 7–9)*
