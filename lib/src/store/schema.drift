@@ -1,0 +1,87 @@
+-- The whole local-store schema, in one file (drift SQL-first).
+--
+-- Ported near-verbatim from the reference crate's `schema.sql` (5 tables + 3
+-- indexes). drift codegen reads this file to generate the typed table classes
+-- and `_$AppDatabase` in `database.g.dart`.
+--
+-- !!! SCHEMA-CHANGE WARNING !!!
+-- The local store is a CACHE of Google Tasks plus per-row sync metadata, and
+-- Google is the source of truth. Pre-1.0 there are NO migrations (RFC-003): a
+-- schema change does NOT migrate data in place — on the next launch every
+-- existing database whose schema fingerprint no longer matches is exported to
+-- JSON and then wiped-and-recreated from scratch (see `database.dart`).
+--
+-- The fingerprint is computed from `schemaSource` in `database.dart`, which
+-- MUST mirror the CREATE statements below (a guard test compares the two
+-- schemas). To change the schema, edit BOTH this file and `schemaSource`
+-- together, and mean it — any change resets every user's local cache.
+--
+-- Design notes:
+--  * Domain columns mirror the Google Tasks API; sync columns drive the
+--    dirty-flag reconciliation engine (RFC-004).
+--  * Pending mutations are tracked on two orthogonal axes:
+--      - tasks.pending_op  : field-level create/update/delete (patch endpoint)
+--      - pending_moves      : structural reorder/reparent (move endpoint)
+--    A task may have both simultaneously (edited AND moved before sync).
+--  * Timestamps are RFC-3339 TEXT (lexically sortable; SQLite has no native
+--    datetime). Dates (due) are date-only RFC-3339.
+
+CREATE TABLE task_lists (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  etag            TEXT,
+  updated         TEXT NOT NULL,
+  local_updated   TEXT NOT NULL,
+  sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted')),
+  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL),
+  local_only      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE tasks (
+  id              TEXT PRIMARY KEY,
+  list_id         TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE,
+  parent_id       TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  position        TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  notes           TEXT,
+  status          TEXT NOT NULL CHECK (status IN ('needsAction','completed')),
+  due             TEXT,
+  completed_at    TEXT,
+  etag            TEXT,
+  updated         TEXT NOT NULL,
+  local_updated   TEXT NOT NULL,
+  sync_state      TEXT NOT NULL CHECK (sync_state IN ('clean','dirty','deleted')),
+  pending_op      TEXT CHECK (pending_op IN ('create','update','delete') OR pending_op IS NULL),
+  base_title      TEXT,
+  base_notes      TEXT,
+  base_due        TEXT,
+  base_status     TEXT CHECK (base_status IN ('needsAction','completed') OR base_status IS NULL),
+  web_view_link   TEXT
+);
+
+CREATE INDEX idx_tasks_tree  ON tasks(list_id, parent_id, position);
+CREATE INDEX idx_tasks_dirty ON tasks(sync_state) WHERE sync_state != 'clean';
+CREATE INDEX idx_tasks_due   ON tasks(due) WHERE due IS NOT NULL;
+
+CREATE TABLE pending_moves (
+  task_id     TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  list_id     TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE,
+  parent_id   TEXT,
+  previous_id TEXT
+);
+
+CREATE TABLE sync_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ran_at      TEXT NOT NULL,
+  duration_ms INTEGER,
+  pulled      INTEGER NOT NULL DEFAULT 0,
+  pushed      INTEGER NOT NULL DEFAULT 0,
+  conflicts   INTEGER NOT NULL DEFAULT 0,
+  error       TEXT
+);
+
+CREATE TABLE inflight_creates (
+  local_id  TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  list_id   TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE,
+  base_local_updated TEXT
+);

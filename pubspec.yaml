@@ -69,10 +69,13 @@ dev_dependencies:
 
   # drift codegen — generates the database class from hand-written .drift files.
   # SQL-first: build_runner is a one-shot tool, never in the TDD loop (RESEARCH §2).
-  # build_runner (the codegen runner) lands in T1.2 with the first .drift file —
-  # its current release needs analyzer 13.3+, above the meta 1.18.0 ceiling the
-  # Flutter 3.44.8 SDK pins, so it is not added prematurely (see T0.1 report).
+  # Landed in T1.2 with the first .drift file (store/schema.drift). T0.1 deferred
+  # build_runner on the belief its current release needed analyzer 13.3+; in fact
+  # build_runner 2.15.x resolves cleanly against the meta 1.18.0 / analyzer 12.1
+  # ceiling this SDK pins, so it is added here. Generated code is committed
+  # (RESEARCH §2); codegen never runs in the TDD loop.
   drift_dev: ">=2.34.0 <2.34.1"
+  build_runner: ">=2.15.0 <2.16.0"
   # Golden test harness — alchemist over matchesGoldenFile (RESEARCH §5).
   alchemist: ^0.14.0
   # Property-based testing — the only maintained Dart PBT lib. Pinned and used
