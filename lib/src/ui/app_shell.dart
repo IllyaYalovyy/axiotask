@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 import '../app/providers.dart';
 import 'list_detail_scaffold.dart';
 import 'router.dart';
+import 'task_list_view.dart';
 import 'views.dart';
 
 /// The adaptive shell for the current [location], wrapping the list pane [child]
@@ -77,16 +78,28 @@ class AppShell extends ConsumerWidget {
   }
 }
 
-/// Placeholder list pane for a view. Renders the view's label and icon; the real
-/// list on the store lands in T2.3.
+/// The list pane for a view. The "All Tasks" view renders the real
+/// [TaskListView] on the store (T2.3); the other smart views keep a placeholder
+/// until their filters land in T7.1.
 class ViewListPane extends StatelessWidget {
-  const ViewListPane({required this.viewId, super.key});
+  const ViewListPane({required this.viewId, this.selectedTaskId, super.key});
 
-  /// The view whose (placeholder) list this pane shows.
+  /// The view whose list this pane shows.
   final String viewId;
+
+  /// The task the detail panel currently shows (drives new-task-follows-panel).
+  final String? selectedTaskId;
 
   @override
   Widget build(BuildContext context) {
+    if (viewId == SmartView.all.id) {
+      return TaskListView(
+        key: const ValueKey('view-all'),
+        viewId: viewId,
+        selectedTaskId: selectedTaskId,
+        onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+      );
+    }
     final view = SmartView.byId(viewId);
     final label = viewLabelFor(viewId);
     return Center(

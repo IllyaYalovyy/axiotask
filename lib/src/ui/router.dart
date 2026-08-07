@@ -74,9 +74,13 @@ GoRouter buildAppRouter({
         routes: [
           GoRoute(
             path: '/view/:viewId',
-            builder: (context, state) => ViewListPane(
-              viewId: state.pathParameters['viewId'] ?? SmartView.all.id,
-            ),
+            builder: (context, state) {
+              final task = state.uri.queryParameters['task'];
+              return ViewListPane(
+                viewId: state.pathParameters['viewId'] ?? SmartView.all.id,
+                selectedTaskId: (task != null && task.isNotEmpty) ? task : null,
+              );
+            },
           ),
         ],
       ),

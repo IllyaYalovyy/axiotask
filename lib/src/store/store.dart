@@ -40,6 +40,12 @@ const String _selectListsSql =
 const String _selectTasksSql =
     'SELECT $_taskCols FROM tasks WHERE list_id = ? AND sync_state != \'deleted\' '
     'ORDER BY (parent_id IS NOT NULL), parent_id, position';
+// All visible tasks across EVERY list (tombstones excluded) — the read behind
+// the "All Tasks" smart view, which aggregates every list. Top-level rows first
+// so the caller can fold subtasks under their parents; then by position.
+const String _selectAllTasksSql =
+    "SELECT $_taskCols FROM tasks WHERE sync_state != 'deleted' "
+    'ORDER BY (parent_id IS NOT NULL), parent_id, position';
 // find_task_any: any row, tombstones included.
 const String _selectTaskAnySql = 'SELECT $_taskCols FROM tasks WHERE id = ?';
 // watchTask: the VISIBLE task by id (a tombstone reads as absent, so a delete
@@ -259,6 +265,21 @@ class Store {
         .get();
     return rows.map(_taskFromRow).toList();
   }
+
+  /// All visible tasks across every list, ordered top-level-first then by
+  /// position — the one-shot read behind the "All Tasks" view.
+  Future<List<StoredTask>> allTasks() async {
+    final rows = await _db.customSelect(_selectAllTasksSql).get();
+    return rows.map(_taskFromRow).toList();
+  }
+
+  /// Live stream of [allTasks], re-emitting on every task write — the "All
+  /// Tasks" view subscribes to this so a create/rename/toggle in any list shows
+  /// up immediately.
+  Stream<List<StoredTask>> watchAllTasks() => _db
+      .customSelect(_selectAllTasksSql, readsFrom: {_db.tasks})
+      .watch()
+      .map((rows) => rows.map(_taskFromRow).toList());
 
   /// Fetch a single task by id regardless of sync_state (tombstones included);
   /// `null` when absent.

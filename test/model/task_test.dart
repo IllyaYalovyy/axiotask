@@ -120,6 +120,40 @@ void main() {
     });
   });
 
+  group('copyWith', () {
+    const base = Task(
+      id: '1',
+      position: 'p1',
+      title: 'old',
+      notes: 'n',
+      status: TaskStatus.needsAction,
+      due: '2026-01-01T00:00:00.000Z',
+      completed: '2026-01-02T00:00:00.000Z',
+      etag: 'e1',
+      updated: 'u1',
+      webViewLink: 'https://x',
+    );
+
+    test('replaces only the named fields, preserves the rest', () {
+      final t = base.copyWith(title: 'new', status: TaskStatus.completed);
+      expect(t.title, 'new');
+      expect(t.status, TaskStatus.completed);
+      // Untouched fields carry over.
+      expect(t.id, '1');
+      expect(t.notes, 'n');
+      expect(t.etag, 'e1');
+      expect(t.webViewLink, 'https://x');
+      expect(t.completed, '2026-01-02T00:00:00.000Z');
+    });
+
+    test('an explicit null clears completed, distinct from omitting it', () {
+      // Omitting keeps the old stamp…
+      expect(base.copyWith(status: TaskStatus.completed).completed, isNotNull);
+      // …an explicit null clears it (re-opening a task).
+      expect(base.copyWith(completed: null).completed, isNull);
+    });
+  });
+
   group('value equality', () {
     test('Task == compares by value, differs on any field', () {
       const a = Task(

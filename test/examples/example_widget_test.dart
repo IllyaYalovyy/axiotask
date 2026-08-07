@@ -15,21 +15,36 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('root renders the shell inside a ProviderScope', (tester) async {
-    await tester.pumpWidget(const ProviderScope(child: AxiotaskApp()));
+    await tester.pumpWidget(
+      ProviderScope(
+        // The default "all" view renders the store-backed list; empty streams
+        // let the root render without a database.
+        overrides: [
+          allTasksProvider.overrideWith((ref) => const Stream.empty()),
+          listsProvider.overrideWith((ref) => const Stream.empty()),
+        ],
+        child: const AxiotaskApp(),
+      ),
+    );
     await tester.pumpAndSettle();
 
     // The app root is Riverpod-scoped and router-driven (covers runApp wiring).
     expect(find.byType(ProviderScope), findsOneWidget);
     expect(find.byType(MaterialApp), findsOneWidget);
     expect(find.byType(ListDetailScaffold), findsOneWidget);
-    // The default "all" view renders its placeholder pane.
+    // The "All Tasks" nav destination label renders (the pane itself is the
+    // real task list now, showing its empty state).
     expect(find.text('All Tasks'), findsWidgets);
   });
 
   testWidgets('a dev instance still renders the shell', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [instancePrefixProvider.overrideWithValue('dev')],
+        overrides: [
+          instancePrefixProvider.overrideWithValue('dev'),
+          allTasksProvider.overrideWith((ref) => const Stream.empty()),
+          listsProvider.overrideWith((ref) => const Stream.empty()),
+        ],
         child: const AxiotaskApp(),
       ),
     );

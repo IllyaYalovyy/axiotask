@@ -27,6 +27,10 @@ enum TaskStatus {
   };
 }
 
+/// Sentinel distinguishing "leave [Task.completed] unchanged" (the default)
+/// from an explicit `null` clear in [Task.copyWith].
+const Object _unset = Object();
+
 /// A Google Tasks task (a leaf or an interior node of the two-level tree).
 
 class Task {
@@ -86,6 +90,41 @@ class Task {
   /// `412`-conflict refetch resolves a delete×edit race as P4 delete-wins
   /// instead of resurrecting the row. Always `false` for stored/listed rows.
   final bool deleted;
+
+  /// A copy with the named fields replaced. The command layer edits an
+  /// immutable [Task] by producing a new one (the Dart equivalent of the
+  /// reference's in-place `t.task.field = …` mutations). [completed] defaults to
+  /// a sentinel so passing an explicit `null` (clearing the completion timestamp
+  /// on re-open) is distinguishable from "leave unchanged".
+  Task copyWith({
+    String? id,
+    String? parent,
+    String? position,
+    String? title,
+    String? notes,
+    TaskStatus? status,
+    String? due,
+    Object? completed = _unset,
+    String? etag,
+    String? updated,
+    String? webViewLink,
+    bool? deleted,
+  }) => Task(
+    id: id ?? this.id,
+    parent: parent ?? this.parent,
+    position: position ?? this.position,
+    title: title ?? this.title,
+    notes: notes ?? this.notes,
+    status: status ?? this.status,
+    due: due ?? this.due,
+    completed: identical(completed, _unset)
+        ? this.completed
+        : completed as String?,
+    etag: etag ?? this.etag,
+    updated: updated ?? this.updated,
+    webViewLink: webViewLink ?? this.webViewLink,
+    deleted: deleted ?? this.deleted,
+  );
 
   /// Serialize to Google's wire JSON: camelCase status, `webViewLink` field
   /// name, and `null`/`false`-default fields skipped exactly as serde does.
