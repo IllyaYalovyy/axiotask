@@ -8,5 +8,6 @@
 
 export 'api_error.dart';
 export 'authed_client.dart';
+export 'fake_tasks_api.dart';
 export 'http_tasks_api.dart';
 export 'tasks_api.dart';
