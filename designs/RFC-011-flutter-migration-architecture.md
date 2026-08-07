@@ -2,7 +2,7 @@
 
 | Field         | Value         |
 |---------------|---------------|
-| Status        | Draft         |
+| Status        | Accepted (2026-08-06) |
 | Author(s)     | Illya Yalovyy |
 | Supersedes    | — (continues the RFC line of the Tauri repo, whose designs remain the behavioral reference) |
 | Superseded by | —             |
@@ -128,8 +128,7 @@ google_sign_in v7 (Android) behind one TokenProvider, alchemist goldens,
 kiri_check properties, subprocess JSON-lines oracle, go_router + hand-rolled
 600dp adaptive shell.
 
-*(Pending user ratification — this RFC stays Draft until ruled on, including
-open questions Q1–Q6.)*
+*(Ratified by the user 2026-08-06; all open questions resolved — see below.)*
 
 ---
 
@@ -350,12 +349,13 @@ document); each step's completion includes its gate additions.
 
 ## Open Questions
 
-- [ ] **Q1** — Ratify the stack (RESEARCH doc D1, incl. the 2026-08-06
-  external-review deltas): Riverpod 3 + riverpod_lint / drift / hand-rolled
-  client / googleapis_auth + google_sign_in v7 / alchemist / kiri_check /
-  go_router.
-- [ ] **Q2** — Approve adding the test-only `axiotask-oracle` bin target to
-  the Rust repo (the one write this plan makes to the reference).
+- [x] **Q1** — **Ratified 2026-08-06**: the stack as researched, including
+  the external-review deltas: Riverpod 3 + riverpod_lint / drift /
+  hand-rolled client / googleapis_auth + google_sign_in v7 / alchemist /
+  kiri_check / go_router.
+- [x] **Q2** — **Approved 2026-08-06**: the test-only `axiotask-oracle` bin
+  target may be added to the Rust repo (additive, test-only; the one write
+  this plan makes to the reference).
 - [x] **Q3** — UI fidelity — **ruled 2026-08-05**: NOT pixel-identical and
   not a faithful visual port; "the reason we are replacing Tauri is that the
   Tauri UI sucks." The new UI is a fresh design: much better, more
@@ -363,10 +363,12 @@ document); each step's completion includes its gate additions.
   carries over is the UX capability contract (ux_decisions.md workflows, the
   1–2-interaction efficiency bar, meaningful defaults) — not the visuals.
   Golden baselines are authored fresh for the new design.
-- [ ] **Q4** — Desktop token storage: plain 0600 tokens.json (recommended;
-  matches reference) vs libsecret/flutter_secure_storage now.
-- [ ] **Q5** — Coverage ratchet floor for Step 0 (recommend: start at
-  measured Step-1 coverage, ratchet up only).
-- [ ] **Q6** — During the transition, does the Rust `main` accept anything
-  beyond critical fixes + the oracle (e.g., the still-open #166/#167/#170
-  device verifications)?
+- [x] **Q4** — **Ruled 2026-08-06**: plain 0600 tokens.json under the app
+  data dir behind the TokenStore interface (as recommended); libsecret can
+  slot in behind the same interface later if ever wanted.
+- [x] **Q5** — **Ruled 2026-08-06**: as recommended — the coverage ratchet
+  arms at the coverage measured at Step 1 completion and only ratchets up.
+- [x] **Q6** — **Ruled 2026-08-06**: the Rust `main` is frozen for the
+  transition — critical fixes and the oracle bin target only. Disposition of
+  the unmerged task-129 branch (Tauri Android auth awaiting its phone gate)
+  is tracked separately with the user.
