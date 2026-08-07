@@ -212,7 +212,8 @@ Dart, testable without a widget binding.
 - **ui/** — one `ListDetailScaffold` branching at 600dp: NavigationBar +
   pushed detail route (compact) vs NavigationRail + side-by-side pane
   (expanded); same child widgets both ways, no forked screens. go_router
-  with ShellRoute. Views: smart views (Focus / Upcoming / Missed /
+  with ShellRoute; any redirect policy is a pure function adapted into
+  `GoRouter.redirect`, unit-tested without pumping an app. Views: smart views (Focus / Upcoming / Missed /
   Unscheduled / All), list views, detail panel (subtasks live ONLY here),
   quick-add with NL date preview, search overlay, properties, toasts.
   Mobile: swipe left/right quick actions on rows — designed as the primary
@@ -276,9 +277,11 @@ assertion must fail) before any feature code exists:
 - **Store tests**: real drift on `NativeDatabase.memory()`; transaction and
   watch-stream behavior asserted on state.
 - **API contract tests**: HttpTasksApi against a scripted fake http.Client
-  (wire-level: If-Match presence per endpoint, error mapping);
-  FakeTasksApi ported test-first — each behavior pinned by a test citing the
-  live probe or Google docs, mirroring `in_memory.rs`.
+  (wire-level: If-Match presence per endpoint, error mapping); hand-written
+  DTO parsing with malformed-response tests (missing fields, nulls,
+  unexpected types, truncated bodies); FakeTasksApi ported test-first — each
+  behavior pinned by a test citing the live probe or Google docs, mirroring
+  `in_memory.rs`.
 - **Property layer**: kiri_check (pinned, behind a facade) for pure-function
   properties; the seeded op-sequence suite for engine invariants (eventual
   push, convergence, idempotency, deferral safety, crash safety, parent
@@ -309,7 +312,8 @@ assertion must fail) before any feature code exists:
 
 - [ ] **Step 0 — Harness**: all five test layers stood up on a hello-world
   core and red-checked; clock/DI conventions; coverage ratchet armed; gate
-  extended (grep bans, coverage) *(prerequisite: —)*
+  extended (grep bans, coverage, `dart run custom_lint` for riverpod_lint)
+  *(prerequisite: —)*
 - [ ] **Step 1 — Model + Store**: value types, effective date, NL dates;
   schema port + fingerprint wipe; watch streams *(prerequisite: Step 0)*
 - [ ] **Step 2 — Walking skeleton**: launchable local-only app — adaptive
@@ -346,9 +350,10 @@ document); each step's completion includes its gate additions.
 
 ## Open Questions
 
-- [ ] **Q1** — Ratify the stack (RESEARCH doc D1): Riverpod 3 / drift /
-  hand-rolled client / googleapis_auth + google_sign_in v7 / alchemist /
-  kiri_check / go_router.
+- [ ] **Q1** — Ratify the stack (RESEARCH doc D1, incl. the 2026-08-06
+  external-review deltas): Riverpod 3 + riverpod_lint / drift / hand-rolled
+  client / googleapis_auth + google_sign_in v7 / alchemist / kiri_check /
+  go_router.
 - [ ] **Q2** — Approve adding the test-only `axiotask-oracle` bin target to
   the Rust repo (the one write this plan makes to the reference).
 - [x] **Q3** — UI fidelity — **ruled 2026-08-05**: NOT pixel-identical and

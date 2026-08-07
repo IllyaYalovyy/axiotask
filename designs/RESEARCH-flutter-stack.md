@@ -12,7 +12,8 @@ in below. Toolchain baseline: Flutter 3.44.8 stable / Dart 3.12 (pinned).
 
 ## The recommended stack at a glance
 
-- State management: **Riverpod 3** (flutter_riverpod 3.4.x), **no codegen**
+- State management: **Riverpod 3** (flutter_riverpod 3.4.x), **no codegen**;
+  riverpod_lint via custom_lint (analysis-time only)
 - Persistence: **drift 2.34.x in SQL-first mode** on package:sqlite3 (bundled SQLite)
 - Tasks API client: **hand-rolled typed client** over package:http (~10 endpoints)
 - Auth: **googleapis_auth** (desktop PKCE+loopback) + **google_sign_in v7** (Android
@@ -61,6 +62,9 @@ signals (single-maintainer, small adoption).
   convention, not hygiene.
 - Do not use v3 experimental features (offline persistence, mutations).
 - Domain logic lives in plain Dart classes; providers are wiring only.
+- riverpod_lint + custom_lint are adopted (analysis-time enforcement, no
+  build_runner in the loop); the gate runs `dart run custom_lint` beside
+  flutter analyze once the dependency lands (Step 0).
 
 ## 2. Persistence — drift 2.34.x, SQL-first, on bundled sqlite3
 
@@ -89,7 +93,9 @@ the sync engine, goes through the single drift database object (external
 writes don't trigger streams). Widget tests must pass
 `closeStreamsSynchronously: true` or stream teardown trips the pending-timer
 check. Codegen (build_runner) is the accepted cost — SQL-first keeps clarity
-in the SQL we write.
+in the SQL we write. Post-1.0, if migrations ever replace wipe-and-recreate,
+drift's migration test tooling (schema structure + data preservation) is the
+designated tool — not before.
 
 ## 3. Google Tasks API client — hand-rolled; generated client REJECTED
 
@@ -101,9 +107,12 @@ over package:http for ~10 endpoints, porting the Rust reference's
 probe-verified wire semantics exactly (task PATCH/DELETE honor If-Match →
 412; tasklists endpoints IGNORE If-Match; stale If-Match PATCH on a deleted
 row returns 200 not 412). DTOs mirror the reference, easing the equivalence
-oracle; error taxonomy maps 1:1 (401/404/412). Skip
-extension_google_sign_in_as_googleapis_auth — with our own client we need
-only the access-token string.
+oracle; error taxonomy maps 1:1 (401/404/412). DTO parsing is hand-written
+(5 small types with deliberately odd semantics — date-only RFC3339, etag
+plumbing; json_serializable rejected as codegen for no gain) and carries
+malformed-response tests: missing fields, nulls, unexpected types, truncated
+bodies. Skip extension_google_sign_in_as_googleapis_auth — with our own
+client we need only the access-token string.
 
 ## 4. Auth — one TokenProvider seam, two platform implementations
 
@@ -211,6 +220,9 @@ screens; golden-tested headlessly at both form factors. Navigation:
 go_router 17.4.0 (flutter.dev, published ~30h before check;
 "feature-complete" bug-fix-only mode is a stability asset for routing) with
 ShellRoute keeping the shell mounted; Android back semantics come free.
+Any redirect policy is a pure function adapted into `GoRouter.redirect`,
+unit-tested without pumping an app. go_router_builder rejected (codegen for
+a handful of string routes).
 
 ## 8. Linux desktop — production target, with named mitigations
 
@@ -252,6 +264,21 @@ a mitigation the design doc must carry:
 - D4: Desktop token storage: plain 0600 tokens.json (recommended, matches
   reference) vs libsecret now.
 - D5: Coverage floor to start the ratchet at.
+
+## External review (2026-08-06)
+
+An independent stack review (8/10) validated every load-bearing choice.
+Its one hard correction — replace direct googleapis_auth with google_sign_in
+v7 + extension_google_sign_in_as_googleapis_auth — was REJECTED on three
+project facts the generic advice misses: google_sign_in has no Linux support
+(our primary platform); the extension bridges to the generated googleapis
+client we rejected (no If-Match); our seam is authorization-only, never
+identity. Adopted from the review: riverpod_lint/custom_lint, redirect
+policy as a pure function, explicit malformed-response DTO tests, and the
+post-1.0 drift-migration-testing note. Rejected with reasons:
+riverpod_generator / json_serializable / go_router_builder (codegen beyond
+the single drift exception), pre-1.0 migration tests (wipe-and-recreate is
+ratified), patrol (no Linux, needs a device).
 
 Full per-area findings with sources: workflow run wf_a4ba44fb-72e
 (11 agents, 2026-08-05); key sources inline above.
