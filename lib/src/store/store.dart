@@ -17,6 +17,7 @@
 import 'package:drift/drift.dart';
 
 import '../model/base_snapshot.dart';
+import '../model/dates.dart' show nowUtcString;
 import '../model/task.dart';
 import '../model/task_list.dart';
 import 'database.dart' show AppDatabase;
@@ -429,6 +430,555 @@ class Store {
           (statusStr == null ? null : TaskStatus.parseApi(statusStr)) ??
           TaskStatus.needsAction,
     );
+  }
+
+  // ── skip-set + ghost-detection reads ──────────────────────────────────────
+
+  /// Ids of every locally dirty or deleted task — the pull skip-set (a pull
+  /// must never clobber a row with unpushed local changes).
+  Future<Set<String>> dirtyIds() async {
+    final rows = await _db
+        .customSelect(
+          "SELECT id FROM tasks WHERE sync_state = 'dirty' OR sync_state = 'deleted'",
+        )
+        .get();
+    return {for (final r in rows) r.read<String>('id')};
+  }
+
+  /// Ids of all clean tasks in [listId] — the per-list ghost-detection set
+  /// (a clean row absent from the server's pull is a ghost to remove).
+  Future<Set<String>> cleanTaskIdsForList(String listId) async {
+    final rows = await _db
+        .customSelect(
+          "SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean'",
+          variables: [Variable<String>(listId)],
+        )
+        .get();
+    return {for (final r in rows) r.read<String>('id')};
+  }
+
+  // ── move drain (list deletion / cross-list) ───────────────────────────────
+
+  /// Move every row the server has NEVER seen out of [fromList] into [toList],
+  /// returning how many rows moved. D2: a list holding unpushed rows may not be
+  /// dropped until they have somewhere to go.
+  ///
+  /// A row moves only when it is top-level OR its parent is itself an unpushed
+  /// row in the same dying list — so an unpushed subtree travels together. The
+  /// `id IN (SELECT ...)` materializes the set against the pre-update state, so
+  /// "my parent is re-homing too" is judged while every row is still in
+  /// [fromList]. A subtask of a row that STAYS behind (e.g. a synced parent) is
+  /// NOT promoted or re-homed — it stays put to die in the list cascade (D3
+  /// REJECTED; invariant #3). Synced rows and tombstones never move.
+  ///
+  /// An in-flight-create marker is list-scoped, so it follows its row: without
+  /// this the list's FK cascade would drop the marker and a committed-but-
+  /// unacked insert could be re-inserted as a duplicate (P8).
+  Future<int> rehomeUnpushedTasks(String fromList, String toList) async {
+    var moved = 0;
+    await _db.transaction(() async {
+      moved = await _db.customUpdate(
+        'UPDATE tasks SET list_id = ?2 '
+        'WHERE id IN ('
+        '  SELECT id FROM tasks '
+        "  WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted' "
+        '    AND (parent_id IS NULL OR parent_id IN ('
+        '        SELECT id FROM tasks '
+        "        WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted')))",
+        variables: [Variable<String>(fromList), Variable<String>(toList)],
+        updates: {_db.tasks},
+      );
+      await _db.customUpdate(
+        'UPDATE inflight_creates SET list_id = ?2 '
+        'WHERE list_id = ?1 AND local_id IN '
+        '(SELECT id FROM tasks WHERE list_id = ?2)',
+        variables: [Variable<String>(fromList), Variable<String>(toList)],
+        updates: {_db.inflightCreates},
+      );
+    });
+    return moved;
+  }
+
+  /// Whether [listId] still holds any row the server has never seen (D2: such a
+  /// list may not be dropped until those rows have somewhere to go).
+  Future<bool> hasUnpushedTasks(String listId) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT 1 FROM tasks WHERE list_id = ? AND etag IS NULL '
+          "AND sync_state != 'deleted' LIMIT 1",
+          variables: [Variable<String>(listId)],
+        )
+        .get();
+    return rows.isNotEmpty;
+  }
+
+  // ── confirm / tombstone task paths ────────────────────────────────────────
+
+  /// Adopt a fresh etag/updated from the server WITHOUT touching sync_state or
+  /// pending_op. Used after a move push: the move endpoint returns a new etag,
+  /// but the row may carry an unrelated pending content edit whose dirty flag
+  /// must survive.
+  Future<void> refreshTaskMeta(
+    String id,
+    String? newEtag,
+    String serverUpdated,
+  ) async {
+    await _db.customUpdate(
+      'UPDATE tasks SET etag = COALESCE(?, etag), updated = ? WHERE id = ?',
+      variables: [
+        Variable<String>(newEtag),
+        Variable<String>(serverUpdated),
+        Variable<String>(id),
+      ],
+      updates: {_db.tasks},
+    );
+  }
+
+  /// Tombstone [rootId] and its whole subtree in ONE transaction (RFC-009 §D:
+  /// "deleting a parent tombstones the whole subtree"; D3 REJECTED — children
+  /// die with the parent, never promoted; invariant #3).
+  ///
+  /// The root keeps `pending_op = 'delete'` so its delete pushes; Google's own
+  /// DELETE cascade takes the children remotely (verified live, #106), so each
+  /// descendant becomes a LOCAL-ONLY tombstone with `pending_op = NULL` — never
+  /// pushed, kept out of every view and out of the pull (a `deleted` row is in
+  /// the skip-set, so it cannot be resurrected as an orphan). The FK `ON DELETE
+  /// CASCADE` clears the child tombstones when the confirmed root delete hard-
+  /// deletes the root row.
+  ///
+  /// [descendantIds] are the subtree the caller already walked (top-level + its
+  /// one legal level of subtasks, invariant #1); the caller owns the walk so
+  /// the same snapshot backs the undo token.
+  Future<void> tombstoneSubtree(
+    String rootId,
+    List<String> descendantIds,
+    String now,
+  ) async {
+    await _db.transaction(() async {
+      await _db.customUpdate(
+        "UPDATE tasks SET sync_state = 'deleted', pending_op = 'delete', "
+        'local_updated = ?2 WHERE id = ?1',
+        variables: [Variable<String>(rootId), Variable<String>(now)],
+        updates: {_db.tasks},
+      );
+      for (final id in descendantIds) {
+        await _db.customUpdate(
+          "UPDATE tasks SET sync_state = 'deleted', pending_op = NULL, "
+          'local_updated = ?2 WHERE id = ?1',
+          variables: [Variable<String>(id), Variable<String>(now)],
+          updates: {_db.tasks},
+        );
+      }
+    });
+  }
+
+  // ── list confirm / remap ──────────────────────────────────────────────────
+
+  /// Mark a list in-sync after a successful push.
+  Future<void> markListClean(
+    String id,
+    String? newEtag,
+    String serverUpdated,
+  ) async {
+    await _db.customUpdate(
+      "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL, "
+      'etag = COALESCE(?, etag), updated = ? WHERE id = ?',
+      variables: [
+        Variable<String>(newEtag),
+        Variable<String>(serverUpdated),
+        Variable<String>(id),
+      ],
+      updates: {_db.taskLists},
+    );
+  }
+
+  /// Remap a local list UUID to its server id, rewriting the list row and every
+  /// task's `list_id` (plus pending_moves and inflight_creates) in one
+  /// transaction, then landing the list clean. `defer_foreign_keys` lets the PK
+  /// rewrite precede the child `list_id` updates within the transaction; the FK
+  /// is consistent again at commit.
+  Future<void> remapListId(
+    String localId,
+    String remoteId,
+    String? etag,
+    String serverUpdated,
+  ) async {
+    await _db.transaction(() async {
+      await _db.customStatement('PRAGMA defer_foreign_keys = ON');
+      final l = Variable<String>(localId);
+      final r = Variable<String>(remoteId);
+      await _db.customUpdate(
+        'UPDATE task_lists SET id = ? WHERE id = ?',
+        variables: [r, l],
+        updates: {_db.taskLists},
+      );
+      await _db.customUpdate(
+        'UPDATE tasks SET list_id = ? WHERE list_id = ?',
+        variables: [r, l],
+        updates: {_db.tasks},
+      );
+      await _db.customUpdate(
+        'UPDATE pending_moves SET list_id = ? WHERE list_id = ?',
+        variables: [r, l],
+        updates: {_db.pendingMoves},
+      );
+      await _db.customUpdate(
+        'UPDATE inflight_creates SET list_id = ? WHERE list_id = ?',
+        variables: [r, l],
+        updates: {_db.inflightCreates},
+      );
+      await _db.customUpdate(
+        "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL, "
+        'etag = COALESCE(?, etag), updated = ? WHERE id = ?',
+        variables: [Variable<String>(etag), Variable<String>(serverUpdated), r],
+        updates: {_db.taskLists},
+      );
+    });
+  }
+
+  // ── pending moves (structural reorder/reparent axis) ──────────────────────
+
+  /// Record (or replace) a pending position/parent move for a task.
+  Future<void> recordMove(
+    String taskId,
+    String listId,
+    String? parentId,
+    String? previousId,
+  ) async {
+    await _db.customInsert(
+      'INSERT INTO pending_moves (task_id, list_id, parent_id, previous_id) '
+      'VALUES (?, ?, ?, ?) '
+      'ON CONFLICT(task_id) DO UPDATE SET '
+      'list_id = excluded.list_id, parent_id = excluded.parent_id, '
+      'previous_id = excluded.previous_id',
+      variables: [
+        Variable<String>(taskId),
+        Variable<String>(listId),
+        Variable<String>(parentId),
+        Variable<String>(previousId),
+      ],
+      updates: {_db.pendingMoves},
+    );
+  }
+
+  /// All pending moves awaiting push.
+  Future<List<PendingMove>> pendingMoves() async {
+    final rows = await _db
+        .customSelect(
+          'SELECT task_id, list_id, parent_id, previous_id FROM pending_moves',
+        )
+        .get();
+    return [
+      for (final r in rows)
+        PendingMove(
+          taskId: r.read<String>('task_id'),
+          listId: r.read<String>('list_id'),
+          parentId: r.readNullable<String>('parent_id'),
+          previousId: r.readNullable<String>('previous_id'),
+        ),
+    ];
+  }
+
+  /// Clear a pending move after it has been pushed (or remapped away).
+  Future<void> clearMove(String taskId) async {
+    await _db.customUpdate(
+      'DELETE FROM pending_moves WHERE task_id = ?',
+      variables: [Variable<String>(taskId)],
+      updates: {_db.pendingMoves},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  /// Number of local changes awaiting push: dirty/deleted tasks and lists plus
+  /// recorded position moves, excluding local-only lists (which never sync).
+  /// Read-only — unlike `drain*`, it does not consume the queue, so the UI can
+  /// show "N changes pending" without disturbing sync state.
+  Future<int> pendingPushCount() async {
+    final tasks = await _db
+        .customSelect(
+          'SELECT COUNT(*) AS c FROM tasks t JOIN task_lists l ON l.id = t.list_id '
+          "WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') "
+          'AND l.local_only = 0',
+        )
+        .getSingle();
+    final lists = await _db
+        .customSelect(
+          'SELECT COUNT(*) AS c FROM task_lists '
+          "WHERE (sync_state = 'dirty' OR sync_state = 'deleted') "
+          'AND local_only = 0',
+        )
+        .getSingle();
+    final moves = await _db
+        .customSelect('SELECT COUNT(*) AS c FROM pending_moves')
+        .getSingle();
+    return tasks.read<int>('c') + lists.read<int>('c') + moves.read<int>('c');
+  }
+
+  // ── fresh-sync clears ─────────────────────────────────────────────────────
+
+  /// Drop ALL local tasks, lists, moves and in-flight markers (fresh sync from
+  /// an empty cache).
+  Future<void> clearAll() async {
+    await _db.transaction(() async {
+      await _db.customUpdate(
+        'DELETE FROM tasks',
+        updates: {_db.tasks},
+        updateKind: UpdateKind.delete,
+      );
+      await _db.customUpdate(
+        'DELETE FROM task_lists',
+        updates: {_db.taskLists},
+        updateKind: UpdateKind.delete,
+      );
+      await _db.customUpdate(
+        'DELETE FROM pending_moves',
+        updates: {_db.pendingMoves},
+        updateKind: UpdateKind.delete,
+      );
+      await _db.customUpdate(
+        'DELETE FROM inflight_creates',
+        updates: {_db.inflightCreates},
+        updateKind: UpdateKind.delete,
+      );
+    });
+  }
+
+  /// Drop all *synced* lists and their tasks, preserving local-only lists.
+  ///
+  /// Fresh sync rebuilds the cache from Google (the source of truth for synced
+  /// data). Local-only lists exist nowhere but this device, so they survive.
+  /// `ON DELETE CASCADE` clears each removed list's tasks, pending moves and
+  /// in-flight markers.
+  Future<void> clearSynced() async {
+    await _db.customUpdate(
+      'DELETE FROM task_lists WHERE local_only = 0',
+      updates: {
+        _db.taskLists,
+        _db.tasks,
+        _db.pendingMoves,
+        _db.inflightCreates,
+      },
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  /// Record a sync-run outcome, keeping only the most recent 500 entries.
+  Future<void> writeSyncLog({
+    required int pulled,
+    required int pushed,
+    required int conflicts,
+    required int durationMs,
+    String? error,
+  }) async {
+    await _db.customInsert(
+      'INSERT INTO sync_log (ran_at, duration_ms, pulled, pushed, conflicts, error) '
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      variables: [
+        Variable<String>(nowUtcString()),
+        Variable<int>(durationMs),
+        Variable<int>(pulled),
+        Variable<int>(pushed),
+        Variable<int>(conflicts),
+        Variable<String>(error),
+      ],
+      updates: {_db.syncLog},
+    );
+    // Bound growth: keep only the most recent 500 rows.
+    await _db.customUpdate(
+      'DELETE FROM sync_log WHERE id NOT IN '
+      '(SELECT id FROM sync_log ORDER BY id DESC LIMIT 500)',
+      updates: {_db.syncLog},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  // ── create finalize + in-flight markers ───────────────────────────────────
+
+  /// Atomically finalize a pushed create: rewrite the local id to the server id
+  /// (self + children + move intents), adopt the server metadata, and clear the
+  /// in-flight marker — all in ONE transaction. This removes the half-applied
+  /// window where a crash between remap and mark-clean would leave a remapped
+  /// row still flagged `pending_op = 'create'` (which would re-insert →
+  /// duplicate).
+  ///
+  /// The final mark-clean is guarded like [markTaskClean]:
+  ///  * A re-edited row (its `local_updated` moved past [expectedLocalUpdated])
+  ///    keeps its dirty flag but flips `create` → `update`: the task now exists
+  ///    remotely under [remoteId], so re-running it as a create would duplicate.
+  ///    Its base snapshot survives (the payload as sent, which a later 412
+  ///    compares against, #118).
+  ///  * A row the user DELETED mid-flight is a tombstone: it keeps its pending
+  ///    `delete` and only LEARNS the server id — exactly what its delete push
+  ///    was missing — never flipping back to a live row.
+  ///  * A clean landing clears the base (#134) and adopts the server-assigned
+  ///    [serverPosition] (unless a pending move will supersede it); without the
+  ///    position the row would keep its local placeholder forever, since the
+  ///    adopted etag makes every future pull skip it.
+  Future<void> finishCreate(
+    String localId,
+    String remoteId,
+    String? etag,
+    String serverUpdated,
+    String expectedLocalUpdated,
+    String? serverPosition,
+  ) async {
+    await _db.transaction(() async {
+      await _db.customStatement('PRAGMA defer_foreign_keys = ON');
+      final l = Variable<String>(localId);
+      final r = Variable<String>(remoteId);
+      await _db.customUpdate(
+        'UPDATE tasks SET id = ? WHERE id = ?',
+        variables: [r, l],
+        updates: {_db.tasks},
+      );
+      await _db.customUpdate(
+        'UPDATE tasks SET parent_id = ? WHERE parent_id = ?',
+        variables: [r, l],
+        updates: {_db.tasks},
+      );
+      await _db.customUpdate(
+        'UPDATE pending_moves SET task_id = ? WHERE task_id = ?',
+        variables: [r, l],
+        updates: {_db.pendingMoves},
+      );
+      await _db.customUpdate(
+        'UPDATE pending_moves SET parent_id = ? WHERE parent_id = ?',
+        variables: [r, l],
+        updates: {_db.pendingMoves},
+      );
+      await _db.customUpdate(
+        'UPDATE pending_moves SET previous_id = ? WHERE previous_id = ?',
+        variables: [r, l],
+        updates: {_db.pendingMoves},
+      );
+      await _db.customUpdate(
+        'UPDATE tasks SET '
+        'etag = COALESCE(?1, etag), '
+        'updated = ?2, '
+        'position = CASE WHEN local_updated = ?3 AND ?4 IS NOT NULL AND NOT EXISTS '
+        '             (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id) '
+        '           THEN ?4 ELSE position END, '
+        // Base snapshot (#134): a clean create landing clears it (base_* is NULL
+        // while clean, RFC-009 §B); a re-edited or deleted row keeps its base.
+        "base_title  = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_title  END, "
+        "base_notes  = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_notes  END, "
+        "base_due    = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_due    END, "
+        "base_status = CASE WHEN sync_state != 'deleted' AND local_updated = ?3 THEN NULL ELSE base_status END, "
+        "sync_state = CASE WHEN sync_state = 'deleted' THEN 'deleted' "
+        "                  WHEN local_updated = ?3 THEN 'clean' "
+        '                  ELSE sync_state END, '
+        "pending_op = CASE WHEN sync_state = 'deleted' THEN 'delete' "
+        '                  WHEN local_updated = ?3 THEN NULL '
+        "                  ELSE 'update' END "
+        'WHERE id = ?5',
+        variables: [
+          Variable<String>(etag),
+          Variable<String>(serverUpdated),
+          Variable<String>(expectedLocalUpdated),
+          Variable<String>(serverPosition),
+          r,
+        ],
+        updates: {_db.tasks},
+      );
+      await _db.customUpdate(
+        'DELETE FROM inflight_creates WHERE local_id = ?',
+        variables: [l],
+        updates: {_db.inflightCreates},
+        updateKind: UpdateKind.delete,
+      );
+    });
+  }
+
+  /// Durably mark a create as in-flight before calling the (non-idempotent)
+  /// server insert; cleared by [finishCreate] on success.
+  ///
+  /// Also captures the base snapshot for the row (#124): [baseLocalUpdated] is
+  /// the drain-time `local_updated`, so crash recovery can pass it to
+  /// [finishCreate] and an edit during the in-flight window keeps its dirty
+  /// flag; and `tasks.base_*` is set to the current content — the payload as
+  /// sent — so orphan adoption matches on it, not on drifted local content
+  /// (#122). Both writes commit before the insert, so they survive a crash.
+  Future<void> recordInflightCreate(
+    String localId,
+    String listId,
+    String baseLocalUpdated,
+  ) async {
+    await _db.transaction(() async {
+      await _db.customInsert(
+        'INSERT OR REPLACE INTO inflight_creates '
+        '(local_id, list_id, base_local_updated) VALUES (?, ?, ?)',
+        variables: [
+          Variable<String>(localId),
+          Variable<String>(listId),
+          Variable<String>(baseLocalUpdated),
+        ],
+        updates: {_db.inflightCreates},
+      );
+      await _db.customUpdate(
+        'UPDATE tasks SET base_title = title, base_notes = notes, '
+        'base_due = due, base_status = status WHERE id = ?',
+        variables: [Variable<String>(localId)],
+        updates: {_db.tasks},
+      );
+    });
+  }
+
+  /// All in-flight create markers as `(localId, listId)` pairs (non-empty only
+  /// after a crash mid-create).
+  Future<List<(String, String)>> inflightCreates() async {
+    final rows = await _db
+        .customSelect('SELECT local_id, list_id FROM inflight_creates')
+        .get();
+    return [
+      for (final r in rows)
+        (r.read<String>('local_id'), r.read<String>('list_id')),
+    ];
+  }
+
+  /// The drain-time `local_updated` recorded for an in-flight create (#124);
+  /// `null` when there is no marker (or a legacy marker without one).
+  Future<String?> inflightBaseLocalUpdated(String localId) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT base_local_updated FROM inflight_creates WHERE local_id = ?',
+          variables: [Variable<String>(localId)],
+        )
+        .get();
+    return rows.isEmpty
+        ? null
+        : rows.first.readNullable<String>('base_local_updated');
+  }
+
+  /// Clear an in-flight marker without finalizing (e.g. the insert never
+  /// reached the server, so the create will be retried normally).
+  Future<void> clearInflightCreate(String localId) async {
+    await _db.customUpdate(
+      'DELETE FROM inflight_creates WHERE local_id = ?',
+      variables: [Variable<String>(localId)],
+      updates: {_db.inflightCreates},
+      updateKind: UpdateKind.delete,
+    );
+  }
+
+  /// Whether the server may already hold this row — the predicate every delete
+  /// path needs before choosing between a hard delete and a tombstone.
+  ///
+  /// An etag is the obvious yes. The subtle one is an open in-flight create
+  /// marker: an insert was issued and its answer never arrived, so the task MAY
+  /// exist on Google under an id we never recorded. Hard-deleting such a row
+  /// throws that marker away with it (FK-cascaded), stranding the committed
+  /// insert — the next pull then resurrects the deleted task, or leaves a
+  /// second copy behind a cross-list move. Tombstoning keeps the marker alive
+  /// so crash recovery adopts the orphan and the delete reaches it.
+  Future<bool> serverMayHold(String id) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT 1 FROM tasks WHERE id = ?1 AND (etag IS NOT NULL '
+          'OR EXISTS (SELECT 1 FROM inflight_creates WHERE local_id = ?1))',
+          variables: [Variable<String>(id)],
+        )
+        .get();
+    return rows.isNotEmpty;
   }
 
   // ── binding + decoding ──────────────────────────────────────────────────

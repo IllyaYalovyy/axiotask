@@ -75,6 +75,43 @@ class StoredTask {
       Object.hash(task, listId, syncState, localUpdated, pendingOp);
 }
 
+/// A pending position/parent move to be pushed via the Tasks move API.
+///
+/// Structural moves (reorder / reparent) live on their own axis from
+/// field-level edits: a task can be both edited (`tasks.pending_op`) AND moved
+/// (a `pending_moves` row) before the next sync.
+class PendingMove {
+  const PendingMove({
+    required this.taskId,
+    required this.listId,
+    this.parentId,
+    this.previousId,
+  });
+
+  /// Task being moved.
+  final String taskId;
+
+  /// List the task belongs to.
+  final String listId;
+
+  /// Target parent (`null` = top-level).
+  final String? parentId;
+
+  /// Task it should follow (`null` = first position).
+  final String? previousId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PendingMove &&
+      other.taskId == taskId &&
+      other.listId == listId &&
+      other.parentId == parentId &&
+      other.previousId == previousId;
+
+  @override
+  int get hashCode => Object.hash(taskId, listId, parentId, previousId);
+}
+
 /// A domain [TaskList] plus the sync metadata the store tracks for it.
 class StoredTaskList {
   const StoredTaskList({
