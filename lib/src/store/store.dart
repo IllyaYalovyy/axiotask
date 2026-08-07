@@ -16,6 +16,7 @@
 
 import 'package:drift/drift.dart';
 
+import '../model/base_snapshot.dart';
 import '../model/task.dart';
 import '../model/task_list.dart';
 import 'database.dart' show AppDatabase;
@@ -44,6 +45,28 @@ const String _selectTaskAnySql = 'SELECT $_taskCols FROM tasks WHERE id = ?';
 // pushes null onto the detail stream).
 const String _selectVisibleTaskSql =
     'SELECT $_taskCols FROM tasks WHERE id = ? AND sync_state != \'deleted\'';
+// drain_dirty: all locally-dirty/deleted tasks awaiting push, joined to their
+// list so local-only lists' tasks are excluded (never pushed). Ordered by
+// pending_op priority (create→update→delete), then top-level-before-subtask,
+// then oldest edit first. The `t.` alias prefixes _taskCols since the join
+// brings a second `id`/`list_id` into scope.
+const String _drainTasksSql =
+    'SELECT t.id, t.list_id, t.parent_id, t.position, t.title, t.notes, '
+    't.status, t.due, t.completed_at, t.etag, t.updated, t.local_updated, '
+    't.sync_state, t.pending_op, t.web_view_link '
+    'FROM tasks t JOIN task_lists l ON l.id = t.list_id '
+    "WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') AND l.local_only = 0 "
+    'ORDER BY CASE t.pending_op '
+    "WHEN 'create' THEN 0 WHEN 'update' THEN 1 WHEN 'delete' THEN 2 ELSE 3 END, "
+    '(t.parent_id IS NOT NULL), t.local_updated ASC';
+// drain_dirty_lists: dirty/deleted lists awaiting push, local-only excluded,
+// creates before updates before deletes, oldest edit first.
+const String _drainListsSql =
+    'SELECT $_listCols FROM task_lists '
+    "WHERE (sync_state = 'dirty' OR sync_state = 'deleted') AND local_only = 0 "
+    'ORDER BY CASE pending_op '
+    "WHEN 'create' THEN 0 WHEN 'update' THEN 1 WHEN 'delete' THEN 2 ELSE 3 END, "
+    'local_updated ASC';
 
 /// Repository handle over the local cache. Cheap to hold; wraps the database.
 class Store {
@@ -137,17 +160,37 @@ class Store {
 
   /// Insert or replace a task row.
   ///
-  /// Base-snapshot capture/clear (the `base_*` CASE columns, #124/#139) is added
-  /// with its dedicated tests in the sync-write partition (T1.4a); this CRUD
-  /// form manages only the domain and sync columns, so `base_*` stay at their
-  /// insert default (NULL) until that path lands.
+  /// Captures the base snapshot (#124) as a side effect: the first edit that
+  /// turns a `clean` row `dirty` records the pre-edit content as its base
+  /// (`tasks.*` on the RHS is the OLD row in an `ON CONFLICT DO UPDATE`), and
+  /// every later edit preserves it — so the base always holds the content as of
+  /// the last server agreement until the row goes clean again. Any write that
+  /// lands the row `clean` clears the base (#139): a clean row carries no base
+  /// (schema invariant §B), so the 412 `ConflictedCopy` resolver overwriting a
+  /// dirty id with the canonical remote row must not leave a stale base behind.
+  ///
+  /// `base_*` are absent from the INSERT column list, so a first insert leaves
+  /// them at their NULL default — a freshly inserted row has no base.
   Future<void> upsertTask(StoredTask t) async {
     await _db.customInsert(
       'INSERT INTO tasks ($_taskCols) '
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
       'list_id = excluded.list_id, parent_id = excluded.parent_id, '
-      'position = excluded.position, title = excluded.title, notes = excluded.notes, '
+      'position = excluded.position, '
+      "base_title  = CASE WHEN excluded.sync_state = 'clean' THEN NULL "
+      "                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty' "
+      '                   THEN tasks.title  ELSE tasks.base_title  END, '
+      "base_notes  = CASE WHEN excluded.sync_state = 'clean' THEN NULL "
+      "                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty' "
+      '                   THEN tasks.notes  ELSE tasks.base_notes  END, '
+      "base_due    = CASE WHEN excluded.sync_state = 'clean' THEN NULL "
+      "                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty' "
+      '                   THEN tasks.due    ELSE tasks.base_due    END, '
+      "base_status = CASE WHEN excluded.sync_state = 'clean' THEN NULL "
+      "                   WHEN tasks.sync_state = 'clean' AND excluded.sync_state = 'dirty' "
+      '                   THEN tasks.status ELSE tasks.base_status END, '
+      'title = excluded.title, notes = excluded.notes, '
       'status = excluded.status, due = excluded.due, '
       'completed_at = excluded.completed_at, etag = excluded.etag, '
       'updated = excluded.updated, local_updated = excluded.local_updated, '
@@ -246,6 +289,147 @@ class Store {
       )
       .watch()
       .map((rows) => rows.isEmpty ? null : _taskFromRow(rows.first));
+
+  // ── push-side write paths (drains + mark-clean + apply-pushed) ────────────
+
+  /// All locally-dirty/deleted tasks awaiting push, ordered by pending_op
+  /// priority (creates → updates → deletes). Tasks in local-only lists are
+  /// excluded: their list does not exist on the server, so they are never
+  /// pushed.
+  Future<List<StoredTask>> drainDirty() async {
+    final rows = await _db.customSelect(_drainTasksSql).get();
+    return rows.map(_taskFromRow).toList();
+  }
+
+  /// All locally-dirty/deleted lists awaiting push, creates before updates
+  /// before deletes. Local-only lists are excluded — they are never pushed.
+  Future<List<StoredTaskList>> drainDirtyLists() async {
+    final rows = await _db.customSelect(_drainListsSql).get();
+    return rows.map(_listFromRow).toList();
+  }
+
+  /// Mark a task as in-sync after a successful push — but only if the row's
+  /// `local_updated` still equals the snapshot taken when the push drained it.
+  ///
+  /// Without the guard, an edit made while the push's HTTP request is in flight
+  /// would have its dirty flag wiped by the push completing, and that newer
+  /// edit would silently never sync (a lost update). When the guard misses, the
+  /// row stays dirty — but the fresh etag is adopted either way, so the re-push
+  /// of the newer content succeeds instead of 412ing.
+  Future<void> markTaskClean(
+    String id,
+    String? newEtag,
+    String serverUpdated,
+    String expectedLocalUpdated,
+  ) async {
+    await _db.customUpdate(
+      'UPDATE tasks SET etag = COALESCE(?1, etag), updated = ?2, '
+      "sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END, "
+      'pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END '
+      'WHERE id = ?4',
+      variables: [
+        Variable<String>(newEtag),
+        Variable<String>(serverUpdated),
+        Variable<String>(expectedLocalUpdated),
+        Variable<String>(id),
+      ],
+      updates: {_db.tasks},
+    );
+  }
+
+  /// Adopt the full task the server returned from a successful push.
+  ///
+  /// The response is what the server ACTUALLY stored, and it can differ from
+  /// what we sent: it assigns `position` on insert, sets the `completed`
+  /// timestamp, normalizes `due`, and can silently coerce fields. Discarding
+  /// the body creates permanent drift no later pull corrects.
+  ///
+  /// Three race guards, all arbitrated by [expectedLocalUpdated] (the drained
+  /// snapshot):
+  ///  * A mid-flight re-edit (`local_updated` moved) keeps its own content and
+  ///    dirty flag, adopting just the fresh etag, and re-bases `base_*` to the
+  ///    body the server now holds (#124) so a later 412 diffs against reality.
+  ///  * A pending move (a `pending_moves` row) freezes `parent_id`/`position`
+  ///    so the queued structural move is not clobbered by the content response.
+  ///  * A response naming a `parent` this device no longer holds detaches the
+  ///    row and drops its etag (RFC-009 §A) rather than violating the FK, so a
+  ///    later pull re-links it (P6).
+  Future<void> applyPushedTask(Task remote, String expectedLocalUpdated) async {
+    await _db.customUpdate(
+      'UPDATE tasks SET '
+      'etag = CASE WHEN ?4 IS NOT NULL AND local_updated = ?3 AND NOT EXISTS '
+      '              (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id) '
+      '              AND NOT EXISTS (SELECT 1 FROM tasks p WHERE p.id = ?4) '
+      '            THEN NULL ELSE COALESCE(?1, etag) END, '
+      'updated = ?2, '
+      'parent_id = CASE WHEN local_updated = ?3 AND NOT EXISTS '
+      '              (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id) '
+      '            THEN CASE WHEN ?4 IS NULL OR EXISTS '
+      '                   (SELECT 1 FROM tasks p WHERE p.id = ?4) '
+      '                 THEN ?4 ELSE NULL END '
+      '            ELSE parent_id END, '
+      'position = CASE WHEN local_updated = ?3 AND NOT EXISTS '
+      '              (SELECT 1 FROM pending_moves pm WHERE pm.task_id = tasks.id) '
+      '            THEN ?5 ELSE position END, '
+      'title        = CASE WHEN local_updated = ?3 THEN ?6  ELSE title        END, '
+      'notes        = CASE WHEN local_updated = ?3 THEN ?7  ELSE notes        END, '
+      'status       = CASE WHEN local_updated = ?3 THEN ?8  ELSE status       END, '
+      'due          = CASE WHEN local_updated = ?3 THEN ?9  ELSE due          END, '
+      'completed_at = CASE WHEN local_updated = ?3 THEN ?10 ELSE completed_at END, '
+      'web_view_link = COALESCE(?11, web_view_link), '
+      // A clean landing clears the base; a mid-flight re-edit that keeps the row
+      // dirty re-bases to the pushed body so a later 412 compares right (#124).
+      'base_title  = CASE WHEN local_updated = ?3 THEN NULL ELSE ?6 END, '
+      'base_notes  = CASE WHEN local_updated = ?3 THEN NULL ELSE ?7 END, '
+      'base_due    = CASE WHEN local_updated = ?3 THEN NULL ELSE ?9 END, '
+      'base_status = CASE WHEN local_updated = ?3 THEN NULL ELSE ?8 END, '
+      "sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END, "
+      'pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END '
+      'WHERE id = ?12',
+      variables: [
+        Variable<String>(remote.etag), // ?1
+        Variable<String>(remote.updated), // ?2
+        Variable<String>(expectedLocalUpdated), // ?3
+        Variable<String>(remote.parent), // ?4
+        Variable<String>(remote.position), // ?5
+        Variable<String>(remote.title), // ?6
+        Variable<String>(remote.notes), // ?7
+        Variable<String>(remote.status.apiStr), // ?8
+        Variable<String>(remote.due), // ?9
+        Variable<String>(remote.completed), // ?10
+        Variable<String>(remote.webViewLink), // ?11
+        Variable<String>(remote.id), // ?12
+      ],
+      updates: {_db.tasks},
+    );
+  }
+
+  /// The base snapshot for a row (#124), or `null` when the row is clean / has
+  /// no base recorded. `base_title` is the presence sentinel: a `NOT NULL`
+  /// title column can only be absent when no base was captured.
+  Future<BaseSnapshot?> baseSnapshot(String id) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT base_title, base_notes, base_due, base_status '
+          'FROM tasks WHERE id = ?',
+          variables: [Variable<String>(id)],
+        )
+        .get();
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    final title = row.readNullable<String>('base_title');
+    if (title == null) return null; // no base captured
+    final statusStr = row.readNullable<String>('base_status');
+    return BaseSnapshot(
+      title: title,
+      notes: row.readNullable<String>('base_notes'),
+      due: row.readNullable<String>('base_due'),
+      // A NULL/unparseable base_status falls back to needsAction (mirrors ref).
+      status:
+          (statusStr == null ? null : TaskStatus.parseApi(statusStr)) ??
+          TaskStatus.needsAction,
+    );
+  }
 
   // ── binding + decoding ──────────────────────────────────────────────────
 
