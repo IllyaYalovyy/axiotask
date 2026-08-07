@@ -115,6 +115,17 @@ class FakeBackend implements Commands {
     );
     _emit();
   }
+
+  // The list slice never drives these (detail-panel / delete paths, T2.4); the
+  // stubs only satisfy the [Commands] surface this double stands in for.
+  @override
+  Future<void> setNotes(String id, String notes) async {}
+
+  @override
+  Future<DeleteToken> deleteTask(String id) async => throw UnimplementedError();
+
+  @override
+  Future<void> undoDelete(DeleteToken token) async {}
 }
 
 void main() {

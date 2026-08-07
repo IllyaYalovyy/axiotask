@@ -2,10 +2,9 @@
 // adaptive [ListDetailScaffold], wires navigation back into go_router, persists
 // the selected view, and keeps the desktop window title in sync.
 //
-// The panes are SKELETONS at T2.2: [ViewListPane] and [TaskDetailPlaceholder]
-// render structure and labels, not real tasks. The All-Tasks list lands on the
-// real store in T2.3; the detail panel fields in T2.4. What is real here is the
-// shell: adaptive layout, routing, back handling, window title, theme.
+// The All-Tasks list lands on the real store in T2.3 ([ViewListPane]); the
+// detail panel fields in T2.4 ([TaskDetail]). What is real here is the shell:
+// adaptive layout, routing, back handling, window title, theme.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import '../app/providers.dart';
 import 'list_detail_scaffold.dart';
 import 'router.dart';
+import 'task_detail.dart';
 import 'task_list_view.dart';
 import 'views.dart';
 
@@ -61,9 +61,11 @@ class AppShell extends ConsumerWidget {
       list: child,
       detail: sel.taskId == null
           ? null
-          : TaskDetailPlaceholder(
+          : TaskDetail(
+              key: ValueKey(sel.taskId),
               taskId: sel.taskId!,
               onClose: () => context.go(viewPath(sel.viewId)),
+              onOpenTask: (id) => context.go(viewPath(sel.viewId, taskId: id)),
             ),
       onCloseDetail: () => context.go(viewPath(sel.viewId)),
     );
@@ -120,40 +122,6 @@ class ViewListPane extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Placeholder detail pane for a selected task. Real fields land in T2.4; today
-/// it proves the detail routing and the compact back affordance.
-class TaskDetailPlaceholder extends StatelessWidget {
-  const TaskDetailPlaceholder({
-    required this.taskId,
-    required this.onClose,
-    super.key,
-  });
-
-  /// The selected task id.
-  final String taskId;
-
-  /// Close the detail (used by the visible back affordance).
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            tooltip: 'Back',
-            onPressed: onClose,
-          ),
-          title: const Text('Details'),
-        ),
-        Expanded(child: Center(child: Text('Task $taskId'))),
-      ],
     );
   }
 }

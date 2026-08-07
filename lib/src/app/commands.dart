@@ -67,6 +67,95 @@ class CommandError implements Exception {
   String toString() => message;
 }
 
+/// A descendant captured in a [DeleteToken], so undo can rebuild the whole
+/// subtree even after the parent's delete pushed — the server cascades child
+/// deletion when a parent dies (verified live, #106) and the local FK mirrors
+/// it, so the row is gone by undo time and must be recreated from the snapshot.
+/// Port of `commands.rs::SubtreeEntry`.
+class SubtreeEntry {
+  const SubtreeEntry({
+    required this.id,
+    this.parentId,
+    required this.title,
+    this.notes,
+    required this.status,
+    this.due,
+    required this.position,
+  });
+
+  /// The descendant's id at delete time.
+  final String id;
+
+  /// Its parent id (the deleted root, or a mid-level node).
+  final String? parentId;
+
+  /// Display title.
+  final String title;
+
+  /// Free-form notes.
+  final String? notes;
+
+  /// Completion status (Google's wire string).
+  final TaskStatus status;
+
+  /// Due date (RFC 3339), if any.
+  final String? due;
+
+  /// Lex-sortable position string.
+  final String position;
+}
+
+/// The undo handle returned by [Commands.deleteTask]: everything needed to put
+/// the task — and its whole subtree — back exactly as it was. Held in memory by
+/// the caller (the undo toast, T7.8); there is no IPC boundary, so unlike the
+/// reference's serialized struct this is a plain value. Port of
+/// `commands.rs::DeleteToken`.
+class DeleteToken {
+  const DeleteToken({
+    required this.id,
+    required this.listId,
+    this.parentId,
+    required this.title,
+    this.notes,
+    required this.status,
+    this.due,
+    required this.position,
+    required this.hadEtag,
+    this.subtree = const [],
+  });
+
+  /// The deleted task's id.
+  final String id;
+
+  /// The list it belonged to.
+  final String listId;
+
+  /// Its parent id (`null` for a top-level task).
+  final String? parentId;
+
+  /// Display title at delete time.
+  final String title;
+
+  /// Notes at delete time.
+  final String? notes;
+
+  /// Completion status at delete time.
+  final TaskStatus status;
+
+  /// Due date at delete time.
+  final String? due;
+
+  /// Lex-sortable position at delete time.
+  final String position;
+
+  /// Whether the task had ever been pushed (drives revive-vs-recreate only as a
+  /// diagnostic; undo re-checks the live row instead of trusting this flag).
+  final bool hadEtag;
+
+  /// Descendants captured at delete time, parents before children.
+  final List<SubtreeEntry> subtree;
+}
+
 /// The mutation surface the UI drives. Cheap to hold; wraps the [Store].
 class Commands {
   /// Build over an open [store]; [newId] is injectable so tests pin the local
@@ -177,6 +266,182 @@ class Commands {
           ),
         );
       }
+    }
+  }
+
+  /// Overwrite a task's notes and mark it dirty (`''` clears the field, matching
+  /// Google's wire contract). Port of `commands.rs::set_notes` — the detail
+  /// panel's notes auto-save routes here. [dirtyOp] preserves a `create` for a
+  /// still-unsynced row.
+  Future<void> setNotes(String id, String notes) async {
+    final t = await _findTask(id);
+    final now = nowUtcString();
+    await _store.upsertTask(
+      StoredTask(
+        task: t.task.copyWith(notes: notes.isEmpty ? null : notes),
+        listId: t.listId,
+        syncState: SyncState.dirty,
+        localUpdated: now,
+        pendingOp: dirtyOp(t.task.etag),
+      ),
+    );
+  }
+
+  /// Delete a task and return an undo [DeleteToken] capturing its whole subtree.
+  /// Port of `commands.rs::delete_task_inner`.
+  ///
+  /// A row the server may already hold ([Store.serverMayHold] — it has an etag,
+  /// or an in-flight create marker says its insert may have committed) is
+  /// TOMBSTONED so the delete reaches Google; the whole subtree is tombstoned in
+  /// one transaction (#138) with only the root carrying a pushable delete —
+  /// Google's own DELETE cascade takes the children remotely (invariant #3). A
+  /// row the server can never have seen is hard-deleted locally, its subtree
+  /// taken by the FK `ON DELETE CASCADE`.
+  Future<DeleteToken> deleteTask(String id) async {
+    final t = await _findTask(id);
+
+    // Snapshot the descendants (BFS → parents before children) so undo can
+    // rebuild them after the delete's server-side cascade destroys them.
+    final list = await _store.listTasks(t.listId);
+    final subtree = <SubtreeEntry>[];
+    final frontier = <String>[id];
+    while (frontier.isNotEmpty) {
+      final pid = frontier.removeLast();
+      for (final c in list.where((c) => c.task.parent == pid)) {
+        frontier.add(c.task.id);
+        subtree.add(
+          SubtreeEntry(
+            id: c.task.id,
+            parentId: c.task.parent,
+            title: c.task.title,
+            notes: c.task.notes,
+            status: c.task.status,
+            due: c.task.due,
+            position: c.task.position,
+          ),
+        );
+      }
+    }
+
+    final token = DeleteToken(
+      id: t.task.id,
+      listId: t.listId,
+      parentId: t.task.parent,
+      title: t.task.title,
+      notes: t.task.notes,
+      status: t.task.status,
+      due: t.task.due,
+      position: t.task.position,
+      hadEtag: t.task.etag != null,
+      subtree: subtree,
+    );
+
+    if (await _store.serverMayHold(id)) {
+      final descendantIds = [for (final e in subtree) e.id];
+      await _store.tombstoneSubtree(id, descendantIds, nowUtcString());
+    } else {
+      await _store.deleteTaskHard(id);
+    }
+    return token;
+  }
+
+  /// Restore a deleted task (and its subtree) from an undo [DeleteToken]. Port of
+  /// `commands.rs::undo_delete_inner`.
+  ///
+  /// If the tombstone is still present (the delete has not pushed), the row is
+  /// revived IN PLACE — preserving its etag — so the un-pushed delete simply
+  /// never fires; reviving as a fresh create would leave the original remote
+  /// task un-deleted AND make a duplicate. A row already synced comes back a
+  /// dirty `update` (not clean): the tombstone may sit on an edit that never
+  /// pushed, and reviving clean would silently drop that edit from the queue.
+  ///
+  /// If the tombstone is gone (the delete already pushed, cascading the row
+  /// away) it is recreated as a fresh dirty `create`; a parent that was deleted
+  /// separately falls back to top level instead of failing the FK.
+  Future<void> undoDelete(DeleteToken token) async {
+    final now = nowUtcString();
+
+    final existing = await _store.findTaskAny(token.id);
+    if (existing != null) {
+      final synced = existing.task.etag != null;
+      await _store.upsertTask(
+        StoredTask(
+          task: existing.task.copyWith(status: token.status, completed: null),
+          listId: existing.listId,
+          syncState: SyncState.dirty,
+          localUpdated: now,
+          pendingOp: synced ? 'update' : 'create',
+        ),
+      );
+      await _restoreSubtree(token, now);
+      return;
+    }
+
+    // Tombstone gone → recreate. Fall back to top level if the parent is dead.
+    final parent =
+        (token.parentId != null &&
+            await _store.findTaskAny(token.parentId!) != null)
+        ? token.parentId
+        : null;
+    await _store.upsertTask(
+      StoredTask(
+        task: Task(
+          id: token.id,
+          parent: parent,
+          position: token.position,
+          title: token.title,
+          notes: token.notes,
+          status: token.status,
+          due: token.due,
+          updated: now,
+        ),
+        listId: token.listId,
+        syncState: SyncState.dirty,
+        localUpdated: now,
+        pendingOp: 'create',
+      ),
+    );
+    await _restoreSubtree(token, now);
+  }
+
+  /// Restore the captured descendants (parents before children, so each row's
+  /// named parent is revived first). A descendant still present is a local-only
+  /// tombstone the parent's delete has not pushed — revived in place, mirroring
+  /// the root; one whose row is gone was cascaded away and is recreated as a
+  /// fresh dirty `create`. Port of `commands.rs::restore_subtree`.
+  Future<void> _restoreSubtree(DeleteToken token, String now) async {
+    for (final e in token.subtree) {
+      final existing = await _store.findTaskAny(e.id);
+      if (existing != null) {
+        await _store.upsertTask(
+          StoredTask(
+            task: existing.task.copyWith(status: e.status, completed: null),
+            listId: existing.listId,
+            syncState: SyncState.dirty,
+            localUpdated: now,
+            pendingOp: dirtyOp(existing.task.etag),
+          ),
+        );
+        continue;
+      }
+      await _store.upsertTask(
+        StoredTask(
+          task: Task(
+            id: e.id,
+            parent: e.parentId,
+            position: e.position,
+            title: e.title,
+            notes: e.notes,
+            status: e.status,
+            due: e.due,
+            updated: now,
+          ),
+          listId: token.listId,
+          syncState: SyncState.dirty,
+          localUpdated: now,
+          pendingOp: 'create',
+        ),
+      );
     }
   }
 

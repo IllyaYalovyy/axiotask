@@ -80,6 +80,23 @@ void main() {
       expect(find.byType(NavigationBar), findsNothing);
     });
 
+    testWidgets('an open detail gets full height (a lazy ListView renders)', (
+      tester,
+    ) async {
+      // Regression: the Stack sized to the offstage 0×0 list, starving the
+      // detail pane of height, so a lazy ListView in it built zero children.
+      await pumpScaffold(
+        tester,
+        width: 400,
+        detail: ListView(
+          children: const [SizedBox(height: 40, child: Text('DETAIL-ROW'))],
+        ),
+      );
+      expect(find.text('DETAIL-ROW'), findsOneWidget);
+      final size = tester.getSize(find.byType(ListView));
+      expect(size.height, greaterThan(100), reason: 'detail fills the screen');
+    });
+
     testWidgets('a system back with a detail open closes the detail', (
       tester,
     ) async {

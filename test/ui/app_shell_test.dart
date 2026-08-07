@@ -9,6 +9,8 @@ import 'package:axiotask/src/app/app.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/window_title_controller.dart';
+import 'package:axiotask/src/model/task.dart';
+import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/router.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,6 +42,7 @@ void main() {
     required _FakeTitle title,
     String? instancePrefix,
     GoRouter? router,
+    List<StoredTask> tasks = const [],
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -48,9 +51,10 @@ void main() {
           prefsStoreProvider.overrideWithValue(store),
           instancePrefixProvider.overrideWithValue(instancePrefix),
           windowTitleControllerProvider.overrideWithValue(title),
-          // The "all" view now renders the real store-backed list; feed it empty
-          // streams so the shell wiring under test needs no database.
-          allTasksProvider.overrideWith((ref) => const Stream.empty()),
+          // The "all" view (and the detail panel) render off the real store
+          // streams; feed them fixed values so the shell wiring under test needs
+          // no database.
+          allTasksProvider.overrideWith((ref) => Stream.value(tasks)),
           listsProvider.overrideWith((ref) => const Stream.empty()),
           if (router != null) routerProvider.overrideWithValue(router),
         ],
@@ -59,6 +63,19 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  StoredTask storedTask(String id, String title) => StoredTask(
+    task: Task(
+      id: id,
+      position: '1',
+      title: title,
+      status: TaskStatus.needsAction,
+      updated: 't',
+    ),
+    listId: 'L1',
+    syncState: SyncState.clean,
+    localUpdated: 't',
+  );
 
   testWidgets('window title reflects the initial view', (tester) async {
     final title = _FakeTitle();
@@ -97,16 +114,23 @@ void main() {
     final store = prefs();
     final title = _FakeTitle();
     final router = buildAppRouter(initialViewId: 'all');
-    await pumpApp(tester, store: store, title: title, router: router);
+    await pumpApp(
+      tester,
+      store: store,
+      title: title,
+      router: router,
+      tasks: [storedTask('T1', 'my task')],
+    );
 
     router.go(viewPath('all', taskId: 'T1'));
     await tester.pumpAndSettle();
-    expect(find.text('Task T1'), findsOneWidget);
+    // The detail panel renders the task's real fields (Title label + value).
+    expect(find.widgetWithText(TextField, 'my task'), findsOneWidget);
 
     // The visible back affordance (touch path — no system back on desktop).
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
-    expect(find.text('Task T1'), findsNothing);
+    expect(find.widgetWithText(TextField, 'my task'), findsNothing);
   });
 
   testWidgets('Android system back closes an open detail on a phone', (
@@ -120,11 +144,17 @@ void main() {
     final store = prefs();
     final title = _FakeTitle();
     final router = buildAppRouter(initialViewId: 'all');
-    await pumpApp(tester, store: store, title: title, router: router);
+    await pumpApp(
+      tester,
+      store: store,
+      title: title,
+      router: router,
+      tasks: [storedTask('T1', 'my task')],
+    );
 
     router.go(viewPath('all', taskId: 'T1'));
     await tester.pumpAndSettle();
-    expect(find.text('Task T1'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'my task'), findsOneWidget);
 
     // The system/OS back button, routed through go_router + the shell PopScope.
     final handled = await tester.binding.handlePopRoute();
@@ -134,6 +164,6 @@ void main() {
       isTrue,
       reason: 'back must not fall through to exit the app',
     );
-    expect(find.text('Task T1'), findsNothing);
+    expect(find.widgetWithText(TextField, 'my task'), findsNothing);
   });
 }

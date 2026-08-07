@@ -123,14 +123,20 @@ class ListDetailScaffold extends StatelessWidget {
   Widget _buildCompact() {
     return Scaffold(
       body: SafeArea(
-        child: Stack(
-          children: [
-            // The list stays mounted (keeps the ShellRoute Navigator alive);
-            // Offstage hides it from paint/hit-test and from finders when the
-            // detail covers it.
-            Offstage(offstage: _showingDetail, child: list),
-            if (_showingDetail) Positioned.fill(child: detail!),
-          ],
+        // Force the Stack to fill the screen. Without this it would size to its
+        // only non-positioned child — the [Offstage] list, which collapses to
+        // 0×0 while the detail is open — starving the detail pane of height (a
+        // lazy ListView in it would then build zero rows).
+        child: SizedBox.expand(
+          child: Stack(
+            children: [
+              // The list stays mounted (keeps the ShellRoute Navigator alive);
+              // Offstage hides it from paint/hit-test and from finders when the
+              // detail covers it.
+              Offstage(offstage: _showingDetail, child: list),
+              if (_showingDetail) Positioned.fill(child: detail!),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: _showingDetail
