@@ -22,5 +22,8 @@ reached.
 - `flutter test` — must be green
 - Android build: `flutter build apk`
 - Linux build: `flutter build linux`
+- The full quality gate is one command: `bash .ktask/verify.sh`
 
-See CONTRIBUTING.md for commit identity, versioning, and RFC rules.
+See TESTING.md for the testing conventions (the five test layers, the red-check
+ritual, the time-source ban, and the golden-regeneration rule) and
+CONTRIBUTING.md for commit identity, versioning, and RFC rules.

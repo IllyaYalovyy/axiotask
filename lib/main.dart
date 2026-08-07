@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 void main() {
-  runApp(const MyApp());
+  // Every axiotask entry point mounts a ProviderScope at the root — the app is
+  // Riverpod-driven and riverpod_lint's missing_provider_scope enforces this.
+  // The counter body below is placeholder scaffolding; the real shell lands in
+  // T2.1/T2.2. Keeping the scope here now is the one bit of that wiring the
+  // lint gate requires today.
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {

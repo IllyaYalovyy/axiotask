@@ -1,0 +1,6 @@
+# Declares the tags used by the suite so `flutter test` does not warn about an
+# "unspecified" tag. alchemist tags every golden test `golden`; declaring it
+# here also lets goldens be selected/excluded with `--tags golden` /
+# `--exclude-tags golden` when iterating.
+tags:
+  golden:

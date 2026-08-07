@@ -3,6 +3,16 @@
 
 include: package:flutter_lints/flutter.yaml
 
+# riverpod_lint 3.1.x is a NATIVE analysis_server_plugin (not custom_lint —
+# that host was retired in T0.1 as irreconcilable with the analyzer-12 stack).
+# `dart analyze` loads this plugin and reports its rules (e.g.
+# missing_provider_scope); `flutter analyze` does NOT run analyzer plugins, so
+# the gate runs BOTH — flutter analyze for the framework lints and
+# `dart analyze --fatal-infos --fatal-warnings` for the Riverpod rules. This
+# `plugins:` block is what T0.1 deferred here (see .ktask report-1).
+plugins:
+  riverpod_lint: 3.1.4
+
 analyzer:
   language:
     strict-casts: true
