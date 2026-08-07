@@ -35,6 +35,22 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # State management — Riverpod 3, no codegen (RFC-011 / RESEARCH §1).
+  # Held at 3.3.x: riverpod_lint pins its riverpod exactly, and the newest
+  # riverpod_lint compatible with this Flutter SDK's analyzer ceiling pins
+  # riverpod 3.3.2 (see T0.1 report — analyzer/kiri_check constraint chain).
+  flutter_riverpod: ">=3.3.2 <3.4.0"
+  # Persistence — drift 2.34.x, SQL-first on bundled sqlite3 (RESEARCH §2).
+  drift: ">=2.34.0 <2.35.0"
+  # Time discipline — package:clock everywhere; DateTime.now() is banned in
+  # product code (RFC-011 testing strategy / RESEARCH §6).
+  clock: ^1.1.2
+  # Routing — go_router, one hand-rolled adaptive shell (RESEARCH §7).
+  go_router: ^17.4.0
+  # Windowing — size persistence on desktop. Pinned: 0.5.x is mid-migration to
+  # nativeapi-flutter and must be wrapped, not spread through the app (RESEARCH §8).
+  window_manager: 0.5.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -45,6 +61,29 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # drift codegen — generates the database class from hand-written .drift files.
+  # SQL-first: build_runner is a one-shot tool, never in the TDD loop (RESEARCH §2).
+  # build_runner (the codegen runner) lands in T1.2 with the first .drift file —
+  # its current release needs analyzer 13.3+, above the meta 1.18.0 ceiling the
+  # Flutter 3.44.8 SDK pins, so it is not added prematurely (see T0.1 report).
+  drift_dev: ">=2.34.0 <2.34.1"
+  # Golden test harness — alchemist over matchesGoldenFile (RESEARCH §5).
+  alchemist: ^0.14.0
+  # Property-based testing — the only maintained Dart PBT lib. Pinned and used
+  # only behind test/support/property_check.dart (RESEARCH §5).
+  kiri_check: 1.3.1
+  # Boundary-seam mocking only; the Tasks API uses a hand-written fake (RESEARCH §5).
+  mocktail: ^1.0.5
+  # Deterministic time in engine/timer tests (RESEARCH §6).
+  fake_async: ^1.3.3
+  # Analysis-time enforcement of Riverpod rules. riverpod_lint 3.1.x is a
+  # NATIVE `dart analyze` plugin (analysis_server_plugin) — it no longer rides
+  # on custom_lint, which cannot resolve against this SDK's analyzer anyway
+  # (custom_lint needs analyzer ^8; see T0.1 report for why the plan's
+  # custom_lint host is retired). Held at 3.1.4/3.1.5 to keep analyzer at 12.x,
+  # the ceiling kiri_check's `package:test` allows under the SDK test_api pin.
+  riverpod_lint: ">=3.1.4 <3.1.6"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
