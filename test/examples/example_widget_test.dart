@@ -1,33 +1,38 @@
 // EXAMPLE — widget layer (rendered tree + interaction).
 //
 // Template for asserting what the USER SEES: pump a widget, find rendered
-// content, drive a gesture, assert the tree changed. The subject is the app
-// root, so this also covers the ProviderScope wiring in main.dart (the app
-// must mount inside a ProviderScope — enforced statically by riverpod_lint and
-// verified here at runtime).
-import 'package:axiotask/main.dart';
+// content, assert the tree. The subject is the app root [AxiotaskApp], so this
+// also covers the ProviderScope wiring the app mounts under (enforced
+// statically by riverpod_lint and verified here at runtime).
+import 'package:axiotask/src/app/app.dart';
+import 'package:axiotask/src/app/providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('app renders inside a ProviderScope and reacts to a tap', (
+  testWidgets('root renders inside a ProviderScope with the instance title', (
     tester,
   ) async {
-    await tester.pumpWidget(const ProviderScope(child: MyApp()));
+    await tester.pumpWidget(const ProviderScope(child: AxiotaskApp()));
 
-    // The app root is Riverpod-scoped (covers main.dart's runApp wiring).
+    // The app root is Riverpod-scoped (covers the runApp wiring).
     expect(find.byType(ProviderScope), findsOneWidget);
+    expect(find.byType(MaterialApp), findsOneWidget);
+    // Production title with no instance prefix override.
+    expect(find.text('axiotask'), findsWidgets);
+  });
 
-    // Starts at 0; the incremented value is NOT yet on screen (non-happy
-    // guard against a false-positive that would pass whatever the state).
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  testWidgets('an instance prefix badges the title (dev-mode)', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [instancePrefixProvider.overrideWithValue('dev')],
+        child: const AxiotaskApp(),
+      ),
+    );
+    // Non-production instances are visibly labelled so a dev run is never
+    // mistaken for production.
+    expect(find.text('axiotask (dev)'), findsWidgets);
+    expect(find.text('axiotask'), findsNothing);
   });
 }

@@ -45,6 +45,23 @@ dependencies:
   # Time discipline — package:clock everywhere; DateTime.now() is banned in
   # product code (RFC-011 testing strategy / RESEARCH §6).
   clock: ^1.1.2
+  # Path joining for the instance-aware data/config layout (bootstrap, T2.1).
+  # Already transitively locked; promoted to a direct dep because lib/ imports it.
+  path: ^1.9.1
+  # FFI binding to libc flock(2) for the desktop single-instance guard (#48,
+  # T2.1). Rust's File::try_lock uses flock; dart:io's RandomAccessFile.lock is
+  # fcntl (per-process, so it can't guard against a second in-process holder),
+  # so we bind flock directly. Already transitively locked; promoted to direct.
+  ffi: ^2.2.0
+  # Local UUIDs for rows created before their first push (default list, and the
+  # command layer to come) — the port of `uuid::Uuid::new_v4()`. Already
+  # transitively locked; promoted to a direct dep.
+  uuid: ^4.6.0
+  # Per-platform app directory resolution — the Flutter analog of the reference's
+  # Tauri path resolver (#170). Desktop derives data/config from XDG env, but
+  # Android's only app-writable root comes from the platform, without which the
+  # store can never open on device. Desktop-Linux uses the XDG env directly.
+  path_provider: ^2.1.5
   # Routing — go_router, one hand-rolled adaptive shell (RESEARCH §7).
   go_router: ^17.4.0
   # Windowing — size persistence on desktop. Pinned: 0.5.x is mid-migration to

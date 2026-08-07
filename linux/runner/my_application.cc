@@ -52,7 +52,16 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "axiotask");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // Default size at first launch (before any persisted size is restored, which
+  // happens in Dart AFTER the first frame — never here, to avoid the
+  // geometry-restore-at-mount freeze). A minimum size keeps the adaptive layout
+  // usable and stops the window from collapsing below its narrow breakpoint.
+  gtk_window_set_default_size(window, 1100, 740);
+  GdkGeometry min_geometry;
+  min_geometry.min_width = 480;
+  min_geometry.min_height = 480;
+  gtk_window_set_geometry_hints(window, nullptr, &min_geometry,
+                                GDK_HINT_MIN_SIZE);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
