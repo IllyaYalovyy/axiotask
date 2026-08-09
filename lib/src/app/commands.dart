@@ -204,6 +204,10 @@ class Commands {
   final Store _store;
   final String Function() _newId;
 
+  /// The task the UI is holding, for the sync engine's held-create deferral.
+  /// Process memory only — never persisted (see [setEditing]).
+  String? _editingTaskId;
+
   /// Create a task in [listId] (optionally under [parentId]) with [title].
   /// Written as a never-synced dirty `create` (no etag), so the next sync
   /// inserts it. Returns the stored row so the caller can pin/follow it.
@@ -649,6 +653,231 @@ class Commands {
       );
     }
   }
+
+  // ── structural moves (T5.2) ───────────────────────────────────────────────
+
+  /// Reparent and/or reposition [id]. A structural move rides its OWN axis: it
+  /// records a `pending_moves` row (pushed via the Tasks move API — Google
+  /// reorders through move, not patch) and leaves the row's field-level
+  /// `syncState`/`pendingOp` untouched, so a clean synced row stays clean.
+  /// Port of `commands.rs::move_task_inner`.
+  ///
+  /// [parentId] `null` detaches to top level (always allowed). Otherwise the
+  /// one-level invariant (#1, RFC-009 §F) is enforced HERE — Google accepts a
+  /// deeper nest with 200 (probe 3), so this command is the last gate before
+  /// the store records a tree no list view can render. [previousId] names the
+  /// sibling the task should follow; the local `position` is pinned so the UI
+  /// reflects the order before the push.
+  Future<void> moveTask(
+    String id, {
+    String? parentId,
+    String? previousId,
+  }) async {
+    final t = await _findTask(id);
+    if (parentId != null) {
+      final siblings = await _store.listTasks(t.listId);
+      if (siblings.any((s) => s.task.id == parentId && s.task.parent != null)) {
+        throw const CommandError(
+          'cannot nest under a subtask: subtasks are one level deep',
+        );
+      }
+      if (siblings.any((s) => s.task.parent == id)) {
+        throw const CommandError(
+          'cannot make a task with subtasks into a subtask',
+        );
+      }
+    }
+    final now = nowUtcString();
+    await _store.upsertTask(
+      StoredTask(
+        // parent may be cleared to null, which copyWith cannot express, so the
+        // moved row is rebuilt explicitly.
+        task: Task(
+          id: t.task.id,
+          parent: parentId,
+          position: previousId != null ? 'after-$previousId' : '00000000000001',
+          title: t.task.title,
+          notes: t.task.notes,
+          status: t.task.status,
+          due: t.task.due,
+          completed: t.task.completed,
+          etag: t.task.etag,
+          updated: t.task.updated,
+          webViewLink: t.task.webViewLink,
+        ),
+        listId: t.listId,
+        syncState: t.syncState,
+        localUpdated: now,
+        pendingOp: t.pendingOp,
+      ),
+    );
+    await _store.recordMove(id, t.listId, parentId, previousId);
+  }
+
+  /// Move [id] one step [direction] (`'up'` | `'down'`) among its siblings.
+  /// Swaps the two rows' `position` strings so the new order renders at once,
+  /// then records a `pending_moves` row naming the sibling the task now follows
+  /// (Google reorders through the move API). A step at the list boundary is a
+  /// no-op — no write, nothing queued. Field-level sync state is preserved (the
+  /// order pushes via the move axis, not a patch). Port of
+  /// `commands.rs::reorder_task_inner`.
+  ///
+  /// The panel measures drag distance against the FULL sibling list, so with
+  /// "Hide completed" on it emits as many single-step swaps as needed to cross
+  /// hidden completed rows (#90) — each call here is one such step.
+  Future<void> reorderTask(String id, String direction) async {
+    final t = await _findTask(id);
+    final all = await _store.listTasks(t.listId);
+    final siblings = all.where((s) => s.task.parent == t.task.parent).toList();
+    final idx = siblings.indexWhere((s) => s.task.id == id);
+    if (idx < 0) return;
+
+    final int swapIdx;
+    if (direction == 'up' && idx > 0) {
+      swapIdx = idx - 1;
+    } else if (direction == 'down' && idx < siblings.length - 1) {
+      swapIdx = idx + 1;
+    } else {
+      return; // no-op at the boundary
+    }
+
+    final other = siblings[swapIdx];
+    final now = nowUtcString();
+    // Swap the two positions, preserving each row's field-level sync state.
+    await _store.upsertTask(
+      StoredTask(
+        task: t.task.copyWith(position: other.task.position),
+        listId: t.listId,
+        syncState: t.syncState,
+        localUpdated: now,
+        pendingOp: t.pendingOp,
+      ),
+    );
+    await _store.upsertTask(
+      StoredTask(
+        task: other.task.copyWith(position: t.task.position),
+        listId: other.listId,
+        syncState: other.syncState,
+        localUpdated: now,
+        pendingOp: other.pendingOp,
+      ),
+    );
+
+    // The sibling the task now follows: moving up, that is two slots back (or
+    // nothing if it reached the top); moving down, it is the row it hopped over.
+    final String? newPrevious = direction == 'up'
+        ? (idx >= 2 ? siblings[idx - 2].task.id : null)
+        : siblings[idx + 1].task.id;
+    await _store.recordMove(id, t.listId, t.task.parent, newPrevious);
+  }
+
+  /// Move [id]'s whole subtree to [targetListId] and return the new root id.
+  /// Google Tasks has no native cross-list move, so this is a delete-from-old +
+  /// create-in-new: each node is recreated in the target under a FRESH local id
+  /// (parent before child), then each original is removed. Port of
+  /// `AppState::move_task_to_list` (P8).
+  ///
+  /// The subtree moves together — deleting a parent deletes its children both on
+  /// Google (verified live) and via the local FK cascade, so leaving subtasks
+  /// behind would silently destroy them once the parent's delete pushed.
+  Future<String> moveTaskToList(String id, String targetListId) async {
+    final old = await _findTask(id);
+    if (old.listId == targetListId) return id; // already there
+
+    final now = nowUtcString();
+    final siblings = await _store.listTasks(old.listId);
+
+    // Recreate the root, then each descendant level under its recreated
+    // parent's new id. A stack visits parents before children.
+    final recreated = <(StoredTask, String)>[]; // (original node, new id)
+    final frontier = <(StoredTask, String?)>[(old, null)];
+    while (frontier.isNotEmpty) {
+      final (node, newParent) = frontier.removeLast();
+      final newId = _newId();
+      await _store.upsertTask(
+        StoredTask(
+          task: Task(
+            id: newId,
+            parent: newParent,
+            position: node.task.position,
+            title: node.task.title,
+            notes: node.task.notes,
+            status: node.task.status,
+            due: node.task.due,
+            completed: node.task.completed,
+            etag: null, // brand-new remote row (invariant #4)
+            updated: node.task.updated,
+            webViewLink: null,
+          ),
+          listId: targetListId,
+          syncState: SyncState.dirty,
+          localUpdated: now,
+          pendingOp: 'create',
+        ),
+      );
+      recreated.add((node, newId));
+      for (final child in siblings.where(
+        (c) => c.task.parent == node.task.id,
+      )) {
+        frontier.add((child, newId));
+      }
+    }
+    final newRootId = recreated.firstWhere((e) => e.$1.task.id == id).$2;
+
+    // Remove the originals: descendants first, then the root — the root's
+    // delete is what cascades the descendants away on the server.
+    for (final (node, _) in recreated.skip(1)) {
+      await _removeMovedOriginal(node, now);
+    }
+    await _removeMovedOriginal(old, now);
+    return newRootId;
+  }
+
+  /// Remove one original row after its subtree was recreated in another list.
+  /// A row the server MAY hold ([Store.serverMayHold]: it has an etag, or an
+  /// in-flight-create marker says its insert may have committed) is TOMBSTONED,
+  /// not hard-deleted: the server only cascades the moved subtree away once the
+  /// ROOT's delete lands, and if a pull happens first a hard-deleted row is
+  /// RESURRECTED from the server, duplicating the moved subtree (P8). A
+  /// tombstone pushes its own delete and the pull cannot re-add it; a redundant
+  /// server cascade then 404s = success. A row the server has never seen is
+  /// hard-deleted. Port of `AppState::remove_moved_original`.
+  Future<void> _removeMovedOriginal(StoredTask row, String now) async {
+    if (await _store.serverMayHold(row.task.id)) {
+      await _store.upsertTask(
+        StoredTask(
+          task: row.task,
+          listId: row.listId,
+          syncState: SyncState.deleted,
+          localUpdated: now,
+          pendingOp: 'delete',
+        ),
+      );
+    } else {
+      await _store.deleteTaskHard(row.task.id);
+    }
+  }
+
+  /// Drop all synced local data so the next sync rebuilds it from Google (the
+  /// source of truth). Local-only lists exist nowhere else and a fresh pull
+  /// cannot recreate them, so they survive. Port of the local half of
+  /// `commands.rs::fresh_sync`; the re-pull it triggers is the sync engine's
+  /// job (wired in T5.5+), driven by the caller after this clears the cache.
+  Future<void> freshSync() async {
+    await _store.clearSynced();
+  }
+
+  /// The task the UI is actively holding (inline editor row or open detail
+  /// panel), or `null` when nothing is being edited. See [setEditing].
+  String? get heldCreateId => _editingTaskId;
+
+  /// Record which task the UI is holding. Only that one task's CREATE push is
+  /// held by the sync engine (prevents its local id remapping mid-edit); every
+  /// other create — including subtasks born inside the open panel (#85) — keeps
+  /// syncing. Pure process memory: it never touches the store, so a relaunch
+  /// starts with nothing held and the once-held create pushes on the next sync.
+  /// Port of `commands.rs::set_editing` / `AppState::set_editing_task`.
+  void setEditing(String? id) => _editingTaskId = id;
 
   /// Whether calendar date [a] falls strictly before date [b]. Both are the
   /// Google canonical `YYYY-MM-DDT00:00:00.000Z`, so the date is the leading ten
