@@ -32,6 +32,17 @@ Future<void> seedList(Store store, String id) => store.upsertList(
   ),
 );
 
+/// A local-only (never-synced) list — its rows keep their create-time
+/// positions forever and it survives a fresh-sync wipe.
+Future<void> seedLocalList(Store store, String id) => store.upsertList(
+  StoredTaskList(
+    list: TaskList(id: id, title: 'Local', updated: _t0),
+    syncState: SyncState.clean,
+    localUpdated: _t0,
+    localOnly: true,
+  ),
+);
+
 /// Seed an already-pushed task (has an etag) — the "synced" starting point for
 /// rename/toggle, so their pending_op should become `update`, not `create`.
 Future<void> seedTask(
@@ -41,22 +52,51 @@ Future<void> seedTask(
   String title, {
   String? parent,
   String? due,
+  String position = '1',
+  String? webViewLink,
   TaskStatus status = TaskStatus.needsAction,
 }) => store.upsertTask(
   StoredTask(
     task: Task(
       id: id,
       parent: parent,
-      position: '1',
+      position: position,
       title: title,
       status: status,
       due: due,
       etag: 'e1',
+      webViewLink: webViewLink,
       updated: _t0,
     ),
     listId: listId,
     syncState: SyncState.clean,
     localUpdated: _t0,
+  ),
+);
+
+/// Seed a never-pushed local task (no etag) — a dirty `create` awaiting its
+/// first push, the starting point for the hard-delete / in-flight move cases.
+Future<void> seedLocalTask(
+  Store store,
+  String id,
+  String listId,
+  String title, {
+  String? parent,
+  String position = '1',
+}) => store.upsertTask(
+  StoredTask(
+    task: Task(
+      id: id,
+      parent: parent,
+      position: position,
+      title: title,
+      status: TaskStatus.needsAction,
+      updated: _t0,
+    ),
+    listId: listId,
+    syncState: SyncState.dirty,
+    localUpdated: _t0,
+    pendingOp: 'create',
   ),
 );
 
@@ -936,6 +976,530 @@ void main() {
       final t = (await store.findTaskAny('T1'))!;
       expect(t.localUpdated, isNot(_t0));
       expect(t.localUpdated, startsWith('2026-06-01T09'));
+    });
+  });
+
+  // --- T5.2: structural moves — move/reorder + move-to-list + held create ----
+  //
+  // These are the command-layer halves of the reference's move/reorder,
+  // move_to_list and set_editing groups. The parent/position mutation and the
+  // recorded pending_moves row are observable in the store now; the push half
+  // (the move API drain, the cross-list sync round-trips of §H) lands with the
+  // sync engine in T5.5–T5.7 and is proven there, not here. Assertions read the
+  // rows the store persists — a no-op command fails every one of these.
+
+  group('moveTask', () {
+    // move_task_changes_parent
+    test(
+      'reparents a task and records a pending move under the new parent',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'T1', 'L1', 'parent');
+        await seedTask(store, 'T2', 'L1', 'child-to-be');
+
+        await commands.moveTask('T2', parentId: 'T1');
+
+        final t2 = (await store.findTaskAny('T2'))!;
+        expect(t2.task.parent, 'T1');
+        // The reorder is pushed via the move API (a pending_moves row), not a patch.
+        final moves = await store.pendingMoves();
+        expect(
+          moves.any((m) => m.taskId == 'T2' && m.parentId == 'T1'),
+          isTrue,
+          reason: 'a pending move carries the new parent',
+        );
+      },
+    );
+
+    // demoting_a_task_that_has_subtasks_is_refused (invariant #1, RFC-009 §F)
+    test(
+      'refuses demoting a task that has subtasks, leaving it untouched',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(store, 'C', 'L1', 'its subtask');
+        await seedTask(store, 'X', 'L1', 'another top-level task');
+        await commands.moveTask('C', parentId: 'P');
+
+        await expectLater(
+          commands.moveTask('P', parentId: 'X'),
+          throwsA(
+            isA<CommandError>().having(
+              (e) => e.message,
+              'message',
+              contains('subtask'),
+            ),
+          ),
+        );
+
+        // P is still a top-level row and its subtask is untouched.
+        expect((await store.findTaskAny('P'))!.task.parent, isNull);
+        expect((await store.findTaskAny('C'))!.task.parent, 'P');
+        // Nothing queued to push a third level at the server.
+        final moves = await store.pendingMoves();
+        expect(moves.any((m) => m.taskId == 'P'), isFalse);
+      },
+    );
+
+    // nesting_a_task_under_a_subtask_is_refused (the mirror: target is a subtask)
+    test(
+      'refuses nesting under a subtask, leaving the mover top-level',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(store, 'C', 'L1', 'its subtask');
+        await seedTask(store, 'X', 'L1', 'would-be grandchild');
+        await commands.moveTask('C', parentId: 'P');
+
+        await expectLater(
+          commands.moveTask('X', parentId: 'C'),
+          throwsA(
+            isA<CommandError>().having(
+              (e) => e.message,
+              'message',
+              contains('subtask'),
+            ),
+          ),
+        );
+
+        expect((await store.findTaskAny('X'))!.task.parent, isNull);
+        final moves = await store.pendingMoves();
+        expect(moves.any((m) => m.taskId == 'X'), isFalse);
+      },
+    );
+
+    // Detaching (parent_id = None) is always allowed and lands the task at top.
+    test(
+      'detaching a subtask clears its parent and lands it at the top',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(store, 'C', 'L1', 'child', parent: 'P');
+
+        await commands.moveTask('C', parentId: null);
+
+        final c = (await store.findTaskAny('C'))!;
+        expect(c.task.parent, isNull, reason: 'detached to top level');
+        expect(c.task.position, '00000000000001', reason: 'lands first');
+        final moves = await store.pendingMoves();
+        final m = moves.firstWhere((m) => m.taskId == 'C');
+        expect(m.parentId, isNull);
+      },
+    );
+
+    // A previous_id records the sibling the task should follow and pins an
+    // after-position locally so the UI reflects the order before the push.
+    test('a previousId records an after-position for the push', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'first');
+      await seedTask(store, 'T2', 'L1', 'second');
+
+      await commands.moveTask('T2', previousId: 'T1');
+
+      expect((await store.findTaskAny('T2'))!.task.position, 'after-T1');
+      final m = (await store.pendingMoves()).firstWhere(
+        (m) => m.taskId == 'T2',
+      );
+      expect(m.previousId, 'T1');
+    });
+
+    test('moving a missing task throws the not-found shape', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await expectLater(
+        commands.moveTask('ghost', parentId: null),
+        throwsA(
+          isA<CommandError>().having(
+            (e) => e.message,
+            'message',
+            'task ghost not found',
+          ),
+        ),
+      );
+    });
+  });
+
+  group('reorderTask', () {
+    // reorder_swaps_positions
+    test('swaps sibling positions so the rendered order flips', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
+      await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
+
+      // Precondition: rendered T1, then T2.
+      var order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
+      expect(order, ['T1', 'T2']);
+
+      await commands.reorderTask('T1', 'down');
+
+      order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
+      expect(order, ['T2', 'T1'], reason: 'the swap is visible in list order');
+    });
+
+    // reorder_moves_freshly_created_task (#80): create_task once handed every
+    // row the same constant position, so the swap swapped two equal strings and
+    // did nothing on local-only rows. Reorder must actually change the order.
+    test(
+      'reorders a freshly created task despite create-time positions',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        // A local-only list never syncs, so rows keep create-time positions.
+        await seedLocalList(store, 'L1');
+        await commands.createTask(listId: 'L1', title: 'first');
+        await commands.createTask(listId: 'L1', title: 'second');
+
+        final before = await store.listTasks('L1');
+        expect(before, hasLength(2));
+        final lastId = before[1].task.id;
+        final lastTitle = before[1].task.title;
+        final firstTitle = before[0].task.title;
+        expect(lastTitle, isNot(firstTitle));
+
+        await commands.reorderTask(lastId, 'up');
+
+        final after = await store.listTasks('L1');
+        expect(
+          after[0].task.title,
+          lastTitle,
+          reason: 'reorder moves the last row to the top',
+        );
+        expect(after[1].task.title, firstTitle);
+      },
+    );
+
+    // reorder_moves_subtask_across_completed_sibling (#90): with "Hide
+    // completed" on, the panel emits single-step swaps to cross hidden rows.
+    test('walks a subtask across a hidden completed sibling', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P1', 'L1', 'parent');
+      await seedTask(
+        store,
+        's1',
+        'L1',
+        'alpha',
+        parent: 'P1',
+        position: '00000000000001',
+      );
+      await seedTask(
+        store,
+        's2',
+        'L1',
+        'beta',
+        parent: 'P1',
+        position: '00000000000002',
+        status: TaskStatus.completed,
+      );
+      await seedTask(
+        store,
+        's3',
+        'L1',
+        'gamma',
+        parent: 'P1',
+        position: '00000000000003',
+      );
+
+      // Drag "gamma" above "alpha": two single-step "up" swaps (across "beta").
+      await commands.reorderTask('s3', 'up');
+      await commands.reorderTask('s3', 'up');
+
+      final subs = (await store.listTasks(
+        'L1',
+      )).where((t) => t.task.parent == 'P1').map((t) => t.task.id).toList();
+      expect(subs, [
+        's3',
+        's1',
+        's2',
+      ], reason: 'gamma first, alpha second, completed beta retained last');
+    });
+
+    // A reorder at the boundary is a no-op: no position change, nothing queued.
+    test('is a no-op at the top boundary and queues no move', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
+      await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
+
+      await commands.reorderTask('T1', 'up');
+
+      final order = (await store.listTasks(
+        'L1',
+      )).map((t) => t.task.id).toList();
+      expect(order, ['T1', 'T2'], reason: 'order unchanged at the boundary');
+      expect(await store.pendingMoves(), isEmpty);
+    });
+
+    // The recorded move names the sibling the task now follows so the push
+    // reproduces the local order via the move API.
+    test('records the new predecessor so the move pushes', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'a', position: '00000000000001');
+      await seedTask(store, 'T2', 'L1', 'b', position: '00000000000002');
+      await seedTask(store, 'T3', 'L1', 'c', position: '00000000000003');
+
+      await commands.reorderTask('T3', 'up'); // T3 crosses T2 → lands after T1
+
+      final order = (await store.listTasks(
+        'L1',
+      )).map((t) => t.task.id).toList();
+      expect(order, ['T1', 'T3', 'T2']);
+      final m = (await store.pendingMoves()).firstWhere(
+        (m) => m.taskId == 'T3',
+      );
+      expect(m.previousId, 'T1', reason: 'T3 now follows T1');
+    });
+  });
+
+  group('moveTaskToList', () {
+    // move_to_list_creates_in_target_and_tombstones_old (GH#16)
+    test(
+      'clones a synced task into the target and tombstones the original',
+      () async {
+        final store = await freshStore();
+        var n = 0;
+        final commands = Commands(store, newId: () => 'new-${n++}');
+        await seedList(store, 'L1');
+        await seedList(store, 'L2');
+        await seedTask(store, 'T1', 'L1', 'Task to move'); // has etag e1
+
+        final newId = await commands.moveTaskToList('T1', 'L2');
+        expect(newId, isNot('T1'), reason: 'the moved task gets a fresh id');
+
+        // Old list no longer shows the task (tombstoned, not visible).
+        expect(await store.listTasks('L1'), isEmpty);
+        // New list holds a fresh create with the same title.
+        final l2 = await store.listTasks('L2');
+        expect(l2, hasLength(1));
+        expect(l2.single.task.title, 'Task to move');
+        expect(l2.single.task.id, newId);
+        expect(l2.single.pendingOp, 'create');
+        // The push sees both a create and a delete.
+        final ops = (await store.drainDirty()).map((t) => t.pendingOp).toSet();
+        expect(ops, containsAll(<String?>['create', 'delete']));
+      },
+    );
+
+    // move_to_list_local_only_task_hard_deletes_old
+    test('hard-deletes a never-synced original — no delete tombstone', () async {
+      final store = await freshStore();
+      var n = 0;
+      final commands = Commands(store, newId: () => 'new-${n++}');
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      await seedLocalTask(store, 'local-1', 'L1', 'unsynced'); // no etag
+
+      final newId = await commands.moveTaskToList('local-1', 'L2');
+      expect(newId, isNot('local-1'));
+
+      // The original is gone entirely — never synced, so nothing to tombstone.
+      expect(await store.findTaskAny('local-1'), isNull);
+      final l2 = await store.listTasks('L2');
+      expect(l2, hasLength(1));
+      expect(l2.single.task.id, newId);
+      final ops = (await store.drainDirty()).map((t) => t.pendingOp).toSet();
+      expect(ops, isNot(contains('delete')));
+    });
+
+    // move_to_list_takes_subtasks_along (local half; the sync round-trip is T5.7)
+    test('takes the whole subtree along under fresh ids', () async {
+      final store = await freshStore();
+      var n = 0;
+      final commands = Commands(store, newId: () => 'new-${n++}');
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C1', 'L1', 'sub one', parent: 'P');
+      await seedTask(store, 'C2', 'L1', 'sub two', parent: 'P');
+
+      await commands.moveTaskToList('P', 'L2');
+
+      // Whole subtree in L2 with its shape intact under the clone's new id.
+      final l2 = await store.listTasks('L2');
+      expect(l2, hasLength(3), reason: 'parent + both subtasks moved');
+      final parent = l2.firstWhere((t) => t.task.title == 'parent');
+      final c1 = l2.firstWhere((t) => t.task.title == 'sub one');
+      final c2 = l2.firstWhere((t) => t.task.title == 'sub two');
+      expect(c1.task.parent, parent.task.id);
+      expect(c2.task.parent, parent.task.id);
+      // The originals are gone from L1.
+      expect(await store.listTasks('L1'), isEmpty);
+    });
+
+    test('moving to the same list is a no-op returning the same id', () async {
+      final store = await freshStore();
+      var n = 0;
+      final commands = Commands(store, newId: () => 'new-${n++}');
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'stay');
+
+      expect(await commands.moveTaskToList('T1', 'L1'), 'T1');
+      final l1 = await store.listTasks('L1');
+      expect(l1, hasLength(1), reason: 'no clone created');
+      expect(l1.single.task.id, 'T1');
+    });
+
+    test('moving a missing task throws the not-found shape', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      await expectLater(
+        commands.moveTaskToList('ghost', 'L2'),
+        throwsA(
+          isA<CommandError>().having(
+            (e) => e.message,
+            'message',
+            'task ghost not found',
+          ),
+        ),
+      );
+    });
+
+    // The clone is a brand-new remote row (invariant #4): it must carry NO etag
+    // and NO web link, or a push would patch the original's remote id.
+    test('the clone carries no etag and no web link', () async {
+      final store = await freshStore();
+      var n = 0;
+      final commands = Commands(store, newId: () => 'new-${n++}');
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      await seedTask(
+        store,
+        'T1',
+        'L1',
+        'movable',
+        webViewLink: 'https://tasks.google.com/task/T1',
+      );
+
+      final newId = await commands.moveTaskToList('T1', 'L2');
+      final clone = (await store.findTaskAny(newId))!;
+      expect(clone.task.etag, isNull);
+      expect(clone.task.webViewLink, isNull);
+    });
+
+    // §J command-level (a_cross_list_move_of_a_crashed_create_leaves_nothing_
+    // behind, #113/P8): the original's insert may have committed under an id we
+    // never recorded (an in-flight-create marker), so hard-deleting it on the
+    // move would strand that committed row — the next pull resurrects it in the
+    // OLD list. serverMayHold sees the marker, so the original is tombstoned
+    // (its own delete queued), never hard-deleted.
+    test(
+      'tombstones an in-flight-create original instead of resurrecting it',
+      () async {
+        final store = await freshStore();
+        var n = 0;
+        final commands = Commands(store, newId: () => 'new-${n++}');
+        await seedList(store, 'L1');
+        await seedList(store, 'L2');
+        await seedLocalTask(
+          store,
+          'local-1',
+          'L1',
+          'maybe-on-server',
+        ); // no etag
+        await store.recordInflightCreate('local-1', 'L1', _t0);
+
+        await commands.moveTaskToList('local-1', 'L2');
+
+        // The original is tombstoned, not gone: its delete must reach the orphan.
+        final orig = await store.findTaskAny('local-1');
+        expect(orig, isNotNull);
+        expect(orig!.syncState, SyncState.deleted);
+        expect(orig.pendingOp, 'delete');
+        // The clone still landed in L2.
+        expect(await store.listTasks('L2'), hasLength(1));
+      },
+    );
+  });
+
+  group('freshSync', () {
+    // fresh_sync drops synced local data so the next pull rebuilds it; local-only
+    // lists exist nowhere else, so they must survive. (The re-pull itself is the
+    // sync engine's job, wired in T5.5+.)
+    test('drops synced lists and tasks but spares local-only lists', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1'); // synced
+      await seedTask(store, 'T1', 'L1', 'from google');
+      await seedLocalList(store, 'LOCAL');
+      await seedLocalTask(store, 'l-1', 'LOCAL', 'my private note');
+
+      await commands.freshSync();
+
+      final listIds = (await store.allLists()).map((l) => l.list.id).toSet();
+      expect(listIds, isNot(contains('L1')), reason: 'synced list wiped');
+      expect(listIds, contains('LOCAL'), reason: 'local-only list survives');
+      expect(
+        await store.findTaskAny('T1'),
+        isNull,
+        reason: 'synced task wiped',
+      );
+      expect(
+        await store.findTaskAny('l-1'),
+        isNotNull,
+        reason: 'local-only task survives',
+      );
+    });
+  });
+
+  group('setEditing / held create', () {
+    // The held-create id names the one create whose push is deferred while its
+    // row is being edited (prevents an id remap mid-edit). The deferral itself
+    // is exercised against the sync engine in T5.5; here we pin the seam.
+    test('records the held create id and clears it', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      expect(commands.heldCreateId, isNull, reason: 'nothing held at start');
+
+      commands.setEditing('local-1');
+      expect(commands.heldCreateId, 'local-1');
+
+      commands.setEditing(null);
+      expect(commands.heldCreateId, isNull, reason: 'editing finished');
+    });
+
+    // The hold is pure process state: it must not dirty or otherwise persist the
+    // row it holds (that would defeat the point of deferring only the push).
+    test('never touches the store — the held row stays clean', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'held'); // clean
+
+      commands.setEditing('T1');
+
+      expect((await store.findTaskAny('T1'))!.syncState, SyncState.clean);
+      expect(await store.drainDirty(), isEmpty);
+    });
+
+    // Process memory only: a relaunch (a fresh Commands over the same store)
+    // starts with nothing held, so a create the panel was holding is released
+    // and pushes on the next sync (restart_drops_the_held_create).
+    test('a fresh Commands (restart) starts with no held create', () async {
+      final store = await freshStore();
+      final before = Commands(store);
+      before.setEditing('local-1');
+
+      final afterRestart = Commands(store);
+      expect(afterRestart.heldCreateId, isNull);
     });
   });
 }

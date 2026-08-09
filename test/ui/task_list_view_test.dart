@@ -141,6 +141,31 @@ class FakeBackend implements Commands {
 
   @override
   Future<int> clearCompleted(String listId) async => throw UnimplementedError();
+
+  // T5.2 structural moves — the list slice does not drive these yet.
+  @override
+  Future<void> moveTask(
+    String id, {
+    String? parentId,
+    String? previousId,
+  }) async => throw UnimplementedError();
+
+  @override
+  Future<void> reorderTask(String id, String direction) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<String> moveTaskToList(String id, String targetListId) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> freshSync() async => throw UnimplementedError();
+
+  @override
+  void setEditing(String? id) {}
+
+  @override
+  String? get heldCreateId => null;
 }
 
 void main() {
