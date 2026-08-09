@@ -12,7 +12,7 @@ import 'dart:async';
 import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
-import 'package:axiotask/src/model/dates.dart' show normalizeDue;
+import 'package:axiotask/src/model/dates.dart' show DateMove, normalizeDue;
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
@@ -126,6 +126,21 @@ class FakeBackend implements Commands {
 
   @override
   Future<void> undoDelete(DeleteToken token) async {}
+
+  @override
+  Future<SetDueResult> setDue(String id, DateMove move) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<SetDueResult> setDueRaw(String id, String rawDate) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> undoSetDue(List<DueUndoEntry> entries) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<int> clearCompleted(String listId) async => throw UnimplementedError();
 }
 
 void main() {

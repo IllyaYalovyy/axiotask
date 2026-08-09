@@ -98,6 +98,8 @@ class Task {
   /// on re-open) is distinguishable from "leave unchanged". [notes] uses the
   /// same sentinel so an explicit `null` (clearing the notes field) is
   /// distinguishable from omission — Google treats empty notes as absent.
+  /// [due] uses it too, so `set_due`'s Clear move (an explicit `null`) is
+  /// distinguishable from "leave the date unchanged".
   Task copyWith({
     String? id,
     String? parent,
@@ -105,7 +107,7 @@ class Task {
     String? title,
     Object? notes = _unset,
     TaskStatus? status,
-    String? due,
+    Object? due = _unset,
     Object? completed = _unset,
     String? etag,
     String? updated,
@@ -118,7 +120,7 @@ class Task {
     title: title ?? this.title,
     notes: identical(notes, _unset) ? this.notes : notes as String?,
     status: status ?? this.status,
-    due: due ?? this.due,
+    due: identical(due, _unset) ? this.due : due as String?,
     completed: identical(completed, _unset)
         ? this.completed
         : completed as String?,
