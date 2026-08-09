@@ -10,6 +10,7 @@
 import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/model/base_snapshot.dart';
 import 'package:axiotask/src/model/task.dart';
+import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/reconcile.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +35,24 @@ StoredTask stored(Task t) => StoredTask(
 );
 
 Set<String> idSet(List<String> v) => v.toSet();
+
+/// A remote task list (mirrors the reference `list` helper).
+TaskList list(String id, String title) =>
+    TaskList(id: id, title: title, etag: 'etag-$id', updated: 'u');
+
+/// A clean stored list wrapping [l].
+StoredTaskList storedList(TaskList l) => StoredTaskList(
+  list: l,
+  syncState: SyncState.clean,
+  localUpdated: l.updated,
+);
+
+/// A task with an explicit parent, for the move / depth tests.
+Task childTask(String id, String? parent) => task(id).copyWith(parent: parent);
+
+/// A move ref-set with everything unset but [task]/[parent]/[previous].
+MoveRefs refs(RefState taskState, RefState? parent, RefState? previous) =>
+    MoveRefs(task: taskState, parent: parent, previous: previous);
 
 void main() {
   group('failure classification', () {
@@ -567,6 +586,552 @@ void main() {
         isFalse,
       );
       expect(sameContent(a, b.copyWith(status: TaskStatus.completed)), isFalse);
+    });
+  });
+
+  group('§E/§F moves', () {
+    test('move with all ids synced is sent whole', () {
+      expect(
+        planMove(refs(RefState.synced, RefState.synced, RefState.synced)),
+        const MoveSend(keepPrevious: true),
+      );
+      // A bare reorder to the top of a list names neither ref.
+      expect(
+        planMove(refs(RefState.synced, null, null)),
+        const MoveSend(keepPrevious: false),
+      );
+    });
+
+    test('move whose target parent vanished is dropped', () {
+      expect(
+        planMove(refs(RefState.synced, RefState.missing, RefState.synced)),
+        const MoveDrop(),
+      );
+    });
+
+    test('move whose previous vanished degrades to the reparent', () {
+      // P5: degrade, never wedge — the reparent is still expressible.
+      expect(
+        planMove(refs(RefState.synced, RefState.synced, RefState.missing)),
+        const MoveSend(keepPrevious: false),
+      );
+    });
+
+    test('move waits while any named id is still local', () {
+      expect(planMove(refs(RefState.local, null, null)), const MoveWait());
+      expect(planMove(refs(RefState.missing, null, null)), const MoveWait());
+      expect(
+        planMove(refs(RefState.synced, RefState.local, null)),
+        const MoveWait(),
+      );
+      expect(
+        planMove(refs(RefState.synced, null, RefState.local)),
+        const MoveWait(),
+      );
+    });
+
+    test('a vanished previous does not rescue an unsynced parent', () {
+      // Degradation drops the ordering, but the reparent still names a
+      // local-only id — that must still wait, not be sent as a 400.
+      expect(
+        planMove(refs(RefState.synced, RefState.local, RefState.missing)),
+        const MoveWait(),
+      );
+    });
+
+    test('move_previous_id follows the plan', () {
+      const mv = PendingMove(
+        taskId: 't',
+        listId: 'L',
+        parentId: 'p',
+        previousId: 'b',
+      );
+      expect(movePreviousId(mv, const MoveSend(keepPrevious: true)), 'b');
+      expect(movePreviousId(mv, const MoveSend(keepPrevious: false)), isNull);
+      expect(movePreviousId(mv, const MoveWait()), isNull);
+    });
+
+    test('move adopts the body only for a clean row', () {
+      expect(moveAdoption(stored(task('t'))), MoveAdoption.body);
+      // A pending content edit must survive the move response.
+      final dirty = StoredTask(
+        task: task('t'),
+        listId: 'L',
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+        pendingOp: 'update',
+      );
+      expect(moveAdoption(dirty), MoveAdoption.metaOnly);
+      expect(moveAdoption(null), MoveAdoption.metaOnly);
+    });
+
+    test('move failures', () {
+      // No `previous` was sent, so a 404 can only mean the subject is gone.
+      expect(onMoveError(const NotFound(), false), MoveFailure.dropIntent);
+      expect(onMoveError(const ServerError(500), false), MoveFailure.retry);
+      expect(onMoveError(const Unauthorized(), false), MoveFailure.abort);
+      // A rejected move drops its intent so it can't retry forever (P5).
+      expect(
+        onMoveError(const OtherApiError('400 invalid'), false),
+        MoveFailure.rejectAndDrop,
+      );
+    });
+
+    test('a move 404 is ambiguous only while a previous was sent', () {
+      // §E gap: the move endpoint answers 404 for BOTH "previous task id not
+      // found" (probe 2, verified live) and a subject the server no longer has.
+      // The ladder resolves the ambiguity by experiment: drop the ordering
+      // half, retry.
+      expect(
+        onMoveError(const NotFound(), true),
+        MoveFailure.dropPreviousAndRetry,
+      );
+      // The retry names no `previous`, so its 404 is unambiguous.
+      expect(onMoveError(const NotFound(), false), MoveFailure.dropIntent);
+      // Only 404 is ambiguous — every other status means the same either way,
+      // so nothing else may enter the ladder.
+      for (final sentPrevious in [true, false]) {
+        expect(
+          onMoveError(
+            const OtherApiError('400: Invalid task ID'),
+            sentPrevious,
+          ),
+          MoveFailure.rejectAndDrop,
+        );
+        expect(
+          onMoveError(const ServerError(503), sentPrevious),
+          MoveFailure.retry,
+        );
+        expect(
+          onMoveError(const Unauthorized(), sentPrevious),
+          MoveFailure.abort,
+        );
+      }
+    });
+
+    test('a demote that would create a third level is refused', () {
+      // §F gap: Google ACCEPTS a move that nests a task three deep (probe 3,
+      // 200 — there is no depth cap), so invariant #1 is ours to enforce. The
+      // moved task already has subtasks of its own — a pull can hand it one
+      // after the demote was recorded.
+      expect(
+        planMove(
+          const MoveRefs(
+            task: RefState.synced,
+            parent: RefState.synced,
+            taskHasChildren: true,
+          ),
+        ),
+        const MoveRefuse(),
+      );
+      // The mirror: the target parent is itself a subtask.
+      expect(
+        planMove(
+          const MoveRefs(
+            task: RefState.synced,
+            parent: RefState.synced,
+            parentIsSubtask: true,
+          ),
+        ),
+        const MoveRefuse(),
+      );
+    });
+
+    test('a promote or reorder of a parent task is still allowed', () {
+      // The refusal is about DEPTH, not about having children: detaching a task
+      // with subtasks (parent cleared) leaves the tree one level deep, and so
+      // does reordering it among its siblings.
+      expect(
+        planMove(
+          const MoveRefs(
+            task: RefState.synced,
+            previous: RefState.synced,
+            taskHasChildren: true,
+          ),
+        ),
+        const MoveSend(keepPrevious: true),
+      );
+      // And a childless demote under a top-level parent is the normal path.
+      expect(
+        planMove(refs(RefState.synced, RefState.synced, null)),
+        const MoveSend(keepPrevious: false),
+      );
+    });
+  });
+
+  group('§I list ops', () {
+    test('list create adopts a same-title remote list once', () {
+      final remote = [list('r1', 'My Tasks'), list('r2', 'Work')];
+      expect(adoptableList('My Tasks', remote, <String>{})?.id, 'r1');
+      // Already tracked → insert a new remote list instead of colliding.
+      expect(adoptableList('My Tasks', remote, idSet(['r1'])), isNull);
+      expect(adoptableList('Errands', remote, <String>{}), isNull);
+    });
+
+    test('list rename failures', () {
+      expect(
+        onListRenameError(const NotFound()),
+        const ListRenameDeleteLocal(),
+      );
+      expect(
+        onListRenameError(const Network('x')),
+        const ListRenameFailed(PushFailure.retry),
+      );
+      expect(
+        onListRenameError(const Unauthorized()),
+        const ListRenameFailed(PushFailure.abort),
+      );
+    });
+
+    test('list delete outcomes', () {
+      expect(planListDelete(null), ListDeleteAction.deleteLocal);
+      expect(planListDelete(const NotFound()), ListDeleteAction.deleteLocal);
+      expect(planListDelete(const ServerError(503)), ListDeleteAction.retry);
+      expect(planListDelete(const Unauthorized()), ListDeleteAction.abort);
+      // Refused (e.g. the account's default list) — revive rather than nag
+      // forever with a tombstone that can never push.
+      expect(
+        planListDelete(const OtherApiError('403 forbidden')),
+        ListDeleteAction.revive,
+      );
+    });
+  });
+
+  group('§G3 / D2 re-home target', () {
+    test('rehome_target prefers the default list', () {
+      final lists = [
+        storedList(list('r1', 'Work')),
+        storedList(list('r2', 'My Tasks')),
+        storedList(list('r3', 'Dying')),
+      ];
+      expect(rehomeTarget(lists, 'r3')?.list.id, 'r2');
+    });
+
+    test('rehome_target falls back to the first list deterministically', () {
+      // No "My Tasks": alphabetical by title, ties broken by id, so the answer
+      // never depends on store iteration order.
+      final lists = [
+        storedList(list('r2', 'Work')),
+        storedList(list('r1', 'Work')),
+        storedList(list('r3', 'Admin')),
+      ];
+      expect(rehomeTarget(lists, 'zz')?.list.id, 'r3');
+      final ties = [
+        storedList(list('r2', 'Work')),
+        storedList(list('r1', 'Work')),
+      ];
+      expect(rehomeTarget(ties, 'zz')?.list.id, 'r1');
+    });
+
+    test('rehome_target skips lists that cannot keep the work', () {
+      // A local-only list never pushes (the re-homed create would never sync)
+      // and a tombstoned list is about to take its rows down again.
+      final localOnly = StoredTaskList(
+        list: list('r1', 'My Tasks'),
+        syncState: SyncState.clean,
+        localUpdated: 'u',
+        localOnly: true,
+      );
+      final doomed = StoredTaskList(
+        list: list('r2', 'Archive'),
+        syncState: SyncState.deleted,
+        localUpdated: 'u',
+        pendingOp: 'delete',
+      );
+      final good = storedList(list('r3', 'Work'));
+
+      expect(rehomeTarget([localOnly, doomed, good], 'dying')?.list.id, 'r3');
+      // Nothing usable at all — the caller must keep the dying list.
+      expect(rehomeTarget([localOnly, doomed], 'dying'), isNull);
+      expect(rehomeTarget(<StoredTaskList>[], 'dying'), isNull);
+    });
+
+    test('rehome_target never returns the dying list', () {
+      expect(rehomeTarget([storedList(list('r1', 'My Tasks'))], 'r1'), isNull);
+    });
+  });
+
+  group('§A pull', () {
+    test('pull_batch skips dirty rows and in-flight orphans', () {
+      // The committed orphan carries the base content under a server id.
+      final committed = task('server-id').copyWith(title: 'task local-uuid');
+      const inflight = InflightBase(
+        base: BaseSnapshot(
+          title: 'task local-uuid',
+          status: TaskStatus.needsAction,
+        ),
+      );
+      final batch = pullBatch(
+        [task('a'), task('b'), committed],
+        idSet(['a']),
+        [inflight],
+      );
+      expect(batch.map((t) => t.id).toList(), ['b']);
+    });
+
+    test('pull_batch skips an in-flight orphan edited during the window', () {
+      // #122 at the pull layer: the local row drifted, but the base still
+      // matches the committed orphan, so the pull leaves it for recovery.
+      final committed = task('server-id').copyWith(title: 'buy milk');
+      const inflight = InflightBase(
+        base: BaseSnapshot(title: 'buy milk', status: TaskStatus.needsAction),
+      );
+      final batch = pullBatch([committed], <String>{}, [inflight]);
+      expect(batch, isEmpty, reason: 'the committed orphan is not pulled');
+    });
+
+    test('pull_batch skips a completed subtask orphan under a completed '
+        'parent', () {
+      // RFC-009 §G at the pull layer: the committed child was stored completed
+      // by the cascade, but the parent-completed tolerance still recognizes it.
+      final parent = task(
+        'remote-parent',
+      ).copyWith(status: TaskStatus.completed);
+      final child = task('remote-child').copyWith(
+        title: 'sub',
+        parent: 'remote-parent',
+        status: TaskStatus.completed,
+      );
+      const inflight = InflightBase(
+        // Payload was open — the cascade completed it server-side.
+        base: BaseSnapshot(title: 'sub', status: TaskStatus.needsAction),
+        parent: 'remote-parent',
+      );
+      final batch = pullBatch([parent, child], <String>{}, [inflight]);
+      expect(batch.map((t) => t.id).toList(), [
+        'remote-parent',
+      ], reason: 'only the parent is pulled');
+    });
+
+    test('pull_batch orders parents before children at any depth', () {
+      final child = task('c').copyWith(parent: 'b');
+      final mid = task('b').copyWith(parent: 'a');
+      final batch = pullBatch([child, mid, task('a')], <String>{}, []);
+      expect(batch.map((t) => t.id).toList(), ['a', 'b', 'c']);
+    });
+
+    test('order_parents_first appends a cycle instead of dropping it', () {
+      final a = task('a').copyWith(parent: 'b');
+      final b = task('b').copyWith(parent: 'a');
+      expect(
+        orderParentsFirst([a, b]).length,
+        2,
+        reason: 'a cycle must not silently drop rows',
+      );
+    });
+
+    test('pull_row skips only on a matching etag', () {
+      final batchIds = idSet(['t1']);
+      final known = <String>{};
+      final ctx = PullRowContext(
+        localEtags: {'t1': 'etag-t1'},
+        batchIds: batchIds,
+        knownLocal: known,
+      );
+      expect(planPullRow(task('t1'), ctx), PullRowAction.skip);
+
+      final changed = task('t1').copyWith(etag: 'newer');
+      expect(planPullRow(changed, ctx), PullRowAction.upsert);
+
+      // A row whose local etag is NULL (e.g. web_view_link backfill) is never
+      // skipped.
+      final ctx2 = PullRowContext(
+        localEtags: {'t1': null},
+        batchIds: batchIds,
+        knownLocal: known,
+      );
+      expect(planPullRow(task('t1'), ctx2), PullRowAction.upsert);
+    });
+
+    test('pull_row detaches a child whose parent is nowhere yet', () {
+      final child = task('c').copyWith(parent: 'p');
+      // Parent neither in the batch nor already local → detach so the FK holds.
+      expect(
+        planPullRow(
+          child,
+          PullRowContext(
+            localEtags: const {},
+            batchIds: idSet(['c']),
+            knownLocal: <String>{},
+          ),
+        ),
+        PullRowAction.upsertDetached,
+      );
+      // Parent in the same batch → plain upsert.
+      expect(
+        planPullRow(
+          child,
+          PullRowContext(
+            localEtags: const {},
+            batchIds: idSet(['c', 'p']),
+            knownLocal: <String>{},
+          ),
+        ),
+        PullRowAction.upsert,
+      );
+      // Parent already local (its row was skipped as dirty) → plain upsert.
+      expect(
+        planPullRow(
+          child,
+          PullRowContext(
+            localEtags: const {},
+            batchIds: idSet(['c']),
+            knownLocal: idSet(['p']),
+          ),
+        ),
+        PullRowAction.upsert,
+      );
+    });
+
+    test('list pull preserves a locally renamed list', () {
+      final local = StoredTaskList(
+        list: list('r1', 'renamed here'),
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+        pendingOp: 'update',
+      );
+      expect(
+        planListPull(list('r1', 'server title'), [local]),
+        const ListPullKeepLocal(),
+      );
+    });
+
+    test('list pull adopts an unpushed local create by title', () {
+      final orphan = StoredTaskList(
+        list: const TaskList(id: 'local-uuid', title: 'Work', updated: 'u'),
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+        pendingOp: 'create',
+      );
+      expect(
+        planListPull(list('r2', 'Work'), [orphan]),
+        const ListPullAdoptLocalCreate('local-uuid'),
+      );
+    });
+
+    test('list pull adopts a remote rename even when the etag is unchanged', () {
+      // §I / D6: a list rename resolves REMOTE-WINS, and a stale etag must not
+      // freeze the local title out of the pull (P6 at list level). Tasks are
+      // skipped on a matching etag; lists deliberately are NOT — the title is
+      // compared, so a server rename lands even if etag and `updated` match.
+      final storedRow = storedList(list('r1', 'Work'));
+      final renamed = TaskList(
+        id: 'r1',
+        title: 'Career',
+        etag: storedRow.list.etag,
+        updated: storedRow.list.updated,
+      );
+      expect(
+        planListPull(renamed, [storedRow]),
+        const ListPullUpsert(changed: true),
+        reason: 'the remote title wins; no conflicted copy exists for lists',
+      );
+    });
+
+    test('list pull reports whether anything changed', () {
+      final storedRow = storedList(list('r1', 'Work'));
+      expect(
+        planListPull(list('r1', 'Work'), [storedRow]),
+        const ListPullUpsert(changed: false),
+      );
+      expect(
+        planListPull(list('r1', 'Renamed remotely'), [storedRow]),
+        const ListPullUpsert(changed: true),
+      );
+      expect(
+        planListPull(list('r1', 'Work'), <StoredTaskList>[]),
+        const ListPullUpsert(changed: true),
+      );
+      // A local-only list shadowing the same id still counts as a change.
+      final localOnly = StoredTaskList(
+        list: list('r1', 'Work'),
+        syncState: SyncState.clean,
+        localUpdated: 'u',
+        localOnly: true,
+      );
+      expect(
+        planListPull(list('r1', 'Work'), [localOnly]),
+        const ListPullUpsert(changed: true),
+      );
+    });
+  });
+
+  group('§F/§G D7 third-level detection', () {
+    /// A clean stored row [id] with parent [parent].
+    StoredTask cleanChild(String id, String? parent) =>
+        stored(childTask(id, parent));
+
+    test('third_level_ids flags only the grandchild', () {
+      // P (top) > T (subtask) > C (grandchild). Only C sits a third level deep.
+      final rows = [
+        cleanChild('P', null),
+        cleanChild('T', 'P'),
+        cleanChild('C', 'T'),
+      ];
+      expect(thirdLevelIds(rows), ['C']);
+    });
+
+    test('third_level_ids is empty for a legal one-level tree', () {
+      final rows = [
+        cleanChild('P', null),
+        cleanChild('A', 'P'),
+        cleanChild('B', 'P'),
+      ];
+      expect(thirdLevelIds(rows), isEmpty);
+    });
+
+    test('third_level_ids ignores a row whose parent is absent', () {
+      // A detached child (parent not present) is not a grandchild.
+      expect(thirdLevelIds([cleanChild('C', 'gone')]), isEmpty);
+    });
+
+    test('third_level_ids skips an optimistic demote of the middle row', () {
+      // The false-positive guard: T looks like a subtask purely because of an
+      // un-pushed optimistic demote, so its row is still DIRTY. Its parent link
+      // is not server-confirmed, so C must NOT be treated as a real third level.
+      final t = StoredTask(
+        task: childTask('T', 'P'),
+        listId: 'L',
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+      );
+      final rows = [cleanChild('P', null), t, cleanChild('C', 'T')];
+      expect(thirdLevelIds(rows), isEmpty);
+    });
+
+    test('third_level_ids flags a still-queued subtask create under a clean '
+        'subtask', () {
+      // §G before the create pushes: C is a queued subtask create (no etag)
+      // whose parent T is a clean, server-confirmed subtask. It IS a third
+      // level — the leaf's state only changes HOW it is promoted.
+      final c = StoredTask(
+        task: Task(
+          id: 'C',
+          parent: 'T',
+          position: '00000000000000000000',
+          title: 'task C',
+          status: TaskStatus.needsAction,
+          updated: 'u',
+        ),
+        listId: 'L',
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+        pendingOp: 'create',
+      );
+      final rows = [cleanChild('P', null), cleanChild('T', 'P'), c];
+      expect(thirdLevelIds(rows), ['C']);
+    });
+
+    test('third_level_ids flags every clean row below the first level', () {
+      // A pathological four-deep chain P > T > C > D, all clean. Both C and D
+      // have a parent that is itself a subtask, so both are flagged.
+      final rows = [
+        cleanChild('P', null),
+        cleanChild('T', 'P'),
+        cleanChild('C', 'T'),
+        cleanChild('D', 'C'),
+      ];
+      expect(thirdLevelIds(rows)..sort(), ['C', 'D']);
     });
   });
 }

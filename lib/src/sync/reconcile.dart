@@ -9,10 +9,10 @@
 // (read the store, call the API), **decide** (call into this module), **apply**
 // (write the store).
 //
-// This file is built in two migration steps. T5.3 lands the push-side half:
+// This file is built in two migration steps. T5.3 landed the push-side half:
 // the shared failure classification plus §B/§C (content update), §D (delete)
-// and §G (create). T5.4 appends §E/§F (moves), §I (lists) and §A (pull).
-// Section markers (§B, §D, …) refer to the matrix in
+// and §G (create). T5.4 appends §E/§F (moves), §I (lists), §G3/D2 (re-home)
+// and §A (pull). Section markers (§B, §D, …) refer to the matrix in
 // `designs/RFC-009-sync-conflict-matrix.md` in the reference repo.
 //
 // Pure Dart: no Flutter dependency, fully unit-testable.
@@ -21,6 +21,7 @@ import '../api/api_error.dart';
 import '../model/base_snapshot.dart';
 import '../model/dates.dart' show normalizeDue;
 import '../model/task.dart';
+import '../model/task_list.dart';
 import '../store/stored.dart';
 
 // ─── Shared vocabulary ───────────────────────────────────────────────────────
@@ -410,6 +411,597 @@ bool _baseMatchesCreate(BaseSnapshot base, String? parent, Task r) {
       due(base.due) == due(r.due) &&
       (base.status == r.status ||
           (parent != null && r.status == TaskStatus.completed));
+}
+
+// ─── §E/§F — position and parent moves ───────────────────────────────────────
+
+/// The ids a pending move references, as the store currently sees them.
+class MoveRefs {
+  const MoveRefs({
+    required this.task,
+    this.parent,
+    this.previous,
+    this.taskHasChildren = false,
+    this.parentIsSubtask = false,
+  });
+
+  /// The task being moved.
+  final RefState task;
+
+  /// The target parent; `null` when the move names none (top-level).
+  final RefState? parent;
+
+  /// The sibling the task should follow; `null` when the move names none.
+  final RefState? previous;
+
+  /// Whether the moved task currently has subtasks of its own. Only matters
+  /// for a demote: its children would land a third level down.
+  final bool taskHasChildren;
+
+  /// Whether the target parent is itself a subtask — the mirror case of the
+  /// same third level.
+  final bool parentIsSubtask;
+}
+
+/// What to do with a pending move before calling the API (§E, §F).
+sealed class MoveIntent {
+  const MoveIntent();
+}
+
+/// Send it. [keepPrevious] false means the ordering half was dropped and only
+/// the reparent is sent.
+final class MoveSend extends MoveIntent {
+  const MoveSend({required this.keepPrevious});
+
+  /// Whether the `previous` sibling is still expressible.
+  final bool keepPrevious;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MoveSend && other.keepPrevious == keepPrevious;
+
+  @override
+  int get hashCode => Object.hash(MoveSend, keepPrevious);
+}
+
+/// Nothing left to express — clear the intent so it stops being re-walked (and
+/// stops inflating the pending-changes count the UI shows).
+final class MoveDrop extends MoveIntent {
+  const MoveDrop();
+
+  @override
+  bool operator ==(Object other) => other is MoveDrop;
+
+  @override
+  int get hashCode => (MoveDrop).hashCode;
+}
+
+/// The move would nest the task a third level deep (invariant #1). Clear the
+/// intent WITHOUT calling the API: the server would accept it (probe 3: there
+/// is no depth cap, the move returns 200), and the grandchild it would store is
+/// a row no list view can render. The pull that follows restores the remote
+/// parent on the row, so local converges too.
+final class MoveRefuse extends MoveIntent {
+  const MoveRefuse();
+
+  @override
+  bool operator ==(Object other) => other is MoveRefuse;
+
+  @override
+  int get hashCode => (MoveRefuse).hashCode;
+}
+
+/// The ids aren't on the server yet — keep the intent and try next run.
+final class MoveWait extends MoveIntent {
+  const MoveWait();
+
+  @override
+  bool operator ==(Object other) => other is MoveWait;
+
+  @override
+  int get hashCode => (MoveWait).hashCode;
+}
+
+/// Plan a pending move against the current local view of the ids it names
+/// (§E, §F). Moves degrade, never wedge (P5).
+MoveIntent planMove(MoveRefs refs) {
+  // The TARGET PARENT is gone (the user deleted it after dropping this task
+  // under it). Its delete cascades to the whole subtree on both sides (verified
+  // live), so this task goes with it: there is nothing left to express, and
+  // Google would answer 400 "Invalid task ID" for the dead parent (verified
+  // live). The synced-yet check below can never pass for a row that no longer
+  // exists, so the intent would otherwise survive forever.
+  if (refs.parent == RefState.missing) return const MoveDrop();
+  // A DEMOTE that would produce a third level (invariant #1) — either the task
+  // already has subtasks, or the target parent is itself a subtask. Google does
+  // NOT cap nesting depth: the move is accepted with 200 and the grandchild is
+  // stored (probe 3, which falsified the earlier "the server rejects it"
+  // claim). So the refusal has to happen here. A demote is only ever *recorded*
+  // against a childless task, but a pull can hand that task a remote-born
+  // subtask before the move is pushed.
+  if (refs.parent != null && (refs.taskHasChildren || refs.parentIsSubtask)) {
+    return const MoveRefuse();
+  }
+  // The SIBLING this task was dropped after is gone. One drag can carry two
+  // intents — reparent and ordering — and the row already applied both
+  // optimistically. "Place after B" is unexpressible now, but the reparent
+  // still is, so dropping the whole intent would strand it: local would show
+  // the task at its new parent while Google keeps the old one, and because the
+  // row is Clean with a matching etag no later pull ever corrects the drift.
+  // Keep the parent, drop only the ordering — position self-heals on the next
+  // pull.
+  final keepPrevious =
+      refs.previous != null && refs.previous != RefState.missing;
+  // A move whose task (or target parent/previous) hasn't been pushed yet still
+  // carries a local UUID — the API answers 400 "Invalid task ID" (verified
+  // live), which would drop the user's reordering. Hold the intent;
+  // finishCreate rewrites the ids when the create lands.
+  bool unsynced(RefState? r) => r != null && r != RefState.synced;
+  if (refs.task != RefState.synced ||
+      unsynced(refs.parent) ||
+      (keepPrevious && unsynced(refs.previous))) {
+    return const MoveWait();
+  }
+  return MoveSend(keepPrevious: keepPrevious);
+}
+
+/// The `previous` id to send for a planned move, given the stored intent.
+String? movePreviousId(PendingMove mv, MoveIntent intent) =>
+    intent is MoveSend && intent.keepPrevious ? mv.previousId : null;
+
+/// How much of a successful move response is adopted (§E).
+enum MoveAdoption {
+  /// Adopt the response BODY, not just the etag — the same trap `update`
+  /// documents. A move can change more than parent/position: completing a
+  /// parent cascades to its subtree server-side (verified live), so a task
+  /// moved OUT of a parent completed in the same batch comes back completed.
+  /// The fresh etag the move returns would otherwise make every later pull skip
+  /// the row and freeze that drift in place (P6).
+  body,
+
+  /// The row carries its own pending content edit: keep it (meta only). Its
+  /// update push adopts the server body on this run or the next.
+  metaOnly,
+}
+
+/// Decide how much of a move response to adopt, from the row snapshot taken
+/// *before* the call (so a mid-flight re-edit stays dirty).
+MoveAdoption moveAdoption(StoredTask? before) =>
+    before != null && before.syncState == SyncState.clean
+    ? MoveAdoption.body
+    : MoveAdoption.metaOnly;
+
+/// What a failed move push does (§E, §F).
+enum MoveFailure {
+  /// `404` on a move that named a `previous` sibling. The status is
+  /// **ambiguous**: the server answers 404 both for "Previous task id not
+  /// found" (probe 2, verified live) and for a subject it no longer has.
+  /// Reading it as "the task is gone" throws away a reparent the server would
+  /// have accepted — the user's demote silently reverts. Resolve the ambiguity
+  /// by experiment: drop the ordering half (P5's ladder) and send the reparent
+  /// alone. If THAT 404s, the subject really is gone.
+  dropPreviousAndRetry,
+
+  /// `404`: the task is gone on the server — drop the stale intent.
+  dropIntent,
+
+  /// Transient — keep the intent and retry next run.
+  retry,
+
+  /// Auth is dead — abort the run, leaving the intent pending.
+  abort,
+
+  /// Rejected. A rejected move must not starve the rest of the queue: count it
+  /// and drop the intent (positions self-heal on the next pull).
+  rejectAndDrop,
+}
+
+/// Decide what a move push's error means (§E, §F). [sentPrevious] says whether
+/// the call that failed named a `previous` sibling — the only thing that makes
+/// a 404 ambiguous ([MoveFailure.dropPreviousAndRetry]).
+MoveFailure onMoveError(ApiError e, bool sentPrevious) {
+  if (e is NotFound) {
+    return sentPrevious
+        ? MoveFailure.dropPreviousAndRetry
+        : MoveFailure.dropIntent;
+  }
+  return switch (pushFailure(e)) {
+    PushFailure.retry => MoveFailure.retry,
+    PushFailure.abort => MoveFailure.abort,
+    PushFailure.reject => MoveFailure.rejectAndDrop,
+  };
+}
+
+// ─── §I — list operations ────────────────────────────────────────────────────
+
+/// A remote list a local list-create should adopt instead of inserting a
+/// duplicate — same title, and not already tracked locally (§I). Covers the
+/// default "My Tasks" bootstrap and any create that already landed.
+TaskList? adoptableList(
+  String title,
+  List<TaskList> remote,
+  Set<String> trackedLocalIds,
+) {
+  for (final r in remote) {
+    if (r.title == title && !trackedLocalIds.contains(r.id)) return r;
+  }
+  return null;
+}
+
+/// What a failed list rename does (§I).
+sealed class ListRenameFailure {
+  const ListRenameFailure();
+}
+
+/// `404`: the list is gone on the server — hard-delete it locally (P4).
+final class ListRenameDeleteLocal extends ListRenameFailure {
+  const ListRenameDeleteLocal();
+
+  @override
+  bool operator ==(Object other) => other is ListRenameDeleteLocal;
+
+  @override
+  int get hashCode => (ListRenameDeleteLocal).hashCode;
+}
+
+/// Generic row-push failure handling.
+final class ListRenameFailed extends ListRenameFailure {
+  const ListRenameFailed(this.failure);
+
+  /// The classified push failure.
+  final PushFailure failure;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListRenameFailed && other.failure == failure;
+
+  @override
+  int get hashCode => Object.hash(ListRenameFailed, failure);
+}
+
+/// Decide what a list rename's error means (§I).
+ListRenameFailure onListRenameError(ApiError e) => e is NotFound
+    ? const ListRenameDeleteLocal()
+    : ListRenameFailed(pushFailure(e));
+
+/// What a list delete push does (§I).
+enum ListDeleteAction {
+  /// Hard-delete locally; a remote `404` counts as success.
+  deleteLocal,
+
+  /// Transient — keep the tombstone and retry next run.
+  retry,
+
+  /// Auth is dead — abort the run, leaving the tombstone.
+  abort,
+
+  /// Permanently refused — Google will not delete an account's default list,
+  /// for example. A tombstone that can never push would error on every run
+  /// forever; revive the list instead (its tasks re-pull) and tell the user via
+  /// the error count.
+  revive,
+}
+
+/// Decide what a list delete's answer means (§I); `null` is a success.
+ListDeleteAction planListDelete(ApiError? error) {
+  if (error == null || error is NotFound) return ListDeleteAction.deleteLocal;
+  return switch (pushFailure(error)) {
+    PushFailure.retry => ListDeleteAction.retry,
+    PushFailure.abort => ListDeleteAction.abort,
+    PushFailure.reject => ListDeleteAction.revive,
+  };
+}
+
+// ─── §G3 — a remotely-deleted list holding unpushed rows (D2) ────────────────
+
+/// The title Google gives an account's default list, and the title the app's
+/// own offline bootstrap uses. Preferring it makes the re-home target the list
+/// the user thinks of as home whenever one exists.
+const String _defaultListTitle = 'My Tasks';
+
+/// Where the unpushed rows of a remotely-deleted list go (§G3, D2 — ratified).
+///
+/// A row the server has never seen must not die with a list the server deleted
+/// (P2), so it re-homes to the **default list**: the surviving list titled "My
+/// Tasks" if there is one, otherwise the alphabetically first, tied by id so the
+/// choice is deterministic. Candidates exclude the dying list itself, lists the
+/// user has tombstoned (they would take the rows down again) and local-only
+/// lists (they never push, so a re-homed create would never sync). `null` means
+/// there is nowhere to put them — the caller keeps the list alive instead.
+StoredTaskList? rehomeTarget(List<StoredTaskList> lists, String dyingListId) {
+  StoredTaskList? best;
+  ({bool notDefault, String title, String id})? bestKey;
+  for (final l in lists) {
+    if (l.list.id == dyingListId ||
+        l.localOnly ||
+        l.syncState == SyncState.deleted) {
+      continue;
+    }
+    final key = (
+      notDefault: l.list.title != _defaultListTitle,
+      title: l.list.title,
+      id: l.list.id,
+    );
+    if (bestKey == null || _rehomeKeyLess(key, bestKey)) {
+      best = l;
+      bestKey = key;
+    }
+  }
+  return best;
+}
+
+/// Lexicographic ordering for the re-home key `(notDefault, title, id)`, so the
+/// default list wins, then the alphabetically-first title, ties broken by id.
+bool _rehomeKeyLess(
+  ({bool notDefault, String title, String id}) a,
+  ({bool notDefault, String title, String id}) b,
+) {
+  if (a.notDefault != b.notDefault) return !a.notDefault;
+  final byTitle = a.title.compareTo(b.title);
+  if (byTitle != 0) return byTitle < 0;
+  return a.id.compareTo(b.id) < 0;
+}
+
+// ─── §A — pull ───────────────────────────────────────────────────────────────
+
+/// An in-flight create the pull must not front-run: its base snapshot (the
+/// payload as sent) plus the remote parent id it was inserted under. Matching on
+/// the base — not the row's live content — means an edit made during the
+/// in-flight window (#122) still recognizes the committed orphan, and the parent
+/// id lets the match tolerate the completed-parent cascade (RFC-009 §G).
+class InflightBase {
+  const InflightBase({required this.base, this.parent});
+
+  /// The create's base snapshot (payload as sent).
+  final BaseSnapshot base;
+
+  /// The parent id the row currently names (remote id once the parent has been
+  /// adopted), used to detect the completed-parent cascade.
+  final String? parent;
+}
+
+/// The rows of one remote list that are candidates for upsert, in FK-safe order
+/// (§A). Dirty rows keep their local intent (push handles them), and a remote
+/// row matching an in-flight create by its BASE snapshot is left for
+/// `recoverInflightCreates` to adopt via id remap — pulling it as a new clean
+/// row would duplicate it (or collide on the primary key). Matching on the base
+/// (not the live row) makes this robust to an edit during the in-flight window
+/// (#122) and to the completed-parent status cascade (RFC-009 §G), exactly like
+/// recovery's [findOrphanByBase].
+List<Task> pullBatch(
+  List<Task> remote,
+  Set<String> dirtyIds,
+  List<InflightBase> inflight,
+) {
+  final filtered = <Task>[];
+  for (final t in remote) {
+    if (dirtyIds.contains(t.id)) continue;
+    if (inflight.any((f) => _baseMatchesCreate(f.base, f.parent, t))) continue;
+    filtered.add(t);
+  }
+  return orderParentsFirst(filtered);
+}
+
+/// Everything [planPullRow] needs to judge one pulled row.
+class PullRowContext {
+  const PullRowContext({
+    required this.localEtags,
+    required this.batchIds,
+    required this.knownLocal,
+  });
+
+  /// Local `task_id → etag` for the list being pulled.
+  final Map<String, String?> localEtags;
+
+  /// Ids of the batch currently being upserted.
+  final Set<String> batchIds;
+
+  /// Ids already present locally in this list.
+  final Set<String> knownLocal;
+}
+
+/// What a pulled remote row does to the local store (§A).
+enum PullRowAction {
+  /// Local already carries this etag — nothing to do.
+  skip,
+
+  /// Upsert as a clean row.
+  upsert,
+
+  /// Upsert, but detached from its parent and with the etag dropped. A parent
+  /// that is neither in this batch nor already local (its row was skipped as
+  /// dirty/in-flight, or it moved mid-pagination) would fail the FK and abort
+  /// the whole pull. Dropping the etag keeps the row from being etag-skipped
+  /// next pull, so it re-links once the parent appears.
+  upsertDetached,
+}
+
+/// Decide what to do with one pulled row (§A).
+PullRowAction planPullRow(Task task, PullRowContext ctx) {
+  if (isUpToDate(task.id, task.etag, ctx.localEtags)) return PullRowAction.skip;
+  final parent = task.parent;
+  if (parent != null &&
+      !ctx.batchIds.contains(parent) &&
+      !ctx.knownLocal.contains(parent)) {
+    return PullRowAction.upsertDetached;
+  }
+  return PullRowAction.upsert;
+}
+
+/// Ids of the local rows that sit a third level deep — a grandchild, i.e. a row
+/// whose parent is a **clean** subtask (RFC-009 §F/§G, D7 **ratified**).
+///
+/// Google does not cap nesting depth (probe 3: a `move` that deepens the tree
+/// returns 200), so invariant #1 (subtasks are strictly one level) is ours to
+/// enforce client-side. Two vectors reach the server-side third level and no
+/// push-side guard can close either — the demote is unseen until the pull:
+///   * §F residual — a remote-born subtask arrives *after* our demote already
+///     landed, so the server holds `P > T > C` we never asked for; and
+///   * §G — our own queued subtask create races a remote demote of its parent,
+///     so the create lands (or is still queued) under a row the server has since
+///     made a subtask.
+///
+/// The pull is the one place with the full server picture, so D7 promotes each
+/// grandchild to top-level and, for a synced row, pushes the corrective move.
+///
+/// Detects over the LOCAL store after the pull's upsert, not the fetched batch:
+/// a paged pull can land a middle row's demotion (`T` gains parent `P`) while
+/// the grandchild `C` sits on a page a transient error dropped — so `C` never
+/// appears in this batch, yet it is a third level the moment `T`'s demotion is
+/// stored. The local store is the only place that sees the whole chain.
+///
+/// The **clean-middle guard** is what makes local detection safe: the PARENT
+/// (`T`) must be `Clean`. A clean parent link is server-confirmed, so a row that
+/// looks nested purely because of an un-pushed optimistic demote of the middle
+/// (a refused move that stayed put while `T` was dirty) is never mistaken for a
+/// real third level and never triggers a bogus repair. The grandchild `C` itself
+/// may be in any state — clean, a pending edit, or a still-queued create under a
+/// just-demoted parent (§G) — because that only changes HOW it is promoted, not
+/// WHETHER it is a third level.
+///
+/// Structural only — no IO. Promoting exactly these ids to top-level heals any
+/// tree to at most one level: a great-grandchild `D` under a promoted `C`
+/// becomes a legal one-level subtask once `C` is top-level.
+List<String> thirdLevelIds(List<StoredTask> rows) {
+  final byId = {for (final r in rows) r.task.id: r};
+  final out = <String>[];
+  for (final r in rows) {
+    final parentId = r.task.parent;
+    if (parentId == null) continue;
+    final parent = byId[parentId];
+    if (parent != null &&
+        parent.syncState == SyncState.clean &&
+        parent.task.parent != null) {
+      out.add(r.task.id);
+    }
+  }
+  return out;
+}
+
+/// Whether a remote task is already up to date locally.
+bool isUpToDate(
+  String id,
+  String? remoteEtag,
+  Map<String, String?> localEtags,
+) {
+  if (!localEtags.containsKey(id)) return false;
+  final local = localEtags[id];
+  return local != null && remoteEtag != null && local == remoteEtag;
+}
+
+/// Order [tasks] so every parent precedes its children (FK-safe upsert order),
+/// at any depth. A parent whose id is not in the batch places immediately; a
+/// cycle (no row can ever place) is appended rather than dropped, so no row is
+/// ever silently lost.
+List<Task> orderParentsFirst(List<Task> tasks) {
+  final inBatch = {for (final t in tasks) t.id};
+  final remaining = List<Task?>.from(tasks);
+  final placed = <String>{};
+  final out = <Task>[];
+  while (true) {
+    var progressed = false;
+    for (var i = 0; i < remaining.length; i++) {
+      final t = remaining[i];
+      if (t == null) continue;
+      final parent = t.parent;
+      final ready =
+          parent == null ||
+          !inBatch.contains(parent) ||
+          placed.contains(parent);
+      if (ready) {
+        placed.add(t.id);
+        out.add(t);
+        remaining[i] = null;
+        progressed = true;
+      }
+    }
+    if (!progressed) break;
+  }
+  for (final t in remaining) {
+    if (t != null) out.add(t);
+  }
+  return out;
+}
+
+/// What a pulled remote list does to the local store (§A, §I).
+sealed class ListPullAction {
+  const ListPullAction();
+}
+
+/// A locally dirty list with the same id — preserve local intent (push will
+/// handle it).
+final class ListPullKeepLocal extends ListPullAction {
+  const ListPullKeepLocal();
+
+  @override
+  bool operator ==(Object other) => other is ListPullKeepLocal;
+
+  @override
+  int get hashCode => (ListPullKeepLocal).hashCode;
+}
+
+/// Adopt a local-only create (no etag) with the same title by remapping its id
+/// — covers the offline "My Tasks" bootstrap and any create that already
+/// landed.
+final class ListPullAdoptLocalCreate extends ListPullAction {
+  const ListPullAdoptLocalCreate(this.localId);
+
+  /// The local id to remap onto the remote list.
+  final String localId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListPullAdoptLocalCreate && other.localId == localId;
+
+  @override
+  int get hashCode => Object.hash(ListPullAdoptLocalCreate, localId);
+}
+
+/// Upsert the remote list. [changed] reports whether anything the UI shows
+/// actually differs from what is stored.
+final class ListPullUpsert extends ListPullAction {
+  const ListPullUpsert({required this.changed});
+
+  /// Whether this upsert changes locally-visible list metadata.
+  final bool changed;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ListPullUpsert && other.changed == changed;
+
+  @override
+  int get hashCode => Object.hash(ListPullUpsert, changed);
+}
+
+/// Decide how one remote list reconciles into the local store (§A, §I).
+ListPullAction planListPull(TaskList remote, List<StoredTaskList> locals) {
+  if (locals.any(
+    (l) => l.list.id == remote.id && l.syncState != SyncState.clean,
+  )) {
+    return const ListPullKeepLocal();
+  }
+
+  for (final l in locals) {
+    if (l.pendingOp == 'create' &&
+        l.list.etag == null &&
+        l.list.title == remote.title) {
+      return ListPullAdoptLocalCreate(l.list.id);
+    }
+  }
+
+  // Lists are deliberately NOT etag-skipped like tasks: the title itself is
+  // compared, so a server-side rename always lands (§I / D6, remote-wins) even
+  // if the etag and `updated` are byte-identical to what we hold.
+  final changed = !locals.any(
+    (l) =>
+        l.list.id == remote.id &&
+        l.list.title == remote.title &&
+        l.list.etag == remote.etag &&
+        l.list.updated == remote.updated &&
+        !l.localOnly &&
+        l.syncState == SyncState.clean,
+  );
+  return ListPullUpsert(changed: changed);
 }
 
 // ─── Content comparison ──────────────────────────────────────────────────────
