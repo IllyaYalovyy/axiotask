@@ -6,6 +6,7 @@
 // which method ran — a stubbed no-op Commands fails every one of these.
 
 import 'package:axiotask/src/app/commands.dart';
+import 'package:axiotask/src/model/dates.dart' show DateMove;
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
@@ -39,6 +40,7 @@ Future<void> seedTask(
   String listId,
   String title, {
   String? parent,
+  String? due,
   TaskStatus status = TaskStatus.needsAction,
 }) => store.upsertTask(
   StoredTask(
@@ -48,6 +50,7 @@ Future<void> seedTask(
       position: '1',
       title: title,
       status: status,
+      due: due,
       etag: 'e1',
       updated: _t0,
     ),
@@ -56,6 +59,16 @@ Future<void> seedTask(
     localUpdated: _t0,
   ),
 );
+
+/// The canonical stored form of a bare date, for readable assertions —
+/// what [normalizeDue] produces (`YYYY-MM-DDT00:00:00.000Z`).
+String due(String date) => '${date}T00:00:00.000Z';
+
+/// The stored due date of a listed task, or `null`.
+Future<String?> dueOf(Store store, String listId, String id) async {
+  final tasks = await store.listTasks(listId);
+  return tasks.firstWhere((t) => t.task.id == id).task.due;
+}
 
 void main() {
   group('dirtyOp', () {
@@ -502,6 +515,413 @@ void main() {
         expect(t.task.status, TaskStatus.completed);
       },
     );
+  });
+
+  // --- T5.1: due dates & the #164 parent/subtask cascade (12 cases) --------
+  //
+  // Invariant #164, enforced at the moment of a LOCAL edit: a subtask's
+  // explicit due date may never be before its parent's explicit due date. Every
+  // date-entry path funnels through the single set_due primitive (setDue for the
+  // one-keystroke moves, setDueRaw for the picker/detail raw date), so
+  // exercising both proves no path can bypass the rule. Assertions read the
+  // dates the store persists — a no-op setDue fails all of these.
+  group('setDue — due dates & #164 cascade', () {
+    // set_due_applies_date_move
+    test('applies a one-keystroke date move and marks the row dirty', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'task with due');
+
+      await withClock(Clock.fixed(DateTime.utc(2026, 5, 23, 9)), () async {
+        await commands.setDue('T1', DateMove.tomorrow);
+      });
+
+      final t = (await store.listTasks('L1')).single;
+      expect(t.task.due, due('2026-05-24'));
+      expect(t.syncState, SyncState.dirty);
+    });
+
+    // parent_edit_pulls_earlier_children_up_only
+    test('setting the parent later pulls only earlier children up', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C_early',
+        'L1',
+        'early',
+        parent: 'P',
+        due: due('2026-08-05'),
+      );
+      await seedTask(
+        store,
+        'C_late',
+        'L1',
+        'late',
+        parent: 'P',
+        due: due('2026-08-20'),
+      );
+      await seedTask(store, 'C_none', 'L1', 'no date', parent: 'P');
+
+      final res = await commands.setDueRaw('P', '2026-08-15');
+
+      expect(await dueOf(store, 'L1', 'P'), due('2026-08-15'));
+      // Earlier child pulled UP to the parent's new date.
+      expect(await dueOf(store, 'L1', 'C_early'), due('2026-08-15'));
+      // Later child untouched; a child with no explicit date never participates.
+      expect(await dueOf(store, 'L1', 'C_late'), due('2026-08-20'));
+      expect(await dueOf(store, 'L1', 'C_none'), isNull);
+      expect(res.cascaded, 1);
+      expect(res.cascadedParent, isFalse);
+    });
+
+    // child_set_earlier_pulls_parent_down
+    test('setting a child earlier pulls the parent down to match', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2026-08-10'),
+      );
+      await seedTask(
+        store,
+        'C2',
+        'L1',
+        'sibling',
+        parent: 'P',
+        due: due('2026-08-25'),
+      );
+
+      final res = await commands.setDueRaw('C', '2026-08-05');
+
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-05'));
+      expect(await dueOf(store, 'L1', 'P'), due('2026-08-05'));
+      // The other child is later than the new parent date — untouched.
+      expect(await dueOf(store, 'L1', 'C2'), due('2026-08-25'));
+      expect(res.cascaded, 1);
+      expect(res.cascadedParent, isTrue);
+    });
+
+    // parent_without_date_is_inert
+    test(
+      'a parent with no date is inert — setting a child adds none',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent'); // no due
+        await seedTask(
+          store,
+          'C',
+          'L1',
+          'child',
+          parent: 'P',
+          due: due('2026-08-10'),
+        );
+
+        final res = await commands.setDueRaw('C', '2026-08-01');
+
+        expect(await dueOf(store, 'L1', 'C'), due('2026-08-01'));
+        expect(await dueOf(store, 'L1', 'P'), isNull);
+        expect(res.cascaded, 0);
+      },
+    );
+
+    // child_set_later_than_parent_does_not_cascade
+    test('a child set later than its parent does not cascade', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2026-08-10'),
+      );
+
+      final res = await commands.setDueRaw('C', '2026-08-20');
+
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-20'));
+      expect(await dueOf(store, 'L1', 'P'), due('2026-08-10'));
+      expect(res.cascaded, 0);
+    });
+
+    // equal_dates_do_not_cascade
+    test('equal dates are not "before" — no cascade on a tie', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2026-08-10'),
+      );
+
+      final res = await commands.setDueRaw('P', '2026-08-10');
+
+      expect(res.cascaded, 0);
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-10'));
+    });
+
+    // clearing_a_date_never_cascades
+    test('clearing a date participates in nothing', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      // A pre-existing violation the invariant would never have allowed to be
+      // created. Clearing the parent must not touch the child.
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2026-08-05'),
+      );
+
+      final res = await commands.setDue('P', DateMove.clear);
+
+      expect(res.cascaded, 0);
+      expect(await dueOf(store, 'L1', 'P'), isNull);
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-05'));
+    });
+
+    // date_move_path_also_cascades
+    test('the date-move path cascades too, not only raw dates', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      // Child fixed in the far past so "Today" is always later than it.
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2020-01-01'),
+      );
+
+      late final SetDueResult res;
+      await withClock(Clock.fixed(DateTime.utc(2026, 8, 15, 9)), () async {
+        res = await commands.setDue('P', DateMove.today);
+      });
+
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-15'));
+      expect(res.cascaded, 1);
+    });
+
+    // completed_subtask_is_included_in_cascade
+    test('a completed earlier subtask is still pulled up (#164)', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'done child',
+        parent: 'P',
+        due: due('2026-08-01'),
+        status: TaskStatus.completed,
+      );
+
+      final res = await commands.setDueRaw('P', '2026-08-15');
+
+      expect(res.cascaded, 1);
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-15'));
+    });
+
+    // cascade_reverts_as_one_undo_unit
+    test('one edit + its cascade revert as a single undo unit', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent', due: due('2026-08-10'));
+      await seedTask(
+        store,
+        'C',
+        'L1',
+        'child',
+        parent: 'P',
+        due: due('2026-08-05'),
+      );
+
+      final res = await commands.setDueRaw('P', '2026-08-15');
+      expect(await dueOf(store, 'L1', 'P'), due('2026-08-15'));
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-15'));
+
+      await commands.undoSetDue(res.undo);
+
+      // Both rows back to exactly their pre-edit dates.
+      expect(await dueOf(store, 'L1', 'P'), due('2026-08-10'));
+      expect(await dueOf(store, 'L1', 'C'), due('2026-08-05'));
+    });
+
+    // set_due_from_picker_normalizes_bare_date_and_pushes (store-observable half;
+    // the sync round-trip lands with the sync engine in a later task).
+    test('the picker path canonicalizes a bare date before storing', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'pick a date');
+
+      await commands.setDueRaw('T1', '2026-08-02');
+
+      final t = (await store.listTasks('L1')).single;
+      // Google 400s a bare "YYYY-MM-DD" (verified live) — must be canonical.
+      expect(t.task.due, '2026-08-02T00:00:00.000Z');
+      expect(t.syncState, SyncState.dirty);
+    });
+
+    // set_due_rejects_garbage_instead_of_poisoning_the_row
+    test(
+      'garbage is rejected at the boundary, leaving the row untouched',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'T1', 'L1', 'task'); // clean, no due
+
+        await expectLater(
+          commands.setDueRaw('T1', 'not-a-date'),
+          throwsA(isA<CommandError>()),
+        );
+
+        final t = (await store.listTasks('L1')).single;
+        expect(t.syncState, SyncState.clean, reason: 'row untouched');
+        expect(t.task.due, isNull);
+      },
+    );
+  });
+
+  group('clearCompleted', () {
+    // clear_completed_spares_open_subtasks_under_a_completed_parent
+    test(
+      'clears fully-completed subtrees but spares a completed parent with open work',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        // A completed parent still sheltering an OPEN child (parent completed
+        // remotely before its child) — deleting it would destroy open work.
+        await seedTask(
+          store,
+          'P-open-kid',
+          'L1',
+          'done parent, open kid',
+          status: TaskStatus.completed,
+        );
+        await seedTask(
+          store,
+          'K-open',
+          'L1',
+          'still todo',
+          parent: 'P-open-kid',
+        );
+        // A fully-completed subtree — safe to clear.
+        await seedTask(
+          store,
+          'P-done',
+          'L1',
+          'done parent',
+          status: TaskStatus.completed,
+        );
+        await seedTask(
+          store,
+          'K-done',
+          'L1',
+          'also done',
+          parent: 'P-done',
+          status: TaskStatus.completed,
+        );
+
+        final cleared = await commands.clearCompleted('L1');
+
+        final left = (await store.listTasks(
+          'L1',
+        )).map((t) => t.task.id).toSet();
+        expect(left, contains('K-open'), reason: 'open subtask survives');
+        expect(
+          left,
+          contains('P-open-kid'),
+          reason: 'its parent is spared too',
+        );
+        expect(left, isNot(contains('P-done')));
+        expect(left, isNot(contains('K-done')));
+        expect(cleared, 2);
+      },
+    );
+
+    // A synced completed task must be TOMBSTONED (not hard-deleted) so its delete
+    // reaches Google (invariant #3) — the non-happy sync-safety path.
+    test(
+      'a synced completed task is tombstoned so the delete pushes',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(
+          store,
+          'T1',
+          'L1',
+          'done',
+          status: TaskStatus.completed,
+        ); // has etag e1
+
+        final cleared = await commands.clearCompleted('L1');
+        expect(cleared, 1);
+
+        expect(await store.listTasks('L1'), isEmpty);
+        final dirty = await store.drainDirty();
+        expect(dirty, hasLength(1));
+        expect(dirty.single.task.id, 'T1');
+        expect(dirty.single.pendingOp, 'delete');
+      },
+    );
+
+    // A never-pushed completed local task is hard-deleted — nothing to push.
+    test('a never-pushed completed task is hard-deleted', () async {
+      final store = await freshStore();
+      final commands = Commands(store, newId: () => 'local-1');
+      await seedList(store, 'L1');
+      await commands.createTask(listId: 'L1', title: 'ephemeral');
+      await commands.toggleComplete('local-1');
+
+      final cleared = await commands.clearCompleted('L1');
+      expect(cleared, 1);
+      expect(await store.findTaskAny('local-1'), isNull);
+      expect(await store.drainDirty(), isEmpty);
+    });
+
+    // Nothing completed → nothing cleared (empty non-happy path).
+    test('clears nothing when the list has no completed tasks', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'open');
+
+      expect(await commands.clearCompleted('L1'), 0);
+      expect(await store.listTasks('L1'), hasLength(1));
+    });
   });
 
   group('local_updated stamps', () {

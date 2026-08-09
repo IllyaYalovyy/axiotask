@@ -13,7 +13,8 @@
 
 import 'package:clock/clock.dart';
 
-import '../model/dates.dart' show normalizeDue, nowUtcString;
+import '../model/dates.dart'
+    show DateMove, applyDateMove, normalizeDue, nowUtcString;
 import '../model/task.dart';
 import '../store/store.dart';
 import '../store/stored.dart';
@@ -156,6 +157,43 @@ class DeleteToken {
   final List<SubtreeEntry> subtree;
 }
 
+/// One row's due date as it stood BEFORE a [Commands.setDue] edit, captured so
+/// the edit and its parent/subtask cascade revert together as a single undo unit
+/// (#164). Port of `commands.rs::DueUndoEntry`.
+class DueUndoEntry {
+  const DueUndoEntry({required this.id, this.due});
+
+  /// The row whose date to restore.
+  final String id;
+
+  /// The value to restore; `null` means "no explicit date".
+  final String? due;
+}
+
+/// Outcome of a [Commands.setDue] edit. Beyond the edit itself it reports the
+/// parent/subtask consistency cascade (#164): the undo unit covering the edited
+/// row and every row the cascade moved, and enough about the cascade for the UI
+/// to phrase its toast. Port of `commands.rs::SetDueResult`.
+class SetDueResult {
+  const SetDueResult({
+    required this.undo,
+    required this.cascaded,
+    required this.cascadedParent,
+  });
+
+  /// The edited row's prior date first, then each cascaded row's prior date.
+  /// Feed straight to [Commands.undoSetDue] to revert the whole edit as one unit.
+  final List<DueUndoEntry> undo;
+
+  /// How many OTHER rows the cascade moved (0 = no cascade, no toast).
+  final int cascaded;
+
+  /// True when the cascade pulled the PARENT down (a child was set earlier);
+  /// false when it pulled CHILDREN up (a parent was set later). Selects the
+  /// toast wording.
+  final bool cascadedParent;
+}
+
 /// The mutation surface the UI drives. Cheap to hold; wraps the [Store].
 class Commands {
   /// Build over an open [store]; [newId] is injectable so tests pin the local
@@ -285,6 +323,173 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
+  }
+
+  /// Set a task's due date via a one-keystroke [move] (RFC-008), resolved
+  /// against the current calendar day, then enforce the #164 cascade.
+  /// [DateMove.clear] removes the date (and, being date-less, cascades nothing).
+  ///
+  /// The move resolves against the current CALENDAR day in UTC (day arithmetic
+  /// is DST-free and only Y-M-D is ever read back) — the same basis quick-add
+  /// uses. Funnels through the shared [_setDue] primitive so no date-entry path
+  /// bypasses the invariant.
+  Future<SetDueResult> setDue(String id, DateMove move) {
+    return _setDue(id, () {
+      final now = clock.now();
+      final today = DateTime.utc(now.year, now.month, now.day);
+      final moved = applyDateMove(today, move);
+      if (moved == null) return null; // Clear
+      final ymd =
+          '${moved.year.toString().padLeft(4, '0')}'
+          '-${moved.month.toString().padLeft(2, '0')}'
+          '-${moved.day.toString().padLeft(2, '0')}';
+      // normalizeDue on a value we just formatted is total; the `!` is safe.
+      return normalizeDue(ymd)!;
+    });
+  }
+
+  /// Set a task's due date from a raw date string (calendar picker / detail
+  /// panel), canonicalized to Google's form, then enforce the #164 cascade.
+  ///
+  /// Google rejects a bare `YYYY-MM-DD` with a permanent 400, which would poison
+  /// this row's push on every future sync, so an unparseable value is refused at
+  /// the boundary with a [CommandError] and the row is left untouched (the
+  /// not-found check runs first, before the parse). Port of the `raw:` arm of
+  /// `commands.rs::set_due_inner`.
+  Future<SetDueResult> setDueRaw(String id, String rawDate) {
+    return _setDue(id, () {
+      final normalized = normalizeDue(rawDate);
+      if (normalized == null) throw CommandError('invalid due date: $rawDate');
+      return normalized;
+    });
+  }
+
+  /// The single command-layer primitive every date-entry path funnels through.
+  /// After writing the edited row's date it enforces the #164 invariant (a
+  /// subtask's explicit date is never before its parent's explicit date) with
+  /// the editor's intent winning. [resolveDue] runs AFTER the not-found check so
+  /// a missing task fails before any parse, and it may throw [CommandError]
+  /// (garbage raw date) before any write, leaving the row untouched. Port of
+  /// `commands.rs::set_due_inner`.
+  Future<SetDueResult> _setDue(String id, String? Function() resolveDue) async {
+    final t = await _findTask(id);
+    final newDue = resolveDue();
+
+    // The undo unit opens with the edited row's prior date, then grows by one
+    // entry per row the cascade moves.
+    final undo = <DueUndoEntry>[DueUndoEntry(id: id, due: t.task.due)];
+    await _writeDue(t, newDue);
+
+    var cascadedParent = false;
+    // Rows without an explicit date never participate — clearing a date, or a
+    // parent that has no date, makes the rule inert.
+    if (newDue != null) {
+      // A task is EITHER a subtask or a possible parent (subtasks are strictly
+      // one level, invariant #1), so exactly one arm runs.
+      final siblings = await _store.listTasks(t.listId);
+      final parentId = t.task.parent;
+      if (parentId != null) {
+        // Editing a CHILD: if its parent sits later, pull the parent DOWN to
+        // match. Other children are all >= the old parent date > newDue, so
+        // lowering the parent cannot violate the rule for them.
+        for (final parent in siblings.where((p) => p.task.id == parentId)) {
+          final pd = parent.task.due;
+          if (pd != null && _dueDateBefore(newDue, pd)) {
+            undo.add(DueUndoEntry(id: parent.task.id, due: parent.task.due));
+            await _writeDue(parent, newDue);
+            cascadedParent = true;
+          }
+        }
+      } else {
+        // Editing a PARENT: pull UP every child that sits before it. Later
+        // children and children with no explicit date never move.
+        for (final child in siblings.where((c) => c.task.parent == id)) {
+          final cd = child.task.due;
+          if (cd != null && _dueDateBefore(cd, newDue)) {
+            undo.add(DueUndoEntry(id: child.task.id, due: child.task.due));
+            await _writeDue(child, newDue);
+          }
+        }
+      }
+    }
+
+    return SetDueResult(
+      undo: undo,
+      cascaded: undo.length - 1,
+      cascadedParent: cascadedParent,
+    );
+  }
+
+  /// Revert a [setDue] edit and its cascade as one unit by restoring each row's
+  /// captured prior date. Restoration deliberately bypasses the consistency
+  /// primitive: the pre-edit state was already consistent, so replaying the rule
+  /// would be redundant (and, mid-typing, could re-cascade). A row that has
+  /// since vanished is skipped — best-effort, matching [undoDelete]. Port of
+  /// `commands.rs::undo_set_due_inner`.
+  Future<void> undoSetDue(List<DueUndoEntry> entries) async {
+    for (final e in entries) {
+      final t = await _store.findTaskAny(e.id);
+      if (t == null || t.syncState == SyncState.deleted) continue;
+      await _writeDue(t, e.due);
+    }
+  }
+
+  /// Write a new due date onto a row as a local edit and persist it. Marks the
+  /// row dirty and sets its pending op via [dirtyOp] (a never-pushed row stays a
+  /// `create`); the etag is carried unchanged and `base_due` is managed by
+  /// [Store.upsertTask] — a clean→dirty write snapshots the old date, a repeat
+  /// dirty write preserves the existing base (invariant #10). Port of
+  /// `commands.rs::write_due`.
+  Future<void> _writeDue(StoredTask t, String? newDue) async {
+    final now = nowUtcString();
+    await _store.upsertTask(
+      StoredTask(
+        task: t.task.copyWith(due: newDue),
+        listId: t.listId,
+        syncState: SyncState.dirty,
+        localUpdated: now,
+        pendingOp: dirtyOp(t.task.etag),
+      ),
+    );
+  }
+
+  /// Delete every fully-completed task in [listId]; returns the count cleared.
+  /// Port of `commands.rs::clear_completed_inner`.
+  ///
+  /// Deleting a task deletes its descendants — on Google (verified live) and
+  /// locally via the FK cascade. A completed parent can still shelter OPEN
+  /// subtasks (completed remotely before its children, or via local edits), so
+  /// deleting it would destroy unfinished work — those parents are skipped. Each
+  /// cleared row follows the same tombstone-vs-hard-delete rule as [deleteTask]:
+  /// only a row the server can never have seen is safe to drop without a
+  /// tombstone (invariant #3).
+  Future<int> clearCompleted(String listId) async {
+    final tasks = await _store.listTasks(listId);
+
+    bool hasOpenDescendant(String root) {
+      final frontier = <String>[root];
+      while (frontier.isNotEmpty) {
+        final pid = frontier.removeLast();
+        for (final c in tasks.where((c) => c.task.parent == pid)) {
+          if (c.task.status != TaskStatus.completed) return true;
+          frontier.add(c.task.id);
+        }
+      }
+      return false;
+    }
+
+    var count = 0;
+    for (final t in tasks) {
+      if (t.task.status != TaskStatus.completed) continue;
+      if (hasOpenDescendant(t.task.id)) continue;
+      if (await _store.serverMayHold(t.task.id)) {
+        await _store.tombstoneSubtree(t.task.id, const [], nowUtcString());
+      } else {
+        await _store.deleteTaskHard(t.task.id);
+      }
+      count += 1;
+    }
+    return count;
   }
 
   /// Delete a task and return an undo [DeleteToken] capturing its whole subtree.
@@ -443,6 +648,16 @@ class Commands {
         ),
       );
     }
+  }
+
+  /// Whether calendar date [a] falls strictly before date [b]. Both are the
+  /// Google canonical `YYYY-MM-DDT00:00:00.000Z`, so the date is the leading ten
+  /// characters and a lexical compare of those equals a chronological one; equal
+  /// dates are deliberately NOT "before" (the invariant allows child == parent).
+  /// Port of `commands.rs::due_date_before`.
+  static bool _dueDateBefore(String a, String b) {
+    String head(String s) => s.length >= 10 ? s.substring(0, 10) : s;
+    return head(a).compareTo(head(b)) < 0;
   }
 
   /// Find a VISIBLE task by id (tombstones read as absent). Port of
