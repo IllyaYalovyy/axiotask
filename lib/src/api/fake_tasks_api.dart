@@ -36,9 +36,15 @@
 // none — making our deletes unconditional (RFC-009 P4, "delete wins") — so the
 // trait (and the fake) has no etag parameter on delete.
 //
-// T3.3 adds the remainder — positioning ordering, `move`, pagination, and the
-// full fault-injection surface (the seams below are no-op placeholders wired
-// there). Together T3.2+T3.3 cover the entire `in_memory.rs` inventory.
+// T3.3 adds the remainder — positioning ordering, `move`, real pagination, and
+// the full fault-injection surface: untargeted FIFO faults, per-id and per-page
+// targeted faults, `commit_then_fail` lost-response faults, the `on_call`
+// interleave hook, `clear_faults`, and per-method call counting. Together
+// T3.2+T3.3 cover the entire `in_memory.rs` inventory.
+//
+// Faults, call counting, and the on_call hook are wired into EVERY trait method
+// uniformly (fire the hook, record the call, check faults) so the fake behaves
+// exactly like the reference no matter which operation a test exercises.
 
 import '../model/dates.dart';
 import '../model/page.dart';
@@ -47,8 +53,8 @@ import '../model/task_list.dart';
 import 'api_error.dart';
 import 'tasks_api.dart';
 
-/// Per-method fault-injection key. Present now so the fault seams below have a
-/// stable public signature; the seams that consume it are wired in T3.3.
+/// Per-method fault-injection key, and the argument to the [FakeTasksApi.callCount]
+/// counter and the [FakeTasksApi.setOnCall] hook.
 enum Method {
   listTasklists,
   insertTasklist,
@@ -78,6 +84,38 @@ const String _updatedStamp = '2026-01-01T00:00:00Z';
 /// A stored row: which list it belongs to plus the task itself.
 typedef _Row = ({String listId, Task task});
 
+/// A fault scoped to a specific target — a single task [id] (matching a
+/// single-task method invoked against it) or a 0-based `list_tasks` [page]
+/// (matching that page mid-scroll). Exactly one of [id]/[page] is set. Fired the
+/// first time a matching call is made and removed on fire; order-independent
+/// (unlike the untargeted FIFO queue), so a test can arm "fail patch of T2"
+/// without caring what else is patched first.
+class _TargetedFault {
+  const _TargetedFault({
+    required this.method,
+    this.id,
+    this.page,
+    required this.err,
+  });
+
+  final Method method;
+  final String? id;
+  final int? page;
+  final ApiError Function() err;
+}
+
+/// The per-call interleave hook installed via [FakeTasksApi.setOnCall]: it fires
+/// at the START of every [TasksApi] call on this fake, receiving the fake itself
+/// and the [Method] about to run, BEFORE that call does any work. It exists to
+/// interleave a server-side mutation (another device racing us) at a precise
+/// point inside one sync run — the engine makes many calls per run, and the
+/// fault/`*FromState` helpers only mutate at op boundaries. The hook is
+/// synchronous, so it drives the synchronous helpers ([FakeTasksApi.seedTaskIfListExists],
+/// [FakeTasksApi.deleteTaskFromState], [FakeTasksApi.deleteListFromState]), not
+/// the async trait methods. It fires with its own slot emptied, so a re-entrant
+/// call from inside the hook does NOT re-fire it.
+typedef OnCall = void Function(FakeTasksApi client, Method method);
+
 /// Deterministic in-memory [TasksApi] test double. Mirrors verified Google
 /// Tasks semantics exactly (see the file header); never loosen it to make a
 /// test pass.
@@ -93,9 +131,84 @@ class FakeTasksApi implements TasksApi {
 
   int _etagCounter = 0;
 
+  /// Untargeted faults, FIFO. Fired only when the FRONT of the queue names the
+  /// invoked method (so an armed-but-not-at-front fault leaves other methods
+  /// alone), then popped — exactly the reference's `VecDeque` semantics.
+  final List<(Method, ApiError Function())> _faults = [];
+
+  /// Faults scoped to a specific task id or `list_tasks` page.
+  final List<_TargetedFault> _targetedFaults = [];
+
+  /// Methods whose next call commits its mutation server-side and THEN returns a
+  /// [Network] error — a response lost after the server already applied the
+  /// change (the at-least-once hazard). Fired and consumed per method.
+  final List<Method> _commitThenFail = [];
+
+  /// `list_tasks` page size. `null` returns the whole list in one page; a value
+  /// splits it into that-many-item pages with real `next_page_token`s.
+  int? _pageSize;
+
+  /// Per-method invocation counts. A faulted call still counts.
+  final Map<Method, int> _calls = {};
+
+  /// The optional per-call interleave hook; see [OnCall] and [setOnCall].
+  OnCall? _onCall;
+
   String _freshEtag() {
     _etagCounter += 1;
     return 'etag-$_etagCounter';
+  }
+
+  // ── Fault / call-count / hook plumbing ──────────────────────────────────
+
+  /// Record an invocation of [m] (counted even when the call then faults).
+  void _record(Method m) => _calls[m] = (_calls[m] ?? 0) + 1;
+
+  /// Pop and fire the untargeted fault at the FRONT of the queue iff it names
+  /// [m]; otherwise leave the queue untouched and return `null`.
+  ApiError? _nextFault(Method m) {
+    if (_faults.isNotEmpty && _faults.first.$1 == m) {
+      return _faults.removeAt(0).$2();
+    }
+    return null;
+  }
+
+  /// Fire and consume a targeted fault matching [m] against task [id], if any.
+  ApiError? _nextFaultForId(Method m, String id) {
+    final i = _targetedFaults.indexWhere((f) => f.method == m && f.id == id);
+    if (i < 0) return null;
+    return _targetedFaults.removeAt(i).err();
+  }
+
+  /// Fire and consume a targeted fault matching [m] against `list_tasks` [page],
+  /// if any.
+  ApiError? _nextFaultForPage(Method m, int page) {
+    final i = _targetedFaults.indexWhere(
+      (f) => f.method == m && f.page == page,
+    );
+    if (i < 0) return null;
+    return _targetedFaults.removeAt(i).err();
+  }
+
+  /// Consume a pending commit-then-fail arming for [m], returning whether THIS
+  /// call's response should be lost after its mutation already committed.
+  bool _takeCommitThenFail(Method m) {
+    final i = _commitThenFail.indexOf(m);
+    if (i < 0) return false;
+    _commitThenFail.removeAt(i);
+    return true;
+  }
+
+  /// Fire the on_call hook (if armed) for [m], with the hook taken out of its
+  /// slot while running so a re-entrant trait call from inside it neither
+  /// recurses nor re-fires. Restored afterwards unless the hook itself replaced
+  /// or cleared it.
+  void _fireOnCall(Method m) {
+    final hook = _onCall;
+    if (hook == null) return;
+    _onCall = null;
+    hook(this, m);
+    _onCall ??= hook;
   }
 
   // ── Test-fixture seeding ────────────────────────────────────────────────
@@ -145,10 +258,20 @@ class FakeTasksApi implements TasksApi {
   // ── Task lists ──────────────────────────────────────────────────────────
 
   @override
-  Future<List<TaskList>> listTasklists() async => List.of(_lists);
+  Future<List<TaskList>> listTasklists() async {
+    _fireOnCall(Method.listTasklists);
+    _record(Method.listTasklists);
+    final fault = _nextFault(Method.listTasklists);
+    if (fault != null) throw fault;
+    return List.of(_lists);
+  }
 
   @override
   Future<TaskList> insertTasklist(String title) async {
+    _fireOnCall(Method.insertTasklist);
+    _record(Method.insertTasklist);
+    final fault = _nextFault(Method.insertTasklist);
+    if (fault != null) throw fault;
     final etag = _freshEtag();
     final list = TaskList(
       id: 'remote-list-$_etagCounter',
@@ -162,6 +285,10 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<TaskList> patchTasklist(String id, String title) async {
+    _fireOnCall(Method.patchTasklist);
+    _record(Method.patchTasklist);
+    final fault = _nextFault(Method.patchTasklist);
+    if (fault != null) throw fault;
     final i = _lists.indexWhere((l) => l.id == id);
     if (i < 0) throw const NotFound();
     final updated = TaskList(
@@ -176,6 +303,10 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<void> deleteTasklist(String id) async {
+    _fireOnCall(Method.deleteTasklist);
+    _record(Method.deleteTasklist);
+    final fault = _nextFault(Method.deleteTasklist);
+    if (fault != null) throw fault;
     final before = _lists.length;
     _lists.removeWhere((l) => l.id == id);
     if (_lists.length == before) throw const NotFound();
@@ -188,17 +319,52 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<Page<Task>> listTasks(String listId, {String? pageToken}) async {
-    // T3.2 returns the whole (live) list in one page, ordered by the opaque,
-    // lexicographic `position` string the live API sorts by. Real pagination
-    // and per-page faults land in T3.3.
+    _fireOnCall(Method.listTasks);
+    _record(Method.listTasks);
+    // Decode the page cursor first — it identifies which page a per-page fault
+    // targets. Tokens are our own opaque `page-N` strings; anything else is a
+    // client bug the live API rejects with a permanent 400.
+    final int pageIndex;
+    if (pageToken == null) {
+      pageIndex = 0;
+    } else {
+      final n = pageToken.startsWith('page-')
+          ? int.tryParse(pageToken.substring(5))
+          : null;
+      if (n == null || n < 0) {
+        throw const OtherApiError('400: Invalid page token');
+      }
+      pageIndex = n;
+    }
+    final fault = _nextFault(Method.listTasks);
+    if (fault != null) throw fault;
+    final pageFault = _nextFaultForPage(Method.listTasks, pageIndex);
+    if (pageFault != null) throw pageFault;
+
+    // Google returns a list's tasks ordered by their opaque, lexicographic
+    // `position` string; mirror that so ordering tests see a real order.
     final items =
         _tasks.where((r) => r.listId == listId).map((r) => r.task).toList()
           ..sort((a, b) => a.position.compareTo(b.position));
-    return Page(items: items, nextPageToken: null);
+
+    final pageSize = _pageSize ?? (items.isEmpty ? 1 : items.length);
+    final start = pageIndex * pageSize;
+    final end = (start + pageSize) < items.length
+        ? start + pageSize
+        : items.length;
+    final pageItems = start < items.length
+        ? items.sublist(start, end)
+        : <Task>[];
+    final nextPageToken = end < items.length ? 'page-${pageIndex + 1}' : null;
+    return Page(items: pageItems, nextPageToken: nextPageToken);
   }
 
   @override
   Future<Task> insertTask(String listId, NewTask task) async {
+    _fireOnCall(Method.insertTask);
+    _record(Method.insertTask);
+    final fault = _nextFault(Method.insertTask);
+    if (fault != null) throw fault;
     if (!_lists.any((l) => l.id == listId)) throw const NotFound();
     // Live-API strictness: an unknown (or soft-deleted) parent id is a
     // permanent 400 — exactly what pushing a child create before its parent
@@ -232,11 +398,22 @@ class FakeTasksApi implements TasksApi {
       webViewLink: 'https://tasks.google.com/task/$id',
     );
     _tasks.add((listId: listId, task: created));
+    // Lost-response hazard: the row IS created above, but the response is
+    // dropped — the caller sees a Network error while the mutation landed.
+    if (_takeCommitThenFail(Method.insertTask)) {
+      throw const Network('response timeout after commit');
+    }
     return created;
   }
 
   @override
   Future<Task> getTask(String listId, String id) async {
+    _fireOnCall(Method.getTask);
+    _record(Method.getTask);
+    final fault = _nextFault(Method.getTask);
+    if (fault != null) throw fault;
+    final idFault = _nextFaultForId(Method.getTask, id);
+    if (idFault != null) throw idFault;
     for (final r in _tasks) {
       if (r.listId == listId && r.task.id == id) return r.task;
     }
@@ -256,6 +433,12 @@ class FakeTasksApi implements TasksApi {
     TaskPatch patch, {
     String? etag,
   }) async {
+    _fireOnCall(Method.patchTask);
+    _record(Method.patchTask);
+    final fault = _nextFault(Method.patchTask);
+    if (fault != null) throw fault;
+    final idFault = _nextFaultForId(Method.patchTask, id);
+    if (idFault != null) throw idFault;
     // Argument validation precedes resource lookup on the live API: an oversize
     // title/notes is a permanent 400 regardless of the target row's state.
     _validateSizes(patch.title, patch.notes);
@@ -327,15 +510,32 @@ class FakeTasksApi implements TasksApi {
     // Completing a parent auto-completes its whole subtree server-side. Un-
     // completing does NOT reopen children, so this only runs on completion.
     if (cascadeComplete) _cascadeCompleteDescendants(updated.id);
+    // Lost-response hazard: the patch committed above (new content + etag), but
+    // its response is dropped. A retry meets a self-content 412 the engine must
+    // absorb by adopting the remote etag, with no conflicted copy.
+    if (_takeCommitThenFail(Method.patchTask)) {
+      throw const Network('response timeout after commit');
+    }
     return updated;
   }
 
   @override
   Future<void> deleteTask(String listId, String id) async {
+    _fireOnCall(Method.deleteTask);
+    _record(Method.deleteTask);
+    final fault = _nextFault(Method.deleteTask);
+    if (fault != null) throw fault;
+    final idFault = _nextFaultForId(Method.deleteTask, id);
+    if (idFault != null) throw idFault;
     if (!_lists.any((l) => l.id == listId)) throw const NotFound();
     // DELETE soft-deletes; the server cascades to descendants, so the whole
     // subtree goes. Zero rows moved means `id` names no live task → 404.
     if (_softDeleteSubtree(id) == 0) throw const NotFound();
+    // Lost-response hazard: the subtree is soft-deleted, but the response is
+    // dropped. A retry meets a 404 the engine treats as a completed delete.
+    if (_takeCommitThenFail(Method.deleteTask)) {
+      throw const Network('response timeout after commit');
+    }
   }
 
   @override
@@ -344,38 +544,166 @@ class FakeTasksApi implements TasksApi {
     String id, {
     String? parent,
     String? previous,
-  }) {
-    // Positioning/move lands in T3.3 (see the file header); the reference's
-    // cycle/unknown-parent/cascade rules port there test-first.
-    throw UnimplementedError('moveTask: implemented in T3.3');
+  }) async {
+    _fireOnCall(Method.moveTask);
+    _record(Method.moveTask);
+    final fault = _nextFault(Method.moveTask);
+    if (fault != null) throw fault;
+    final idFault = _nextFaultForId(Method.moveTask, id);
+    if (idFault != null) throw idFault;
+    if (!_lists.any((l) => l.id == listId)) throw const NotFound();
+    final idx = _tasks.indexWhere((r) => r.task.id == id);
+    if (idx < 0) {
+      // Live-API behavior: an unknown SUBJECT id in a move is a permanent 400
+      // "Invalid task ID" — NOT the 404 an unknown `previous` draws.
+      throw const OtherApiError('400: Invalid task ID');
+    }
+    // Same strictness `insert_task` applies to the same field: an unknown parent
+    // is a permanent 400. Without it the fake could hold a task whose parent it
+    // does not have — a state Google cannot be in, one our pull re-detaches on
+    // every run (#113).
+    if (parent != null && !_tasks.any((r) => r.task.id == parent)) {
+      throw const OtherApiError('400: Invalid task ID (parent)');
+    }
+    // A task cannot become its own descendant (Google's forest model, #155).
+    // Walk up from the target parent; reaching `id` proves the move closes a
+    // cycle → permanent 400, evaluated against current server state.
+    if (parent != null) {
+      String? cur = parent;
+      while (cur != null) {
+        if (cur == id) {
+          throw const OtherApiError('400: Invalid task ID (parent)');
+        }
+        final i = _tasks.indexWhere((r) => r.task.id == cur);
+        cur = i < 0 ? null : _tasks[i].task.parent;
+      }
+    }
+    final newEtag = _freshEtag();
+    // Real lexicographic placement, exactly like `insert`. An unknown
+    // `previous` throws NotFound (a 404), the verified asymmetry.
+    final position = _positionAfter(previous);
+    // Moving an open task under a COMPLETED parent completes it: the move
+    // RESPONSE already carries status=completed, and the cascade reaches its
+    // subtree.
+    final destCompleted = parent != null && _isCompleted(parent);
+    final current = _tasks[idx].task;
+    final becomesCompleted =
+        destCompleted && current.status != TaskStatus.completed;
+    final moved = Task(
+      id: current.id,
+      parent: parent,
+      position: position,
+      title: current.title,
+      notes: current.notes,
+      status: becomesCompleted ? TaskStatus.completed : current.status,
+      due: current.due,
+      completed: becomesCompleted ? _completedStamp : current.completed,
+      etag: newEtag,
+      updated: current.updated,
+      webViewLink: current.webViewLink,
+      deleted: current.deleted,
+    );
+    _tasks[idx] = (listId: _tasks[idx].listId, task: moved);
+    if (destCompleted) _cascadeCompleteDescendants(moved.id);
+    // Lost-response hazard: the move committed above, but the response is
+    // dropped. A retry re-sends the same move and must reconverge.
+    if (_takeCommitThenFail(Method.moveTask)) {
+      throw const Network('response timeout after commit');
+    }
+    return moved;
   }
 
-  // ── Fault-injection seams (no-op placeholders, wired + tested in T3.3) ───
+  // ── Fault injection & server-side state helpers ─────────────────────────
 
-  /// Schedule a fault returned by the next call to [m]. No-op until T3.3.
-  void failNext(Method m, ApiError Function() err) {}
+  /// Schedule an untargeted fault returned by the next call to [m] (FIFO per
+  /// method; fires only when [m] is at the front of the queue).
+  void failNext(Method m, ApiError Function() err) => _faults.add((m, err));
 
-  /// Schedule a fault fired only when [m] is invoked against [id]. No-op until
-  /// T3.3.
-  void failNextForId(Method m, String id, ApiError Function() err) {}
+  /// Schedule a fault that fires only when [m] (a single-task method) is invoked
+  /// against [id]. Order-independent; consumed on the first matching call.
+  void failNextForId(Method m, String id, ApiError Function() err) =>
+      _targetedFaults.add(_TargetedFault(method: m, id: id, err: err));
 
-  /// Schedule a fault fired only for the given 0-based `list_tasks` [page].
-  /// No-op until T3.3.
-  void failListTasksPage(int page, ApiError Function() err) {}
+  /// Schedule a fault that fires only when `list_tasks` is called for the given
+  /// 0-based [page] — models a network drop partway through a paged scroll.
+  void failListTasksPage(int page, ApiError Function() err) => _targetedFaults
+      .add(_TargetedFault(method: Method.listTasks, page: page, err: err));
 
-  /// Split `list_tasks` into pages of at most [size]. No-op until T3.3.
-  void setPageSize(int size) {}
+  /// Split `list_tasks` into pages of at most [size] items, with real
+  /// `next_page_token`s between them. Unset returns everything in one page.
+  void setPageSize(int size) => _pageSize = size;
 
-  /// Arm a lost-response (commit-then-fail) fault on the next call to [m].
-  /// No-op until T3.3.
-  void commitThenFailNext(Method m) {}
+  /// Arm a lost-response fault on the next call to [m]: it commits its mutation
+  /// server-side, then throws [Network] — the at-least-once hazard. Defined for
+  /// the mutating methods; arming a read-only method has no committed mutation
+  /// to preserve, so its call simply never checks the arming.
+  void commitThenFailNext(Method m) => _commitThenFail.add(m);
 
-  /// Disarm every queued fault. No-op until T3.3.
-  void clearFaults() {}
+  /// Insert-only shorthand for [commitThenFailNext] — the same as
+  /// `commitThenFailNext(Method.insertTask)`.
+  void commitThenFailNextInsert() => commitThenFailNext(Method.insertTask);
 
-  /// Number of recorded calls to [m]. Call counting is wired in T3.3; returns
-  /// `0` until then.
-  int callCount(Method m) => 0;
+  /// Disarm every queued fault — untargeted, targeted, and every pending
+  /// commit-then-fail lost response — so a test can switch from a chaotic phase
+  /// to a provably healthy one.
+  void clearFaults() {
+    _faults.clear();
+    _targetedFaults.clear();
+    _commitThenFail.clear();
+  }
+
+  /// Number of recorded calls to [m] (a faulted call still counts).
+  int callCount(Method m) => _calls[m] ?? 0;
+
+  /// Install (or replace) the per-call interleave hook. See [OnCall];
+  /// [clearOnCall] removes it.
+  void setOnCall(OnCall hook) => _onCall = hook;
+
+  /// Remove any installed on_call hook.
+  void clearOnCall() => _onCall = null;
+
+  /// Soft-delete a task server-side the way another client's `DELETE` would —
+  /// the row (and its cascade subtree) leaves `list_tasks`, but a direct
+  /// `get`/`patch` still reaches it — WITHOUT recording a call or consuming a
+  /// fault. Drives a delete race from setup or an on_call hook. [listId] is
+  /// accepted for call-site clarity; the subtree is resolved by id.
+  void deleteTaskFromState(String listId, String taskId) {
+    _softDeleteSubtree(taskId);
+  }
+
+  /// Insert a top-level task server-side the way another client's create would,
+  /// but TOLERANT of a racing list delete: a missing [listId] is a safe no-op
+  /// instead of an assertion. Records no call and consumes no fault, so it can
+  /// be driven from an on_call hook to model "another device created a task
+  /// mid-run". (Setup-time seeding should still use [seedTask], whose assertion
+  /// catches typos.)
+  void seedTaskIfListExists(
+    String listId,
+    String id,
+    String title,
+    String position,
+  ) {
+    if (!_lists.any((l) => l.id == listId)) return;
+    final task = Task(
+      id: id,
+      position: position,
+      title: title,
+      status: TaskStatus.needsAction,
+      etag: _freshEtag(),
+      updated: _updatedStamp,
+      webViewLink: 'https://tasks.google.com/task/$id',
+    );
+    _tasks.add((listId: listId, task: task));
+  }
+
+  /// Remove a list (and its tasks + tombstones) from internal state, simulating
+  /// a list deleted server-side by another client. Records no call. Later
+  /// single-task/list methods against it then naturally return [NotFound].
+  void deleteListFromState(String listId) {
+    _lists.removeWhere((l) => l.id == listId);
+    _tasks.removeWhere((r) => r.listId == listId);
+    _deleted.removeWhere((r) => r.listId == listId);
+  }
 
   // ── Internal helpers ────────────────────────────────────────────────────
 
