@@ -14,14 +14,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/commands.dart' show Commands, SetDueResult;
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
+import '../model/dates.dart' show DateMove;
 import '../model/effective_due.dart';
 import '../model/task.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
+import 'due_date_picker.dart';
 import 'sort_dropdown.dart';
 import 'task_row.dart';
 import 'url_opener.dart';
@@ -124,6 +127,54 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (widget.selectedTaskId != null) widget.onOpenTask(stored.task.id);
   }
 
+  /// Apply a one-gesture quick-date move from the hover strip, then surface any
+  /// #164 cascade as an undoable toast.
+  Future<void> _quickMove(String id, DateMove move) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final commands = ref.read(commandsProvider);
+    final res = await commands.setDue(id, move);
+    if (!mounted) return;
+    _offerCascadeUndo(messenger, commands, res);
+  }
+
+  /// Open the calendar for [id] on its current [currentDue], apply the choice
+  /// (a picked day via `setDueRaw`, Clear via `setDue`), then surface any #164
+  /// cascade. A dismissed picker leaves the date untouched.
+  Future<void> _openDatePicker(String id, String? currentDue) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final commands = ref.read(commandsProvider);
+    final pick = await showDueDatePicker(context, initial: currentDue);
+    if (pick == null || !mounted) return;
+    final res = switch (pick) {
+      DuePickClear() => await commands.setDue(id, DateMove.clear),
+      DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
+    };
+    if (!mounted) return;
+    _offerCascadeUndo(messenger, commands, res);
+  }
+
+  /// Show the #164 cascade toast for [res] with a whole-cascade Undo, or nothing
+  /// when the edit moved no other row.
+  void _offerCascadeUndo(
+    ScaffoldMessengerState messenger,
+    Commands commands,
+    SetDueResult res,
+  ) {
+    final message = dueCascadeMessage(res);
+    if (message == null) return;
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => commands.undoSetDue(res.undo),
+          ),
+        ),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final all =
@@ -209,8 +260,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                           ref.read(commandsProvider).toggleComplete(t.id),
                       onRename: (v) =>
                           ref.read(commandsProvider).renameTask(t.id, v),
-                      onSetDue: (m) =>
-                          ref.read(commandsProvider).setDue(t.id, m),
+                      onSetDue: (m) => _quickMove(t.id, m),
+                      onPickDate: () => _openDatePicker(t.id, t.due),
                       onOpenUrl: openUrl,
                     );
                   },

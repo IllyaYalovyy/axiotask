@@ -250,5 +250,30 @@ void main() {
       await settle(tester);
       expect(picked, ['buy milk']);
     });
+
+    testWidgets('tapping a DATED badge also opens the picker (T7.3)', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await withClock(Clock.fixed(DateTime(2026, 6, 15)), () async {
+        await pumpRow(tester, due: '2026-08-01', picked: picked);
+        // Absolute short label further out than a week.
+        await tester.tap(find.text('Aug 1'));
+        await settle(tester);
+      });
+      expect(picked, ['buy milk']);
+    });
+
+    testWidgets('the inherited-date marker is a picker affordance too (T7.3)', (
+      tester,
+    ) async {
+      final picked = <String>[];
+      await withClock(Clock.fixed(DateTime(2026, 6, 15)), () async {
+        await pumpRow(tester, inheritedDue: '2026-08-01', picked: picked);
+        await tester.tap(find.text('↳ Aug 1'));
+        await settle(tester);
+      });
+      expect(picked, ['buy milk']);
+    });
   });
 }

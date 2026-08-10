@@ -12,7 +12,8 @@ import 'dart:async';
 import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
-import 'package:axiotask/src/model/dates.dart' show DateMove, normalizeDue;
+import 'package:axiotask/src/model/dates.dart'
+    show DateMove, applyDateMove, normalizeDue;
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
@@ -20,6 +21,7 @@ import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -63,6 +65,13 @@ class FakeBackend implements Commands {
   final List<StoredTask> _tasks;
   final String Function() _newId;
   final _controller = StreamController<List<StoredTask>>.broadcast();
+
+  /// When set, the next [setDue]/[setDueRaw] reports this cascade instead of the
+  /// default no-cascade result — lets a test drive the #164 toast surface.
+  SetDueResult? nextDueResult;
+
+  /// The entries the last [undoSetDue] was handed (the Undo-was-wired probe).
+  List<DueUndoEntry>? undoneWith;
 
   Stream<List<StoredTask>> get tasksStream async* {
     yield List.of(_tasks);
@@ -141,16 +150,52 @@ class FakeBackend implements Commands {
   Future<void> undoDelete(DeleteToken token) async {}
 
   @override
-  Future<SetDueResult> setDue(String id, DateMove move) async =>
-      throw UnimplementedError();
+  Future<SetDueResult> setDue(String id, DateMove move) async {
+    String? computed() {
+      if (move == DateMove.clear) return null;
+      final n = clock.now();
+      final today = DateTime.utc(n.year, n.month, n.day);
+      final d = applyDateMove(today, move)!;
+      final ymd =
+          '${d.year.toString().padLeft(4, '0')}'
+          '-${d.month.toString().padLeft(2, '0')}'
+          '-${d.day.toString().padLeft(2, '0')}';
+      return normalizeDue(ymd);
+    }
+
+    return _applyDue(id, computed());
+  }
 
   @override
   Future<SetDueResult> setDueRaw(String id, String rawDate) async =>
-      throw UnimplementedError();
+      _applyDue(id, normalizeDue(rawDate));
+
+  /// Write [due] onto the row and re-emit, returning either the configured
+  /// cascade or a plain no-cascade result over the row's prior date.
+  Future<SetDueResult> _applyDue(String id, String? due) async {
+    final i = _tasks.indexWhere((t) => t.task.id == id);
+    if (i < 0) throw StateError('no task $id');
+    final prev = _tasks[i].task.due;
+    _tasks[i] = StoredTask(
+      task: _tasks[i].task.copyWith(due: due),
+      listId: _tasks[i].listId,
+      syncState: SyncState.dirty,
+      localUpdated: 't',
+      pendingOp: 'update',
+    );
+    _emit();
+    return nextDueResult ??
+        SetDueResult(
+          undo: [DueUndoEntry(id: id, due: prev)],
+          cascaded: 0,
+          cascadedParent: false,
+        );
+  }
 
   @override
-  Future<void> undoSetDue(List<DueUndoEntry> entries) async =>
-      throw UnimplementedError();
+  Future<void> undoSetDue(List<DueUndoEntry> entries) async {
+    undoneWith = entries;
+  }
 
   @override
   Future<int> clearCompleted(String listId) async => throw UnimplementedError();
@@ -545,6 +590,100 @@ void main() {
       await tester.tap(find.byKey(const Key('link-badge')));
       await tester.pump();
       expect(opened, ['https://example.com/rfc']);
+    });
+  });
+
+  // T7.3 — the #164 cascade surfaced through the list: when a date edit drags
+  // other rows to stay consistent, an undoable toast says so and Undo reverts
+  // the whole cascade as one unit (mirrors the reference DueConsistency suite).
+  group('DueConsistency (#164 cascade toast)', () {
+    Future<void> hoverRow(WidgetTester tester) async {
+      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await g.addPointer(location: Offset.zero);
+      addTearDown(g.removePointer);
+      await g.moveTo(tester.getCenter(find.byType(TaskRow)));
+      await tester.pump();
+    }
+
+    testWidgets('a cascade shows an undoable toast; Undo reverts the whole '
+        'unit', (tester) async {
+      final fake = await pumpView(
+        tester,
+        initial: [row('P', 'Parent', '1', due: '2026-06-20')],
+      );
+      // The backend reports one pulled-up child, undo covering both rows.
+      fake.nextDueResult = const SetDueResult(
+        undo: [
+          DueUndoEntry(id: 'P', due: '2026-06-20T00:00:00.000Z'),
+          DueUndoEntry(id: 'C', due: '2026-06-10T00:00:00.000Z'),
+        ],
+        cascaded: 1,
+        cascadedParent: false,
+      );
+
+      await hoverRow(tester);
+      await tester.tap(find.byKey(const Key('quick-date-today')));
+      await tester.pump(); // resolve setDue → schedule the SnackBar
+      await tester.pump(const Duration(milliseconds: 750)); // animate it in
+
+      expect(find.text('1 subtask date moved to match'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      expect(fake.undoneWith, isNotNull);
+      expect(fake.undoneWith!.map((e) => e.id).toList(), ['P', 'C']);
+    });
+
+    testWidgets('no toast when nothing else moved (cascaded = 0)', (
+      tester,
+    ) async {
+      await pumpView(
+        tester,
+        initial: [row('P', 'Lonely', '1', due: '2026-06-20')],
+      );
+      // Default result → cascaded 0.
+      await hoverRow(tester);
+      await tester.tap(find.byKey(const Key('quick-date-today')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('moved to match'), findsNothing);
+    });
+  });
+
+  // T7.3 — the due badge / "no date" tap opens the calendar and applies the
+  // pick through the command layer (the row re-renders with the new date).
+  group('DatePicker (badge/no-date tap)', () {
+    testWidgets('tapping "no date" opens the calendar; Today applies today', (
+      tester,
+    ) async {
+      await withClock(_clock, () async {
+        await pumpView(tester, initial: [row('T', 'plan trip', '1')]);
+        expect(find.text('no date'), findsOneWidget);
+
+        await tester.tap(find.text('no date'));
+        await tester.pumpAndSettle();
+        // The calendar is up with its Today / Clear actions.
+        expect(find.byKey(const Key('due-picker-today')), findsOneWidget);
+
+        await tester.tap(find.byKey(const Key('due-picker-today')));
+        await tester.pumpAndSettle();
+        // Clock is 2026-06-15 → the row now shows the friendly "today" badge.
+        expect(find.text('today'), findsOneWidget);
+        expect(find.text('no date'), findsNothing);
+      });
+    });
+
+    testWidgets('cancelling the picker leaves the date untouched (non-happy '
+        'path)', (tester) async {
+      await withClock(_clock, () async {
+        await pumpView(tester, initial: [row('T', 'plan trip', '1')]);
+        await tester.tap(find.text('no date'));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key('due-picker-cancel')));
+        await tester.pumpAndSettle();
+        expect(find.text('no date'), findsOneWidget);
+      });
     });
   });
 }
