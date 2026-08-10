@@ -1,24 +1,24 @@
 // The app shell — the ShellRoute builder that turns the current URL into the
-// adaptive [ListDetailScaffold], wires navigation back into go_router, persists
-// the selected view, and keeps the desktop window title in sync.
-//
-// The All-Tasks list lands on the real store in T2.3 ([ViewListPane]); the
-// detail panel fields in T2.4 ([TaskDetail]). What is real here is the shell:
-// adaptive layout, routing, back handling, window title, theme.
+// adaptive [ListDetailScaffold], builds the real [Sidebar] from the store and
+// prefs, wires navigation + list management back into go_router / the command
+// layer, persists the selected view, and keeps the desktop window title in sync
+// (now resolving list ids to their titles).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import 'list_detail_scaffold.dart';
 import 'router.dart';
+import 'sidebar.dart';
 import 'task_detail.dart';
 import 'task_list_view.dart';
 import 'views.dart';
 
 /// The adaptive shell for the current [location], wrapping the list pane [child]
-/// (the ShellRoute child) with navigation chrome and an optional detail pane.
+/// (the ShellRoute child) with the sidebar and an optional detail pane.
 class AppShell extends ConsumerWidget {
   const AppShell({required this.location, required this.child, super.key});
 
@@ -34,11 +34,21 @@ class AppShell extends ConsumerWidget {
     final prefix = ref.watch(instancePrefixProvider);
     final titleController = ref.watch(windowTitleControllerProvider);
 
+    final lists = ref.watch(orderedListsProvider);
+    final counts = ref.watch(viewCountsProvider);
+    final excluded = ref.watch(prefsControllerProvider).excludedLists.toSet();
+    final footer = ref.watch(sidebarFooterProvider);
+    final listTitles = {for (final l in lists) l.list.id: l.list.title};
+
     // Keep the desktop window title in sync with the active view (no-op on
     // mobile / under tests via NoopWindowTitleController). Scheduled after the
     // frame so titling never blocks the first paint (the geometry-freeze lesson
     // applied to the title too).
-    final title = windowTitleFor(sel.viewId, instancePrefix: prefix);
+    final title = windowTitleFor(
+      sel.viewId,
+      instancePrefix: prefix,
+      listTitles: listTitles,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       titleController.setTitle(title);
     });
@@ -46,7 +56,33 @@ class AppShell extends ConsumerWidget {
     final selectedIndex =
         SmartView.byId(sel.viewId)?.index ?? SmartView.all.index;
 
+    final sidebar = Sidebar(
+      selectedViewId: sel.viewId,
+      counts: counts,
+      lists: lists,
+      excludedLists: excluded,
+      onSelectView: (id) => _selectView(context, ref, id),
+      onCreateList: (title, {localOnly = false}) =>
+          ref.read(commandsProvider).createList(title, localOnly: localOnly),
+      onRenameList: (id, title) =>
+          ref.read(commandsProvider).renameList(id, title),
+      onDeleteList: (id) async {
+        await ref.read(commandsProvider).deleteList(id);
+        // If the deleted list was the open view, fall back to All Tasks so the
+        // pane never points at a list that is gone.
+        if (sel.viewId == id && context.mounted) {
+          _selectView(context, ref, SmartView.all.id);
+        }
+      },
+      onToggleExclude: (id) =>
+          ref.read(prefsControllerProvider.notifier).toggleExclude(id),
+      onReorderLists: (ids) =>
+          ref.read(prefsControllerProvider.notifier).setListOrder(ids),
+      footer: footer,
+    );
+
     return ListDetailScaffold(
+      sidebar: sidebar,
       destinations: [
         for (final v in SmartView.values)
           ShellDestination(
@@ -74,15 +110,13 @@ class AppShell extends ConsumerWidget {
   /// Persist the newly selected view (survives restart, localStorage parity)
   /// and navigate to it.
   void _selectView(BuildContext context, WidgetRef ref, String viewId) {
-    final store = ref.read(prefsStoreProvider);
-    store.save(store.load().copyWith(view: viewId));
+    ref.read(prefsControllerProvider.notifier).setView(viewId);
     context.go(viewPath(viewId));
   }
 }
 
-/// The list pane for a view. The "All Tasks" view renders the real
-/// [TaskListView] on the store (T2.3); the other smart views keep a placeholder
-/// until their filters land in T7.1.
+/// The list pane for a view — the real [TaskListView] for every smart view and
+/// every list (the T7.1 filters + sort make this one widget serve them all).
 class ViewListPane extends StatelessWidget {
   const ViewListPane({required this.viewId, this.selectedTaskId, super.key});
 
@@ -94,34 +128,11 @@ class ViewListPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (viewId == SmartView.all.id) {
-      return TaskListView(
-        key: const ValueKey('view-all'),
-        viewId: viewId,
-        selectedTaskId: selectedTaskId,
-        onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
-      );
-    }
-    final view = SmartView.byId(viewId);
-    final label = viewLabelFor(viewId);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            view?.icon ?? Icons.checklist_outlined,
-            size: 48,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          const SizedBox(height: 12),
-          Text(label, style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 4),
-          Text(
-            'Tasks arrive in the next slice.',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-        ],
-      ),
+    return TaskListView(
+      key: ValueKey('view-$viewId'),
+      viewId: viewId,
+      selectedTaskId: selectedTaskId,
+      onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
     );
   }
 }

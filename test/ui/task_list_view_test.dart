@@ -355,7 +355,13 @@ void main() {
   ) async {
     await pumpView(tester, initial: [row('A', 'apples', '5')]);
     expect(find.text('apples'), findsOneWidget);
-    await tester.tap(find.byType(Checkbox));
+    // The row's checkbox — the toolbar now also has a "Show completed" one.
+    await tester.tap(
+      find.descendant(
+        of: find.byType(TaskRow),
+        matching: find.byType(Checkbox),
+      ),
+    );
     await settle(tester);
     // Completed → hidden from the open list (show-completed defaults off).
     expect(find.text('apples'), findsNothing);
@@ -407,5 +413,60 @@ void main() {
         expect(opened, isEmpty, reason: 'creating never opens the panel');
       },
     );
+  });
+
+  group('Toolbar', () {
+    testWidgets('the show-completed toggle reveals completed tasks live', (
+      tester,
+    ) async {
+      await pumpView(
+        tester,
+        initial: [
+          row('A', 'apples', '5'),
+          row('D', 'done thing', '6', done: true),
+        ],
+      );
+      // Default hides the completed task…
+      expect(find.text('done thing'), findsNothing);
+      // …tapping the toolbar toggle (the live prefs path) reveals it.
+      await tester.tap(find.byKey(const Key('show-completed-toggle')));
+      await settle(tester);
+      expect(find.text('done thing'), findsOneWidget);
+    });
+
+    testWidgets('picking a sort order reorders the rows live', (tester) async {
+      await pumpView(
+        tester,
+        initial: [
+          row('B', 'banana', '1'),
+          row('A', 'apple', '2'),
+          row('C', 'cherry', '3'),
+        ],
+      );
+      // Manual (position) order first: banana, apple, cherry.
+      var titles = tester
+          .widgetList<TaskRow>(find.byType(TaskRow))
+          .map((r) => r.title)
+          .toList();
+      expect(titles, ['banana', 'apple', 'cherry']);
+
+      await tester.tap(find.byKey(const Key('sort-dropdown')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Alphabetical').last);
+      await settle(tester);
+
+      titles = tester
+          .widgetList<TaskRow>(find.byType(TaskRow))
+          .map((r) => r.title)
+          .toList();
+      expect(titles, ['apple', 'banana', 'cherry']);
+    });
+
+    testWidgets('a smart view with nothing to show has its own empty message', (
+      tester,
+    ) async {
+      await pumpView(tester, viewId: 'focus');
+      expect(find.text('All clear for this week'), findsOneWidget);
+    });
   });
 }

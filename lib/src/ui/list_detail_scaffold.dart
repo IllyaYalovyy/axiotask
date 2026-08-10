@@ -39,6 +39,7 @@ class ShellDestination {
 /// Adaptive list-detail scaffold branching at [breakpoint].
 class ListDetailScaffold extends StatelessWidget {
   const ListDetailScaffold({
+    required this.sidebar,
     required this.destinations,
     required this.selectedIndex,
     required this.onDestinationSelected,
@@ -51,13 +52,18 @@ class ListDetailScaffold extends StatelessWidget {
   /// The single width breakpoint (logical pixels) between compact and expanded.
   static const double breakpoint = 600;
 
-  /// Navigation destinations, in display order.
+  /// The full navigation sidebar (smart views + lists + footer) shown as the
+  /// left panel in the expanded layout. Compact keeps the bottom nav bar below
+  /// (lists on a phone are a later touch-native pass).
+  final Widget sidebar;
+
+  /// Bottom-nav destinations for the compact layout, in display order.
   final List<ShellDestination> destinations;
 
   /// Index of the selected destination.
   final int selectedIndex;
 
-  /// Called when the user picks a destination.
+  /// Called when the user picks a compact bottom-nav destination.
   final ValueChanged<int> onDestinationSelected;
 
   /// The list pane — always present (left pane when expanded, base screen when
@@ -95,19 +101,7 @@ class ListDetailScaffold extends StatelessWidget {
       body: SafeArea(
         child: Row(
           children: [
-            NavigationRail(
-              selectedIndex: selectedIndex,
-              onDestinationSelected: onDestinationSelected,
-              labelType: NavigationRailLabelType.all,
-              destinations: [
-                for (final d in destinations)
-                  NavigationRailDestination(
-                    icon: Icon(d.icon),
-                    selectedIcon: Icon(d.selectedIcon),
-                    label: Text(d.label),
-                  ),
-              ],
-            ),
+            sidebar,
             const VerticalDivider(width: 1),
             Expanded(flex: 2, child: list),
             if (_showingDetail) ...[

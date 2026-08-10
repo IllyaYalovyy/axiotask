@@ -10,6 +10,7 @@ import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/window_title_controller.dart';
 import 'package:axiotask/src/model/task.dart';
+import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/router.dart';
 import 'package:flutter/material.dart';
@@ -77,6 +78,36 @@ void main() {
     localUpdated: 't',
   );
 
+  Future<void> pumpAppWithLists(
+    WidgetTester tester, {
+    required PrefsStore store,
+    required _FakeTitle title,
+    required List<StoredTaskList> lists,
+    List<StoredTask> tasks = const [],
+    GoRouter? router,
+  }) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          prefsProvider.overrideWithValue(store.load()),
+          prefsStoreProvider.overrideWithValue(store),
+          windowTitleControllerProvider.overrideWithValue(title),
+          allTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+          listsProvider.overrideWith((ref) => Stream.value(lists)),
+          if (router != null) routerProvider.overrideWithValue(router),
+        ],
+        child: const AxiotaskApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  StoredTaskList storedList(String id, String title) => StoredTaskList(
+    list: TaskList(id: id, title: title, etag: 'e', updated: 't'),
+    syncState: SyncState.clean,
+    localUpdated: 't',
+  );
+
   testWidgets('window title reflects the initial view', (tester) async {
     final title = _FakeTitle();
     await pumpApp(tester, store: prefs(), title: title);
@@ -131,6 +162,42 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(TextField, 'my task'), findsNothing);
+  });
+
+  testWidgets('a list renders in the sidebar with its open-task count', (
+    tester,
+  ) async {
+    await pumpAppWithLists(
+      tester,
+      store: prefs(),
+      title: _FakeTitle(),
+      lists: [storedList('L1', 'Work')],
+      tasks: [storedTask('T1', 'a'), storedTask('T2', 'b')],
+    );
+    expect(find.text('Work'), findsOneWidget);
+    // Two open top-level tasks in the list → a "2" badge (All Tasks + the list).
+    expect(find.text('2'), findsWidgets);
+  });
+
+  testWidgets('selecting a list navigates, persists it, and retitles', (
+    tester,
+  ) async {
+    final store = prefs();
+    final title = _FakeTitle();
+    await pumpAppWithLists(
+      tester,
+      store: store,
+      title: title,
+      lists: [storedList('L1', 'Work')],
+    );
+
+    await tester.tap(find.text('Work'));
+    await tester.pumpAndSettle();
+
+    // The window title resolves the LIST id to its title (WindowTitle contract).
+    expect(title.titles.last, 'Work — axiotask');
+    // Persisted as the last view (survives restart).
+    expect(store.load().view, 'L1');
   });
 
   testWidgets('Android system back closes an open detail on a phone', (
