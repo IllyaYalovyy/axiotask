@@ -218,7 +218,6 @@ class _Header extends StatelessWidget {
               IconButton(
                 key: const Key('sidebar-add-list'),
                 tooltip: 'New list',
-                visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.add, size: 20),
                 onPressed: onCreateList,
               ),

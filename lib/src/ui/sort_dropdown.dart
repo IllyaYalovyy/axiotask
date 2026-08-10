@@ -29,23 +29,30 @@ class SortDropdown extends StatelessWidget {
         for (final m in SortMode.values)
           PopupMenuItem(value: m, child: Text(m.label)),
       ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.sort, size: 18),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                'Sort: ${value.label}',
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
-                style: theme.textTheme.labelLarge,
+      // A 48dp-tall hit area (the label stays small) — this toolbar also renders
+      // on a phone, where a coarse pointer needs the full Material tap target.
+      // SizedBox (not Container-with-alignment, which would expand to fill the
+      // width and force the toolbar to wrap).
+      child: SizedBox(
+        height: 48,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.sort, size: 18),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Sort: ${value.label}',
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                  style: theme.textTheme.labelLarge,
+                ),
               ),
-            ),
-            const Icon(Icons.arrow_drop_down, size: 18),
-          ],
+              const Icon(Icons.arrow_drop_down, size: 18),
+            ],
+          ),
         ),
       ),
     );

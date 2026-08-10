@@ -227,27 +227,33 @@ class _ListToolbar extends StatelessWidget {
             key: const Key('show-completed-toggle'),
             borderRadius: BorderRadius.circular(8),
             onTap: () => onShowCompleted(!showCompleted),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    value: showCompleted,
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    onChanged: (v) => onShowCompleted(v ?? false),
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      'Show completed',
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: Theme.of(context).textTheme.labelLarge,
+            // A 48dp-tall hit area — the toolbar renders on a phone too, so the
+            // whole toggle (not just the shrink-wrapped checkbox) is tappable.
+            // SizedBox (not Container-with-alignment, which would fill the width).
+            child: SizedBox(
+              height: 48,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: showCompleted,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: (v) => onShowCompleted(v ?? false),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Show completed',
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
