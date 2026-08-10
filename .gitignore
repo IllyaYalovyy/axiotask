@@ -1,0 +1,51 @@
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+.DS_Store
+
+# Android local state and signing material
+android/.gradle/
+android/key.properties
+android/local.properties
+android/app/google-services.json
+*.jks
+*.keystore
+
+# Linux and local build state
+linux/flutter/ephemeral/
+
+# Credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+config/dev.json
+config/test-account.json
+credentials*.json
+tokens*.json
+secrets/
+
+# Test output that may contain local paths or rendered data
+test-results/
+screenshots/actual/
+integration_test/output/
+
+# Local task runners and AI-only working state
+.ktask/
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md
+CODEX.md

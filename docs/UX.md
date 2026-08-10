@@ -1,0 +1,105 @@
+# UX direction
+
+## Trust before decoration
+
+The most important UX correction is truthful synchronization feedback. Cached
+tasks render quickly, but the interface never implies that cached state has
+been verified merely because it loaded successfully.
+
+### Sync health vocabulary
+
+| Outcome | Meaning | Required presentation |
+|---|---|---|
+| Inactive | Sync was stopped, or usable Tasks authorization is absent | “Sync stopped” with Resume, or “No authorization” with Connect; never green |
+| Good | A complete sync succeeded within the freshness window and no work, failure, or uncertainty is newer | Green icon, “Up to date,” and exact last-success time |
+| Failed | The latest required attempt failed/timed out, or freshness expired without active verification | Persistent failure/stale reason, last-success time, pending count, and retry/action |
+| Pending | Verification, synchronization, retry, or durable unconfirmed work is active or queued | Yellow icon, precise activity/reason, and pending count; never green |
+
+Color is never the only signal. A small status icon can summarize health, but
+hover/tap and an accessible label expose the outcome, detailed reason, last
+success, pending count, and next action. Offline, stale, unauthorized, uncertain,
+and checking are reasons contributing to the four outcomes, not additional
+competing top-level statuses. The account being connected is not itself evidence
+of sync health.
+
+Desktop places health in the always-visible application header and exposes
+details without leaving the current work. Android uses the top app bar plus a
+persistent banner for degraded/action-required states. Neither platform hides
+an expired token in a settings screen or transient toast.
+
+## Information architecture
+
+Shared concepts:
+
+- smart views and Google task lists;
+- task collection, task details, search, and bulk selection;
+- account/sync health and application preferences;
+- top-level tasks with subtasks in details.
+
+Desktop starts with a navigation/list/detail composition when width permits.
+The detail pane may become a dialog or route at narrower desktop widths. Android
+uses a task-list route, full-screen details, platform navigation/drawer patterns,
+and a reachable primary add action. Breakpoints are driven by available space
+and input capability, not a hard-coded platform switch.
+
+## Interaction principles
+
+- Common create, complete, and date actions take one or two interactions.
+- Destructive actions are unmistakable and undoable where the remote semantics
+  allow a reliable undo; confirmation is reserved for high-cost/non-recoverable
+  actions.
+- Optimistic changes appear only after their local transaction commits.
+- Pending remote confirmation is globally visible without making every task row
+  noisy.
+- Mouse hover and context menus accelerate desktop use but never hide the only
+  route to an action.
+- Android touch targets meet Material accessibility guidance; swipe actions have
+  visible alternatives.
+- Keyboard shortcuts have discoverable menu/button equivalents and never become
+  the sole workflow.
+- Focus, selection, and system-back behavior are explicit state-machine tests.
+
+## Task hierarchy
+
+Collection views show top-level tasks. Parent rows expose subtask progress and
+the earliest relevant unfinished child date when product policy calls for it.
+Subtasks are managed in task details and are never orphaned as unexplained rows
+in smart views or search results. Search results that match a subtask open its
+parent context and identify the match.
+
+The product and local model support exactly one subtask level. There is no
+deeper-hierarchy UI. Unexpected deeper API data is not edited, flattened, or
+deleted; it produces a typed unsupported-data failure.
+
+## Recurrence and links
+
+The Google Tasks API's `webViewLink` powers an explicit **Manage recurrence in
+Google Tasks** action. The copy explains that recurrence is managed by Google's
+UI because the API does not expose its configuration.
+
+Valid `http`/`https` links detected in task content are presented separately as
+ordinary external links. Link detection, safety validation, and launch failure
+are tested. A task's Google web link is never confused with a user-authored URL.
+
+## Error presentation
+
+Errors answer three questions:
+
+1. What did not happen?
+2. Is the user's work safe?
+3. What can the user do now?
+
+Transient, already-retrying conditions stay calm but visible in sync details.
+Persistent failures affecting freshness or durability appear near the affected
+workflow and in global health. Raw exception text and opaque status codes are
+available only as sanitized diagnostic references.
+
+## Accessibility and visual validation
+
+- Semantics labels and roles are part of widget acceptance tests.
+- Status never relies only on color, motion, tooltip, hover, or gesture.
+- Text scaling, keyboard traversal, contrast, reduced motion, long titles/notes,
+  and narrow/wide layouts have representative fixtures.
+- Material defaults are a baseline, not an excuse for generic web-like layout.
+- Significant states are checked through widget tests, curated goldens, and
+  actual screenshots on Fedora and Android.
