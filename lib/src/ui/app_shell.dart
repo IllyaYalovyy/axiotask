@@ -14,6 +14,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'list_detail_scaffold.dart';
 import 'onboarding.dart';
+import 'properties.dart';
 import 'router.dart';
 import 'sidebar.dart';
 import 'task_detail.dart';
@@ -112,6 +113,14 @@ class AppShell extends ConsumerWidget {
       onReorderLists: (ids) =>
           ref.read(prefsControllerProvider.notifier).setListOrder(ids),
       footer: footer,
+      onOpenProperties: () => showProperties(context),
+      onToggleTheme: () {
+        // Flip to the opposite explicit theme (a "system" pref resolves to its
+        // effective brightness, then flips). Keeps the sun/moon meaningful.
+        final next = _resolvedDark(context, prefs.theme) ? 'light' : 'dark';
+        ref.read(prefsControllerProvider.notifier).setTheme(next);
+      },
+      isDark: _resolvedDark(context, prefs.theme),
     );
 
     final scaffold = ListDetailScaffold(
@@ -171,6 +180,16 @@ class AppShell extends ConsumerWidget {
     context.go(viewPath(viewId));
   }
 }
+
+/// The effective dark/light of a theme pref: explicit choices win; `system` (or
+/// any unknown value) resolves against the platform brightness — so the sidebar
+/// sun/moon always shows the CURRENT brightness and flips to its opposite.
+bool _resolvedDark(BuildContext context, String themePref) =>
+    switch (themePref) {
+      'dark' => true,
+      'light' => false,
+      _ => MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+    };
 
 /// The list pane for a view — the real [TaskListView] for every smart view and
 /// every list (the T7.1 filters + sort make this one widget serve them all).

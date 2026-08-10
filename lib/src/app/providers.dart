@@ -9,7 +9,9 @@
 // missing_provider_scope lint satisfied and makes every dependency swappable in
 // widget tests.
 
-import 'package:flutter/material.dart' show ThemeMode, Widget;
+import 'dart:io' show Directory;
+
+import 'package:flutter/material.dart' show ThemeMode, VoidCallback, Widget;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -19,10 +21,14 @@ import '../store/store.dart';
 import '../store/stored.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
+import 'app_settings.dart';
+import 'app_version.dart';
+import 'backup_service.dart';
 import 'commands.dart';
 import 'config_controller.dart';
 import 'prefs.dart';
 import 'prefs_controller.dart';
+import 'sync_status.dart';
 import 'window_title_controller.dart';
 
 Never _mustOverride(String name) => throw StateError(
@@ -139,3 +145,79 @@ final sidebarFooterProvider = Provider<Widget?>((ref) => null);
 final routerProvider = Provider<GoRouter>(
   (ref) => buildAppRouter(initialViewId: ref.watch(prefsProvider).view),
 );
+
+// ── Properties dialog data + backup seam ──────────────────────────────────────
+
+/// The app version string (About tab). Overridable so a test can pin it.
+final appVersionProvider = Provider<String>((ref) => appVersion);
+
+/// The database file path shown on the About tab. Empty until the bootstrap
+/// overrides it with the real path (display-only).
+final dbPathProvider = Provider<String>((ref) => '');
+
+/// The config file path shown on the About tab. Overridden by the bootstrap.
+final configPathProvider = Provider<String>((ref) => '');
+
+/// The instance's backups directory. Overridden by the bootstrap; a test that
+/// exercises real export/import overrides it with a temp dir.
+final backupsDirProvider = Provider<Directory>(
+  (ref) => _mustOverride('backupsDirProvider'),
+);
+
+/// The backup export/import service over the store and the backups dir.
+final backupServiceProvider = Provider<BackupService>(
+  (ref) => BackupService(
+    store: ref.watch(storeProvider),
+    backupsDir: ref.watch(backupsDirProvider),
+  ),
+);
+
+/// The live count of local changes awaiting a push (Properties Sync stats).
+final pendingPushCountProvider = FutureProvider<int>(
+  (ref) => ref.watch(storeProvider).pendingPushCount(),
+);
+
+/// The sanitized sync-status view the Sync tab renders. Defaults to "never
+/// synced"; the scheduler-integration task overrides it with the live stream.
+final syncStatusViewProvider = Provider<SyncStatusView>(
+  (ref) => const SyncStatusView.initial(),
+);
+
+/// Whether a live Google session exists. Auth-integration overrides this;
+/// signed-out is the safe default (the sync actions gate on it).
+final authenticatedProvider = Provider<bool>((ref) => false);
+
+/// Whether the stored session is dead (needs re-auth). Overridden by auth.
+final needsReauthProvider = Provider<bool>((ref) => false);
+
+/// Run the OAuth sign-in from the Account tab. No-op until auth is wired.
+final signInActionProvider = Provider<VoidCallback>((ref) => () {});
+
+/// Drop the session from the Account tab. No-op until auth is wired.
+final signOutActionProvider = Provider<VoidCallback>((ref) => () {});
+
+/// Execute a fresh sync (clear local synced data + full re-pull). Defaults to
+/// the local half via [Commands.freshSync]; the scheduler task overrides it to
+/// also drive the re-pull. Gated behind authentication in the UI.
+final freshSyncActionProvider = Provider<Future<void> Function()>(
+  (ref) =>
+      () => ref.read(commandsProvider).freshSync(),
+);
+
+/// The assembled Properties-dialog snapshot (`get_settings` DTO).
+final appSettingsProvider = Provider<AppSettingsView>((ref) {
+  final config = ref.watch(configControllerProvider);
+  return AppSettingsView(
+    version: ref.watch(appVersionProvider),
+    instance: ref.watch(instancePrefixProvider),
+    pushEnabled: config.pushEnabled,
+    autoSyncOnStart: config.autoSyncOnStart,
+    authenticated: ref.watch(authenticatedProvider),
+    needsReauth: ref.watch(needsReauthProvider),
+    scopes: config.scopes,
+    dbPath: ref.watch(dbPathProvider),
+    configPath: ref.watch(configPathProvider),
+    pendingPushes: ref.watch(pendingPushCountProvider).asData?.value ?? 0,
+    sync: ref.watch(syncStatusViewProvider),
+  );
+});
