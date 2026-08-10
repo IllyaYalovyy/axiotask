@@ -638,4 +638,146 @@ void main() {
       },
     );
   });
+
+  group('finish_move atomic pair (kill-window)', () {
+    // Stage a task carrying a pending move, so finish_move has both an intent to
+    // clear and a landed response to adopt. Returns the fresh store.
+    Future<Store> stageMovedTask({required SyncState state}) async {
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'T1',
+            position: '1',
+            title: state == SyncState.dirty ? 'my edit' : 'moved',
+            status: TaskStatus.needsAction,
+            etag: 'e1',
+            updated: _t0,
+          ),
+          listId: 'L1',
+          syncState: state,
+          localUpdated: _t0,
+          pendingOp: state == SyncState.dirty ? 'update' : null,
+        ),
+      );
+      // The move the command layer queued: T1 reordered to position '9'.
+      await s.recordMove('T1', 'L1', null, null);
+      return s;
+    }
+
+    Task landed(String title, String etag, String position) => Task(
+      id: 'T1',
+      position: position,
+      title: title,
+      status: TaskStatus.needsAction,
+      etag: etag,
+      updated: '2026-01-02T00:00:00Z',
+    );
+
+    test(
+      'adoptBody: clears the intent AND adopts the whole response body',
+      () async {
+        final s = await stageMovedTask(state: SyncState.clean);
+
+        // A clean row adopts the body: the server-assigned position lands only
+        // because the move intent was cleared first inside the same call — the
+        // apply_pushed_task guard skips position while a move is pending.
+        await s.finishMove(
+          'T1',
+          landed('moved', 'e2', '9'),
+          adoptBody: true,
+          expectedLocalUpdated: _t0,
+        );
+
+        expect(
+          await s.pendingMoves(),
+          isEmpty,
+          reason: 'the move intent is cleared',
+        );
+        final t1 = (await s.listTasks('L1')).single;
+        expect(t1.task.etag, 'e2', reason: 'the response etag is adopted');
+        expect(
+          t1.task.position,
+          '9',
+          reason: 'the server-assigned position lands — move cleared first',
+        );
+        expect(t1.syncState, SyncState.clean);
+      },
+    );
+
+    test('meta-only: refreshes the etag but spares the pending edit', () async {
+      final s = await stageMovedTask(state: SyncState.dirty);
+
+      await s.finishMove(
+        'T1',
+        landed('server title', 'e2', '9'),
+        adoptBody: false,
+        expectedLocalUpdated: _t0,
+      );
+
+      expect(await s.pendingMoves(), isEmpty);
+      final t1 = (await s.listTasks('L1')).single;
+      expect(t1.task.etag, 'e2', reason: 'meta adopts the fresh etag');
+      expect(
+        t1.task.title,
+        'my edit',
+        reason: 'a meta-only landing keeps the unrelated pending content edit',
+      );
+      expect(t1.syncState, SyncState.dirty, reason: 'the edit still needs push');
+    });
+
+    test(
+      'a crash after clear_move rolls the whole pair back — the move survives',
+      () async {
+        // The kill-window guarantee: the reference clears the move and adopts
+        // the response as two separate writes, so a crash in the gap leaves the
+        // intent gone with the server parent/position/etag never adopted — no
+        // move queued to correct the drift. Forcing the SECOND write to fault
+        // (a subclass models the process dying right after clear_move) proves
+        // the pair is one transaction: the clear is rolled back, so the NEXT run
+        // re-pushes the move rather than losing it.
+        final s = _CrashAfterClearMoveStore(await AppDatabase.openMemory());
+        addTearDown(s.db.close);
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+        await s.recordMove('T1', 'L1', null, null);
+
+        await expectLater(
+          s.finishMove(
+            'T1',
+            landed('moved', 'e2', '9'),
+            adoptBody: false,
+            expectedLocalUpdated: _t0,
+          ),
+          throwsA(anything),
+          reason: 'the second write faults, standing in for a crash',
+        );
+
+        final moves = await s.pendingMoves();
+        expect(
+          moves.length,
+          1,
+          reason: 'the clear_move was rolled back — the intent survives',
+        );
+        expect(moves.single.taskId, 'T1');
+      },
+    );
+  });
+}
+
+/// A store whose [refreshTaskMeta] always faults — stands in for the process
+/// dying (or a write erroring) immediately after `clear_move`, exercising the
+/// finish_move transaction's rollback.
+class _CrashAfterClearMoveStore extends Store {
+  _CrashAfterClearMoveStore(super.db);
+
+  @override
+  Future<void> refreshTaskMeta(
+    String id,
+    String? newEtag,
+    String serverUpdated,
+  ) async {
+    throw StateError('simulated crash after clear_move');
+  }
 }

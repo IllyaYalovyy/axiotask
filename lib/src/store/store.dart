@@ -736,6 +736,41 @@ class Store {
     );
   }
 
+  /// Land a pushed move as ONE atomic pair (MIGRATION-PLAN §5): clear the
+  /// pending move intent AND adopt the server's response in a SINGLE
+  /// transaction. [adoptBody] adopts the whole response body via
+  /// [applyPushedTask] (a CLEAN row — a move can complete the task server-side,
+  /// P6); otherwise only the meta (etag/updated) is refreshed via
+  /// [refreshTaskMeta], sparing an unrelated pending content edit.
+  ///
+  /// Kill-window: split across two writes (as the reference is —
+  /// `clear_move` then `apply_move_response`), a crash in the gap leaves the
+  /// intent gone with the server's parent/position/etag never adopted, so the
+  /// row keeps its optimistic pre-move etag with no move queued to correct it —
+  /// the drift only self-heals if a later pull happens to notice the mismatch.
+  /// Wrapped here, a kill rolls BOTH back: the move survives and the next run
+  /// re-pushes it. Writes only — the move call that produced [remote] already
+  /// happened, never an API call inside the transaction (§2).
+  ///
+  /// [clearMove] MUST run first inside the txn: [applyPushedTask] refuses to
+  /// touch parent/position while a pending move exists (its guard), so the
+  /// server body can only land once the intent is gone.
+  Future<void> finishMove(
+    String taskId,
+    Task remote, {
+    required bool adoptBody,
+    required String expectedLocalUpdated,
+  }) async {
+    await _db.transaction(() async {
+      await clearMove(taskId);
+      if (adoptBody) {
+        await applyPushedTask(remote, expectedLocalUpdated);
+      } else {
+        await refreshTaskMeta(remote.id, remote.etag, remote.updated);
+      }
+    });
+  }
+
   /// Number of local changes awaiting push: dirty/deleted tasks and lists plus
   /// recorded position moves, excluding local-only lists (which never sync).
   /// Read-only — unlike `drain*`, it does not consume the queue, so the UI can
