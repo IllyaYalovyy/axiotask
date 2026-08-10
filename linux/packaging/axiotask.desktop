@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=axiotask
+GenericName=Task Manager
+Comment=Fast, offline-first Google Tasks client
+Exec=axiotask
+Icon=axiotask
+Terminal=false
+Categories=Utility;Office;ProjectManagement;
+Keywords=tasks;todo;google;productivity;
+StartupWMClass=axiotask
