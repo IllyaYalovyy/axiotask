@@ -27,6 +27,7 @@ import 'bulk_add.dart';
 import 'bulk_bar.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'list_detail_scaffold.dart' show ListDetailScaffold;
 import 'list_pickers.dart';
 import 'search.dart';
 import 'sort_dropdown.dart';
@@ -108,7 +109,8 @@ class TaskListView extends ConsumerStatefulWidget {
 
 class _TaskListViewState extends ConsumerState<TaskListView> {
   final TextEditingController _quickAdd = TextEditingController();
-  final FocusNode _quickAddFocus = FocusNode();
+  // The quick-add FocusNode is app-wide (read from quickAddFocusProvider) so the
+  // mobile FAB — which lives outside this pane — can focus the input.
 
   // Transient "pin this new task to the top" id, cleared when the view unmounts
   // on a view switch (only the "all" view mounts this widget today).
@@ -151,9 +153,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   @override
   void dispose() {
     _quickAdd.dispose();
-    _quickAddFocus.dispose();
+    // The FocusNode is owned by quickAddFocusProvider (app-wide) — not disposed
+    // here.
     super.dispose();
   }
+
+  /// Run a manual refresh (mobile pull-to-refresh): a real sync when a session
+  /// is live, else a no-op over the always-live reactive store.
+  Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
 
   Future<void> _submit() async {
     final title = _quickAdd.text.trim();
@@ -510,16 +517,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       }
     }
     final openUrl = ref.read(urlOpenerProvider);
+    final quickAddFocus = ref.watch(quickAddFocusProvider);
     return Column(
       children: [
         _QuickAddBar(
           controller: _quickAdd,
-          focusNode: _quickAddFocus,
+          focusNode: quickAddFocus,
           previewDue: _previewDue,
           onSubmit: _submit,
           onDismissPreview: () {
             setState(() => _dateIgnoredFor = _quickAdd.text);
-            _quickAddFocus.requestFocus();
+            quickAddFocus.requestFocus();
           },
           onChanged: () => setState(() {}),
         ),
@@ -552,68 +560,110 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             onDelete: _bulkDelete,
             onClear: _clearSelection,
           ),
-        Expanded(
-          child: tasks.isEmpty
-              ? Center(
-                  child: Text(
-                    emptyMessageFor(widget.viewId),
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                )
-              // Drag reorder rides ONLY the manual sort (backend position); the
-              // other sorts derive their order, so reordering them is
-              // meaningless (the reference disables it too).
-              : sort == SortMode.manual
-              ? ReorderableListView.builder(
-                  buildDefaultDragHandles: false,
-                  itemCount: tasks.length,
-                  onReorderItem: (oldIndex, newIndex) =>
-                      _onReorder(tasks, oldIndex, newIndex),
-                  itemBuilder: (context, i) {
-                    final stored = tasks[i];
-                    return Row(
-                      key: ValueKey('reorder-${stored.task.id}'),
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        ReorderableDragStartListener(
-                          index: i,
-                          child: SizedBox(
-                            key: ValueKey('drag-handle-${stored.task.id}'),
-                            // A comfortable drag target for both a mouse and a
-                            // finger (touch-drag rides the same handle); the
-                            // glyph stays small, the HIT AREA is 48dp tall.
-                            width: 36,
-                            height: 48,
-                            child: Icon(
-                              Icons.drag_indicator,
-                              size: 18,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: _taskRow(
-                            stored,
-                            dueInfo,
-                            subDone,
-                            subTotal,
-                            openUrl,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                )
-              : ListView.builder(
-                  itemCount: tasks.length,
-                  itemBuilder: (context, i) =>
-                      _taskRow(tasks[i], dueInfo, subDone, subTotal, openUrl),
-                ),
-        ),
+        Expanded(child: _listArea(tasks, dueInfo, subDone, subTotal, openUrl)),
       ],
     );
+  }
+
+  /// The scrollable task list for the current view, wrapped on a phone in a
+  /// pull-to-refresh. The list scrolls even when short (AlwaysScrollable) so an
+  /// over-pull from the top can arm the refresh — and, because RefreshIndicator
+  /// only fires at scroll offset 0, a pull begun after scrolling DOWN never
+  /// refreshes (it just scrolls). Ports the reference's from-the-top pull rule
+  /// via Flutter-native means.
+  Widget _listArea(
+    List<StoredTask> tasks,
+    Map<String, DueInfo> dueInfo,
+    Map<String, int> subDone,
+    Map<String, int> subTotal,
+    UrlOpener openUrl,
+  ) {
+    final sort = SortMode.byId(
+      ref.read(prefsControllerProvider).sortPerView[widget.viewId],
+    );
+    final mobile =
+        MediaQuery.sizeOf(context).width < ListDetailScaffold.breakpoint;
+    final physics = mobile ? const AlwaysScrollableScrollPhysics() : null;
+    // On a phone the "new task" FAB floats over the bottom of the list; pad the
+    // scroll so the last row can clear it (its trailing quick-date/⋯ are never
+    // stuck under the FAB). Desktop has no FAB, so no padding.
+    final listPadding = mobile
+        ? const EdgeInsets.only(bottom: 88)
+        : EdgeInsets.zero;
+
+    final Widget content;
+    if (tasks.isEmpty) {
+      final empty = Center(
+        child: Text(
+          emptyMessageFor(widget.viewId),
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      );
+      // Keep the empty view pull-refreshable on a phone: a full-height scroll
+      // view that always accepts an over-pull.
+      content = mobile
+          ? LayoutBuilder(
+              builder: (context, c) => SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: c.maxHeight),
+                  child: empty,
+                ),
+              ),
+            )
+          : empty;
+    } else if (sort == SortMode.manual) {
+      // Drag reorder rides ONLY the manual sort (backend position); the other
+      // sorts derive their order, so reordering them is meaningless (the
+      // reference disables it too).
+      content = ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        physics: physics,
+        padding: listPadding,
+        itemCount: tasks.length,
+        onReorderItem: (oldIndex, newIndex) =>
+            _onReorder(tasks, oldIndex, newIndex),
+        itemBuilder: (context, i) {
+          final stored = tasks[i];
+          return Row(
+            key: ValueKey('reorder-${stored.task.id}'),
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              ReorderableDragStartListener(
+                index: i,
+                child: SizedBox(
+                  key: ValueKey('drag-handle-${stored.task.id}'),
+                  // A comfortable drag target for both a mouse and a finger
+                  // (touch-drag rides the same handle); the glyph stays small,
+                  // the HIT AREA is 48dp tall.
+                  width: 36,
+                  height: 48,
+                  child: Icon(
+                    Icons.drag_indicator,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: _taskRow(stored, dueInfo, subDone, subTotal, openUrl),
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      content = ListView.builder(
+        physics: physics,
+        padding: listPadding,
+        itemCount: tasks.length,
+        itemBuilder: (context, i) =>
+            _taskRow(tasks[i], dueInfo, subDone, subTotal, openUrl),
+      );
+    }
+
+    if (!mobile) return content;
+    return RefreshIndicator(onRefresh: _pullRefresh, child: content);
   }
 
   /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as the

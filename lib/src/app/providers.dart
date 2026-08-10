@@ -11,7 +11,8 @@
 
 import 'dart:io' show Directory;
 
-import 'package:flutter/material.dart' show ThemeMode, VoidCallback, Widget;
+import 'package:flutter/material.dart'
+    show FocusNode, GlobalKey, ScaffoldState, ThemeMode, VoidCallback, Widget;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -139,6 +140,35 @@ final viewCountsProvider = Provider<Map<String, int>>((ref) {
 /// sign-in/out/sync route through providers a later auth-integration task
 /// supplies). Overridable so tests and that future task drop in a live footer.
 final sidebarFooterProvider = Provider<Widget?>((ref) => null);
+
+/// The single [FocusNode] the always-visible quick-add input attaches to. Held
+/// app-wide (only one quick-add field is ever mounted) so the mobile FAB — which
+/// lives outside the list pane — can focus the input without an empty-task
+/// create (#166: "+ New task"/FAB/n all just FOCUS the input). Disposed with the
+/// container.
+final quickAddFocusProvider = Provider<FocusNode>((ref) {
+  final node = FocusNode(debugLabel: 'quickAdd');
+  ref.onDispose(node.dispose);
+  return node;
+});
+
+/// A stable [GlobalKey] for the compact (phone) [Scaffold], so the shell can
+/// drive its slide-in drawer (open via the hamburger, close after a navigation)
+/// across the rebuilds a route change triggers. Held for the app lifetime — a
+/// key rebuilt each frame would detach the Scaffold's state.
+final mobileScaffoldKeyProvider = Provider<GlobalKey<ScaffoldState>>(
+  (ref) => GlobalKey<ScaffoldState>(),
+);
+
+/// Runs a manual refresh — the mobile pull-to-refresh gesture (and, later, a
+/// Sync-now button). The reactive store keeps every view live, so a plain
+/// "reload" is already continuous; the default is a completed future and the
+/// sync subsystem overrides this to run a real sync when a session is live
+/// (mirrors the reference's "sync when authed, else reload"). Overridable so a
+/// test can drive the pull affordance deterministically.
+final refreshActionProvider = Provider<Future<void> Function()>(
+  (ref) => () async {},
+);
 
 /// The app's [GoRouter], built once with the view restored from prefs. Held for
 /// the process lifetime (it owns navigation state), so it is a plain Provider.
