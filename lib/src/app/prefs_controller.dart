@@ -37,6 +37,16 @@ class PrefsController extends Notifier<Prefs> {
   /// Persist the last-selected view (survives restart).
   void setView(String viewId) => _write(state.copyWith(view: viewId));
 
+  /// Set the theme preference ('system' | 'light' | 'dark'). Persisted and
+  /// pushed to every watcher so the app re-themes live (the Appearance radio and
+  /// the sidebar sun/moon toggle both call this).
+  void setTheme(String theme) => _write(state.copyWith(theme: theme));
+
+  /// Mark the first-launch onboarding intro as seen — persisted so the welcome
+  /// never shows again once dismissed (the reference's `onboardingSeen`).
+  void setOnboardingSeen(bool value) =>
+      _write(state.copyWith(onboardingSeen: value));
+
   /// Show or hide completed tasks across the views.
   void setShowCompleted(bool value) =>
       _write(state.copyWith(showCompleted: value));

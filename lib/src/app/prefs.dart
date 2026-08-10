@@ -51,7 +51,7 @@ class WindowSize {
 /// copies that the store persists.
 class Prefs {
   const Prefs({
-    this.theme = 'system',
+    this.theme = 'dark',
     this.view = 'all',
     this.sortPerView = const {},
     this.showCompleted = false,
@@ -63,7 +63,9 @@ class Prefs {
     this.unknownKeys = const {},
   });
 
-  /// 'system' | 'light' | 'dark' (default dark lands in the theme task).
+  /// 'system' | 'light' | 'dark'. Defaults to `dark` (ratified default-dark, the
+  /// reference's `getThemePref()` fallback) — a fresh install opens dark until
+  /// the user chooses otherwise. An unrecognized value resolves to system.
   final String theme;
 
   /// The active view id (smart view or list).
@@ -143,7 +145,7 @@ class Prefs {
   };
 
   factory Prefs.fromJson(Map<String, Object?> json) => Prefs(
-    theme: json['theme'] as String? ?? 'system',
+    theme: json['theme'] as String? ?? 'dark',
     view: json['view'] as String? ?? 'all',
     sortPerView:
         (json['sort_per_view'] as Map?)?.cast<String, String>() ?? const {},

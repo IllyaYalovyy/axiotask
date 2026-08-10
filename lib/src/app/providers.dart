@@ -79,9 +79,13 @@ final prefsStoreProvider = Provider<PrefsStore>(
 /// never throws — reading it must be safe at construction time.
 final prefsProvider = Provider<Prefs>((ref) => const Prefs());
 
-/// The resolved [ThemeMode] from the `theme` pref ('system' | 'light' | 'dark').
+/// The resolved [ThemeMode] from the LIVE `theme` pref ('system' | 'light' |
+/// 'dark'). Watches [prefsControllerProvider] (not the static launch snapshot)
+/// so a theme change from the Appearance tab or the sidebar toggle re-themes the
+/// running app immediately; the launch value flows in through the controller's
+/// seed so the boot theme is still the persisted one.
 final themeModeProvider = Provider<ThemeMode>(
-  (ref) => themeModeFromString(ref.watch(prefsProvider).theme),
+  (ref) => themeModeFromString(ref.watch(prefsControllerProvider).theme),
 );
 
 /// The window-title seam. Defaults to a no-op (mobile / tests); main.dart

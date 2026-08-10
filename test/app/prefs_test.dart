@@ -14,17 +14,18 @@ void main() {
 
   File prefsFile() => File(p.join(tmp.path, 'prefs.json'));
 
-  test('missing file → defaults (theme system, no window size)', () {
+  test('missing file → defaults (default-dark theme, no window size)', () {
+    // Default-dark ruling: a fresh install with no prefs file opens in dark.
     final store = PrefsStore(prefsFile());
     final prefs = store.load();
-    expect(prefs.theme, 'system');
+    expect(prefs.theme, 'dark');
     expect(prefs.showCompleted, isFalse);
     expect(prefs.windowSize, isNull);
   });
 
   test('malformed file → defaults, not a crash', () {
     prefsFile().writeAsStringSync('not json at all');
-    expect(PrefsStore(prefsFile()).load().theme, 'system');
+    expect(PrefsStore(prefsFile()).load().theme, 'dark');
   });
 
   test('round-trips full prefs through disk', () {
