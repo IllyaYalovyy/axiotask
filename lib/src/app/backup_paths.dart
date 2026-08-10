@@ -34,16 +34,18 @@ String backupFileName(DateTime now) => 'axiotask-backup-${_stamp(now)}.json';
 /// The default target for a new export — a fresh timestamped file directly
 /// inside an already-resolved backups directory [backupsDir]. [now] defaults to
 /// the ambient [clock] (never `DateTime.now()` directly, per the wall-clock ban).
-File defaultBackupIn(Directory backupsDir, {DateTime? now}) => File(
-  p.join(backupsDir.path, backupFileName(now ?? clock.now())),
-);
+File defaultBackupIn(Directory backupsDir, {DateTime? now}) =>
+    File(p.join(backupsDir.path, backupFileName(now ?? clock.now())));
 
 /// The default target for a new export rooted at the data [base] —
 /// `<base>/<app-dir>/backups/axiotask-backup-<stamp>.json`. Instance-aware. It
 /// is used as LOCAL wall-clock time so the stamp matches the user's timezone,
 /// mirroring `jiff::Zoned::now()`.
-File defaultBackupPath(Directory base, {Map<String, String>? env, DateTime? now}) =>
-    defaultBackupIn(backupsDirIn(base, env: env), now: now);
+File defaultBackupPath(
+  Directory base, {
+  Map<String, String>? env,
+  DateTime? now,
+}) => defaultBackupIn(backupsDirIn(base, env: env), now: now);
 
 /// The newest existing backup across the instance's backups dir, or `null` when
 /// none exists. See [latestBackupIn] for the selection rule.

@@ -29,7 +29,9 @@ void main() {
 
   // A container whose controller persists to a real [PrefsStore] and whose
   // launch snapshot is [seed].
-  ({PrefsController controller, PrefsStore store}) wire({Prefs seed = const Prefs()}) {
+  ({PrefsController controller, PrefsStore store}) wire({
+    Prefs seed = const Prefs(),
+  }) {
     final s = store();
     final container = createTestContainer(
       overrides: [

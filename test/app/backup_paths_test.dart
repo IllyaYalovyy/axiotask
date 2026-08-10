@@ -13,7 +13,9 @@ import 'package:path/path.dart' as p;
 
 void main() {
   late Directory tmp;
-  setUp(() => tmp = Directory.systemTemp.createTempSync('axiotask_backup_paths'));
+  setUp(
+    () => tmp = Directory.systemTemp.createTempSync('axiotask_backup_paths'),
+  );
   tearDown(() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });

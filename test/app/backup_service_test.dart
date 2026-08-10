@@ -95,52 +95,62 @@ void main() {
       expect(parsed.lists.single.title, 'Inbox');
     });
 
-    test('with no target lands a timestamped default that latest picks up',
-        () async {
-      final store = await freshStore();
-      await store.upsertList(_list('L1', 'Inbox'));
+    test(
+      'with no target lands a timestamped default that latest picks up',
+      () async {
+        final store = await freshStore();
+        await store.upsertList(_list('L1', 'Inbox'));
 
-      final result = await withClock(
-        Clock.fixed(DateTime(2026, 6, 8, 1, 45)),
-        () => service(store).export(),
-      );
+        final result = await withClock(
+          Clock.fixed(DateTime(2026, 6, 8, 1, 45)),
+          () => service(store).export(),
+        );
 
-      expect(result.path.endsWith('axiotask-backup-20260608-014500.json'), isTrue);
-      final latest = latestBackupIn(tmp);
-      expect(latest, isNotNull);
-      expect(latest!.path, result.path);
-    });
+        expect(
+          result.path.endsWith('axiotask-backup-20260608-014500.json'),
+          isTrue,
+        );
+        final latest = latestBackupIn(tmp);
+        expect(latest, isNotNull);
+        expect(latest!.path, result.path);
+      },
+    );
   });
 
   group('import', () {
-    test('round-trips lists and tasks into an empty store as fresh creates',
-        () async {
-      final src = await freshStore();
-      await src.upsertList(_list('L1', 'Inbox'));
-      await src.upsertTask(_task('T1', 'L1', 'first'));
-      await src.upsertTask(_task('T2', 'L1', 'second', parent: 'T1'));
-      final out = File('${tmp.path}/snap.json');
-      await service(src).export(to: out);
+    test(
+      'round-trips lists and tasks into an empty store as fresh creates',
+      () async {
+        final src = await freshStore();
+        await src.upsertList(_list('L1', 'Inbox'));
+        await src.upsertTask(_task('T1', 'L1', 'first'));
+        await src.upsertTask(_task('T2', 'L1', 'second', parent: 'T1'));
+        final out = File('${tmp.path}/snap.json');
+        await service(src).export(to: out);
 
-      final dst = await freshStore();
-      final result = await service(dst).importFrom(from: out);
+        final dst = await freshStore();
+        final result = await service(dst).importFrom(from: out);
 
-      expect(result.lists, 1);
-      expect(result.tasks, 2);
-      final lists = await dst.allLists();
-      expect(lists.single.list.title, 'Inbox');
-      // A restored non-local list is a pending create with its etag dropped.
-      expect(lists.single.syncState, SyncState.dirty);
-      expect(lists.single.pendingOp, 'create');
-      expect(lists.single.list.etag, isNull);
-      final tasks = await dst.listTasks('L1');
-      expect(tasks.map((t) => t.task.title), containsAll(['first', 'second']));
-      final child = tasks.firstWhere((t) => t.task.id == 'T2');
-      expect(child.task.parent, 'T1', reason: 'parent link preserved');
-      expect(child.syncState, SyncState.dirty);
-      expect(child.pendingOp, 'create');
-      expect(child.task.etag, isNull);
-    });
+        expect(result.lists, 1);
+        expect(result.tasks, 2);
+        final lists = await dst.allLists();
+        expect(lists.single.list.title, 'Inbox');
+        // A restored non-local list is a pending create with its etag dropped.
+        expect(lists.single.syncState, SyncState.dirty);
+        expect(lists.single.pendingOp, 'create');
+        expect(lists.single.list.etag, isNull);
+        final tasks = await dst.listTasks('L1');
+        expect(
+          tasks.map((t) => t.task.title),
+          containsAll(['first', 'second']),
+        );
+        final child = tasks.firstWhere((t) => t.task.id == 'T2');
+        expect(child.task.parent, 'T1', reason: 'parent link preserved');
+        expect(child.syncState, SyncState.dirty);
+        expect(child.pendingOp, 'create');
+        expect(child.task.etag, isNull);
+      },
+    );
 
     test('importFrom() with no argument restores the newest backup', () async {
       final src = await freshStore();
@@ -157,34 +167,39 @@ void main() {
       expect((await dst.listTasks('L1')).single.task.title, 'kept');
     });
 
-    test('is non-destructive: existing rows are kept, only missing ones added',
-        () async {
-      // Source backup holds L1 (renamed) + T1 + T2.
-      final src = await freshStore();
-      await src.upsertList(_list('L1', 'Backup title'));
-      await src.upsertTask(_task('T1', 'L1', 'first'));
-      await src.upsertTask(_task('T2', 'L1', 'second'));
-      final out = File('${tmp.path}/snap.json');
-      await service(src).export(to: out);
+    test(
+      'is non-destructive: existing rows are kept, only missing ones added',
+      () async {
+        // Source backup holds L1 (renamed) + T1 + T2.
+        final src = await freshStore();
+        await src.upsertList(_list('L1', 'Backup title'));
+        await src.upsertTask(_task('T1', 'L1', 'first'));
+        await src.upsertTask(_task('T2', 'L1', 'second'));
+        final out = File('${tmp.path}/snap.json');
+        await service(src).export(to: out);
 
-      // Destination already has L1 (own title) and T1.
-      final dst = await freshStore();
-      await dst.upsertList(_list('L1', 'Existing title'));
-      await dst.upsertTask(_task('T1', 'L1', 'mine'));
+        // Destination already has L1 (own title) and T1.
+        final dst = await freshStore();
+        await dst.upsertList(_list('L1', 'Existing title'));
+        await dst.upsertTask(_task('T1', 'L1', 'mine'));
 
-      final result = await service(dst).importFrom(from: out);
-      expect(result.lists, 0, reason: 'L1 already present — untouched');
-      expect(result.tasks, 1, reason: 'only the missing T2 is added');
+        final result = await service(dst).importFrom(from: out);
+        expect(result.lists, 0, reason: 'L1 already present — untouched');
+        expect(result.tasks, 1, reason: 'only the missing T2 is added');
 
-      final lists = await dst.allLists();
-      expect(lists.single.list.title, 'Existing title', reason: 'not clobbered');
-      final tasks = await dst.listTasks('L1');
-      expect(tasks.firstWhere((t) => t.task.id == 'T1').task.title, 'mine');
-      expect(tasks.any((t) => t.task.id == 'T2'), isTrue);
-    });
+        final lists = await dst.allLists();
+        expect(
+          lists.single.list.title,
+          'Existing title',
+          reason: 'not clobbered',
+        );
+        final tasks = await dst.listTasks('L1');
+        expect(tasks.firstWhere((t) => t.task.id == 'T1').task.title, 'mine');
+        expect(tasks.any((t) => t.task.id == 'T2'), isTrue);
+      },
+    );
 
-    test('re-homes a restored task whose parent is absent (FK safety)',
-        () async {
+    test('re-homes a restored task whose parent is absent (FK safety)', () async {
       // Hand-craft a backup whose only task points at a parent that is nowhere.
       final backup = Backup.build('2026-06-08T00:00:00Z', [
         (_list('L1', 'Inbox'), [_task('T2', 'L1', 'orphan', parent: 'GHOST')]),

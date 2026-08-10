@@ -40,8 +40,7 @@ void main() {
   // A prefs store with the first-launch onboarding already dismissed — for the
   // shell tests that exercise a normal (not first-launch) empty workspace and
   // would otherwise sit behind the welcome overlay.
-  PrefsStore seenPrefs() =>
-      prefs()..save(const Prefs(onboardingSeen: true));
+  PrefsStore seenPrefs() => prefs()..save(const Prefs(onboardingSeen: true));
 
   Future<void> pumpApp(
     WidgetTester tester, {
@@ -125,7 +124,12 @@ void main() {
     tester,
   ) async {
     final title = _FakeTitle();
-    await pumpApp(tester, store: seenPrefs(), title: title, instancePrefix: 'dev');
+    await pumpApp(
+      tester,
+      store: seenPrefs(),
+      title: title,
+      instancePrefix: 'dev',
+    );
     expect(title.titles.last, 'All Tasks — axiotask (dev)');
   });
 

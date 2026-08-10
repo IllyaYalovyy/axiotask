@@ -85,7 +85,10 @@ void main() {
         find.text('Delete 2 completed tasks? This cannot be undone.'),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('clear-completed-confirm-button')), findsOneWidget);
+      expect(
+        find.byKey(const Key('clear-completed-confirm-button')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('canceling the confirm deletes nothing', (tester) async {
