@@ -593,10 +593,16 @@ class SyncEngine {
           error = e;
         }
         if (error == null) {
-          // Drop the intent first so the server's parent/position can land
-          // (applyPushedTask refuses to touch them while a move is pending).
-          await _store.clearMove(mv.taskId);
-          await _applyMoveResponse(before, remote!);
+          // Clear the intent + adopt the response as ONE atomic pair
+          // (MIGRATION-PLAN §5): clearMove first so applyPushedTask's guard lets
+          // the server's parent/position land, both under one txn so a kill in
+          // the gap rolls back and the move re-pushes next run.
+          await _store.finishMove(
+            mv.taskId,
+            remote!,
+            adoptBody: reconcile.moveAdoption(before) == MoveAdoption.body,
+            expectedLocalUpdated: before?.localUpdated ?? remote.updated,
+          );
           out.pushed += 1;
           break;
         }
