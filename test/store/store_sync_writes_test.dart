@@ -724,7 +724,11 @@ void main() {
         'my edit',
         reason: 'a meta-only landing keeps the unrelated pending content edit',
       );
-      expect(t1.syncState, SyncState.dirty, reason: 'the edit still needs push');
+      expect(
+        t1.syncState,
+        SyncState.dirty,
+        reason: 'the edit still needs push',
+      );
     });
 
     test(
