@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../ui/theme.dart';
+import '../ui/toast.dart';
 import 'providers.dart';
 
 /// Root widget: a router-driven, themed [MaterialApp].
@@ -20,6 +21,7 @@ class AxiotaskApp extends ConsumerWidget {
     final prefix = ref.watch(instancePrefixProvider);
     final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final toasts = ref.watch(toastControllerProvider);
 
     return MaterialApp.router(
       // Base app title (task switcher / accessibility). The live desktop window
@@ -30,6 +32,12 @@ class AxiotaskApp extends ConsumerWidget {
       darkTheme: buildDarkTheme(),
       themeMode: themeMode,
       routerConfig: router,
+      // Mount the toast/undo stack ABOVE the Navigator so a toast out-stacks
+      // every modal overlay — dialogs, the detail panel, pickers (#172).
+      builder: (context, child) => ToastOverlay(
+        controller: toasts,
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }

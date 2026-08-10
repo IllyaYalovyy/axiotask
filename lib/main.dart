@@ -24,6 +24,7 @@ import 'src/app/startup_trace.dart';
 import 'src/app/window_manager_controller.dart';
 import 'src/app/window_service.dart';
 import 'src/app/window_title_controller.dart';
+import 'src/ui/app_boundary.dart';
 
 bool get _isDesktop =>
     !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
@@ -36,6 +37,9 @@ Future<void> main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
   Log.initLogging();
+  // Surface a render-time failure as a human screen instead of the framework's
+  // bare gray error box (a release build has no console).
+  installAppErrorBoundary();
 
   if (_isDesktop) {
     await windowManager.ensureInitialized();
