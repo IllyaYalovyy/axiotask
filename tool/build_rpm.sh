@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# Build an installable RPM of the axiotask Linux desktop app WITHOUT fastforge.
+#
+# This is the standalone path (the fastforge path is `flutter_distributor
+# package --platform linux --targets rpm` — see distribute_options.yaml). It
+# renders an RPM spec whose metadata mirrors linux/packaging/rpm/make_config.yaml,
+# stages the `flutter build linux --release` bundle, and calls rpmbuild.
+#
+# Layout the RPM installs:
+#   /usr/lib/axiotask/                 the whole release bundle (binary, data, lib)
+#   /usr/bin/axiotask                  symlink -> /usr/lib/axiotask/axiotask
+#   /usr/share/applications/axiotask.desktop
+#   /usr/share/icons/hicolor/512x512/apps/axiotask.png
+#
+# Usage:
+#   tool/build_rpm.sh                build the RPM (needs flutter + rpmbuild)
+#   tool/build_rpm.sh --dry-run      validate config + render spec + report the
+#                                    exact rpmbuild command, WITHOUT building
+#                                    (never invokes rpmbuild; always exits 0 on
+#                                    a valid config — this is the gate check)
+#   tool/build_rpm.sh --print-spec   render the spec to stdout and exit
+#
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+PKG_NAME="axiotask"
+SUMMARY="Fast, offline-first Google Tasks client"
+LICENSE="GPLv3+"
+URL="https://github.com/axiotask/axiotask"
+DESKTOP_SRC="linux/packaging/axiotask.desktop"
+# Icon: reuse the highest-res Android launcher (no separate desktop asset).
+ICON_SRC="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+BUNDLE_DIR="build/linux/x64/release/bundle"
+
+info()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
+warn()  { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
+die()   { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# ── Version: parse `version: X.Y.Z+B` from pubspec (X.Y.Z → Version, B → Release)
+read_version() {
+  local raw
+  raw=$(grep -E '^version:' pubspec.yaml | head -1 | sed -E 's/^version:[[:space:]]*//; s/[[:space:]]*#.*$//')
+  [ -n "$raw" ] || die "could not read version from pubspec.yaml"
+  VERSION="${raw%%+*}"
+  local build="${raw##*+}"
+  [ "$build" = "$raw" ] && build=1   # no +B present
+  RELEASE="$build"
+}
+
+# ── Render the RPM spec to stdout. Single source of the RPM metadata; kept in
+#    sync with linux/packaging/rpm/make_config.yaml (enforced by the test).
+render_spec() {
+  read_version
+  cat <<SPEC
+Name:           ${PKG_NAME}
+Version:        ${VERSION}
+Release:        ${RELEASE}%{?dist}
+Summary:        ${SUMMARY}
+License:        ${LICENSE}
+URL:            ${URL}
+
+# The bundle is a prebuilt x86_64 tree of shared objects; do not let rpmbuild
+# strip/repack it or generate auto-requires from the vendored *.so files.
+AutoReqProv:    no
+Requires:       gtk3
+Requires:       glib2
+%global __brp_strip %{nil}
+%global __brp_strip_static_archive %{nil}
+%global debug_package %{nil}
+
+%description
+axiotask is a fast, local-first frontend for Google Tasks. One Flutter
+codebase, one UI, for Linux desktop and Android: launches in under two
+seconds, fully usable offline, and every frequent action is one gesture.
+
+%files
+/usr/lib/${PKG_NAME}
+/usr/bin/${PKG_NAME}
+/usr/share/applications/${PKG_NAME}.desktop
+/usr/share/icons/hicolor/512x512/apps/${PKG_NAME}.png
+
+%post
+/usr/bin/gtk-update-icon-cache -f /usr/share/icons/hicolor &>/dev/null || :
+/usr/bin/update-desktop-database /usr/share/applications &>/dev/null || :
+
+%postun
+/usr/bin/gtk-update-icon-cache -f /usr/share/icons/hicolor &>/dev/null || :
+/usr/bin/update-desktop-database /usr/share/applications &>/dev/null || :
+
+%changelog
+* Mon Jan 01 2024 axiotask packaging <noreply@axiotask.dev> - ${VERSION}-${RELEASE}
+- Automated build via tool/build_rpm.sh
+SPEC
+}
+
+# ── Stage the buildroot that %files describes, from an existing release bundle.
+stage_buildroot() {
+  local root="$1"
+  [ -d "$BUNDLE_DIR" ] || die "release bundle not found at $BUNDLE_DIR (run: flutter build linux --release)"
+  [ -x "$BUNDLE_DIR/${PKG_NAME}" ] || die "release binary missing at $BUNDLE_DIR/${PKG_NAME}"
+
+  install -d "$root/usr/lib/${PKG_NAME}" "$root/usr/bin" \
+             "$root/usr/share/applications" \
+             "$root/usr/share/icons/hicolor/512x512/apps"
+  cp -a "$BUNDLE_DIR/." "$root/usr/lib/${PKG_NAME}/"
+  ln -sf "/usr/lib/${PKG_NAME}/${PKG_NAME}" "$root/usr/bin/${PKG_NAME}"
+  install -Dm644 "$DESKTOP_SRC" "$root/usr/share/applications/${PKG_NAME}.desktop"
+  if [ -f "$ICON_SRC" ]; then
+    install -Dm644 "$ICON_SRC" "$root/usr/share/icons/hicolor/512x512/apps/${PKG_NAME}.png"
+  else
+    warn "icon source $ICON_SRC missing — RPM will list an icon path with no file"
+  fi
+}
+
+# ── Static validation shared by --dry-run: fail loud on a broken config.
+validate_config() {
+  [ -f pubspec.yaml ] || die "pubspec.yaml missing"
+  [ -f "$DESKTOP_SRC" ] || die "desktop entry missing at $DESKTOP_SRC"
+  [ -f linux/packaging/rpm/make_config.yaml ] || die "fastforge make_config.yaml missing"
+  grep -q '^Exec=axiotask$' "$DESKTOP_SRC" || die "desktop Exec= must be 'axiotask' (matches /usr/bin/axiotask)"
+  read_version
+}
+
+case "${1:-}" in
+  --print-spec)
+    render_spec
+    exit 0
+    ;;
+  --dry-run)
+    validate_config
+    info "config OK — package ${PKG_NAME} ${VERSION}-${RELEASE}"
+    spec_tmp="$(mktemp)"
+    render_spec > "$spec_tmp"
+    info "rendered spec -> $spec_tmp ($(wc -l < "$spec_tmp") lines)"
+    if [ -d "$BUNDLE_DIR" ]; then
+      info "release bundle present: $BUNDLE_DIR ($(du -sh "$BUNDLE_DIR" | cut -f1))"
+    else
+      warn "release bundle NOT built yet — real build will run: flutter build linux --release"
+    fi
+    if command -v rpmbuild >/dev/null; then
+      info "rpmbuild available: $(command -v rpmbuild)"
+    else
+      warn "rpmbuild NOT installed — real build needs: sudo dnf install rpm-build"
+    fi
+    info "DRY RUN OK. Real build would run:"
+    printf '      rpmbuild -bb --define "_topdir <tmp>" --buildroot <staged> %s.spec\n' "$PKG_NAME" >&2
+    rm -f "$spec_tmp"
+    exit 0
+    ;;
+  "")
+    : # fall through to real build
+    ;;
+  *)
+    die "unknown argument: ${1} (use: --dry-run | --print-spec | no args)"
+    ;;
+esac
+
+# ── Real build ──────────────────────────────────────────────────────────────
+validate_config
+command -v flutter  >/dev/null || die "flutter not on PATH"
+command -v rpmbuild >/dev/null || die "rpmbuild not found — sudo dnf install rpm-build"
+
+info "Building release bundle (flutter build linux --release)..."
+flutter build linux --release || die "flutter build linux --release failed"
+
+TOPDIR="$(mktemp -d)"
+BUILDROOT="$(mktemp -d)"
+cleanup() { rm -rf "$TOPDIR" "$BUILDROOT"; }
+trap cleanup EXIT
+
+mkdir -p "$TOPDIR/SPECS" "$TOPDIR/RPMS"
+render_spec > "$TOPDIR/SPECS/${PKG_NAME}.spec"
+stage_buildroot "$BUILDROOT"
+
+info "Running rpmbuild..."
+rpmbuild -bb \
+  --define "_topdir $TOPDIR" \
+  --buildroot "$BUILDROOT" \
+  "$TOPDIR/SPECS/${PKG_NAME}.spec" || die "rpmbuild failed"
+
+OUT_DIR="$ROOT/dist"
+mkdir -p "$OUT_DIR"
+rpm_file=$(find "$TOPDIR/RPMS" -name '*.rpm' | head -1)
+[ -n "$rpm_file" ] || die "rpmbuild produced no .rpm"
+cp -f "$rpm_file" "$OUT_DIR/"
+info "RPM built -> $OUT_DIR/$(basename "$rpm_file")"
+info "Install with: sudo dnf install $OUT_DIR/$(basename "$rpm_file")"

@@ -1,0 +1,36 @@
+# fastforge (flutter_distributor) RPM maker config for the Linux desktop build.
+#
+# Consumed by `flutter_distributor package --platform linux --targets rpm`
+# (see ../../../distribute_options.yaml). fastforge derives Version from
+# pubspec.yaml, bundles the `flutter build linux --release` output under
+# /usr/lib/axiotask, and installs the launcher + desktop entry + icon.
+#
+# This file is the single source of the RPM's METADATA. tool/build_rpm.sh is a
+# standalone, fastforge-free path that renders an equivalent spec and calls
+# rpmbuild directly; the two are kept in sync and both are covered by
+# test/packaging/rpm_packaging_test.dart. When you change metadata here, change
+# the render block in tool/build_rpm.sh to match (the test enforces it).
+display_name: axiotask
+package_name: axiotask
+generic_name: Task Manager
+license: GPLv3+
+summary: Fast, offline-first Google Tasks client
+description: |
+  axiotask is a fast, local-first frontend for Google Tasks. One Flutter
+  codebase, one UI, for Linux desktop and Android: launches in under two
+  seconds, fully usable offline, and every frequent action is one gesture.
+categories:
+  - Utility
+  - Office
+  - ProjectManagement
+keywords:
+  - tasks
+  - todo
+  - google
+  - productivity
+# Runtime libraries the release bundle links against but does NOT vendor
+# (GTK/GLib are the host toolkit; sqlite3 is vendored under bundle/lib).
+# Verified with ldd on build/linux/x64/release/bundle/axiotask.
+dependencies:
+  - gtk3
+  - glib2
