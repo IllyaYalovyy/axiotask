@@ -37,6 +37,12 @@ void main() {
 
   PrefsStore prefs() => PrefsStore(File(p.join(tmp.path, 'prefs.json')));
 
+  // A prefs store with the first-launch onboarding already dismissed — for the
+  // shell tests that exercise a normal (not first-launch) empty workspace and
+  // would otherwise sit behind the welcome overlay.
+  PrefsStore seenPrefs() =>
+      prefs()..save(const Prefs(onboardingSeen: true));
+
   Future<void> pumpApp(
     WidgetTester tester, {
     required PrefsStore store,
@@ -110,7 +116,7 @@ void main() {
 
   testWidgets('window title reflects the initial view', (tester) async {
     final title = _FakeTitle();
-    await pumpApp(tester, store: prefs(), title: title);
+    await pumpApp(tester, store: seenPrefs(), title: title);
     // Default view is "all" (T2.1 prefs default) → "All Tasks — axiotask".
     expect(title.titles.last, 'All Tasks — axiotask');
   });
@@ -119,14 +125,14 @@ void main() {
     tester,
   ) async {
     final title = _FakeTitle();
-    await pumpApp(tester, store: prefs(), title: title, instancePrefix: 'dev');
+    await pumpApp(tester, store: seenPrefs(), title: title, instancePrefix: 'dev');
     expect(title.titles.last, 'All Tasks — axiotask (dev)');
   });
 
   testWidgets('selecting a view persists it and retitles the window', (
     tester,
   ) async {
-    final store = prefs();
+    final store = seenPrefs();
     final title = _FakeTitle();
     await pumpApp(tester, store: store, title: title);
 
@@ -182,7 +188,7 @@ void main() {
   testWidgets('selecting a list navigates, persists it, and retitles', (
     tester,
   ) async {
-    final store = prefs();
+    final store = seenPrefs();
     final title = _FakeTitle();
     await pumpAppWithLists(
       tester,
@@ -232,5 +238,50 @@ void main() {
       reason: 'back must not fall through to exit the app',
     );
     expect(find.widgetWithText(TextField, 'my task'), findsNothing);
+  });
+
+  group('first-launch onboarding', () {
+    testWidgets('shows the welcome once on an empty, never-seen workspace', (
+      tester,
+    ) async {
+      await pumpApp(tester, store: prefs(), title: _FakeTitle());
+      expect(find.byKey(const Key('onboarding-intro')), findsOneWidget);
+      expect(find.text('Welcome to axiotask'), findsOneWidget);
+    });
+
+    testWidgets('does not show when the workspace already has tasks', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        store: prefs(),
+        title: _FakeTitle(),
+        tasks: [storedTask('T1', 'existing')],
+      );
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+    });
+
+    testWidgets('does not show once it has been seen', (tester) async {
+      await pumpApp(tester, store: seenPrefs(), title: _FakeTitle());
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+    });
+
+    testWidgets('dismissing it persists onboardingSeen and hides it', (
+      tester,
+    ) async {
+      final store = prefs();
+      await pumpApp(tester, store: store, title: _FakeTitle());
+      expect(find.byKey(const Key('onboarding-intro')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('onboarding-dismiss')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+      expect(
+        store.load().onboardingSeen,
+        isTrue,
+        reason: 'the welcome never returns after dismissal',
+      );
+    });
   });
 }

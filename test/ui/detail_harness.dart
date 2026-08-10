@@ -73,6 +73,7 @@ class FakeBackend implements Commands {
   final List<String> reordered = [];
   final List<String> movedTasks = [];
   final List<String> movedToList = [];
+  final List<String> clearedLists = [];
 
   List<StoredTask> get tasks => List.unmodifiable(_tasks);
 
@@ -227,7 +228,36 @@ class FakeBackend implements Commands {
   Future<void> undoSetDue(List<DueUndoEntry> entries) async {}
 
   @override
-  Future<int> clearCompleted(String listId) async => throw UnimplementedError();
+  Future<int> clearCompleted(String listId) async {
+    clearedLists.add(listId);
+    // Mirror the real command: drop completed tasks in this list unless they
+    // shelter an open descendant (a completed parent of an unfinished subtask).
+    bool hasOpenDescendant(String root) {
+      final frontier = <String>[root];
+      while (frontier.isNotEmpty) {
+        final pid = frontier.removeLast();
+        for (final c in _tasks.where((c) => c.task.parent == pid)) {
+          if (c.task.status != TaskStatus.completed) return true;
+          frontier.add(c.task.id);
+        }
+      }
+      return false;
+    }
+
+    final doomed = _tasks
+        .where(
+          (t) =>
+              t.listId == listId &&
+              t.task.status == TaskStatus.completed &&
+              !hasOpenDescendant(t.task.id),
+        )
+        .map((t) => t.task.id)
+        .toSet();
+    if (doomed.isEmpty) return 0;
+    _tasks.removeWhere((t) => doomed.contains(t.task.id));
+    _emit();
+    return doomed.length;
+  }
 
   @override
   Future<void> moveTask(
