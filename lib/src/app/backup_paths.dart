@@ -33,7 +33,7 @@ String backupFileName(DateTime now) => 'axiotask-backup-${_stamp(now)}.json';
 
 /// The default target for a new export — a fresh timestamped file directly
 /// inside an already-resolved backups directory [backupsDir]. [now] defaults to
-/// the ambient [clock] (never `DateTime.now()` directly, per the wall-clock ban).
+/// the ambient [clock], never the wall clock directly (per the time-source ban).
 File defaultBackupIn(Directory backupsDir, {DateTime? now}) =>
     File(p.join(backupsDir.path, backupFileName(now ?? clock.now())));
 
