@@ -24,6 +24,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'search.dart';
 import 'sort_dropdown.dart';
 import 'task_row.dart';
 import 'url_opener.dart';
@@ -46,6 +47,7 @@ class TaskListView extends ConsumerStatefulWidget {
     required this.viewId,
     required this.selectedTaskId,
     required this.onOpenTask,
+    this.onOpenInView,
     super.key,
   });
 
@@ -58,6 +60,11 @@ class TaskListView extends ConsumerStatefulWidget {
 
   /// Open the detail panel for a task id (router-backed in the app).
   final ValueChanged<String> onOpenTask;
+
+  /// Open a task in a SPECIFIC view (list) — used by search to land a subtask
+  /// on its parent's list (#92). When null, opening falls back to [onOpenTask]
+  /// in the current view.
+  final void Function(String viewId, String taskId)? onOpenInView;
 
   @override
   ConsumerState<TaskListView> createState() => _TaskListViewState();
@@ -152,6 +159,28 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     offerDueCascadeUndo(messenger, commands, res);
   }
 
+  /// Open the live search over EVERY task. Selecting a result navigates to it —
+  /// a matched subtask lands on its parent's list so it opens in context (#92).
+  Future<void> _openSearch() async {
+    final all =
+        ref.read(allTasksProvider).asData?.value ?? const <StoredTask>[];
+    final listTitles = {for (final l in _lists) l.list.id: l.list.title};
+    await showSearchOverlay(
+      context,
+      tasks: all,
+      listTitles: listTitles,
+      onSelect: (task) {
+        final viewId = searchLandingViewId(all, task);
+        final open = widget.onOpenInView;
+        if (open != null) {
+          open(viewId, task.task.id);
+        } else {
+          widget.onOpenTask(task.task.id);
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final all =
@@ -202,6 +231,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         _ListToolbar(
           sort: sort,
           showCompleted: prefs.showCompleted,
+          onSearch: _openSearch,
           onSort: (m) => ref
               .read(prefsControllerProvider.notifier)
               .setSort(widget.viewId, m),
@@ -254,12 +284,14 @@ class _ListToolbar extends StatelessWidget {
   const _ListToolbar({
     required this.sort,
     required this.showCompleted,
+    required this.onSearch,
     required this.onSort,
     required this.onShowCompleted,
   });
 
   final SortMode sort;
   final bool showCompleted;
+  final VoidCallback onSearch;
   final ValueChanged<SortMode> onSort;
   final ValueChanged<bool> onShowCompleted;
 
@@ -274,7 +306,21 @@ class _ListToolbar extends StatelessWidget {
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          SortDropdown(value: sort, onChanged: onSort),
+          // A nested Wrap (not a Row) so a very narrow pane flows the sort
+          // dropdown below the search button instead of overflowing — the same
+          // reason the outer toolbar is a Wrap.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              IconButton(
+                key: const Key('search-button'),
+                icon: const Icon(Icons.search),
+                tooltip: 'Search tasks',
+                onPressed: onSearch,
+              ),
+              SortDropdown(value: sort, onChanged: onSort),
+            ],
+          ),
           // The whole label toggles — a coarse pointer gets a full-size target,
           // not just the checkbox (touch has no hover).
           InkWell(
