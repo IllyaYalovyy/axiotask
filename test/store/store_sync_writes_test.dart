@@ -497,4 +497,145 @@ void main() {
       );
     });
   });
+
+  group('resolve_conflicted_copy atomic pair (kill-window)', () {
+    // Stage a clean T1 then a dirty edit over it, so the row carries a base and
+    // (unless overridden) a stale etag the 412 resolver would land canonical
+    // over. Returns nothing — the store holds the state.
+    Future<void> stageConflictedEdit(
+      Store s, {
+      required String editedTitle,
+      required String etag,
+    }) async {
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'T1',
+            position: '1',
+            title: 'old',
+            status: TaskStatus.needsAction,
+            etag: 'e1',
+            updated: _t0,
+          ),
+          listId: 'L1',
+          syncState: SyncState.clean,
+          localUpdated: _t0,
+        ),
+      );
+      await s.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'T1',
+            position: '1',
+            title: editedTitle,
+            status: TaskStatus.needsAction,
+            etag: etag,
+            updated: _t0,
+          ),
+          listId: 'L1',
+          syncState: SyncState.dirty,
+          localUpdated: _t0,
+          pendingOp: 'update',
+        ),
+      );
+    }
+
+    Task remoteCanonical(String title, String etag) => Task(
+      id: 'T1',
+      position: '1',
+      title: title,
+      status: TaskStatus.needsAction,
+      etag: etag,
+      updated: _t0,
+    );
+
+    StoredTask copyOf(String id, String title, {String? parent}) => StoredTask(
+      task: Task(
+        id: id,
+        parent: parent,
+        position: '1',
+        title: '$title (conflicted copy)',
+        status: TaskStatus.needsAction,
+        updated: _t0,
+      ),
+      listId: 'L1',
+      syncState: SyncState.dirty,
+      localUpdated: _t0,
+      pendingOp: 'create',
+    );
+
+    test('lands the canonical row AND the copy together', () async {
+      final s = await freshStore();
+      await stageConflictedEdit(s, editedTitle: 'mine', etag: 'stale');
+
+      await s.resolveConflictedCopy(
+        remoteCanonical('theirs', 'e2'),
+        _t0,
+        copyOf('copy-1', 'mine'),
+      );
+
+      final rows = await s.listTasks('L1');
+      expect(rows.length, 2, reason: 'canonical remote + conflicted copy');
+      final canonical = rows.firstWhere((r) => r.task.id == 'T1');
+      expect(canonical.task.title, 'theirs');
+      expect(canonical.task.etag, 'e2');
+      expect(canonical.syncState, SyncState.clean);
+      expect(
+        await s.baseSnapshot('T1'),
+        isNull,
+        reason: 'a clean canonical landing clears the base',
+      );
+      final copy = rows.firstWhere((r) => r.task.id == 'copy-1');
+      expect(copy.task.title, 'mine (conflicted copy)');
+      expect(copy.syncState, SyncState.dirty);
+      expect(copy.pendingOp, 'create');
+    });
+
+    test(
+      'a failed copy insert rolls the canonical landing back — the edit survives',
+      () async {
+        // The kill-window guarantee: if the process dies (or a write faults)
+        // AFTER the canonical row lands but BEFORE the copy is inserted, the two
+        // separate writes of the reference would leave the dirty id overwritten
+        // by the remote and the local edit gone forever (P3 data loss). Forcing
+        // the SECOND write to fail — the copy names a parent that does not exist,
+        // an immediate FK violation — proves the pair is one transaction: the
+        // canonical landing is rolled back and the row is left exactly as it was,
+        // dirty on its stale etag with its base intact, so the NEXT run
+        // re-resolves the 412 and preserves the edit.
+        final s = await freshStore();
+        await stageConflictedEdit(s, editedTitle: 'mine', etag: 'stale');
+        expect(await s.baseSnapshot('T1'), isNotNull);
+
+        await expectLater(
+          s.resolveConflictedCopy(
+            remoteCanonical('theirs', 'e2'),
+            _t0,
+            copyOf('copy-1', 'mine', parent: 'ghost-parent'),
+          ),
+          throwsA(anything),
+          reason: 'the copy insert violates the parent FK',
+        );
+
+        final rows = await s.listTasks('L1');
+        expect(rows.length, 1, reason: 'no half-applied copy left behind');
+        final t1 = rows.single;
+        expect(t1.task.id, 'T1');
+        expect(
+          t1.task.title,
+          'mine',
+          reason: 'the canonical landing was rolled back — edit intact',
+        );
+        expect(t1.task.etag, 'stale', reason: 'stale etag preserved to re-412');
+        expect(t1.syncState, SyncState.dirty);
+        expect(t1.pendingOp, 'update');
+        expect(
+          await s.baseSnapshot('T1'),
+          isNotNull,
+          reason: 'the base survives so the retry diffs the 412 correctly',
+        );
+      },
+    );
+  });
 }

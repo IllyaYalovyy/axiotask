@@ -426,6 +426,32 @@ class Store {
     );
   }
 
+  /// Resolve a 412 `ConflictedCopy` as ONE atomic pair (MIGRATION-PLAN §5): land
+  /// the canonical remote row over the dirty id AND insert the local edit's
+  /// preserved copy in a SINGLE transaction.
+  ///
+  /// Kill-window: split across two writes (as the reference is), a crash in the
+  /// gap loses the local edit for good — the canonical [remote] has already
+  /// overwritten the dirty id, so the next run finds nothing left to fork the
+  /// copy from (P3 data loss). Wrapped here, a kill rolls BOTH back: the row
+  /// stays dirty on its stale etag and the next run re-resolves the 412,
+  /// preserving the edit. Writes only — the refetch that produced [remote]
+  /// already happened, never an API call inside the transaction (§2).
+  ///
+  /// The canonical landing reuses [applyPushedTask] (not a raw [upsertTask]) so a
+  /// refetch naming a parent this device never pulled DETACHES that unknown
+  /// parent instead of aborting on the FK (#155).
+  Future<void> resolveConflictedCopy(
+    Task remote,
+    String expectedLocalUpdated,
+    StoredTask copy,
+  ) async {
+    await _db.transaction(() async {
+      await applyPushedTask(remote, expectedLocalUpdated);
+      await upsertTask(copy);
+    });
+  }
+
   /// The base snapshot for a row (#124), or `null` when the row is clean / has
   /// no base recorded. `base_title` is the presence sentinel: a `NOT NULL`
   /// title column can only be absent when no base was captured.
