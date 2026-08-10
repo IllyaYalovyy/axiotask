@@ -403,6 +403,16 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _saveTitle(),
               ),
+              // Google assigns the webViewLink on sync; a not-yet-synced task
+              // has none, so the affordance appears only once it exists. Opens
+              // the task in the Google Tasks web app (to set a repeat, etc.).
+              if (task.webViewLink != null) ...[
+                const SizedBox(height: 12),
+                _OpenInGoogle(
+                  url: task.webViewLink!,
+                  onOpen: ref.read(urlOpenerProvider),
+                ),
+              ],
               const SizedBox(height: 16),
               _DueField(
                 due: task.due,
@@ -626,6 +636,33 @@ class _ListDropdown extends StatelessWidget {
           onChanged: (v) {
             if (v != null && v != value) onChanged(v);
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// The "Open in Google Tasks" affordance — opens the task's webViewLink in the
+/// platform browser (via the same [urlOpenerProvider] seam as the link badges).
+class _OpenInGoogle extends StatelessWidget {
+  const _OpenInGoogle({required this.url, required this.onOpen});
+
+  final String url;
+  final UrlOpener onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Tooltip(
+        message:
+            'Open this task in the Google Tasks web app (to set a '
+            'repeat, etc.)',
+        child: OutlinedButton.icon(
+          key: const Key('open-in-google'),
+          onPressed: () => onOpen(url),
+          icon: const Icon(Icons.open_in_new, size: 16),
+          label: const Text('Open in Google Tasks'),
         ),
       ),
     );

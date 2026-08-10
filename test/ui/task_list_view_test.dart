@@ -249,6 +249,7 @@ void main() {
     List<StoredTask> initial = const [],
     String? selectedTaskId,
     List<String>? opened,
+    List<String>? openedInView,
     String Function()? newId,
     String viewId = 'all',
     bool showCompleted = false,
@@ -287,6 +288,9 @@ void main() {
                 viewId: viewId,
                 selectedTaskId: selectedTaskId,
                 onOpenTask: (opened ?? <String>[]).add,
+                onOpenInView: openedInView == null
+                    ? null
+                    : (v, id) => openedInView.add('$v/$id'),
               ),
             ),
           ),
@@ -684,6 +688,36 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('no date'), findsOneWidget);
       });
+    });
+  });
+
+  group('search wiring', () {
+    testWidgets('the toolbar search button opens the overlay and selecting a '
+        'result navigates', (tester) async {
+      final openedInView = <String>[];
+      await pumpView(
+        tester,
+        initial: [
+          row('P', 'Kitchen remodel', '1'),
+          row('S', 'Order tiles', '2', parent: 'P'),
+        ],
+        openedInView: openedInView,
+      );
+
+      await tester.tap(find.byKey(const Key('search-button')));
+      await tester.pumpAndSettle();
+
+      // The overlay is up: search a SUBTASK (never a list row itself).
+      await tester.enterText(find.byType(TextField).last, 'tiles');
+      await tester.pumpAndSettle();
+      expect(find.text('Order tiles'), findsOneWidget);
+
+      await tester.tap(find.text('Order tiles'));
+      await tester.pumpAndSettle();
+
+      // Navigated to the subtask, landing on its parent's list (#92); both P
+      // and S are on L1 here, so the target view is L1.
+      expect(openedInView, ['L1/S']);
     });
   });
 }

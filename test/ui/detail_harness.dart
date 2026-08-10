@@ -16,6 +16,7 @@ import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/task_detail.dart';
+import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,6 +31,7 @@ StoredTask row(
   String? due,
   String position = '1',
   String listId = 'L1',
+  String? webViewLink,
 }) => StoredTask(
   task: Task(
     id: id,
@@ -39,6 +41,7 @@ StoredTask row(
     notes: notes,
     due: due,
     status: done ? TaskStatus.completed : TaskStatus.needsAction,
+    webViewLink: webViewLink,
     updated: 't',
   ),
   listId: listId,
@@ -332,6 +335,7 @@ Future<FakeBackend> pumpDetail(
   String Function()? newId,
   VoidCallback? onPrev,
   VoidCallback? onNext,
+  UrlOpener? urlOpener,
 }) async {
   final fake = FakeBackend(initial, newId: newId);
   addTearDown(fake.dispose);
@@ -348,6 +352,7 @@ Future<FakeBackend> pumpDetail(
         allTasksProvider.overrideWith((ref) => fake.tasksStream),
         if (lists.isNotEmpty)
           listsProvider.overrideWith((ref) => Stream.value(lists)),
+        if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
       ],
       child: MaterialApp(
         home: Scaffold(
