@@ -44,4 +44,25 @@ void main() {
       expect(out, 'Jun 22');
     });
   });
+
+  group('dueUrgency', () {
+    DueUrgency urgency(String? due) =>
+        withClock(Clock.fixed(now), () => dueUrgency(due));
+
+    test('a past date is overdue', () {
+      expect(urgency('2026-06-14'), DueUrgency.overdue);
+      expect(urgency('2026-06-01'), DueUrgency.overdue);
+    });
+
+    test('today is due-today', () {
+      expect(urgency('2026-06-15'), DueUrgency.today);
+    });
+
+    test('a future date and no date are neither', () {
+      expect(urgency('2026-06-16'), DueUrgency.none);
+      expect(urgency('2027-01-01'), DueUrgency.none);
+      expect(urgency(null), DueUrgency.none);
+      expect(urgency(''), DueUrgency.none);
+    });
+  });
 }

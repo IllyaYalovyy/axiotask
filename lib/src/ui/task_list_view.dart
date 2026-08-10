@@ -17,12 +17,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
+import '../model/effective_due.dart';
 import '../model/task.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'sort_dropdown.dart';
 import 'task_row.dart';
+import 'url_opener.dart';
 import 'views.dart';
 
 /// The empty-state message for [viewId] — a per-view reassurance for a smart
@@ -140,6 +142,21 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       window: dateWindowNow(),
       newestId: _newestId,
     );
+    // Per-row derived metadata over the FULL task set (subtasks included): the
+    // inherited date (earliest unfinished subtask) and the subtask progress
+    // counts. Subtasks never render as rows — they only feed a parent's badges.
+    final dueInfo = computeEffectiveDue(all.map((t) => t.task));
+    final subDone = <String, int>{};
+    final subTotal = <String, int>{};
+    for (final st in all) {
+      final p = st.task.parent;
+      if (p == null) continue;
+      subTotal[p] = (subTotal[p] ?? 0) + 1;
+      if (st.task.status == TaskStatus.completed) {
+        subDone[p] = (subDone[p] ?? 0) + 1;
+      }
+    }
+    final openUrl = ref.read(urlOpenerProvider);
     return Column(
       children: [
         _QuickAddBar(
@@ -175,17 +192,26 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               : ListView.builder(
                   itemCount: tasks.length,
                   itemBuilder: (context, i) {
-                    final t = tasks[i].task;
+                    final stored = tasks[i];
+                    final t = stored.task;
                     return TaskRow(
                       key: ValueKey(t.id),
                       title: t.title,
+                      notes: t.notes,
                       completed: t.status == TaskStatus.completed,
-                      due: formatDue(t.due),
+                      due: t.due,
+                      inheritedDue: dueInfo[t.id]?.propagated,
+                      pendingSync: stored.syncState == SyncState.dirty,
+                      subtaskDone: subDone[t.id] ?? 0,
+                      subtaskTotal: subTotal[t.id] ?? 0,
                       onOpen: () => widget.onOpenTask(t.id),
                       onToggle: () =>
                           ref.read(commandsProvider).toggleComplete(t.id),
                       onRename: (v) =>
                           ref.read(commandsProvider).renameTask(t.id, v),
+                      onSetDue: (m) =>
+                          ref.read(commandsProvider).setDue(t.id, m),
+                      onOpenUrl: openUrl,
                     );
                   },
                 ),

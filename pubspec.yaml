@@ -85,6 +85,12 @@ dependencies:
   # SHA-256 for the PKCE S256 challenge (pkce.dart, the port of pkce.rs).
   # Already transitively locked; promoted to a direct dep because lib/ imports it.
   crypto: ^3.0.7
+  # Opening external links — the task row's URL badge and (T7.5) "Open in Google
+  # Tasks" hand a task's http(s) links / webViewLink to the platform browser,
+  # the Dart analog of the reference's Tauri `open_url` command. Standard Flutter
+  # plugin, desktop-Linux + Android supported. Behind urlOpenerProvider so tests
+  # never touch the platform channel.
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

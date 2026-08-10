@@ -18,26 +18,39 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
+import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 
-StoredTask row(String id, String title, String position, {bool done = false}) =>
-    StoredTask(
-      task: Task(
-        id: id,
-        position: position,
-        title: title,
-        status: done ? TaskStatus.completed : TaskStatus.needsAction,
-        updated: 't',
-      ),
-      listId: 'L1',
-      syncState: SyncState.clean,
-      localUpdated: 't',
-    );
+StoredTask row(
+  String id,
+  String title,
+  String position, {
+  bool done = false,
+  String? parent,
+  String? notes,
+  String? due,
+  bool dirty = false,
+}) => StoredTask(
+  task: Task(
+    id: id,
+    position: position,
+    title: title,
+    parent: parent,
+    notes: notes,
+    due: due,
+    status: done ? TaskStatus.completed : TaskStatus.needsAction,
+    updated: 't',
+  ),
+  listId: 'L1',
+  syncState: dirty ? SyncState.dirty : SyncState.clean,
+  localUpdated: 't',
+);
 
 /// An in-memory stand-in for [Commands] that mutates a task list and re-emits it
 /// on the stream the view watches — enough to exercise the widget's create /
@@ -194,6 +207,7 @@ void main() {
     String Function()? newId,
     String viewId = 'all',
     bool showCompleted = false,
+    List<Override> extraOverrides = const [],
   }) async {
     final fake = FakeBackend(initial, newId: newId);
     addTearDown(fake.dispose);
@@ -206,6 +220,7 @@ void main() {
             ),
             commandsProvider.overrideWithValue(fake),
             allTasksProvider.overrideWith((ref) => fake.tasksStream),
+            ...extraOverrides,
             listsProvider.overrideWith(
               (ref) => Stream.value([
                 StoredTaskList(
@@ -467,6 +482,69 @@ void main() {
     ) async {
       await pumpView(tester, viewId: 'focus');
       expect(find.text('All clear for this week'), findsOneWidget);
+    });
+  });
+
+  group('FlatList (T7.2 metadata wiring)', () {
+    testWidgets('a parent renders its subtask progress; subtasks are NEVER '
+        'rows (invariant #1)', (tester) async {
+      await pumpView(
+        tester,
+        initial: [
+          row('P', 'ship release', '1'),
+          row('C1', 'write notes', '1', parent: 'P', done: true),
+          row('C2', 'tag build', '2', parent: 'P'),
+          row('C3', 'announce', '3', parent: 'P'),
+        ],
+      );
+      // Only the parent is a row.
+      final rows = tester
+          .widgetList<TaskRow>(find.byType(TaskRow))
+          .map((r) => r.title)
+          .toList();
+      expect(rows, ['ship release']);
+      // …and it carries the 1/3 progress from its subtasks.
+      expect(find.text('1/3'), findsOneWidget);
+    });
+
+    testWidgets('an undated parent shows the inherited date from its earliest '
+        'unfinished subtask', (tester) async {
+      await pumpView(
+        tester,
+        initial: [
+          row('P', 'plan trip', '1'), // no own date
+          row('C1', 'book flight', '1', parent: 'P', due: '2026-07-20'),
+          row('C2', 'book hotel', '2', parent: 'P', due: '2026-07-18'),
+        ],
+      );
+      // Earliest unfinished subtask date (Jul 18) surfaces as the ↳ marker
+      // (clock is fixed to 2026-06-15, so it renders as an absolute short date).
+      expect(find.text('↳ Jul 18'), findsOneWidget);
+    });
+
+    testWidgets('a locally-edited row shows the pending-sync dot', (
+      tester,
+    ) async {
+      await pumpView(
+        tester,
+        initial: [row('T', 'draft memo', '1', dirty: true)],
+      );
+      expect(find.byKey(const Key('pending-dot')), findsOneWidget);
+    });
+
+    testWidgets('a task with a URL exposes a link badge that opens via the '
+        'opener', (tester) async {
+      final opened = <String>[];
+      await pumpView(
+        tester,
+        initial: [row('T', 'read https://example.com/rfc', '1')],
+        extraOverrides: [
+          urlOpenerProvider.overrideWithValue((url) async => opened.add(url)),
+        ],
+      );
+      await tester.tap(find.byKey(const Key('link-badge')));
+      await tester.pump();
+      expect(opened, ['https://example.com/rfc']);
     });
   });
 }

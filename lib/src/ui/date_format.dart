@@ -36,6 +36,32 @@ DateTime parseLocalDate(String due) {
   return DateTime(y, m, d);
 }
 
+/// How urgent a due date is, for the task row's due-badge color (port of
+/// `dateFormat.js`'s `dueClass`).
+enum DueUrgency {
+  /// No date, or a future date — the muted default.
+  none,
+
+  /// Due today.
+  today,
+
+  /// Due before today.
+  overdue,
+}
+
+/// Classify [due] relative to "now" (from `package:clock`) for the row's due
+/// badge. Undated/blank and future dates are [DueUrgency.none].
+DueUrgency dueUrgency(String? due) {
+  if (due == null || due.isEmpty) return DueUrgency.none;
+  final d = parseLocalDate(due);
+  final n = clock.now();
+  final now = DateTime(n.year, n.month, n.day);
+  final diff = d.difference(now).inDays;
+  if (diff < 0) return DueUrgency.overdue;
+  if (diff == 0) return DueUrgency.today;
+  return DueUrgency.none;
+}
+
 /// A friendly, relative due label for [due] (a `YYYY-MM-DD…` string), or the
 /// empty string when [due] is null/empty. Never returns the raw ISO string.
 String formatDue(String? due) {
