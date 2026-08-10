@@ -40,6 +40,12 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   bool _confirmingPush = false;
   bool _busy = false;
 
+  // The most recent backup result / error, shown INLINE in the Sync tab. A
+  // SnackBar would render behind this modal dialog (invisible to the user), so
+  // the confirmation lives inside the dialog where it is actually seen.
+  String? _notice;
+  bool _noticeIsError = false;
+
   @override
   void initState() {
     super.initState();
@@ -203,6 +209,10 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
             color: colors.onSurfaceVariant,
           ),
         ),
+        if (_notice != null) ...[
+          const SizedBox(height: 12),
+          _noticeBanner(theme),
+        ],
         const SizedBox(height: 12),
         Wrap(
           spacing: 12,
@@ -473,34 +483,83 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   }
 
   Future<void> _exportBackup() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
     try {
       final r = await ref.read(backupServiceProvider).export();
-      _toast('Backed up ${r.tasks} task(s) in ${r.lists} list(s) → ${r.path}');
+      _notify(
+        'Backed up ${r.tasks} task(s) in ${r.lists} list(s) → ${r.path}',
+        isError: false,
+      );
     } on BackupError catch (e) {
-      _toast(e.message);
+      _notify(e.message, isError: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _restoreBackup() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
     try {
       final r = await ref.read(backupServiceProvider).importFrom();
-      _toast('Restored ${r.tasks} task(s) in ${r.lists} list(s) ← ${r.path}');
+      _notify(
+        'Restored ${r.tasks} task(s) in ${r.lists} list(s) ← ${r.path}',
+        isError: false,
+      );
     } on BackupError catch (e) {
-      _toast(e.message);
+      _notify(e.message, isError: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  void _toast(String message) {
+  void _notify(String message, {required bool isError}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    setState(() {
+      _notice = message;
+      _noticeIsError = isError;
+    });
+  }
+
+  Widget _noticeBanner(ThemeData theme) {
+    final colors = theme.colorScheme;
+    final bg = _noticeIsError
+        ? colors.errorContainer
+        : colors.secondaryContainer;
+    final fg = _noticeIsError
+        ? colors.onErrorContainer
+        : colors.onSecondaryContainer;
+    return Container(
+      key: const Key('backup-notice'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _noticeIsError ? Icons.error_outline : Icons.check_circle_outline,
+            size: 18,
+            color: fg,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _notice!,
+              style: theme.textTheme.bodySmall?.copyWith(color: fg),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// A short relative label for an RFC-3339 timestamp: "never" / "just now" /

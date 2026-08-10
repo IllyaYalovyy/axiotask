@@ -97,12 +97,17 @@ class BackupService {
     for (final l in lists) {
       withTasks.add((l, await store.listTasks(l.list.id)));
     }
-    final backup = Backup.build(clock.now().toUtc().toIso8601String(), withTasks);
+    final backup = Backup.build(
+      clock.now().toUtc().toIso8601String(),
+      withTasks,
+    );
     final json = backup.toJsonPretty();
 
     final target = to ?? defaultBackupIn(backupsDir);
-    target.parent.createSync(recursive: true);
-    target.writeAsStringSync(json, flush: true);
+    // Async IO so a large snapshot never blocks the UI isolate (ANR risk on a
+    // phone); the buttons stay disabled via the caller's busy guard meanwhile.
+    await target.parent.create(recursive: true);
+    await target.writeAsString(json, flush: true);
 
     return ExportResult(
       path: target.path,
@@ -124,7 +129,7 @@ class BackupService {
 
     final String text;
     try {
-      text = target.readAsStringSync();
+      text = await target.readAsString();
     } on FileSystemException catch (e) {
       throw BackupError('invalid backup file: ${e.message}');
     }
@@ -150,9 +155,7 @@ class BackupService {
   // missing rows are inserted as fresh creates so a later sync pushes them.
   Future<ImportResult> _restore(Backup backup, String path) async {
     final now = nowUtcString();
-    final existingListIds = {
-      for (final l in await store.allLists()) l.list.id,
-    };
+    final existingListIds = {for (final l in await store.allLists()) l.list.id};
 
     var listsWritten = 0;
     var tasksWritten = 0;

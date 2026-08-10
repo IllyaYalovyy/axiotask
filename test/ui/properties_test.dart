@@ -52,9 +52,10 @@ void main() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
 
-  ConfigController tempConfig() =>
-      ConfigController(path: File(p.join(tmp.path, 'config.json')),
-          initial: const AppConfig());
+  ConfigController tempConfig() => ConfigController(
+    path: File(p.join(tmp.path, 'config.json')),
+    initial: const AppConfig(),
+  );
 
   Future<Store> seededStore() async {
     final db = await AppDatabase.openMemory();
@@ -105,14 +106,11 @@ void main() {
           prefsProvider.overrideWithValue(prefs),
           configControllerProvider.overrideWithValue(tempConfig()),
           appSettingsProvider.overrideWithValue(settings ?? settingsView()),
-          if (backup != null)
-            backupServiceProvider.overrideWithValue(backup),
+          if (backup != null) backupServiceProvider.overrideWithValue(backup),
           if (freshSync != null)
             freshSyncActionProvider.overrideWithValue(freshSync),
         ],
-        child: const MaterialApp(
-          home: Scaffold(body: PropertiesDialog()),
-        ),
+        child: const MaterialApp(home: Scaffold(body: PropertiesDialog())),
       ),
     );
     await tester.pumpAndSettle();
@@ -151,14 +149,25 @@ void main() {
 
   // The Sync tab scrolls; the Backup buttons sit at the bottom. Bring a key into
   // view before asserting/tapping (a ListView never builds off-screen children).
-  Future<void> scrollTo(WidgetTester tester, Key key) => tester.scrollUntilVisible(
-    find.byKey(key),
-    300,
-    scrollable: find.descendant(
-      of: find.byKey(const Key('sync-tab-list')),
-      matching: find.byType(Scrollable),
-    ),
-  );
+  Future<void> scrollTo(WidgetTester tester, Key key) =>
+      tester.scrollUntilVisible(
+        find.byKey(key),
+        300,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('sync-tab-list')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+
+  // Tap a button whose handler does REAL async file IO. `runAsync` lets that IO
+  // complete (fake timers would starve it); a final pump renders the result.
+  Future<void> tapAsync(WidgetTester tester, Key key) async {
+    await tester.runAsync(() async {
+      await tester.tap(find.byKey(key));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpAndSettle();
+  }
 
   group('Sync tab — backup', () {
     testWidgets('exposes Export and Restore backup buttons', (tester) async {
@@ -177,8 +186,7 @@ void main() {
         backup: BackupService(store: store, backupsDir: tmp),
       );
       await scrollTo(tester, const Key('export-backup-button'));
-      await tester.tap(find.byKey(const Key('export-backup-button')));
-      await tester.pumpAndSettle();
+      await tapAsync(tester, const Key('export-backup-button'));
 
       expect(
         find.textContaining('Backed up 2 task(s) in 1 list(s) →'),
@@ -218,8 +226,9 @@ void main() {
           ],
         ),
       ]);
-      File(p.join(tmp.path, 'axiotask-backup-20260101-000000.json'))
-          .writeAsStringSync(backup.toJsonPretty());
+      File(
+        p.join(tmp.path, 'axiotask-backup-20260101-000000.json'),
+      ).writeAsStringSync(backup.toJsonPretty());
 
       final db = await AppDatabase.openMemory();
       addTearDown(db.close);
@@ -228,8 +237,7 @@ void main() {
         backup: BackupService(store: Store(db), backupsDir: tmp),
       );
       await scrollTo(tester, const Key('restore-backup-button'));
-      await tester.tap(find.byKey(const Key('restore-backup-button')));
-      await tester.pumpAndSettle();
+      await tapAsync(tester, const Key('restore-backup-button'));
 
       expect(
         find.textContaining('Restored 1 task(s) in 1 list(s) ←'),
