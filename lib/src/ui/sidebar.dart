@@ -481,7 +481,8 @@ class _NewListDialogState extends State<_NewListDialog> {
     super.dispose();
   }
 
-  void _submit() => Navigator.pop(context, (_controller.text.trim(), _localOnly));
+  void _submit() =>
+      Navigator.pop(context, (_controller.text.trim(), _localOnly));
 
   @override
   Widget build(BuildContext context) {

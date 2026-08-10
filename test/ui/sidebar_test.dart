@@ -115,21 +115,24 @@ void main() {
     expect(opacity.opacity, 0.5);
   });
 
-  testWidgets('create-list dialog reports a trimmed title and local-only flag', (
+  testWidgets(
+    'create-list dialog reports a trimmed title and local-only flag',
+    (tester) async {
+      final cap = await pump(tester);
+      await tester.tap(find.byKey(const Key('sidebar-add-list')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '  Shopping  ');
+      await tester.tap(find.byKey(const Key('new-list-local-only')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-list-create')));
+      await tester.pumpAndSettle();
+      expect(cap.created, [('Shopping', true)]);
+    },
+  );
+
+  testWidgets('a blank create submits nothing (non-happy path)', (
     tester,
   ) async {
-    final cap = await pump(tester);
-    await tester.tap(find.byKey(const Key('sidebar-add-list')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '  Shopping  ');
-    await tester.tap(find.byKey(const Key('new-list-local-only')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('new-list-create')));
-    await tester.pumpAndSettle();
-    expect(cap.created, [('Shopping', true)]);
-  });
-
-  testWidgets('a blank create submits nothing (non-happy path)', (tester) async {
     final cap = await pump(tester);
     await tester.tap(find.byKey(const Key('sidebar-add-list')));
     await tester.pumpAndSettle();

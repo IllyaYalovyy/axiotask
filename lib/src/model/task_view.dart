@@ -203,10 +203,7 @@ List<StoredTask> visibleTasksForView({
 
   // Completed always sinks to the bottom (stable within each partition), then a
   // freshly created row is pinned to the very top.
-  final result = [
-    ...base.where(open),
-    ...base.where((t) => !open(t)),
-  ];
+  final result = [...base.where(open), ...base.where((t) => !open(t))];
   if (newestId != null) {
     final i = result.indexWhere((t) => t.task.id == newestId);
     if (i > 0) {
@@ -232,7 +229,9 @@ int _compare(
     case SortMode.created:
       primary = b.task.position.compareTo(a.task.position);
     case SortMode.alpha:
-      primary = a.task.title.toLowerCase().compareTo(b.task.title.toLowerCase());
+      primary = a.task.title.toLowerCase().compareTo(
+        b.task.title.toLowerCase(),
+      );
     case SortMode.due:
       final da = effective(a.task.id);
       final db = effective(b.task.id);

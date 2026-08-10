@@ -74,14 +74,17 @@ void main() {
   group('smart-view predicates', () {
     final w = window();
 
-    test('Focus = overdue + today + the next 6 days, excludes +7 and beyond', () {
-      expect(inFocus(day(-2), w), isTrue); // overdue is in Focus
-      expect(inFocus(day(0), w), isTrue); // today
-      expect(inFocus(day(6), w), isTrue); // last day in the window
-      expect(inFocus(day(7), w), isFalse); // strict upper bound
-      expect(inFocus(day(10), w), isFalse);
-      expect(inFocus(null, w), isFalse);
-    });
+    test(
+      'Focus = overdue + today + the next 6 days, excludes +7 and beyond',
+      () {
+        expect(inFocus(day(-2), w), isTrue); // overdue is in Focus
+        expect(inFocus(day(0), w), isTrue); // today
+        expect(inFocus(day(6), w), isTrue); // last day in the window
+        expect(inFocus(day(7), w), isFalse); // strict upper bound
+        expect(inFocus(day(10), w), isFalse);
+        expect(inFocus(null, w), isFalse);
+      },
+    );
 
     test('Upcoming = tomorrow through +14 inclusive', () {
       expect(inUpcoming(day(0), w), isFalse); // today is not upcoming
@@ -119,10 +122,7 @@ void main() {
     test('a parent with a dated unfinished subtask is pulled into Focus', () {
       // The parent is undated; only its subtask carries tomorrow's date. The
       // parent appears as ONE top-level card; the subtask is never a row.
-      final all = [
-        task('P', due: null),
-        task('C', parent: 'P', due: day(1)),
-      ];
+      final all = [task('P', due: null), task('C', parent: 'P', due: day(1))];
       final rows = visible(all, 'focus');
       expect(ids(rows), ['P'], reason: 'parent pulled in by effective due');
     });
@@ -164,10 +164,10 @@ void main() {
         task('done', listId: 'L1', done: true),
       ];
       expect(ids(visible(all, 'L1')), ['open']);
-      expect(
-        ids(visible(all, 'L1', showCompleted: true))..sort(),
-        ['done', 'open'],
-      );
+      expect(ids(visible(all, 'L1', showCompleted: true))..sort(), [
+        'done',
+        'open',
+      ]);
     });
   });
 

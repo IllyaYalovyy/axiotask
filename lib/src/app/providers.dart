@@ -94,7 +94,8 @@ final windowTitleControllerProvider = Provider<WindowTitleController>(
 /// absent from the saved order sorts after the ordered ones, keeping its backend
 /// position (stable). Feeds the sidebar's list section and the reorder round-trip.
 final orderedListsProvider = Provider<List<StoredTaskList>>((ref) {
-  final lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
+  final lists =
+      ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
   final order = ref.watch(prefsControllerProvider).listOrder;
   final rank = {for (var i = 0; i < order.length; i++) order[i]: i};
   final indexed = [for (var i = 0; i < lists.length; i++) (i, lists[i])];
@@ -112,7 +113,8 @@ final orderedListsProvider = Provider<List<StoredTaskList>>((ref) {
 /// top-level, exclusion-aware for smart views — see [computeViewCounts].
 final viewCountsProvider = Provider<Map<String, int>>((ref) {
   final all = ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
-  final lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
+  final lists =
+      ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
   final excluded = ref.watch(prefsControllerProvider).excludedLists.toSet();
   return computeViewCounts(
     allTasks: all,

@@ -22,12 +22,15 @@ class PrefsController extends Notifier<Prefs> {
   Prefs build() => ref.watch(prefsProvider);
 
   void _write(Prefs next) {
+    // Update the live state first so the UI always reflects the edit, then try
+    // to persist. Persistence is best-effort (the reference's localStorage is
+    // too): with no [prefsStoreProvider] override in scope (a widget-only test)
+    // the read throws, and a disk failure on a UI pref is not worth surfacing.
     state = next;
     try {
       ref.read(prefsStoreProvider).save(next);
-    } on StateError {
-      // No prefs store in this scope (a widget-only test) — keep the in-memory
-      // edit; nothing to persist to.
+    } catch (_) {
+      // No store to persist to, or the save failed — keep the in-memory edit.
     }
   }
 
