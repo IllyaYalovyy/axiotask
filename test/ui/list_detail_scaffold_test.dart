@@ -32,6 +32,7 @@ void main() {
         home: MediaQuery(
           data: MediaQueryData(size: Size(width, 800)),
           child: ListDetailScaffold(
+            sidebar: const Text('SIDEBAR-PANE'),
             destinations: _destinations,
             selectedIndex: 0,
             onDestinationSelected: onSelect ?? (_) {},
@@ -45,9 +46,11 @@ void main() {
   }
 
   group('expanded (width ≥ 600)', () {
-    testWidgets('shows a NavigationRail and the list', (tester) async {
+    testWidgets('shows the sidebar panel and the list', (tester) async {
       await pumpScaffold(tester, width: 900);
-      expect(find.byType(NavigationRail), findsOneWidget);
+      // Expanded renders the injected sidebar (the real one is the Sidebar
+      // widget); no bottom nav bar at this width.
+      expect(find.text('SIDEBAR-PANE'), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
       expect(find.text('LIST-PANE'), findsOneWidget);
     });

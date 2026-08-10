@@ -88,7 +88,7 @@ class Sidebar extends StatelessWidget {
                 onSelectView: onSelectView,
                 onCreateList: () => _createList(context),
               ),
-              onReorder: _onReorder,
+              onReorderItem: _onReorder,
               children: [
                 for (var i = 0; i < lists.length; i++)
                   _ListRow(
@@ -112,9 +112,10 @@ class Sidebar extends StatelessWidget {
     );
   }
 
+  // [onReorderItem] hands back a newIndex already adjusted for the item removed
+  // at oldIndex, so no manual `newIndex -= 1` shift is needed.
   void _onReorder(int oldIndex, int newIndex) {
     final order = [for (final l in lists) l.list.id];
-    if (newIndex > oldIndex) newIndex -= 1;
     final moved = order.removeAt(oldIndex);
     order.insert(newIndex, moved);
     onReorderLists(order);

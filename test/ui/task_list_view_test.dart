@@ -355,7 +355,10 @@ void main() {
   ) async {
     await pumpView(tester, initial: [row('A', 'apples', '5')]);
     expect(find.text('apples'), findsOneWidget);
-    await tester.tap(find.byType(Checkbox));
+    // The row's checkbox — the toolbar now also has a "Show completed" one.
+    await tester.tap(
+      find.descendant(of: find.byType(TaskRow), matching: find.byType(Checkbox)),
+    );
     await settle(tester);
     // Completed → hidden from the open list (show-completed defaults off).
     expect(find.text('apples'), findsNothing);

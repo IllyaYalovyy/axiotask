@@ -14,13 +14,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
 import '../model/task.dart';
+import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
+import 'sort_dropdown.dart';
 import 'task_row.dart';
 import 'views.dart';
+
+/// The empty-state message for [viewId] — a per-view reassurance for a smart
+/// view, the generic prompt for a list / All Tasks. Ports the reference's
+/// per-view empty strings.
+String emptyMessageFor(String viewId) => switch (viewId) {
+  'focus' => 'All clear for this week',
+  'upcoming' => 'Nothing upcoming',
+  'missed' => 'Nothing overdue',
+  'unscheduled' => 'Everything is scheduled',
+  _ => 'No tasks yet',
+};
 
 /// The All-Tasks list plus its quick-add bar for [viewId].
 class TaskListView extends ConsumerStatefulWidget {
@@ -108,32 +122,24 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (widget.selectedTaskId != null) widget.onOpenTask(stored.task.id);
   }
 
-  List<StoredTask> _visibleTopLevel(List<StoredTask> all, bool showCompleted) {
-    final rows = all
-        .where(
-          (t) =>
-              t.task.parent == null &&
-              (showCompleted || t.task.status != TaskStatus.completed),
-        )
-        .toList();
-    rows.sort((a, b) {
-      if (a.task.id == _newestId) return -1;
-      if (b.task.id == _newestId) return 1;
-      return a.task.position.compareTo(b.task.position);
-    });
-    return rows;
-  }
-
   @override
   Widget build(BuildContext context) {
     final all =
         ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
     // Keep the lists subscribed and current so quick-add resolves its target.
     _lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
-    // Honor the persisted show-completed pref (default hides completed, matching
-    // the reference); the toggle UI lands in T7.1.
-    final showCompleted = ref.watch(prefsProvider).showCompleted;
-    final tasks = _visibleTopLevel(all, showCompleted);
+
+    final prefs = ref.watch(prefsControllerProvider);
+    final sort = SortMode.byId(prefs.sortPerView[widget.viewId]);
+    final tasks = visibleTasksForView(
+      allTasks: all,
+      viewId: widget.viewId,
+      excludedLists: prefs.excludedLists.toSet(),
+      showCompleted: prefs.showCompleted,
+      sort: sort,
+      window: dateWindowNow(),
+      newestId: _newestId,
+    );
     return Column(
       children: [
         _QuickAddBar(
@@ -148,11 +154,21 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           onChanged: () => setState(() {}),
         ),
         const Divider(height: 1),
+        _ListToolbar(
+          sort: sort,
+          showCompleted: prefs.showCompleted,
+          onSort: (m) => ref
+              .read(prefsControllerProvider.notifier)
+              .setSort(widget.viewId, m),
+          onShowCompleted: (v) =>
+              ref.read(prefsControllerProvider.notifier).setShowCompleted(v),
+        ),
+        const Divider(height: 1),
         Expanded(
           child: tasks.isEmpty
               ? Center(
                   child: Text(
-                    'No tasks yet',
+                    emptyMessageFor(widget.viewId),
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 )
@@ -175,6 +191,68 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// The list toolbar: the sort-order dropdown and the show-completed toggle.
+class _ListToolbar extends StatelessWidget {
+  const _ListToolbar({
+    required this.sort,
+    required this.showCompleted,
+    required this.onSort,
+    required this.onShowCompleted,
+  });
+
+  final SortMode sort;
+  final bool showCompleted;
+  final ValueChanged<SortMode> onSort;
+  final ValueChanged<bool> onShowCompleted;
+
+  @override
+  Widget build(BuildContext context) {
+    // A Wrap (not a Row) so a narrow list pane — a phone, or the desktop list
+    // beside an open detail — flows the toggle onto a second line instead of
+    // overflowing. On a wide pane spaceBetween keeps sort left, toggle right.
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SortDropdown(value: sort, onChanged: onSort),
+          // The whole label toggles — a coarse pointer gets a full-size target,
+          // not just the checkbox (touch has no hover).
+          InkWell(
+            key: const Key('show-completed-toggle'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => onShowCompleted(!showCompleted),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Checkbox(
+                    value: showCompleted,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onChanged: (v) => onShowCompleted(v ?? false),
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      'Show completed',
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -9,10 +9,11 @@
 // missing_provider_scope lint satisfied and makes every dependency swappable in
 // widget tests.
 
-import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/material.dart' show ThemeMode, Widget;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../model/task_view.dart';
 import '../store/database.dart';
 import '../store/store.dart';
 import '../store/stored.dart';
@@ -21,6 +22,7 @@ import '../ui/theme.dart';
 import 'commands.dart';
 import 'config_controller.dart';
 import 'prefs.dart';
+import 'prefs_controller.dart';
 import 'window_title_controller.dart';
 
 Never _mustOverride(String name) => throw StateError(
@@ -87,6 +89,44 @@ final themeModeProvider = Provider<ThemeMode>(
 final windowTitleControllerProvider = Provider<WindowTitleController>(
   (ref) => const NoopWindowTitleController(),
 );
+
+/// The known lists in user-defined display order (`prefs.listOrder`). A list
+/// absent from the saved order sorts after the ordered ones, keeping its backend
+/// position (stable). Feeds the sidebar's list section and the reorder round-trip.
+final orderedListsProvider = Provider<List<StoredTaskList>>((ref) {
+  final lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
+  final order = ref.watch(prefsControllerProvider).listOrder;
+  final rank = {for (var i = 0; i < order.length; i++) order[i]: i};
+  final indexed = [for (var i = 0; i < lists.length; i++) (i, lists[i])];
+  indexed.sort((a, b) {
+    const unranked = 1 << 30;
+    final ra = rank[a.$2.list.id] ?? unranked;
+    final rb = rank[b.$2.list.id] ?? unranked;
+    if (ra != rb) return ra.compareTo(rb);
+    return a.$1.compareTo(b.$1); // preserve backend order among unranked
+  });
+  return [for (final e in indexed) e.$2];
+});
+
+/// The sidebar badge counts keyed by view id (smart views + list ids). Open-only,
+/// top-level, exclusion-aware for smart views — see [computeViewCounts].
+final viewCountsProvider = Provider<Map<String, int>>((ref) {
+  final all = ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+  final lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
+  final excluded = ref.watch(prefsControllerProvider).excludedLists.toSet();
+  return computeViewCounts(
+    allTasks: all,
+    listIds: [for (final l in lists) l.list.id],
+    excludedLists: excluded,
+    window: dateWindowNow(),
+  );
+});
+
+/// The auth/sync footer widget pinned at the bottom of the sidebar, or `null`
+/// when the live auth controller is not wired into the app (its current state —
+/// sign-in/out/sync route through providers a later auth-integration task
+/// supplies). Overridable so tests and that future task drop in a live footer.
+final sidebarFooterProvider = Provider<Widget?>((ref) => null);
 
 /// The app's [GoRouter], built once with the view restored from prefs. Held for
 /// the process lifetime (it owns navigation state), so it is a plain Provider.

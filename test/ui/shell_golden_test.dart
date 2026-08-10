@@ -4,8 +4,9 @@
 // flutter_adaptive_scaffold), so its two branches are pinned with pixel
 // snapshots at the two form factors the app ships:
 //
-//   • desktop (≥600dp): a NavigationRail beside the task list.
-//   • phone   (<600dp): the task list over a bottom NavigationBar.
+//   • desktop (≥600dp): the real Sidebar (smart views + lists) beside the list.
+//   • phone   (<600dp): the task list (with its sort/show-completed toolbar)
+//                       over a bottom NavigationBar.
 //
 // These are the goldens the plan calls for. They render the REAL shell + the
 // REAL All-Tasks list (fed by static provider streams) under the REAL app
@@ -25,6 +26,7 @@ import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
+import 'package:axiotask/src/ui/sidebar.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/views.dart';
@@ -71,6 +73,18 @@ Widget _shellAt(Size size) {
       child: Theme(
         data: buildLightTheme(),
         child: ListDetailScaffold(
+          sidebar: Sidebar(
+            selectedViewId: SmartView.all.id,
+            counts: const {'all': 3, 'L1': 3},
+            lists: const [_myTasks],
+            excludedLists: const {},
+            onSelectView: (_) {},
+            onCreateList: (_, {localOnly = false}) {},
+            onRenameList: (_, _) {},
+            onDeleteList: (_) {},
+            onToggleExclude: (_) {},
+            onReorderLists: (_) {},
+          ),
           destinations: [
             for (final v in SmartView.values)
               ShellDestination(
@@ -97,7 +111,7 @@ void main() {
   const phone = Size(400, 800);
 
   goldenTest(
-    'shell — desktop form factor (rail + list)',
+    'shell — desktop form factor (sidebar + list)',
     fileName: 'shell_desktop',
     builder: () => GoldenTestGroup(
       children: [
