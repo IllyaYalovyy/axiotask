@@ -12,6 +12,7 @@ import 'package:axiotask/src/app/window_title_controller.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/router.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -242,6 +243,141 @@ void main() {
       reason: 'back must not fall through to exit the app',
     );
     expect(find.widgetWithText(TextField, 'my task'), findsNothing);
+  });
+
+  // The Android system-back precedence ladder (T8.3): one back is one ladder
+  // step. On top of the framework's own back handling for routes (dialogs,
+  // search, pickers) and the slide-in drawer, the app-owned steps are, in
+  // order: dismiss the first-launch welcome → close an open detail → clear an
+  // active selection → (nothing left) let the OS exit. Every case is driven at
+  // the real shell through go_router + the system back button.
+  group('Android back-precedence ladder (T8.3)', () {
+    Future<void> pumpPhone(
+      WidgetTester tester, {
+      required PrefsStore store,
+      required GoRouter router,
+      List<StoredTask> tasks = const [],
+    }) async {
+      // Compact form factor — the phone chrome where the ladder is the primary
+      // navigation (no side-by-side detail, no persistent sidebar).
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await pumpApp(
+        tester,
+        store: store,
+        title: _FakeTitle(),
+        router: router,
+        tasks: tasks,
+      );
+    }
+
+    testWidgets('back with an active selection (no detail) clears it', (
+      tester,
+    ) async {
+      final router = buildAppRouter(initialViewId: 'all');
+      await pumpPhone(
+        tester,
+        store: seenPrefs(),
+        router: router,
+        tasks: [storedTask('T1', 'my task')],
+      );
+
+      // Long-press selects the row (the mobile multi-select gesture).
+      await tester.longPress(find.text('my task'));
+      await tester.pumpAndSettle();
+      expect(find.byType(BulkBar), findsOneWidget);
+
+      final handled = await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        handled,
+        isTrue,
+        reason: 'back is consumed to clear the selection, not to exit the app',
+      );
+      expect(find.byType(BulkBar), findsNothing);
+      // The detail never opened — back did not over-reach into a navigation.
+      expect(find.widgetWithText(TextField, 'my task'), findsNothing);
+    });
+
+    testWidgets(
+      'back closes the detail FIRST, then a second back clears the selection',
+      (tester) async {
+        final router = buildAppRouter(initialViewId: 'all');
+        await pumpPhone(
+          tester,
+          store: seenPrefs(),
+          router: router,
+          tasks: [storedTask('T1', 'my task')],
+        );
+
+        // A selection is active …
+        await tester.longPress(find.text('my task'));
+        await tester.pumpAndSettle();
+        expect(find.byType(BulkBar), findsOneWidget);
+
+        // … and a detail opens while the selection persists (the reachable
+        // case: searching from a selection lands on a task in the same view).
+        router.go(viewPath('all', taskId: 'T1'));
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(TextField, 'my task'), findsOneWidget);
+
+        // First back: the detail closes; the selection survives (one step).
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(TextField, 'my task'), findsNothing);
+        expect(
+          find.byType(BulkBar),
+          findsOneWidget,
+          reason: 'the selection outlives the detach — one back is one step',
+        );
+
+        // Second back: now the selection clears.
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        await tester.pumpAndSettle();
+        expect(find.byType(BulkBar), findsNothing);
+      },
+    );
+
+    testWidgets('back on the first-launch welcome dismisses it (persisted)', (
+      tester,
+    ) async {
+      final store = prefs();
+      final router = buildAppRouter(initialViewId: 'all');
+      // Empty, never-seen workspace → the welcome overlay sits on top.
+      await pumpPhone(tester, store: store, router: router);
+      expect(find.byKey(const Key('onboarding-intro')), findsOneWidget);
+
+      expect(await tester.binding.handlePopRoute(), isTrue);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+      expect(
+        store.load().onboardingSeen,
+        isTrue,
+        reason: 'a back dismissal persists like a tap dismissal',
+      );
+    });
+
+    testWidgets('back with nothing active falls through to exit the app', (
+      tester,
+    ) async {
+      final router = buildAppRouter(initialViewId: 'all');
+      await pumpPhone(
+        tester,
+        store: seenPrefs(),
+        router: router,
+        tasks: [storedTask('T1', 'my task')],
+      );
+      // No welcome, no detail, no selection.
+      expect(find.byType(BulkBar), findsNothing);
+      final handled = await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        handled,
+        isFalse,
+        reason: 'no app-owned mode to intercept → the OS pops the app',
+      );
+    });
   });
 
   group('first-launch onboarding', () {

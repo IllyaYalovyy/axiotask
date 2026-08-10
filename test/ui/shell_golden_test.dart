@@ -59,11 +59,14 @@ const _myTasks = StoredTaskList(
   localUpdated: 't',
 );
 
-/// The real shell rendered at [size], branded with the real light theme and fed
-/// the seeded task list — the widget the golden captures at one form factor.
-Widget _shellAt(Size size) {
+/// The real shell rendered at [size] under [textScaler], branded with the real
+/// light theme and fed the seeded task list — the widget the golden captures at
+/// one form factor. [textScaler] drives the accessibility text-scale goldens
+/// (1.3 / 2.0): the mobile chrome must reflow, never overflow, when the system
+/// font is enlarged (MIGRATION-PLAN §5 T8.3 / §6 "text-scale 1.3").
+Widget _shellAt(Size size, {TextScaler textScaler = TextScaler.noScaling}) {
   return MediaQuery(
-    data: MediaQueryData(size: size),
+    data: MediaQueryData(size: size, textScaler: textScaler),
     child: ProviderScope(
       overrides: [
         prefsProvider.overrideWithValue(const Prefs()),
@@ -137,6 +140,32 @@ void main() {
           name: 'compact',
           constraints: BoxConstraints.tight(phone),
           child: _shellAt(phone),
+        ),
+      ],
+    ),
+  );
+
+  // Accessibility text scale on the phone (T8.3): the enlarged-font system
+  // setting must reflow the mobile chrome — the app bar, quick-add bar, sort
+  // toolbar, task rows, and bottom nav — without a RenderFlex overflow (which
+  // would throw and fail this render) and without clipping the content. Pinned
+  // at the two scales the plan names: 1.3 (the §6 parity floor) and 2.0 (a
+  // stress ceiling well past the OS "largest" setting).
+  goldenTest(
+    'shell — phone accessibility text scale (1.3 & 2.0)',
+    fileName: 'shell_phone_text_scale',
+    builder: () => GoldenTestGroup(
+      columns: 2,
+      children: [
+        GoldenTestScenario(
+          name: 'text-scale 1.3',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, textScaler: const TextScaler.linear(1.3)),
+        ),
+        GoldenTestScenario(
+          name: 'text-scale 2.0',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, textScaler: const TextScaler.linear(2.0)),
         ),
       ],
     ),

@@ -54,6 +54,10 @@ class AppShell extends ConsumerWidget {
     final allTasks =
         ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
     final showOnboarding = allTasks.isEmpty && !prefs.onboardingSeen;
+    // Persist the welcome as seen — from its button OR the back-ladder's top
+    // rung (T8.3), so a back dismissal sticks exactly like a tap dismissal.
+    void dismissOnboarding() =>
+        ref.read(prefsControllerProvider.notifier).setOnboardingSeen(true);
 
     // Keep the desktop window title in sync with the active view (no-op on
     // mobile / under tests via NoopWindowTitleController). Scheduled after the
@@ -195,21 +199,48 @@ class AppShell extends ConsumerWidget {
       onCloseDetail: () => context.go(viewPath(sel.viewId)),
     );
 
-    if (!showOnboarding) return scaffold;
     // Overlay the welcome above the shell. Dismissal persists onboardingSeen,
     // which flips [showOnboarding] false and removes the overlay for good.
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        scaffold,
-        Positioned.fill(
-          child: OnboardingIntro(
-            onDismiss: () => ref
-                .read(prefsControllerProvider.notifier)
-                .setOnboardingSeen(true),
-          ),
-        ),
-      ],
+    final Widget shell = showOnboarding
+        ? Stack(
+            fit: StackFit.expand,
+            children: [
+              scaffold,
+              Positioned.fill(
+                child: OnboardingIntro(onDismiss: dismissOnboarding),
+              ),
+            ],
+          )
+        : scaffold;
+
+    // The Android system-back precedence ladder (T8.3), layered OVER the detail
+    // PopScope that [ListDetailScaffold] already owns. One system back resolves
+    // the single highest-priority app-owned mode — one rung per press:
+    //
+    //   1. the first-launch welcome  → dismiss it (persist onboardingSeen)
+    //   2. an open detail            → close it   (owned by the scaffold below)
+    //   3. an active selection       → clear it
+    //   4. (nothing left)            → let the OS pop the app
+    //
+    // This PopScope owns rungs 1 and 3 only; it deliberately leaves rung 2 to
+    // the scaffold's own PopScope. Both PopScopes register on the same route, so
+    // a blocked back fires BOTH callbacks — the `!detailOpen` guard below keeps
+    // this one from ALSO clearing the selection on the back that closes a detail
+    // (one back is exactly one rung). The drawer is never a rung: the framework
+    // dismisses it, and caching it would deaden back across a rotation (T8.2).
+    final selectionActive = ref.watch(selectionBackHandleProvider);
+    final detailOpen = sel.taskId != null;
+    return PopScope(
+      canPop: !(showOnboarding || selectionActive),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (showOnboarding) {
+          dismissOnboarding();
+        } else if (!detailOpen && selectionActive) {
+          ref.read(selectionBackHandleProvider.notifier).clear();
+        }
+      },
+      child: shell,
     );
   }
 
