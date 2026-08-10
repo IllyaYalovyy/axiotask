@@ -16,6 +16,7 @@ import 'package:clock/clock.dart';
 import '../model/dates.dart'
     show DateMove, applyDateMove, normalizeDue, nowUtcString;
 import '../model/task.dart';
+import '../model/task_list.dart';
 import '../store/store.dart';
 import '../store/stored.dart';
 import 'ids.dart' show newLocalId;
@@ -652,6 +653,89 @@ class Commands {
         ),
       );
     }
+  }
+
+  // ── list CRUD (§I) ────────────────────────────────────────────────────────
+
+  /// Create a task list titled [title] and return the stored row. A syncable
+  /// list is written as a dirty `create` (no etag) so the next sync inserts it;
+  /// a [localOnly] list is born clean and never pushes. Port of
+  /// `state.rs::create_list`.
+  Future<StoredTaskList> createList(
+    String title, {
+    bool localOnly = false,
+  }) async {
+    final now = nowUtcString();
+    final stored = StoredTaskList(
+      list: TaskList(id: _newId(), title: title, updated: now),
+      syncState: localOnly ? SyncState.clean : SyncState.dirty,
+      localUpdated: now,
+      pendingOp: localOnly ? null : 'create',
+      localOnly: localOnly,
+    );
+    await _store.upsertList(stored);
+    return stored;
+  }
+
+  /// Rename list [id] to [title]. A never-synced list keeps its pending
+  /// `create` (the rename folds in — flipping to `update` would patch a
+  /// non-existent remote list); otherwise it becomes a dirty `update`, pushed
+  /// via `patch_tasklist`. Port of `state.rs::rename_list`.
+  Future<void> renameList(String id, String title) async {
+    final l = await _findList(id);
+    final now = nowUtcString();
+    await _store.upsertList(
+      StoredTaskList(
+        list: TaskList(
+          id: l.list.id,
+          title: title,
+          etag: l.list.etag,
+          updated: now,
+        ),
+        syncState: SyncState.dirty,
+        localUpdated: now,
+        pendingOp: l.pendingOp == 'create' ? 'create' : 'update',
+        localOnly: l.localOnly,
+      ),
+    );
+  }
+
+  /// Delete list [id]. A list the server has seen (has an etag) is TOMBSTONED so
+  /// the deletion reaches Google — which cascades to its tasks server-side — and
+  /// its local task rows are hard-deleted immediately (nothing stranded). A
+  /// never-synced list is hard-deleted outright (its tasks go with the FK
+  /// cascade). A missing list is a no-op. Port of `state.rs::delete_list`.
+  Future<void> deleteList(String id) async {
+    final lists = await _store.allLists();
+    final match = lists.where((l) => l.list.id == id);
+    if (match.isEmpty) return; // already gone
+    final l = match.first;
+    // Remove local task rows (the server cascades on its side once the list
+    // delete lands).
+    for (final t in await _store.listTasks(id)) {
+      await _store.deleteTaskHard(t.task.id);
+    }
+    if (l.list.etag != null) {
+      await _store.upsertList(
+        StoredTaskList(
+          list: l.list,
+          syncState: SyncState.deleted,
+          localUpdated: nowUtcString(),
+          pendingOp: 'delete',
+          localOnly: l.localOnly,
+        ),
+      );
+    } else {
+      await _store.deleteListHard(id);
+    }
+  }
+
+  /// Find a list by id or raise the reference's `"list not found"` shape.
+  Future<StoredTaskList> _findList(String id) async {
+    final lists = await _store.allLists();
+    final match = lists.where((l) => l.list.id == id);
+    if (match.isEmpty) throw const CommandError('list not found');
+    return match.first;
   }
 
   // ── structural moves (T5.2) ───────────────────────────────────────────────
