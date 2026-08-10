@@ -534,6 +534,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               .setSort(widget.viewId, m),
           onShowCompleted: (v) =>
               ref.read(prefsControllerProvider.notifier).setShowCompleted(v),
+          // Clear-completed is a concrete-list-only action, and only while
+          // completed tasks are visible (you cannot bulk-delete what you cannot
+          // see). Smart views (which aggregate across lists) never offer it.
+          onClearCompleted:
+              prefs.showCompleted && SmartView.byId(widget.viewId) == null
+              ? _confirmClearCompleted
+              : null,
         ),
         const Divider(height: 1),
         if (_selectedIds.isNotEmpty)
@@ -625,6 +632,43 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
   }
 
+  /// Confirm, then permanently clear the completed tasks in the current list.
+  /// Destructive and NOT undoable, so it goes behind a styled confirm naming the
+  /// count (the reference's clear-completed flow). Only reachable on a concrete
+  /// list view with completed tasks visible (see the toolbar gating).
+  Future<void> _confirmClearCompleted() async {
+    final listId = widget.viewId;
+    final count = _all
+        .where(
+          (t) => t.listId == listId && t.task.status == TaskStatus.completed,
+        )
+        .length;
+    final plural = count == 1 ? '' : 's';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('clear-completed-confirm'),
+        title: const Text('Clear completed'),
+        content: Text(
+          'Delete $count completed task$plural? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('clear-completed-confirm-button'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(commandsProvider).clearCompleted(listId);
+  }
+
   /// One [TaskRow] for [stored], wired to selection, the action surface, inline
   /// rename, and the quick-date/date-picker/URL affordances.
   Widget _taskRow(
@@ -672,6 +716,7 @@ class _ListToolbar extends StatelessWidget {
     required this.onBulkAdd,
     required this.onSort,
     required this.onShowCompleted,
+    required this.onClearCompleted,
   });
 
   final SortMode sort;
@@ -682,6 +727,10 @@ class _ListToolbar extends StatelessWidget {
   final VoidCallback? onBulkAdd;
   final ValueChanged<SortMode> onSort;
   final ValueChanged<bool> onShowCompleted;
+
+  /// Clear the completed tasks in the current list; `null` HIDES the action
+  /// (not a concrete list, or completed tasks are hidden).
+  final VoidCallback? onClearCompleted;
 
   @override
   Widget build(BuildContext context) {
@@ -715,41 +764,56 @@ class _ListToolbar extends StatelessWidget {
               SortDropdown(value: sort, onChanged: onSort),
             ],
           ),
-          // The whole label toggles — a coarse pointer gets a full-size target,
-          // not just the checkbox (touch has no hover).
-          InkWell(
-            key: const Key('show-completed-toggle'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => onShowCompleted(!showCompleted),
-            // A 48dp-tall hit area — the toolbar renders on a phone too, so the
-            // whole toggle (not just the shrink-wrapped checkbox) is tappable.
-            // SizedBox (not Container-with-alignment, which would fill the width).
-            child: SizedBox(
-              height: 48,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Checkbox(
-                      value: showCompleted,
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onChanged: (v) => onShowCompleted(v ?? false),
+          // Right group: the clear-completed action (when offered) sits beside
+          // the show-completed toggle. Wrapped so a narrow pane flows them.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (onClearCompleted != null)
+                TextButton.icon(
+                  key: const Key('clear-completed-button'),
+                  onPressed: onClearCompleted,
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: const Text('Clear completed'),
+                ),
+              // The whole label toggles — a coarse pointer gets a full-size
+              // target, not just the checkbox (touch has no hover).
+              InkWell(
+                key: const Key('show-completed-toggle'),
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => onShowCompleted(!showCompleted),
+                // A 48dp-tall hit area — the toolbar renders on a phone too, so the
+                // whole toggle (not just the shrink-wrapped checkbox) is tappable.
+                // SizedBox (not Container-with-alignment, which would fill the width).
+                child: SizedBox(
+                  height: 48,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: showCompleted,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          onChanged: (v) => onShowCompleted(v ?? false),
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            'Show completed',
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        'Show completed',
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ],
       ),

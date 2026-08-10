@@ -25,6 +25,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import '../store/database.dart';
 import '../store/store.dart';
 import '../store/store_error.dart';
+import 'backup_paths.dart';
 import 'config.dart';
 import 'config_controller.dart';
 import 'default_list.dart';
@@ -160,6 +161,10 @@ Future<BootstrapResult> bootstrap({
         prefsStoreProvider.overrideWithValue(prefsStore),
         // Snapshot the loaded prefs for the widget tree (theme + initial view).
         prefsProvider.overrideWithValue(prefsStore.load()),
+        // Backup target + About-tab paths (display-only for the latter).
+        backupsDirProvider.overrideWithValue(backupsDirIn(dataBase, env: env)),
+        dbPathProvider.overrideWithValue(dbFile.path),
+        configPathProvider.overrideWithValue(configFile.path),
       ],
     );
   } catch (e) {

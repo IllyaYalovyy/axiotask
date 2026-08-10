@@ -123,4 +123,19 @@ class SyncStatusView {
   final String? lastError;
   final bool needsAttention;
   final bool needsReauth;
+
+  /// A "never synced" snapshot — the Properties Sync tab's default before any
+  /// sync has run (and the seam value until the scheduler is wired in).
+  const SyncStatusView.initial()
+    : lastSynced = null,
+      lastPulled = 0,
+      lastPushed = 0,
+      lastConflicts = 0,
+      lastDeleted = 0,
+      changedListIds = const [],
+      listsChanged = false,
+      totalSyncs = 0,
+      lastError = null,
+      needsAttention = false,
+      needsReauth = false;
 }

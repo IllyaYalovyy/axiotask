@@ -13,6 +13,8 @@ import '../app/providers.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'list_detail_scaffold.dart';
+import 'onboarding.dart';
+import 'properties.dart';
 import 'router.dart';
 import 'sidebar.dart';
 import 'task_detail.dart';
@@ -38,9 +40,18 @@ class AppShell extends ConsumerWidget {
 
     final lists = ref.watch(orderedListsProvider);
     final counts = ref.watch(viewCountsProvider);
-    final excluded = ref.watch(prefsControllerProvider).excludedLists.toSet();
+    final prefs = ref.watch(prefsControllerProvider);
+    final excluded = prefs.excludedLists.toSet();
     final footer = ref.watch(sidebarFooterProvider);
     final listTitles = {for (final l in lists) l.list.id: l.list.title};
+
+    // First-launch welcome: an empty task workspace the user has never dismissed
+    // the intro on. The Flutter bootstrap always ensures a default list, so
+    // "empty workspace" here means "no tasks yet" (adapted from the reference's
+    // lists-and-tasks-empty gate). Once dismissed, onboardingSeen keeps it away.
+    final allTasks =
+        ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+    final showOnboarding = allTasks.isEmpty && !prefs.onboardingSeen;
 
     // Keep the desktop window title in sync with the active view (no-op on
     // mobile / under tests via NoopWindowTitleController). Scheduled after the
@@ -64,11 +75,8 @@ class AppShell extends ConsumerWidget {
     String? prevTaskId;
     String? nextTaskId;
     if (sel.taskId != null) {
-      final all =
-          ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
-      final prefs = ref.watch(prefsControllerProvider);
       final ordered = visibleTasksForView(
-        allTasks: all,
+        allTasks: allTasks,
         viewId: sel.viewId,
         excludedLists: prefs.excludedLists.toSet(),
         showCompleted: prefs.showCompleted,
@@ -105,9 +113,17 @@ class AppShell extends ConsumerWidget {
       onReorderLists: (ids) =>
           ref.read(prefsControllerProvider.notifier).setListOrder(ids),
       footer: footer,
+      onOpenProperties: () => showProperties(context),
+      onToggleTheme: () {
+        // Flip to the opposite explicit theme (a "system" pref resolves to its
+        // effective brightness, then flips). Keeps the sun/moon meaningful.
+        final next = _resolvedDark(context, prefs.theme) ? 'light' : 'dark';
+        ref.read(prefsControllerProvider.notifier).setTheme(next);
+      },
+      isDark: _resolvedDark(context, prefs.theme),
     );
 
-    return ListDetailScaffold(
+    final scaffold = ListDetailScaffold(
       sidebar: sidebar,
       destinations: [
         for (final v in SmartView.values)
@@ -138,6 +154,23 @@ class AppShell extends ConsumerWidget {
             ),
       onCloseDetail: () => context.go(viewPath(sel.viewId)),
     );
+
+    if (!showOnboarding) return scaffold;
+    // Overlay the welcome above the shell. Dismissal persists onboardingSeen,
+    // which flips [showOnboarding] false and removes the overlay for good.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        scaffold,
+        Positioned.fill(
+          child: OnboardingIntro(
+            onDismiss: () => ref
+                .read(prefsControllerProvider.notifier)
+                .setOnboardingSeen(true),
+          ),
+        ),
+      ],
+    );
   }
 
   /// Persist the newly selected view (survives restart, localStorage parity)
@@ -147,6 +180,16 @@ class AppShell extends ConsumerWidget {
     context.go(viewPath(viewId));
   }
 }
+
+/// The effective dark/light of a theme pref: explicit choices win; `system` (or
+/// any unknown value) resolves against the platform brightness — so the sidebar
+/// sun/moon always shows the CURRENT brightness and flips to its opposite.
+bool _resolvedDark(BuildContext context, String themePref) =>
+    switch (themePref) {
+      'dark' => true,
+      'light' => false,
+      _ => MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+    };
 
 /// The list pane for a view — the real [TaskListView] for every smart view and
 /// every list (the T7.1 filters + sort make this one widget serve them all).

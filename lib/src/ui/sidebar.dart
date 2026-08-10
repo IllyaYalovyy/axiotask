@@ -31,6 +31,9 @@ class Sidebar extends StatelessWidget {
     required this.onToggleExclude,
     required this.onReorderLists,
     this.footer,
+    this.onOpenProperties,
+    this.onToggleTheme,
+    this.isDark = false,
     super.key,
   });
 
@@ -68,6 +71,16 @@ class Sidebar extends StatelessWidget {
   /// The auth/sync footer, pinned at the bottom. `null` hides it (auth wiring
   /// pending).
   final Widget? footer;
+
+  /// Open the Properties dialog. `null` hides the chrome row (e.g. in the
+  /// standalone sidebar tests that do not wire it).
+  final VoidCallback? onOpenProperties;
+
+  /// Flip the theme (sun/moon). `null` hides the toggle.
+  final VoidCallback? onToggleTheme;
+
+  /// Whether the active theme is dark — selects the sun/moon glyph.
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +120,14 @@ class Sidebar extends StatelessWidget {
             ),
           ),
           if (footer != null) ...[const Divider(height: 1), footer!],
+          if (onOpenProperties != null) ...[
+            const Divider(height: 1),
+            _ChromeRow(
+              onOpenProperties: onOpenProperties!,
+              onToggleTheme: onToggleTheme,
+              isDark: isDark,
+            ),
+          ],
         ],
       ),
     );
@@ -164,6 +185,52 @@ class Sidebar extends StatelessWidget {
       ),
     );
     if (ok == true) onDeleteList(l.list.id);
+  }
+}
+
+/// The pinned chrome row at the very bottom: the Properties launcher and the
+/// sun/moon theme toggle (the reference's sidebar footer row). NO Fresh-sync
+/// here — that lives only inside Properties (destructive, behind a confirm).
+class _ChromeRow extends StatelessWidget {
+  const _ChromeRow({
+    required this.onOpenProperties,
+    required this.onToggleTheme,
+    required this.isDark,
+  });
+
+  final VoidCallback onOpenProperties;
+  final VoidCallback? onToggleTheme;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextButton.icon(
+              key: const Key('open-properties'),
+              onPressed: onOpenProperties,
+              icon: const Icon(Icons.settings_outlined, size: 18),
+              label: const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Properties'),
+              ),
+            ),
+          ),
+          if (onToggleTheme != null)
+            IconButton(
+              key: const Key('theme-toggle'),
+              tooltip: isDark
+                  ? 'Switch to light theme'
+                  : 'Switch to dark theme',
+              icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+              onPressed: onToggleTheme,
+            ),
+        ],
+      ),
+    );
   }
 }
 
