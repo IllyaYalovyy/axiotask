@@ -13,7 +13,7 @@
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
-import '../app/commands.dart' show SetDueResult;
+import '../app/commands.dart' show Commands, SetDueResult;
 import 'date_format.dart' show parseLocalDate;
 
 /// What the picker returned. `null` from [showDueDatePicker] means the user
@@ -140,4 +140,29 @@ String? dueCascadeMessage(SetDueResult res) {
   if (n == 0) return null;
   if (res.cascadedParent) return 'Parent date moved to match';
   return '$n subtask date${n == 1 ? '' : 's'} moved to match';
+}
+
+/// Surface the #164 cascade for [res] as an undoable SnackBar, or do nothing
+/// when the edit moved no other row. Shared by every due surface (the list
+/// row's quick strip and the detail panel) so one edit-cascade-undo phrasing
+/// lives in one place. The whole cascade reverts as one unit via
+/// [Commands.undoSetDue].
+void offerDueCascadeUndo(
+  ScaffoldMessengerState messenger,
+  Commands commands,
+  SetDueResult res,
+) {
+  final message = dueCascadeMessage(res);
+  if (message == null) return;
+  messenger
+    ..clearSnackBars()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => commands.undoSetDue(res.undo),
+        ),
+      ),
+    );
 }

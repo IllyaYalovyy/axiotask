@@ -14,7 +14,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../app/commands.dart' show Commands, SetDueResult;
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
@@ -134,7 +133,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final commands = ref.read(commandsProvider);
     final res = await commands.setDue(id, move);
     if (!mounted) return;
-    _offerCascadeUndo(messenger, commands, res);
+    offerDueCascadeUndo(messenger, commands, res);
   }
 
   /// Open the calendar for [id] on its current [currentDue], apply the choice
@@ -150,29 +149,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
     };
     if (!mounted) return;
-    _offerCascadeUndo(messenger, commands, res);
-  }
-
-  /// Show the #164 cascade toast for [res] with a whole-cascade Undo, or nothing
-  /// when the edit moved no other row.
-  void _offerCascadeUndo(
-    ScaffoldMessengerState messenger,
-    Commands commands,
-    SetDueResult res,
-  ) {
-    final message = dueCascadeMessage(res);
-    if (message == null) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () => commands.undoSetDue(res.undo),
-          ),
-        ),
-      );
+    offerDueCascadeUndo(messenger, commands, res);
   }
 
   @override

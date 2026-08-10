@@ -41,6 +41,11 @@ class PrefsController extends Notifier<Prefs> {
   void setShowCompleted(bool value) =>
       _write(state.copyWith(showCompleted: value));
 
+  /// Collapse or reveal completed subtasks in the detail panel checklist.
+  /// Persisted so a tidy checklist stays tidy across panels and sessions.
+  void setHideCompletedSubtasks(bool value) =>
+      _write(state.copyWith(hideCompletedSubtasks: value));
+
   /// Set the sort order for one view id (persisted per view).
   void setSort(String viewId, SortMode mode) {
     final next = Map<String, String>.from(state.sortPerView)

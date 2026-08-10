@@ -10,6 +10,8 @@ import 'package:go_router/go_router.dart';
 
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
+import '../model/task_view.dart';
+import '../store/stored.dart';
 import 'list_detail_scaffold.dart';
 import 'router.dart';
 import 'sidebar.dart';
@@ -55,6 +57,30 @@ class AppShell extends ConsumerWidget {
 
     final selectedIndex =
         SmartView.byId(sel.viewId)?.index ?? SmartView.all.index;
+
+    // Panel prev/next: the siblings of the open task in the CURRENT view's
+    // visible ordering (the same order the list renders). Null at a boundary,
+    // and for anything not in the ordering (a subtask, or a filtered-out task).
+    String? prevTaskId;
+    String? nextTaskId;
+    if (sel.taskId != null) {
+      final all =
+          ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+      final prefs = ref.watch(prefsControllerProvider);
+      final ordered = visibleTasksForView(
+        allTasks: all,
+        viewId: sel.viewId,
+        excludedLists: prefs.excludedLists.toSet(),
+        showCompleted: prefs.showCompleted,
+        sort: SortMode.byId(prefs.sortPerView[sel.viewId]),
+        window: dateWindowNow(),
+      );
+      final i = ordered.indexWhere((t) => t.task.id == sel.taskId);
+      if (i >= 0) {
+        if (i > 0) prevTaskId = ordered[i - 1].task.id;
+        if (i < ordered.length - 1) nextTaskId = ordered[i + 1].task.id;
+      }
+    }
 
     final sidebar = Sidebar(
       selectedViewId: sel.viewId,
@@ -102,6 +128,12 @@ class AppShell extends ConsumerWidget {
               taskId: sel.taskId!,
               onClose: () => context.go(viewPath(sel.viewId)),
               onOpenTask: (id) => context.go(viewPath(sel.viewId, taskId: id)),
+              onPrev: prevTaskId == null
+                  ? null
+                  : () => context.go(viewPath(sel.viewId, taskId: prevTaskId)),
+              onNext: nextTaskId == null
+                  ? null
+                  : () => context.go(viewPath(sel.viewId, taskId: nextTaskId)),
             ),
       onCloseDetail: () => context.go(viewPath(sel.viewId)),
     );
