@@ -7,10 +7,16 @@
 // identical hovered or not).
 //
 // Subtasks are never rows (invariant #1) — the caller only ever hands this
-// widget a top-level task; there is no indent, connector, or expand toggle. The
-// swipe quick-actions and long-press selection are the coarse-pointer path and
-// land in T8.1; this row is the non-touch surface.
+// widget a top-level task; there is no indent, connector, or expand toggle.
+//
+// The coarse-pointer path (T8.1) is grafted on here: a touch swipe right
+// completes the task, a swipe left reveals the quick-date strip (following the
+// finger while peeking, latched open at rest), and a long-press toggles
+// selection. Those gestures are gated to a touch pointer so the mouse keeps the
+// hover strip + right-click menu; the gesture arena disambiguates a horizontal
+// swipe from the list's vertical scroll and a stationary long-press from either.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -128,6 +134,30 @@ class _TaskRowState extends State<TaskRow> {
   FocusNode? _focus;
   bool _hovering = false;
 
+  // ── T8.1 touch gestures ────────────────────────────────────────────────
+  // Reference (TaskRow.svelte): a mostly-horizontal swipe ≥80px right completes
+  // the task; ≥80px left opens the quick-date strip, which follows the finger
+  // (dampened, capped) while peeking and latches open at rest. The gesture arena
+  // resolves a swipe against the list's vertical scroll, and a stationary
+  // long-press (select) against either — any motion before it fires cancels it.
+  static const double _swipeThreshold = 80;
+  static const double _swipeRevealMax = 96;
+  // Touch gestures only — the mouse keeps the hover strip + right-click menu.
+  static const Set<PointerDeviceKind> _touchOnly = {PointerDeviceKind.touch};
+
+  // Cumulative horizontal travel of the in-flight swipe (for the end decision).
+  double _swipeDx = 0;
+  // The content's live horizontal offset (0 closed, negative while peeking/open).
+  double _swipeOffset = 0;
+  // A left peek is tracking the finger (strip shown, not yet latched).
+  bool _peeking = false;
+  // The strip is latched open by a completed left swipe (opens at rest).
+  bool _actionsOpen = false;
+
+  /// The quick-date strip is on-screen because of a touch swipe (peek or open) —
+  /// as opposed to a desktop hover — so it gets the larger 48dp touch targets.
+  bool get _stripRevealedByTouch => _peeking || _actionsOpen;
+
   bool get _editing => _editor != null;
 
   @override
@@ -180,9 +210,16 @@ class _TaskRowState extends State<TaskRow> {
     widget.onEditDone?.call();
   }
 
-  /// A body tap: a Ctrl/Cmd-modified tap toggles selection (BulkOps); a plain
-  /// tap opens the detail panel.
+  /// A body tap: a revealed swipe strip closes first (touch); otherwise a
+  /// Ctrl/Cmd-modified tap toggles selection (BulkOps) and a plain tap opens the
+  /// detail panel.
   void _onBodyTap() {
+    // A tap anywhere on a row with the swipe strip open closes it and does
+    // nothing else (reference: a revealed strip is dismissed by tapping away).
+    if (_actionsOpen) {
+      _closeStrip();
+      return;
+    }
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
     final modified =
         keys.contains(LogicalKeyboardKey.controlLeft) ||
@@ -194,6 +231,81 @@ class _TaskRowState extends State<TaskRow> {
     } else {
       widget.onOpen();
     }
+  }
+
+  /// Snap the swipe strip fully closed.
+  void _closeStrip() {
+    setState(() {
+      _actionsOpen = false;
+      _peeking = false;
+      _swipeOffset = 0;
+    });
+  }
+
+  void _onSwipeStart(DragStartDetails _) {
+    _swipeDx = 0;
+  }
+
+  void _onSwipeUpdate(DragUpdateDetails d) {
+    _swipeDx += d.primaryDelta ?? 0;
+    setState(() {
+      if (_swipeDx < -10 && widget.onSetDue != null) {
+        // A leftward drag peeks the strip and drags the content with the finger,
+        // dampened and capped so a long fling never rips the row off-screen.
+        _peeking = true;
+        _swipeOffset = (_swipeDx * 0.35).clamp(-_swipeRevealMax, 0.0);
+      } else if (!_actionsOpen) {
+        _peeking = false;
+        _swipeOffset = 0;
+      }
+    });
+  }
+
+  void _onSwipeEnd(DragEndDetails _) {
+    final dx = _swipeDx;
+    var complete = false;
+    setState(() {
+      // The finger-following nudge only lives during the peek; at rest the row
+      // sits square and the strip floats over its right edge (reference: only
+      // `.swipe-actions-peeking` translates the content, `-open` does not).
+      _peeking = false;
+      _swipeOffset = 0;
+      if (dx >= _swipeThreshold && !_actionsOpen) {
+        // Swipe right → complete (fire after the frame settles).
+        _actionsOpen = false;
+        complete = true;
+      } else if (dx <= -_swipeThreshold && widget.onSetDue != null) {
+        // Swipe left → latch the quick-date strip open at rest.
+        _actionsOpen = true;
+      }
+      // Otherwise: not far enough — the resting state (open or closed) stands.
+    });
+    if (complete) widget.onToggle();
+  }
+
+  void _onSwipeCancel() {
+    setState(() {
+      _peeking = false;
+      _swipeOffset = 0;
+    });
+  }
+
+  /// Wrap [child] with the touch-only gesture layer: a horizontal swipe
+  /// (complete / reveal) and a long-press (select). Gated to a touch pointer so
+  /// the mouse keeps hover + right-click; a translucent behavior keeps the inner
+  /// tap/checkbox targets hittable, and the arena resolves a swipe against the
+  /// list's vertical scroll and a stationary long-press against either.
+  Widget _wrapTouchGestures(Widget child) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      supportedDevices: _touchOnly,
+      onLongPress: widget.onSelectToggle,
+      onHorizontalDragStart: _onSwipeStart,
+      onHorizontalDragUpdate: _onSwipeUpdate,
+      onHorizontalDragEnd: _onSwipeEnd,
+      onHorizontalDragCancel: _onSwipeCancel,
+      child: child,
+    );
   }
 
   @override
@@ -231,46 +343,58 @@ class _TaskRowState extends State<TaskRow> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             child: Stack(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 48dp hit target for the checkbox (#167) — tapping it
-                    // toggles and never bubbles to the body tap.
-                    SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: Checkbox(
-                        value: widget.completed,
-                        onChanged: (_) => widget.onToggle(),
-                      ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _mainLine(theme),
-                          const SizedBox(height: 2),
-                          _metaLine(theme),
-                        ],
-                      ),
-                    ),
-                    if (showOverflow)
+                // The foreground content follows the finger during a left peek
+                // (T8.1). Transform.translate is paint-only, so the row's size —
+                // and the #168 no-reflow geometry — is unchanged whatever the
+                // offset.
+                Transform.translate(
+                  key: const Key('swipe-content'),
+                  offset: Offset(_swipeOffset, 0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 48dp hit target for the checkbox (#167,
+                      // CheckboxTapTarget) — tapping it toggles and never bubbles
+                      // to the body tap.
                       SizedBox(
+                        key: const Key('row-checkbox-target'),
                         width: 48,
                         height: 48,
-                        child: IconButton(
-                          key: const Key('row-overflow'),
-                          padding: EdgeInsets.zero,
-                          tooltip: 'Task actions',
-                          icon: const Icon(Icons.more_vert),
-                          onPressed: widget.onShowActions,
+                        child: Checkbox(
+                          value: widget.completed,
+                          onChanged: (_) => widget.onToggle(),
                         ),
                       ),
-                  ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _mainLine(theme),
+                            const SizedBox(height: 2),
+                            _metaLine(theme),
+                          ],
+                        ),
+                      ),
+                      if (showOverflow)
+                        SizedBox(
+                          width: 48,
+                          height: 48,
+                          child: IconButton(
+                            key: const Key('row-overflow'),
+                            padding: EdgeInsets.zero,
+                            tooltip: 'Task actions',
+                            icon: const Icon(Icons.more_vert),
+                            onPressed: widget.onShowActions,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 // The quick-date strip — lifted OUT of layout flow (#168): a
                 // Positioned child never contributes to the Stack's size, so the
                 // row height is byte-for-byte identical whether it shows or not.
+                // Revealed by a desktop hover OR a touch swipe-left (T8.1); the
+                // touch reveal gets the larger 48dp button targets.
                 if (widget.onSetDue != null)
                   Positioned(
                     right: 0,
@@ -278,10 +402,12 @@ class _TaskRowState extends State<TaskRow> {
                     bottom: 0,
                     child: Center(
                       child: Visibility(
-                        visible: _hovering && !_editing,
+                        visible:
+                            (_hovering || _stripRevealedByTouch) && !_editing,
                         child: _QuickDateStrip(
                           hasDue: (widget.due ?? '').isNotEmpty,
                           onSetDue: widget.onSetDue!,
+                          dense: !_stripRevealedByTouch,
                         ),
                       ),
                     ),
@@ -309,15 +435,18 @@ class _TaskRowState extends State<TaskRow> {
           )
         : content;
 
-    if (widget.onContextMenu == null) return decorated;
     // Secondary-tap (right-click) opens the desktop context menu anywhere on the
-    // row. Touch selection (long-press) is T8.1's gesture, so it is deliberately
-    // NOT bound here; the persistent "⋯" is the coarse-pointer action path.
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onSecondaryTapDown: (d) => widget.onContextMenu!(d.globalPosition),
-      child: decorated,
-    );
+    // row; touch selection is the long-press bound by _wrapTouchGestures below.
+    final withContext = widget.onContextMenu == null
+        ? decorated
+        : GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onSecondaryTapDown: (d) => widget.onContextMenu!(d.globalPosition),
+            child: decorated,
+          );
+    // The coarse-pointer swipe/long-press layer wraps everything so a gesture
+    // anywhere on the row is caught (T8.1).
+    return _wrapTouchGestures(withContext);
   }
 
   /// The main line: title (or inline editor) and the pending-sync dot.
@@ -489,10 +618,18 @@ class _TaskRowState extends State<TaskRow> {
 /// / Next month, plus Clear when the task has a date. Floats over the row's
 /// right edge with its own background so it reads cleanly.
 class _QuickDateStrip extends StatelessWidget {
-  const _QuickDateStrip({required this.hasDue, required this.onSetDue});
+  const _QuickDateStrip({
+    required this.hasDue,
+    required this.onSetDue,
+    this.dense = true,
+  });
 
   final bool hasDue;
   final ValueChanged<DateMove> onSetDue;
+
+  /// A hover reveal (desktop) is dense; a touch swipe reveal is not, so its
+  /// buttons meet the 48dp target (T8.1 48dp audit).
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -555,21 +692,29 @@ class _QuickDateStrip extends StatelessWidget {
     String tooltip,
     VoidCallback onTap,
   ) {
+    final inner = Padding(
+      padding: EdgeInsets.symmetric(horizontal: dense ? 6 : 12, vertical: 4),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurface,
+        ),
+      ),
+    );
     return Tooltip(
       message: tooltip,
       child: InkWell(
         key: key,
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-        ),
+        // A touch reveal gives every button a 48dp hit target (#167); the dense
+        // desktop hover strip stays compact.
+        child: dense
+            ? inner
+            : ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                child: Center(child: inner),
+              ),
       ),
     );
   }
