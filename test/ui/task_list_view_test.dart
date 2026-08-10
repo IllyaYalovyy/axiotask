@@ -162,6 +162,17 @@ class FakeBackend implements Commands {
   Future<void> freshSync() async => throw UnimplementedError();
 
   @override
+  Future<StoredTaskList> createList(String title, {bool localOnly = false}) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> renameList(String id, String title) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> deleteList(String id) async => throw UnimplementedError();
+
+  @override
   void setEditing(String? id) {}
 
   @override
