@@ -126,6 +126,7 @@ class AppShell extends ConsumerWidget {
           : TaskDetail(
               key: ValueKey(sel.taskId),
               taskId: sel.taskId!,
+              autofocusNotes: sel.focusNotes,
               onClose: () => context.go(viewPath(sel.viewId)),
               onOpenTask: (id) => context.go(viewPath(sel.viewId, taskId: id)),
               onPrev: prevTaskId == null
@@ -165,6 +166,8 @@ class ViewListPane extends StatelessWidget {
       viewId: viewId,
       selectedTaskId: selectedTaskId,
       onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+      onOpenTaskNotes: (id) =>
+          context.go(viewPath(viewId, taskId: id, focusNotes: true)),
       // Search may land on a DIFFERENT view (a subtask's parent list — #92), so
       // it navigates by an explicit target view rather than the current one.
       onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),

@@ -21,13 +21,21 @@ import 'views.dart';
 
 /// The parsed shell selection: which view, and which task (if any).
 class ShellLocation {
-  const ShellLocation({required this.viewId, this.taskId});
+  const ShellLocation({
+    required this.viewId,
+    this.taskId,
+    this.focusNotes = false,
+  });
 
   /// The active view id (smart-view id or list id).
   final String viewId;
 
   /// The selected task id, or `null` when the detail pane is closed.
   final String? taskId;
+
+  /// Whether the detail pane should open with its Notes field focused (the
+  /// context menu's "Edit notes"); carried in the `focus=notes` query param.
+  final bool focusNotes;
 }
 
 /// Parse a shell [uri] into its [ShellLocation]. Falls back to the "all" view
@@ -42,12 +50,16 @@ ShellLocation parseShellLocation(Uri uri) {
   return ShellLocation(
     viewId: viewId,
     taskId: (task != null && task.isNotEmpty) ? task : null,
+    focusNotes: uri.queryParameters['focus'] == 'notes',
   );
 }
 
-/// The path for a view, with an optional selected task.
-String viewPath(String viewId, {String? taskId}) =>
-    taskId == null ? '/view/$viewId' : '/view/$viewId?task=$taskId';
+/// The path for a view, with an optional selected task and Notes-focus request.
+String viewPath(String viewId, {String? taskId, bool focusNotes = false}) {
+  if (taskId == null) return '/view/$viewId';
+  final notes = focusNotes ? '&focus=notes' : '';
+  return '/view/$viewId?task=$taskId$notes';
+}
 
 /// Redirect the bare root to the given [defaultViewId]; leave every other
 /// location untouched. Pure — unit-tested directly.

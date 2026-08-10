@@ -20,15 +20,46 @@ import '../app/quick_add.dart';
 import '../model/dates.dart' show DateMove;
 import '../model/effective_due.dart';
 import '../model/task.dart';
+import '../model/task_tree.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'bulk_add.dart';
+import 'bulk_bar.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'list_pickers.dart';
 import 'search.dart';
 import 'sort_dropdown.dart';
+import 'task_actions.dart';
 import 'task_row.dart';
 import 'url_opener.dart';
 import 'views.dart';
+
+/// The reorder move a drag from [oldIndex] to landing [newIndex] over the
+/// visible [rows] should apply: a direction plus a STEP COUNT that counts only
+/// siblings in the SAME list (cross-list cards in the "all" view are skipped,
+/// mirroring ListView.svelte). [newIndex] is the ADJUSTED landing index (as
+/// delivered by ReorderableListView.onReorderItem — the down-shift is already
+/// applied). Returns `null` for a no-op (dropped in place, or only other-list
+/// cards were crossed). Visible rows are top-level only (invariant #1), so
+/// "same parent" is implicit.
+({String direction, int steps})? reorderStep(
+  List<StoredTask> rows,
+  int oldIndex,
+  int newIndex,
+) {
+  if (newIndex == oldIndex) return null;
+  final moving = rows[oldIndex];
+  final down = newIndex > oldIndex;
+  final lo = down ? oldIndex + 1 : newIndex;
+  final hi = down ? newIndex : oldIndex - 1;
+  var steps = 0;
+  for (var i = lo; i <= hi; i++) {
+    if (rows[i].listId == moving.listId) steps++;
+  }
+  if (steps == 0) return null;
+  return (direction: down ? 'down' : 'up', steps: steps);
+}
 
 /// The empty-state message for [viewId] — a per-view reassurance for a smart
 /// view, the generic prompt for a list / All Tasks. Ports the reference's
@@ -47,6 +78,7 @@ class TaskListView extends ConsumerStatefulWidget {
     required this.viewId,
     required this.selectedTaskId,
     required this.onOpenTask,
+    this.onOpenTaskNotes,
     this.onOpenInView,
     super.key,
   });
@@ -60,6 +92,10 @@ class TaskListView extends ConsumerStatefulWidget {
 
   /// Open the detail panel for a task id (router-backed in the app).
   final ValueChanged<String> onOpenTask;
+
+  /// Open the detail panel for a task id with the Notes field focused (the
+  /// context menu's "Edit notes"). When null, falls back to [onOpenTask].
+  final ValueChanged<String>? onOpenTaskNotes;
 
   /// Open a task in a SPECIFIC view (list) — used by search to land a subtask
   /// on its parent's list (#92). When null, opening falls back to [onOpenTask]
@@ -86,7 +122,25 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // its target synchronously at submit time.
   List<StoredTaskList> _lists = const [];
 
+  // The full visible task set from the last build, so the action handlers can
+  // resolve demote candidates and task rows without re-reading the provider.
+  List<StoredTask> _all = const [];
+
+  // The current multi-select (BulkOps). Empty means the bulk bar is hidden.
+  // The widget is keyed per-view, so a view switch remounts and clears it.
+  final Set<String> _selectedIds = {};
+
+  // The one row asked to enter inline rename via the context menu's "Edit
+  // title"; cleared when that row leaves edit mode.
+  String? _editId;
+
   bool get _isSmartView => SmartView.byId(widget.viewId) != null;
+
+  /// The list a fresh bulk insert targets: the current list, or the first list
+  /// when a smart view is active (mirrors the reference's bulkTargetList).
+  String? get _bulkTargetList => _isSmartView
+      ? (_lists.isEmpty ? null : _lists.first.list.id)
+      : widget.viewId;
 
   /// The natural-language due parsed from the current input, unless the user
   /// dismissed it for this exact text.
@@ -181,10 +235,252 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     );
   }
 
+  // ── multi-select + bulk operations (BulkOps) ──────────────────────────────
+
+  void _toggleSelect(String id) => setState(() {
+    if (!_selectedIds.remove(id)) _selectedIds.add(id);
+  });
+
+  void _clearSelection() => setState(_selectedIds.clear);
+
+  /// A 4-second info toast reporting a bulk op's outcome ("N tasks `<verb>`").
+  void _bulkToast(int n, String verb) {
+    if (n <= 0) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('$n task${n == 1 ? '' : 's'} $verb'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+  }
+
+  Future<void> _bulkComplete() async {
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    final byId = {for (final t in _all) t.task.id: t};
+    _clearSelection();
+    for (final id in ids) {
+      // Completing is idempotent-ish: only flip a still-open task (toggle would
+      // otherwise re-open an already-completed one).
+      final t = byId[id];
+      if (t != null && t.task.status != TaskStatus.completed) {
+        await commands.toggleComplete(id);
+      }
+    }
+    if (mounted) _bulkToast(ids.length, 'completed');
+  }
+
+  Future<void> _bulkSetDue(DateMove move) async {
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    for (final id in ids) {
+      await commands.setDue(id, move);
+    }
+    if (mounted) {
+      _bulkToast(
+        ids.length,
+        move == DateMove.clear ? 'cleared' : 'rescheduled',
+      );
+    }
+  }
+
+  Future<void> _bulkDelete() async {
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    for (final id in ids) {
+      await commands.deleteTask(id);
+    }
+    if (mounted) _bulkToast(ids.length, 'deleted');
+  }
+
+  Future<void> _bulkMove() async {
+    // Bulk mode shows EVERY list (the selection may span lists).
+    final target = await showMoveToListPicker(context, lists: _lists);
+    if (target == null || !mounted) return;
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    for (final id in ids) {
+      await commands.moveTaskToList(id, target);
+    }
+    if (mounted) _bulkToast(ids.length, 'moved');
+  }
+
+  // ── per-row action surface (§4) ───────────────────────────────────────────
+
+  /// The legal parents [t] could be demoted under: every OTHER childless
+  /// top-level task in the SAME list (#88). canNestUnder is the single source of
+  /// truth for the two-level rule.
+  List<StoredTask> _demoteCandidates(StoredTask t) => _all
+      .where(
+        (c) =>
+            c.listId == t.listId &&
+            canNestUnder(t.task.id, c.task, _all.map((x) => x.task)),
+      )
+      .toList();
+
+  /// Build and show the row's action surface: the desktop context menu at
+  /// [globalPosition] (a right-click), or the touch action sheet ([globalPosition]
+  /// null). Both carry EVERY action.
+  Future<void> _showRowActions(StoredTask t, {Offset? globalPosition}) async {
+    final demotable = t.task.parent == null && _demoteCandidates(t).isNotEmpty;
+    final entries = buildTaskMenu(
+      task: t,
+      lists: _lists,
+      demotable: demotable,
+      onEditTitle: () => setState(() => _editId = t.task.id),
+      onEditNotes: () =>
+          (widget.onOpenTaskNotes ?? widget.onOpenTask)(t.task.id),
+      onSetDue: (move) => _quickMove(t.task.id, move),
+      onPickDate: () => _openDatePicker(t.task.id, t.task.due),
+      onMoveToList: (listId) => _moveToList(t, listId),
+      onDetach: () => _detach(t),
+      onDemote: () => _demote(t),
+      onDuplicate: () => _duplicate(t),
+      onDetails: () => widget.onOpenTask(t.task.id),
+      onOpenGoogle: () => _openGoogle(t),
+      onDelete: () => _delete(t),
+    );
+    if (globalPosition != null) {
+      await showTaskContextMenu(context, globalPosition, entries);
+    } else {
+      await showTaskActionSheet(context, entries);
+    }
+  }
+
+  /// Move [t]'s subtree to [targetListId] and toast (no undo — matches the
+  /// reference's 5s move info toast).
+  Future<void> _moveToList(StoredTask t, String targetListId) async {
+    if (t.listId == targetListId) return; // already there
+    final title = t.task.title;
+    final listTitle = _lists
+        .firstWhere(
+          (l) => l.list.id == targetListId,
+          orElse: () => _lists.first,
+        )
+        .list
+        .title;
+    await ref.read(commandsProvider).moveTaskToList(t.task.id, targetListId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Moved "$title" to $listTitle'),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+  }
+
+  /// Detach a subtask back to top level, directly after its former parent.
+  Future<void> _detach(StoredTask t) async {
+    final parentId = t.task.parent;
+    if (parentId == null) return;
+    await ref
+        .read(commandsProvider)
+        .moveTask(t.task.id, parentId: null, previousId: parentId);
+  }
+
+  /// Demote [t] into a subtask via the searchable parent picker (#88).
+  Future<void> _demote(StoredTask t) async {
+    final candidates = _demoteCandidates(t);
+    if (candidates.isEmpty) return;
+    final parentId = await showParentPicker(context, candidates: candidates);
+    if (parentId == null || !mounted) return;
+    await ref.read(commandsProvider).moveTask(t.task.id, parentId: parentId);
+  }
+
+  /// Duplicate [t] as "`<title>` (copy)" in the same list and parent.
+  Future<void> _duplicate(StoredTask t) async {
+    await ref
+        .read(commandsProvider)
+        .createTask(
+          listId: t.listId,
+          parentId: t.task.parent,
+          title: '${t.task.title} (copy)',
+        );
+  }
+
+  /// Open the task's Google Tasks URL via the shared opener.
+  Future<void> _openGoogle(StoredTask t) async {
+    final url = t.task.webViewLink;
+    if (url == null || url.isEmpty) return;
+    await ref.read(urlOpenerProvider)(url);
+  }
+
+  /// Delete [t] with a 30-second Undo toast (mirrors the detail panel's delete).
+  Future<void> _delete(StoredTask t) async {
+    final commands = ref.read(commandsProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    final token = await commands.deleteTask(t.task.id);
+    if (!mounted) return;
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Deleted "${t.task.title}"'),
+          duration: const Duration(seconds: 30),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => commands.undoDelete(token),
+          ),
+        ),
+      );
+  }
+
+  /// Open the BulkAdd dialog (prefilled with [initialText]) and create the
+  /// tasks it returns, then toast the count (BulkAdd / PasteCreate bulk-split).
+  Future<void> _openBulkAdd({String initialText = ''}) async {
+    final target = _bulkTargetList;
+    if (target == null) return;
+    final result = await showBulkAddDialog(
+      context,
+      lists: _lists,
+      defaultListId: target,
+      initialText: initialText,
+    );
+    if (result == null || !mounted) return;
+    final commands = ref.read(commandsProvider);
+    var created = 0;
+    if (result.mode == BulkAddMode.titleNotes) {
+      final all = result.text.split('\n');
+      final title = all.first.trim();
+      final notes = all.skip(1).join('\n').trim();
+      if (title.isNotEmpty) {
+        final task = await commands.createTask(
+          listId: result.listId,
+          title: title,
+        );
+        if (notes.isNotEmpty) await commands.setNotes(task.task.id, notes);
+        created = 1;
+      }
+    } else {
+      for (final line in splitBulkLines(result.text)) {
+        await commands.createTask(listId: result.listId, title: line);
+        created++;
+      }
+    }
+    if (mounted && created > 0) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Added $created task${created == 1 ? '' : 's'}'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final all =
         ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+    _all = all;
     // Keep the lists subscribed and current so quick-add resolves its target.
     _lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
 
@@ -232,6 +528,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           sort: sort,
           showCompleted: prefs.showCompleted,
           onSearch: _openSearch,
+          onBulkAdd: _bulkTargetList == null ? null : () => _openBulkAdd(),
           onSort: (m) => ref
               .read(prefsControllerProvider.notifier)
               .setSort(widget.viewId, m),
@@ -239,6 +536,15 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               ref.read(prefsControllerProvider.notifier).setShowCompleted(v),
         ),
         const Divider(height: 1),
+        if (_selectedIds.isNotEmpty)
+          BulkBar(
+            count: _selectedIds.length,
+            onComplete: _bulkComplete,
+            onSetDue: _bulkSetDue,
+            onMove: _bulkMove,
+            onDelete: _bulkDelete,
+            onClear: _clearSelection,
+          ),
         Expanded(
           child: tasks.isEmpty
               ? Center(
@@ -247,34 +553,112 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 )
-              : ListView.builder(
+              // Drag reorder rides ONLY the manual sort (backend position); the
+              // other sorts derive their order, so reordering them is
+              // meaningless (the reference disables it too).
+              : sort == SortMode.manual
+              ? ReorderableListView.builder(
+                  buildDefaultDragHandles: false,
                   itemCount: tasks.length,
+                  onReorderItem: (oldIndex, newIndex) =>
+                      _onReorder(tasks, oldIndex, newIndex),
                   itemBuilder: (context, i) {
                     final stored = tasks[i];
-                    final t = stored.task;
-                    return TaskRow(
-                      key: ValueKey(t.id),
-                      title: t.title,
-                      notes: t.notes,
-                      completed: t.status == TaskStatus.completed,
-                      due: t.due,
-                      inheritedDue: dueInfo[t.id]?.propagated,
-                      pendingSync: stored.syncState == SyncState.dirty,
-                      subtaskDone: subDone[t.id] ?? 0,
-                      subtaskTotal: subTotal[t.id] ?? 0,
-                      onOpen: () => widget.onOpenTask(t.id),
-                      onToggle: () =>
-                          ref.read(commandsProvider).toggleComplete(t.id),
-                      onRename: (v) =>
-                          ref.read(commandsProvider).renameTask(t.id, v),
-                      onSetDue: (m) => _quickMove(t.id, m),
-                      onPickDate: () => _openDatePicker(t.id, t.due),
-                      onOpenUrl: openUrl,
+                    return Row(
+                      key: ValueKey('reorder-${stored.task.id}'),
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        ReorderableDragStartListener(
+                          index: i,
+                          child: SizedBox(
+                            key: ValueKey('drag-handle-${stored.task.id}'),
+                            // A comfortable drag target for both a mouse and a
+                            // finger (touch-drag rides the same handle); the
+                            // glyph stays small, the HIT AREA is 48dp tall.
+                            width: 36,
+                            height: 48,
+                            child: Icon(
+                              Icons.drag_indicator,
+                              size: 18,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: _taskRow(
+                            stored,
+                            dueInfo,
+                            subDone,
+                            subTotal,
+                            openUrl,
+                          ),
+                        ),
+                      ],
                     );
                   },
+                )
+              : ListView.builder(
+                  itemCount: tasks.length,
+                  itemBuilder: (context, i) =>
+                      _taskRow(tasks[i], dueInfo, subDone, subTotal, openUrl),
                 ),
         ),
       ],
+    );
+  }
+
+  /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as the
+  /// step-count reorder the command layer understands (one swap per step).
+  Future<void> _onReorder(
+    List<StoredTask> tasks,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    final step = reorderStep(tasks, oldIndex, newIndex);
+    if (step == null) return;
+    final id = tasks[oldIndex].task.id;
+    final commands = ref.read(commandsProvider);
+    for (var i = 0; i < step.steps; i++) {
+      await commands.reorderTask(id, step.direction);
+    }
+  }
+
+  /// One [TaskRow] for [stored], wired to selection, the action surface, inline
+  /// rename, and the quick-date/date-picker/URL affordances.
+  Widget _taskRow(
+    StoredTask stored,
+    Map<String, DueInfo> dueInfo,
+    Map<String, int> subDone,
+    Map<String, int> subTotal,
+    UrlOpener openUrl,
+  ) {
+    final t = stored.task;
+    return TaskRow(
+      key: ValueKey(t.id),
+      title: t.title,
+      notes: t.notes,
+      completed: t.status == TaskStatus.completed,
+      due: t.due,
+      inheritedDue: dueInfo[t.id]?.propagated,
+      pendingSync: stored.syncState == SyncState.dirty,
+      subtaskDone: subDone[t.id] ?? 0,
+      subtaskTotal: subTotal[t.id] ?? 0,
+      selected: _selectedIds.contains(t.id),
+      onSelectToggle: () => _toggleSelect(t.id),
+      onContextMenu: (pos) => _showRowActions(stored, globalPosition: pos),
+      onShowActions: () => _showRowActions(stored),
+      editRequested: _editId == t.id,
+      onEditDone: () {
+        if (_editId == t.id) setState(() => _editId = null);
+      },
+      onOpen: () => widget.onOpenTask(t.id),
+      onToggle: () => ref.read(commandsProvider).toggleComplete(t.id),
+      onRename: (v) => ref.read(commandsProvider).renameTask(t.id, v),
+      onSetDue: (m) => _quickMove(t.id, m),
+      onPickDate: () => _openDatePicker(t.id, t.due),
+      onOpenUrl: openUrl,
     );
   }
 }
@@ -285,6 +669,7 @@ class _ListToolbar extends StatelessWidget {
     required this.sort,
     required this.showCompleted,
     required this.onSearch,
+    required this.onBulkAdd,
     required this.onSort,
     required this.onShowCompleted,
   });
@@ -292,6 +677,9 @@ class _ListToolbar extends StatelessWidget {
   final SortMode sort;
   final bool showCompleted;
   final VoidCallback onSearch;
+
+  /// Open the BulkAdd dialog; `null` disables it (no list to target).
+  final VoidCallback? onBulkAdd;
   final ValueChanged<SortMode> onSort;
   final ValueChanged<bool> onShowCompleted;
 
@@ -317,6 +705,12 @@ class _ListToolbar extends StatelessWidget {
                 icon: const Icon(Icons.search),
                 tooltip: 'Search tasks',
                 onPressed: onSearch,
+              ),
+              IconButton(
+                key: const Key('bulk-add-button'),
+                icon: const Icon(Icons.playlist_add),
+                tooltip: 'Add multiple tasks',
+                onPressed: onBulkAdd,
               ),
               SortDropdown(value: sort, onChanged: onSort),
             ],
