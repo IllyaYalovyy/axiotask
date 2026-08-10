@@ -202,11 +202,17 @@ const List<Method> kFatal = [
 /// fake Google. [commands]/[engine] are rebuilt by a Restart over the same
 /// [store]; the id counter survives (a relaunch never re-mints a disk id).
 class Harness {
-  Harness._(this.client, this.store, this._db);
+  Harness._(this.client, this.store, this._db, this.namespace);
 
   final FakeTasksApi client;
   final Store store;
   final AppDatabase _db;
+
+  /// Prefix on every task/list title this device mints. A lone device uses ''
+  /// (titles `t001`/`L001`); the dual-device harness tags its two devices 'a'
+  /// and 'b' so their handles stay disjoint on the one shared server. Mirrors
+  /// the reference `Harness::on_shared_client` namespace.
+  final String namespace;
 
   late Commands commands;
   late SyncEngine engine;
@@ -231,9 +237,24 @@ class Harness {
   static Future<Harness> create() async {
     final client = FakeTasksApi();
     client.seedList(kList, 'Inbox');
+    return onSharedClient(client, '');
+  }
+
+  /// Build one app instance over an ALREADY-SEEDED shared [client], tagging its
+  /// task/list handles with [namespace]. The dual-device harness builds two of
+  /// these on ONE client (offline interleaving, n:1 fixpoint); a lone device
+  /// passes ''. The client is seeded exactly once by the caller — building B
+  /// must NOT re-seed the Inbox A already pushed. Its bootstrap "My Tasks" is a
+  /// pending create adopted by title on the first pull, so two devices share
+  /// one "My Tasks" rather than forking a duplicate. Mirrors the reference
+  /// `Harness::on_shared_client`.
+  static Future<Harness> onSharedClient(
+    FakeTasksApi client,
+    String namespace,
+  ) async {
     final db = await AppDatabase.openMemory();
     final store = Store(db);
-    final h = Harness._(client, store, db);
+    final h = Harness._(client, store, db, namespace);
     await ensureDefaultList(store, isAuthenticated: false, newId: h._newId);
     h._buildEngine();
     await h.runSync();
@@ -249,14 +270,14 @@ class Harness {
 
   String _freshName() {
     _nextName += 1;
-    return 't${_nextName.toString().padLeft(3, '0')}';
+    return '${namespace}t${_nextName.toString().padLeft(3, '0')}';
   }
 
   /// A list title. Distinct namespace from task titles so a list can never
   /// shadow a task handle.
   String _freshListName() {
     _nextName += 1;
-    return 'L${_nextName.toString().padLeft(3, '0')}';
+    return '${namespace}L${_nextName.toString().padLeft(3, '0')}';
   }
 
   /// A sync run, threading the panel hold through the engine the way the app's
@@ -876,16 +897,26 @@ Future<void> assertConverged(Harness h, String ctx) async {
 
 // ─── Generator ───────────────────────────────────────────────────────────────
 
-/// One weighted entry in the op strategy.
-class _W {
-  const _W(this.weight, this.build);
+/// One weighted entry in the op strategy. Public so the dual-device layer
+/// (dual_device.dart) can build its own local-mutation table.
+class OpWeight {
+  const OpWeight(this.weight, this.build);
   final int weight;
   final Op Function(Random) build;
 }
 
-int _b(Random r) => r.nextInt(256);
+/// Short local alias for the many entries in the op tables below.
+typedef _W = OpWeight;
 
-Op _draw(Random r, List<_W> table) {
+/// A generator index byte (0..255), resolved modulo the live set at exec time.
+/// Public alias reused by the dual-device generator.
+int opByte(Random r) => r.nextInt(256);
+
+int _b(Random r) => opByte(r);
+
+/// Draw one op from a weighted [table]. Public so the dual-device layer can
+/// draw from both the shared any-op mix ([drawAnyOp]) and its own table.
+Op drawFrom(Random r, List<OpWeight> table) {
   final total = table.fold<int>(0, (s, e) => s + e.weight);
   var x = r.nextInt(total);
   for (final e in table) {
@@ -894,6 +925,12 @@ Op _draw(Random r, List<_W> table) {
   }
   return table.last.build(r);
 }
+
+Op _draw(Random r, List<OpWeight> table) => drawFrom(r, table);
+
+/// Draw one op from the full any-op mix — a single interleaved step of a
+/// dual-device sequence is exactly this on one of the two devices.
+Op drawAnyOp(Random r) => drawFrom(r, _anyOpTable);
 
 /// The full op mix. Creates are weighted up so sequences actually build a tree
 /// to mutate; syncs are frequent so pushes and pulls interleave with edits.
