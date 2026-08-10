@@ -798,15 +798,18 @@ class SyncEngine {
         // No real divergence — just normalization/etag drift to absorb.
         await _store.applyPushedTask(remote, local.localUpdated);
       case ConflictResolution.conflictedCopy:
-        // Remote becomes canonical, the local edit survives as a copy. The
-        // canonical landing reuses applyPushedTask (not a raw upsert) so a
-        // refetch naming a parent this device never pulled DETACHES that unknown
-        // parent instead of aborting on the FK (#155); the local_updated match
-        // makes it a clean landing that also clears the base snapshot.
+        // Remote becomes canonical, the local edit survives as a copy — landed
+        // as ONE atomic store pair (MIGRATION-PLAN §5 kill-window): applying the
+        // canonical then inserting the copy across two separate writes has a
+        // crash window that overwrites the dirty id and then loses the edit (P3,
+        // the reference's real gap). The canonical landing reuses applyPushedTask
+        // (not a raw upsert) so a refetch naming a parent this device never
+        // pulled DETACHES that unknown parent instead of aborting on the FK
+        // (#155); the local_updated match makes it a clean landing that also
+        // clears the base snapshot.
         out.conflicts += 1;
         final copy = reconcile.conflictedCopy(local, remote, _newId());
-        await _store.applyPushedTask(remote, local.localUpdated);
-        await _store.upsertTask(copy);
+        await _store.resolveConflictedCopy(remote, local.localUpdated, copy);
     }
     out.markListChanged(local.listId);
   }
