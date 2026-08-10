@@ -116,8 +116,11 @@ void main() {
     expect(created.task.title, 'buy milk');
     expect(created.task.status, TaskStatus.needsAction);
 
-    // ── UPDATE ── complete it by tapping its checkbox.
-    await tester.tap(find.byType(Checkbox));
+    // ── UPDATE ── complete it by tapping its checkbox (the row's — the list
+    // toolbar now also has a "Show completed" checkbox).
+    await tester.tap(
+      find.descendant(of: find.byType(TaskRow), matching: find.byType(Checkbox)),
+    );
     await settle(tester);
     // Persisted as completed …
     expect(
