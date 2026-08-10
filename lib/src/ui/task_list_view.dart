@@ -151,12 +151,31 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       : parseQuickAddDue(_quickAdd.text);
 
   @override
+  void initState() {
+    super.initState();
+    // Reset the back ladder's view of the selection for this freshly-mounted
+    // view: the widget is keyed per view, so a view switch remounts here and a
+    // stale "selection active" from the previous view must not deaden the back
+    // button. Scheduled after the first frame so it never modifies a provider
+    // mid-build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncBackHandle();
+    });
+  }
+
+  @override
   void dispose() {
     _quickAdd.dispose();
     // The FocusNode is owned by quickAddFocusProvider (app-wide) — not disposed
     // here.
     super.dispose();
   }
+
+  /// Publish this view's selection liveness to the shell's back-precedence
+  /// ladder (T8.3) — non-empty means a back should clear it rather than exit.
+  void _syncBackHandle() => ref
+      .read(selectionBackHandleProvider.notifier)
+      .set(_selectedIds.isEmpty ? null : _clearSelection);
 
   /// Run a manual refresh (mobile pull-to-refresh): a real sync when a session
   /// is live, else a no-op over the always-live reactive store.
@@ -244,11 +263,20 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   // ── multi-select + bulk operations (BulkOps) ──────────────────────────────
 
-  void _toggleSelect(String id) => setState(() {
-    if (!_selectedIds.remove(id)) _selectedIds.add(id);
-  });
+  void _toggleSelect(String id) {
+    setState(() {
+      if (!_selectedIds.remove(id)) _selectedIds.add(id);
+    });
+    // Republish selection liveness so the shell's back ladder (T8.3) knows a
+    // back should now clear (or, when the last row is deselected, stop clearing)
+    // the selection instead of exiting the app.
+    _syncBackHandle();
+  }
 
-  void _clearSelection() => setState(_selectedIds.clear);
+  void _clearSelection() {
+    setState(_selectedIds.clear);
+    _syncBackHandle();
+  }
 
   /// A 4-second info toast reporting a bulk op's outcome ("N tasks `<verb>`").
   void _bulkToast(int n, String verb) {

@@ -160,6 +160,36 @@ final mobileScaffoldKeyProvider = Provider<GlobalKey<ScaffoldState>>(
   (ref) => GlobalKey<ScaffoldState>(),
 );
 
+/// The list's active multi-select, surfaced up to the shell's back-precedence
+/// ladder (T8.3). The list keeps ownership of the selection LOGIC; this only
+/// lets the app-level back handler (which lives in the root route, above the
+/// list's nested shell navigator) SEE that a selection is active and clear it in
+/// precedence order — a plain [PopScope] inside the list would sit under
+/// go_router's shell navigator and never receive the Android system back. The
+/// value is `true` while a selection is active; [clear] runs the list's own
+/// clear-selection when the ladder reaches that rung.
+class SelectionBackHandle extends Notifier<bool> {
+  VoidCallback? _clear;
+
+  @override
+  bool build() => false;
+
+  /// Publish (or, with `null`, retract) the active selection's clear action.
+  /// Called by the list whenever its selection becomes (non-)empty.
+  void set(VoidCallback? clear) {
+    _clear = clear;
+    state = clear != null;
+  }
+
+  /// Clear the active selection, if any — invoked by the back ladder.
+  void clear() => _clear?.call();
+}
+
+/// See [SelectionBackHandle]. Held app-wide (only one list is ever mounted).
+final selectionBackHandleProvider = NotifierProvider<SelectionBackHandle, bool>(
+  SelectionBackHandle.new,
+);
+
 /// Runs a manual refresh — the mobile pull-to-refresh gesture (and, later, a
 /// Sync-now button). The reactive store keeps every view live, so a plain
 /// "reload" is already continuous; the default is a completed future and the
