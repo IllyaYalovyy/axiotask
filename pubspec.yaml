@@ -91,6 +91,14 @@ dependencies:
   # plugin, desktop-Linux + Android supported. Behind urlOpenerProvider so tests
   # never touch the platform channel.
   url_launcher: ^6.3.2
+  # Android auth — google_sign_in v7's split authentication/authorization model
+  # is the port target of play_services_auth.rs (MIGRATION-PLAN §5 T9.1). Play
+  # Services owns the grant; the app is identified by package name + registered
+  # SHA-1, so NO clientId/serverClientId is passed and NO tokens are stored on
+  # device (ratified auth decision). Wrapped behind the [TokenProvider] seam in
+  # auth/google_sign_in_token_provider.dart; desktop never touches it. Resolves
+  # under the meta 1.18.0 / analyzer-12 ceiling (T0.1).
+  google_sign_in: ^7.2.0
 
 dev_dependencies:
   flutter_test:
@@ -137,6 +145,13 @@ dev_dependencies:
   # custom_lint host is retired). Held at 3.1.4/3.1.5 to keep analyzer at 12.x,
   # the ceiling kiri_check's `package:test` allows under the SDK test_api pin.
   riverpod_lint: ">=3.1.4 <3.1.6"
+  # google_sign_in_token_provider's live gateway is exercised by swapping in a
+  # mock GoogleSignInPlatform (MockPlatformInterfaceMixin), the sanctioned way to
+  # drive the plugin with no Play Services. Both are already locked transitively
+  # via google_sign_in; promoted to direct dev deps because the test imports the
+  # platform-interface types and the mock mixin directly.
+  plugin_platform_interface: ^2.1.8
+  google_sign_in_platform_interface: ^3.1.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
