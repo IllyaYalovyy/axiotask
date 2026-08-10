@@ -95,6 +95,10 @@ Widget _shellAt(Size size) {
           ],
           selectedIndex: SmartView.all.index,
           onDestinationSelected: (_) {},
+          // The compact form factor renders the mobile chrome: an app bar with
+          // the view title + hamburger, and a "new task" FAB.
+          title: 'All Tasks',
+          onNewTask: () {},
           list: TaskListView(
             viewId: SmartView.all.id,
             selectedTaskId: null,

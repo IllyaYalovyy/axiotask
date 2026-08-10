@@ -71,6 +71,16 @@ class AppShell extends ConsumerWidget {
     final selectedIndex =
         SmartView.byId(sel.viewId)?.index ?? SmartView.all.index;
 
+    // The compact app-bar title — the plain view label (windowTitleFor carries
+    // the dev prefix and " — axiotask" suffix, which the on-device app bar
+    // should not repeat).
+    final viewTitle = viewLabelFor(sel.viewId, listTitles: listTitles);
+
+    // Closing the slide-in drawer after a navigation (drawer > selection) — a
+    // no-op when expanded, where the compact Scaffold (and its key) is unmounted.
+    final scaffoldKey = ref.watch(mobileScaffoldKeyProvider);
+    void closeDrawer() => scaffoldKey.currentState?.closeDrawer();
+
     // Panel prev/next: the siblings of the open task in the CURRENT view's
     // visible ordering (the same order the list renders). Null at a boundary,
     // and for anything not in the ordering (a subtask, or a filtered-out task).
@@ -97,7 +107,10 @@ class AppShell extends ConsumerWidget {
       counts: counts,
       lists: lists,
       excludedLists: excluded,
-      onSelectView: (id) => _selectView(context, ref, id),
+      onSelectView: (id) {
+        closeDrawer(); // a view/list pick dismisses the drawer (drawer > select)
+        _selectView(context, ref, id);
+      },
       // List mutations route through the guarded seam: a store failure (or a
       // hung command) surfaces a redacted error toast instead of an unhandled
       // exception (#128/#135), and never leaves the sidebar in a half-state.
@@ -132,7 +145,10 @@ class AppShell extends ConsumerWidget {
       onReorderLists: (ids) =>
           ref.read(prefsControllerProvider.notifier).setListOrder(ids),
       footer: footer,
-      onOpenProperties: () => showProperties(context),
+      onOpenProperties: () {
+        closeDrawer(); // don't leave the drawer stacked over the dialog (#166)
+        showProperties(context);
+      },
       onToggleTheme: () {
         // Flip to the opposite explicit theme (a "system" pref resolves to its
         // effective brightness, then flips). Keeps the sun/moon meaningful.
@@ -144,6 +160,11 @@ class AppShell extends ConsumerWidget {
 
     final scaffold = ListDetailScaffold(
       sidebar: sidebar,
+      scaffoldKey: scaffoldKey,
+      title: viewTitle,
+      // The mobile FAB just focuses the always-visible quick-add input — never a
+      // silent empty-task create (#166).
+      onNewTask: () => ref.read(quickAddFocusProvider).requestFocus(),
       destinations: [
         for (final v in SmartView.values)
           ShellDestination(
