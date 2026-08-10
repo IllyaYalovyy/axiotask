@@ -72,6 +72,19 @@ dependencies:
   # Windowing — size persistence on desktop. Pinned: 0.5.x is mid-migration to
   # nativeapi-flutter and must be wrapped, not spread through the app (RESEARCH §8).
   window_manager: 0.5.2
+  # Desktop OAuth — googleapis_auth owns the token exchange + refresh
+  # (RFC-011 / MIGRATION-PLAN §2 auth: flow.rs/pkce.rs/client.rs → replaced by
+  # this crate). We keep our own loopback redirect parsing and PKCE (the ports
+  # of parse_redirect/pkce.rs) and drive googleapis_auth's
+  # obtainAccessCredentialsViaCodeExchange for the code→token step; wrapper
+  # tests (T6.1) pin that the exchange sends client_secret and that a missing
+  # refresh_token is a sign-in failure, so a googleapis_auth divergence is
+  # caught by a test, not the user. Resolves cleanly under the analyzer-12
+  # ceiling (T0.1). Android never uses this — Play Services owns the grant.
+  googleapis_auth: ^2.3.3
+  # SHA-256 for the PKCE S256 challenge (pkce.dart, the port of pkce.rs).
+  # Already transitively locked; promoted to a direct dep because lib/ imports it.
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
