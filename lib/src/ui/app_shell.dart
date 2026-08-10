@@ -12,6 +12,7 @@ import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'guarded_command.dart';
 import 'list_detail_scaffold.dart';
 import 'onboarding.dart';
 import 'properties.dart';
@@ -19,6 +20,7 @@ import 'router.dart';
 import 'sidebar.dart';
 import 'task_detail.dart';
 import 'task_list_view.dart';
+import 'toast.dart';
 import 'views.dart';
 
 /// The adaptive shell for the current [location], wrapping the list pane [child]
@@ -96,12 +98,29 @@ class AppShell extends ConsumerWidget {
       lists: lists,
       excludedLists: excluded,
       onSelectView: (id) => _selectView(context, ref, id),
-      onCreateList: (title, {localOnly = false}) =>
-          ref.read(commandsProvider).createList(title, localOnly: localOnly),
-      onRenameList: (id, title) =>
-          ref.read(commandsProvider).renameList(id, title),
+      // List mutations route through the guarded seam: a store failure (or a
+      // hung command) surfaces a redacted error toast instead of an unhandled
+      // exception (#128/#135), and never leaves the sidebar in a half-state.
+      onCreateList: (title, {localOnly = false}) => guardCommand(
+        ref.read(toastControllerProvider),
+        'create_list',
+        () async {
+          await ref
+              .read(commandsProvider)
+              .createList(title, localOnly: localOnly);
+        },
+      ),
+      onRenameList: (id, title) => guardCommand(
+        ref.read(toastControllerProvider),
+        'rename_list',
+        () => ref.read(commandsProvider).renameList(id, title),
+      ),
       onDeleteList: (id) async {
-        await ref.read(commandsProvider).deleteList(id);
+        await guardCommand(
+          ref.read(toastControllerProvider),
+          'delete_list',
+          () => ref.read(commandsProvider).deleteList(id),
+        );
         // If the deleted list was the open view, fall back to All Tasks so the
         // pane never points at a list that is gone.
         if (sel.viewId == id && context.mounted) {
