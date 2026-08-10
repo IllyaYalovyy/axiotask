@@ -12,9 +12,11 @@
 // land in T8.1; this row is the non-touch surface.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../model/dates.dart';
 import 'date_format.dart';
+import 'list_detail_scaffold.dart';
 import 'url_detect.dart';
 
 /// One tappable task row. Stateful to host the inline-rename editor and the
@@ -36,6 +38,12 @@ class TaskRow extends StatefulWidget {
     this.onSetDue,
     this.onPickDate,
     this.onOpenUrl,
+    this.selected = false,
+    this.onSelectToggle,
+    this.onContextMenu,
+    this.onShowActions,
+    this.editRequested = false,
+    this.onEditDone,
     super.key,
   });
 
@@ -90,6 +98,27 @@ class TaskRow extends StatefulWidget {
   /// Open a detected URL (a tap on the link badge); `null` hides the badge.
   final ValueChanged<String>? onOpenUrl;
 
+  /// Whether this row is part of the current multi-select — draws the left
+  /// accent bar and a tinted background (BulkOps).
+  final bool selected;
+
+  /// Toggle this row's selection. Wired to a Ctrl/Cmd-click on the body; `null`
+  /// disables selection entry for this row.
+  final VoidCallback? onSelectToggle;
+
+  /// Open the desktop right-click context menu at the given GLOBAL pointer
+  /// position; `null` disables the right-click surface.
+  final void Function(Offset globalPosition)? onContextMenu;
+
+  /// Open the touch action sheet (the coarse-pointer "⋯" overflow); `null`
+  /// hides the overflow button. Rendered persistently on compact/touch layouts.
+  final VoidCallback? onShowActions;
+
+  /// When true, the row enters inline-rename mode (the context menu's
+  /// "Edit title"); the row calls [onEditDone] when it leaves edit mode.
+  final bool editRequested;
+  final VoidCallback? onEditDone;
+
   @override
   State<TaskRow> createState() => _TaskRowState();
 }
@@ -100,6 +129,28 @@ class _TaskRowState extends State<TaskRow> {
   bool _hovering = false;
 
   bool get _editing => _editor != null;
+
+  @override
+  void initState() {
+    super.initState();
+    // A row asked to open in edit mode from the start (context-menu "Edit
+    // title" on a freshly-built row).
+    if (widget.editRequested) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_editing) _startEdit();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(TaskRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The parent flipped editRequested on (context-menu "Edit title") — enter
+    // inline rename now.
+    if (widget.editRequested && !oldWidget.editRequested && !_editing) {
+      _startEdit();
+    }
+  }
 
   void _startEdit() {
     setState(() {
@@ -125,6 +176,24 @@ class _TaskRowState extends State<TaskRow> {
       _editor = null;
       _focus = null;
     });
+    // Let the parent clear its edit request so a later "Edit title" fires again.
+    widget.onEditDone?.call();
+  }
+
+  /// A body tap: a Ctrl/Cmd-modified tap toggles selection (BulkOps); a plain
+  /// tap opens the detail panel.
+  void _onBodyTap() {
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    final modified =
+        keys.contains(LogicalKeyboardKey.controlLeft) ||
+        keys.contains(LogicalKeyboardKey.controlRight) ||
+        keys.contains(LogicalKeyboardKey.metaLeft) ||
+        keys.contains(LogicalKeyboardKey.metaRight);
+    if (modified && widget.onSelectToggle != null) {
+      widget.onSelectToggle!();
+    } else {
+      widget.onOpen();
+    }
   }
 
   @override
@@ -137,9 +206,16 @@ class _TaskRowState extends State<TaskRow> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // On a compact/touch layout (no hover, no right-click) the "⋯" overflow is
+    // the coarse-pointer path to every context action — it must be a persistent
+    // affordance. On the expanded desktop layout the right-click menu carries
+    // them instead, so the row stays clean.
+    final compact =
+        MediaQuery.sizeOf(context).width < ListDetailScaffold.breakpoint;
+    final showOverflow = compact && widget.onShowActions != null;
     // The quick-date strip is revealed by hover (a non-touch affordance); the
     // coarse-pointer swipe path is T8.1.
-    return MouseRegion(
+    final content = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
       child: AnimatedOpacity(
@@ -178,6 +254,18 @@ class _TaskRowState extends State<TaskRow> {
                         ],
                       ),
                     ),
+                    if (showOverflow)
+                      SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: IconButton(
+                          key: const Key('row-overflow'),
+                          padding: EdgeInsets.zero,
+                          tooltip: 'Task actions',
+                          icon: const Icon(Icons.more_vert),
+                          onPressed: widget.onShowActions,
+                        ),
+                      ),
                   ],
                 ),
                 // The quick-date strip — lifted OUT of layout flow (#168): a
@@ -204,6 +292,32 @@ class _TaskRowState extends State<TaskRow> {
         ),
       ),
     );
+
+    // A selected row gets a left accent bar and a tinted wash so a multi-select
+    // reads at a glance (BulkOps). The right-click surface wraps the whole row
+    // so a secondary tap anywhere opens the context menu (desktop). Both are
+    // out of the row's default render, so the clean-state golden is unchanged.
+    final decorated = widget.selected
+        ? DecoratedBox(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.08),
+              border: Border(
+                left: BorderSide(color: theme.colorScheme.primary, width: 3),
+              ),
+            ),
+            child: content,
+          )
+        : content;
+
+    if (widget.onContextMenu == null) return decorated;
+    // Secondary-tap (right-click) opens the desktop context menu anywhere on the
+    // row. Touch selection (long-press) is T8.1's gesture, so it is deliberately
+    // NOT bound here; the persistent "⋯" is the coarse-pointer action path.
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) => widget.onContextMenu!(d.globalPosition),
+      child: decorated,
+    );
   }
 
   /// The main line: title (or inline editor) and the pending-sync dot.
@@ -223,7 +337,7 @@ class _TaskRowState extends State<TaskRow> {
     }
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: widget.onOpen,
+      onTap: _onBodyTap,
       onDoubleTap: _startEdit,
       child: Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 2),

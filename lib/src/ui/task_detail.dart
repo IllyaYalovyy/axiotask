@@ -50,11 +50,16 @@ class TaskDetail extends ConsumerStatefulWidget {
     required this.onOpenTask,
     this.onPrev,
     this.onNext,
+    this.autofocusNotes = false,
     super.key,
   });
 
   /// The task this panel shows.
   final String taskId;
+
+  /// Focus the Notes field once the panel loads (the context menu's
+  /// "Edit notes"); a one-shot honored on the first load of [taskId].
+  final bool autofocusNotes;
 
   /// Close the panel (also called after the task is deleted).
   final VoidCallback onClose;
@@ -115,9 +120,16 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// changed it out from under us (live-tracking without clobbering typing).
   void _sync(Task task) {
     if (task.id != _loadedId) {
+      final firstEver = _loadedId == null;
       _loadedId = task.id;
       _title.text = task.title;
       _notes.text = task.notes ?? '';
+      // Honor an "Edit notes" request once, on this task's first load.
+      if (firstEver && widget.autofocusNotes) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _notesFocus.requestFocus();
+        });
+      }
       return;
     }
     if (!_titleFocus.hasFocus && _title.text != task.title) {
