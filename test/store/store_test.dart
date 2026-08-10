@@ -427,6 +427,72 @@ void main() {
       },
     );
 
+    // Pull-storm rebuild-count guard (T10.1): drift's table-granular
+    // invalidation re-delivers an identical result on every no-op write; the
+    // watch streams must collapse consecutive identical results so a sync pull
+    // that rewrites rows to the same content does not storm open views. See the
+    // fuller note in store_all_tasks_test.dart. `pumpEventQueue` between writes
+    // forces each re-query to deliver (drift otherwise coalesces awaited writes).
+    test(
+      'watchTasks suppresses identical re-emissions (pull-storm dedup)',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+        final events = <List<String>>[];
+        final sub = s
+            .watchTasks('L1')
+            .listen((e) => events.add([for (final r in e) r.task.id]));
+        await pumpEventQueue();
+        expect(events, [
+          ['T1'],
+        ]);
+        for (var i = 0; i < 5; i++) {
+          await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+          await pumpEventQueue();
+        }
+        await s.upsertTask(taskOf('T2', 'L1', null, '0002'));
+        await pumpEventQueue();
+        expect(events, [
+          ['T1'],
+          ['T1', 'T2'],
+        ]);
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'watchTask suppresses identical re-emissions (pull-storm dedup)',
+      () async {
+        // The detail panel's single-task stream is open during a pull storm too;
+        // a no-op rewrite of the same row must not re-notify it.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+        final titles = <String?>[];
+        final sub = s.watchTask('T1').listen((e) => titles.add(e?.task.title));
+        await pumpEventQueue();
+        expect(titles, ['task T1']); // initial
+        for (var i = 0; i < 5; i++) {
+          await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+          await pumpEventQueue();
+        }
+        // A genuine field change re-emits (title differs).
+        final base = taskOf('T1', 'L1', null, '0001');
+        await s.upsertTask(
+          StoredTask(
+            task: base.task.copyWith(title: 'edited'),
+            listId: base.listId,
+            syncState: base.syncState,
+            localUpdated: base.localUpdated,
+          ),
+        );
+        await pumpEventQueue();
+        expect(titles, ['task T1', 'edited']);
+        await sub.cancel();
+      },
+    );
+
     test(
       'watchTask streams the visible task and emits null once deleted',
       () async {

@@ -276,10 +276,18 @@ class Store {
   /// Live stream of [allTasks], re-emitting on every task write — the "All
   /// Tasks" view subscribes to this so a create/rename/toggle in any list shows
   /// up immediately.
+  ///
+  /// [distinct] collapses consecutive byte-identical results: drift invalidation
+  /// is table-granular, so every write to `tasks` re-runs the query and would
+  /// otherwise push a fresh (but equal) list — a sync pull that rewrites many
+  /// rows to the same content (mark-clean sweeps, no-op re-pulls, subtask-only
+  /// writes) would storm the view with one redundant rebuild per write. Only a
+  /// change in the visible set reaches the UI (T10.1 pull-storm guard).
   Stream<List<StoredTask>> watchAllTasks() => _db
       .customSelect(_selectAllTasksSql, readsFrom: {_db.tasks})
       .watch()
-      .map((rows) => rows.map(_taskFromRow).toList());
+      .map((rows) => rows.map(_taskFromRow).toList())
+      .distinct(_sameTaskList);
 
   /// Fetch a single task by id regardless of sync_state (tombstones included);
   /// `null` when absent.
@@ -291,6 +299,7 @@ class Store {
   }
 
   /// Live stream of [listTasks] for [listId], re-emitting on every task write.
+  /// [distinct] applies the same pull-storm guard as [watchAllTasks].
   Stream<List<StoredTask>> watchTasks(String listId) => _db
       .customSelect(
         _selectTasksSql,
@@ -298,7 +307,8 @@ class Store {
         readsFrom: {_db.tasks},
       )
       .watch()
-      .map((rows) => rows.map(_taskFromRow).toList());
+      .map((rows) => rows.map(_taskFromRow).toList())
+      .distinct(_sameTaskList);
 
   /// Live stream of the VISIBLE task with [id], emitting `null` once the row is
   /// deleted/tombstoned (the detail panel reacts instead of stranding a stale
@@ -310,7 +320,10 @@ class Store {
         readsFrom: {_db.tasks},
       )
       .watch()
-      .map((rows) => rows.isEmpty ? null : _taskFromRow(rows.first));
+      .map((rows) => rows.isEmpty ? null : _taskFromRow(rows.first))
+      // The pull-storm guard for the detail panel's single-task stream: a no-op
+      // rewrite of the same row must not re-notify (StoredTask has value ==).
+      .distinct();
 
   // ── push-side write paths (drains + mark-clean + apply-pushed) ────────────
 
@@ -1140,4 +1153,18 @@ class Store {
       pendingOp: row.readNullable<String>('pending_op'),
     );
   }
+}
+
+/// Element-wise equality for the task-watch streams' `distinct` guard. `List`
+/// has only identity `==`, so two equal-content results from consecutive query
+/// runs never compare equal on their own; [StoredTask] carries value equality,
+/// so a positional element compare is the content check the pull-storm guard
+/// needs. Returns true (suppress) only when the visible set is unchanged.
+bool _sameTaskList(List<StoredTask> a, List<StoredTask> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

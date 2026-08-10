@@ -59,12 +59,19 @@ const _myTasks = StoredTaskList(
   localUpdated: 't',
 );
 
-/// The real shell rendered at [size] under [textScaler], branded with the real
-/// light theme and fed the seeded task list — the widget the golden captures at
-/// one form factor. [textScaler] drives the accessibility text-scale goldens
-/// (1.3 / 2.0): the mobile chrome must reflow, never overflow, when the system
-/// font is enlarged (MIGRATION-PLAN §5 T8.3 / §6 "text-scale 1.3").
-Widget _shellAt(Size size, {TextScaler textScaler = TextScaler.noScaling}) {
+/// The real shell rendered at [size] under [textScaler] and [theme], fed the
+/// seeded task list — the widget the golden captures at one form factor.
+/// [textScaler] drives the accessibility text-scale goldens (1.3 / 2.0): the
+/// mobile chrome must reflow, never overflow, when the system font is enlarged
+/// (MIGRATION-PLAN §5 T8.3 / §6 "text-scale 1.3"). [theme] drives the dark-mode
+/// goldens (§6 "goldens green … both themes"): the same shell is pinned in both
+/// brightnesses so a regression in either theme's surfaces/contrast is a byte
+/// diff a reviewer must explain, never a silent rewrite.
+Widget _shellAt(
+  Size size, {
+  TextScaler textScaler = TextScaler.noScaling,
+  ThemeData? theme,
+}) {
   return MediaQuery(
     data: MediaQueryData(size: size, textScaler: textScaler),
     child: ProviderScope(
@@ -74,7 +81,7 @@ Widget _shellAt(Size size, {TextScaler textScaler = TextScaler.noScaling}) {
         listsProvider.overrideWith((ref) => Stream.value(const [_myTasks])),
       ],
       child: Theme(
-        data: buildLightTheme(),
+        data: theme ?? buildLightTheme(),
         child: ListDetailScaffold(
           sidebar: Sidebar(
             selectedViewId: SmartView.all.id,
@@ -140,6 +147,31 @@ void main() {
           name: 'compact',
           constraints: BoxConstraints.tight(phone),
           child: _shellAt(phone),
+        ),
+      ],
+    ),
+  );
+
+  // Dark theme at both form factors (T10.1 / §6 "both themes"). The same seeded
+  // shell rendered under the real dark theme: the cutover parity bar requires
+  // goldens in BOTH brightnesses, and until now only light was pinned. A
+  // regression that leaves a surface light-on-light (or blows out contrast) in
+  // dark mode is now a byte diff, not an unseen break.
+  goldenTest(
+    'shell — dark theme (desktop + phone form factors)',
+    fileName: 'shell_dark',
+    builder: () => GoldenTestGroup(
+      columns: 2,
+      children: [
+        GoldenTestScenario(
+          name: 'desktop dark',
+          constraints: BoxConstraints.tight(desktop),
+          child: _shellAt(desktop, theme: buildDarkTheme()),
+        ),
+        GoldenTestScenario(
+          name: 'phone dark',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, theme: buildDarkTheme()),
         ),
       ],
     ),

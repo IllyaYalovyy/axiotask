@@ -101,4 +101,57 @@ void main() {
 
     await q.cancel();
   });
+
+  // ── Pull-storm rebuild-count guard (T10.1 / MIGRATION-PLAN §4) ──────────────
+  // drift invalidation is table-granular: EVERY write to `tasks` re-runs the
+  // watch query and, unguarded, delivers a fresh List even when the visible set
+  // is byte-for-byte identical (probed: five no-op upserts deliver five
+  // redundant `[a1]` events once the event loop is drained between them). A sync
+  // pull that rewrites many rows to the SAME content (mark-clean sweeps, no-op
+  // re-pulls, subtask-only writes) would then storm the All-Tasks view with
+  // redundant emissions — one full rebuild each. watchAllTasks must collapse
+  // consecutive identical results so a storm of no-op writes costs ZERO extra
+  // emissions; a genuine change still emits.
+  //
+  // `pumpEventQueue` between writes forces drift's re-query to actually deliver
+  // (without it, drift coalesces the awaited writes into a single re-query and
+  // the storm never materialises — the guard would look effective when it is
+  // not). We assert on the full delivered sequence: exactly the initial state
+  // and the one genuine change, nothing in between.
+  test(
+    'watchAllTasks suppresses identical re-emissions (pull-storm dedup)',
+    () async {
+      final store = await freshStore();
+      await store.upsertList(listOf('A'));
+      await store.upsertTask(taskOf('a1', 'A', '1'));
+
+      final events = <List<String>>[];
+      final sub = store.watchAllTasks().listen(
+        (e) => events.add([for (final t in e) t.task.id]),
+      );
+      await pumpEventQueue();
+      expect(events, [
+        ['a1'],
+      ]); // initial
+
+      // Pull storm: rewrite a1 with byte-identical content, draining between each
+      // so every no-op re-query is delivered (or, once guarded, suppressed).
+      for (var i = 0; i < 5; i++) {
+        await store.upsertTask(taskOf('a1', 'A', '1'));
+        await pumpEventQueue();
+      }
+      // Then one write that actually changes the visible set.
+      await store.upsertTask(taskOf('a2', 'A', '2'));
+      await pumpEventQueue();
+
+      // The five no-op rewrites produced NO emission; only the initial state and
+      // the genuine change were delivered. Unguarded, this list holds seven
+      // events (six `[a1]` + one `[a1, a2]`).
+      expect(events, [
+        ['a1'],
+        ['a1', 'a2'],
+      ]);
+      await sub.cancel();
+    },
+  );
 }
