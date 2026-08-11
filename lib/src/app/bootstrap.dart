@@ -22,6 +22,7 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/misc.dart' show Override;
 
+import '../auth/token_store.dart';
 import '../store/database.dart';
 import '../store/store.dart';
 import '../store/store_error.dart';
@@ -46,7 +47,9 @@ class BootstrapReady extends BootstrapResult {
   const BootstrapReady({
     required this.overrides,
     required this.database,
+    required this.configController,
     required this.prefsStore,
+    required this.tokensFile,
     required this.instancePrefix,
     this.lock,
   });
@@ -54,12 +57,21 @@ class BootstrapReady extends BootstrapResult {
   /// Overrides for the root `ProviderScope` (opened DB, config, prefs, prefix).
   final List<Override> overrides;
 
-  /// The opened database — kept so the entry point can close it on shutdown.
+  /// The opened database — kept so the entry point can close it on shutdown,
+  /// and to build the [Store] the composition root hands the scheduler.
   final AppDatabase database;
+
+  /// The loaded config controller — the composition root reads the desktop
+  /// OAuth credentials + the push/auto-sync toggles from it.
+  final ConfigController configController;
 
   /// The UI-prefs store — the entry point feeds it to the window service for
   /// the post-first-frame size restore (outside the widget tree).
   final PrefsStore prefsStore;
+
+  /// The desktop token file beside the DB — the composition root builds a
+  /// [FileTokenStore] over it for the desktop auth path (absent on Android).
+  final File tokensFile;
 
   /// The active instance prefix, or `null` for production.
   final String? instancePrefix;
@@ -73,6 +85,22 @@ class BootstrapFailed extends BootstrapResult {
   const BootstrapFailed(this.message);
 
   final String message;
+}
+
+/// The desktop token file (`tokens.json`) beside the DB — the composition root
+/// (F5) also builds a [FileTokenStore] over this path. Android never writes it.
+File tokensFileBeside(File dbFile) =>
+    File('${dbFile.parent.path}${Platform.pathSeparator}tokens.json');
+
+/// Whether a persisted session exists — the "real auth state" at seed time. A
+/// malformed token file is treated as no session (seed anyway; the restore path
+/// surfaces the error later, and a seed converges by title regardless).
+bool _storedSessionExists(File tokensFile) {
+  try {
+    return FileTokenStore(tokensFile).load() != null;
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Run the ordered startup sequence.
@@ -145,13 +173,22 @@ Future<BootstrapResult> bootstrap({
 
     final store = Store(database);
 
-    // Seed "My Tasks" when signed out and empty (auth arrives in Step 6, so
-    // startup is always signed-out today).
-    await ensureDefaultList(store, isAuthenticated: false);
+    // Seed "My Tasks" only when there is no session and the store is empty. The
+    // real auth state at startup is "does a persisted session exist": desktop
+    // keeps a refresh token in tokens.json beside the DB (its presence IS a live
+    // session — the detached restore just re-hydrates it after the first frame),
+    // and Android persists nothing, so the file is absent and a fresh device
+    // seeds then converges by title on the first pull (default_list.dart). A
+    // signed-in desktop user therefore gets their real lists from sync, never a
+    // duplicate local seed.
+    final hasSession = _storedSessionExists(tokensFileBeside(dbFile));
+    await ensureDefaultList(store, isAuthenticated: hasSession);
 
     return BootstrapReady(
       database: database,
+      configController: configController,
       prefsStore: prefsStore,
+      tokensFile: tokensFileBeside(dbFile),
       instancePrefix: prefix,
       lock: lock,
       overrides: [

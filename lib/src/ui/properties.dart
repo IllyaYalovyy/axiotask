@@ -176,7 +176,7 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
           children: [
             FilledButton.icon(
               key: const Key('sync-now-button'),
-              onPressed: settings.authenticated && !_busy ? () {} : null,
+              onPressed: settings.authenticated && !_busy ? _syncNow : null,
               icon: const Icon(Icons.sync),
               label: const Text('Sync now'),
             ),
@@ -453,6 +453,17 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   Future<void> _setAutoSync(bool v) async {
     await ref.read(configControllerProvider).setAutoSyncOnStart(v);
     if (mounted) setState(() => _autoSync = v);
+  }
+
+  Future<void> _syncNow() async {
+    setState(() => _busy = true);
+    try {
+      // The real "sync when authed, else reload" action — the same seam the
+      // sidebar footer and mobile pull-to-refresh drive.
+      await ref.read(refreshActionProvider)();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _confirmFreshSync(BuildContext context) async {

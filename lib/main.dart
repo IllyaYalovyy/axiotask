@@ -7,6 +7,7 @@
 // screen. The window SIZE is restored only AFTER the first frame — never during
 // mount (the geometry-freeze lesson, made structural).
 
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform, stdout;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -14,7 +15,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'src/api/tasks_api.dart' show TasksApi;
 import 'src/app/app.dart';
+import 'src/app/auth_sync_runtime.dart';
+import 'src/app/authed_api.dart';
 import 'src/app/bootstrap.dart';
 import 'src/app/logging.dart';
 import 'src/app/platform_paths.dart';
@@ -24,10 +28,64 @@ import 'src/app/startup_trace.dart';
 import 'src/app/window_manager_controller.dart';
 import 'src/app/window_service.dart';
 import 'src/app/window_title_controller.dart';
+import 'src/auth/desktop_auth.dart';
+import 'src/auth/desktop_token_provider.dart';
+import 'src/auth/google_sign_in_token_provider.dart';
+import 'src/auth/token_provider.dart';
+import 'src/auth/token_store.dart';
+import 'src/store/store.dart';
 import 'src/ui/app_boundary.dart';
 
 bool get _isDesktop =>
     !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
+
+/// Assemble the [AuthSyncRuntime] with the platform-appropriate auth surfaces.
+///
+/// Desktop drives OAuth PKCE + loopback with a refresh token persisted in
+/// `tokens.json`; the Tasks client refreshes reactively on a 401. Android uses
+/// Play Services authorization — no tokens are stored, the app is identified by
+/// package + SHA-1, and a 401 re-authorizes silently through the same provider
+/// (ratified auth decision / RFC-010).
+AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
+  final store = Store(ready.database);
+  final config = ready.configController;
+
+  final TokenProvider tokenProvider;
+  final TasksApi Function(String accessToken) buildClient;
+
+  if (_isDesktop) {
+    final oauthConfig = OAuthConfig(
+      clientId: config.google.clientId,
+      clientSecret: config.google.clientSecret,
+      scopes: config.google.scopes,
+    );
+    final tokenStore = FileTokenStore(ready.tokensFile);
+    tokenProvider = DesktopTokenProvider(
+      config: oauthConfig,
+      store: tokenStore,
+    );
+    // The access token is refreshed from the stored refresh token by the client
+    // itself, so the desktop builder reads the persisted bundle rather than the
+    // bare token string.
+    buildClient = (_) => buildDesktopTasksApi(
+      tokens: tokenStore.load()!,
+      config: oauthConfig,
+      store: tokenStore,
+    );
+  } else {
+    final provider = GoogleSignInTokenProvider(GoogleSignInAuthGateway());
+    tokenProvider = provider;
+    buildClient = (accessToken) =>
+        buildAndroidTasksApi(accessToken: accessToken, provider: provider);
+  }
+
+  return AuthSyncRuntime(
+    store: store,
+    config: config,
+    tokenProvider: tokenProvider,
+    buildClient: buildClient,
+  );
+}
 
 Future<void> main() async {
   // Monotonic clock for the cold-start trace (Stopwatch, not DateTime.now).
@@ -60,10 +118,14 @@ Future<void> main() async {
       // screen (it uses no providers, but the app is uniformly Riverpod-scoped).
       runApp(ProviderScope(child: StartupErrorApp(message: message)));
     case BootstrapReady():
+      // The composition root: assemble auth + sync over the platform token
+      // provider and the production Tasks client seam.
+      final runtime = _buildRuntime(result);
       runApp(
         ProviderScope(
           overrides: [
             ...result.overrides,
+            ...runtime.overrides,
             // Real desktop window-title seam; mobile keeps the no-op default.
             if (_isDesktop)
               windowTitleControllerProvider.overrideWithValue(
@@ -73,9 +135,16 @@ Future<void> main() async {
           child: const AxiotaskApp(),
         ),
       );
+      // ONE detached task after the first frame: silent restore → (auto-sync) →
+      // background loop. The first frame NEVER waits on it (#175 + the
+      // geometry-freeze lesson).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(runtime.start());
+      });
       if (_isDesktop) {
-        // Restore the persisted window size and start tracking resizes — but
-        // only AFTER the first frame. No geometry work happens during mount.
+        // Restore the persisted window size, track resizes, and flush pending
+        // changes on close — but only AFTER the first frame. No geometry or
+        // network work happens during mount.
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           final service = WindowService(
             controller: const WindowManagerController(),
@@ -83,6 +152,7 @@ Future<void> main() async {
           );
           await service.restoreSize();
           WindowSizePersister(service).attach();
+          await WindowCloseFlusher(runtime.flushOnExit).attach();
         });
       }
   }

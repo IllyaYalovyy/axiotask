@@ -1,0 +1,222 @@
+// The composition root for auth + sync (F5, #176) — the Dart analog of the
+// reference's `AppState::new` auth/sync half plus `lib.rs::run`'s startup task.
+//
+// This is the ONE place the three long-lived actors are assembled and handed
+// the seams the widget tree drives:
+//
+//  - the [AuthController] over a platform [TokenProvider] (desktop tokens.json /
+//    Android Play Services),
+//  - the [SyncScheduler] over the store, the current authed [TasksApi], and the
+//    auth state,
+//  - the [Commands] used for the local half of a fresh-sync.
+//
+// The ordered STARTUP task ([start]) mirrors the reference and the migration
+// plan: silent restore → (if a session came back AND auto-sync-on-start) an
+// auto-sync → the background loop. It is DETACHED after the first frame by the
+// entry point, so a hung `authorize` or a slow first sync can never delay first
+// paint (#175 + the geometry-freeze lesson). [restoreAndAutoSync] is the
+// awaitable ordered prefix (restore → auto-sync) so tests exercise the ordering
+// without spawning the never-ending loop; [start] runs it then launches the
+// loop.
+//
+// The client is rebuilt on every (re)login/restore and read through the
+// scheduler's `TasksApi Function()` getter, so a re-login swaps the client under
+// the scheduler with no reconstruction — exactly the seam `authed_api.dart`
+// documents. Everything platform- or network-touching is injected
+// ([tokenProvider], [buildClient]), so the whole root is exercised in widget
+// tests over a fake token provider and the in-memory fake API.
+
+import 'dart:async';
+
+import 'package:flutter/widgets.dart' show VoidCallback;
+import 'package:flutter_riverpod/misc.dart' show Override;
+
+import '../api/tasks_api.dart' show TasksApi;
+import '../auth/auth_controller.dart';
+import '../auth/token_provider.dart';
+import '../store/store.dart';
+import '../sync/sync_error.dart';
+import '../ui/auth/sidebar_auth_sync_footer.dart';
+import 'commands.dart';
+import 'config_controller.dart';
+import 'logging.dart';
+import 'providers.dart';
+import 'sync_scheduler.dart';
+import 'sync_status.dart';
+
+/// Assembles the auth controller, sync scheduler, and production client seam,
+/// and exposes the provider [overrides] + lifecycle the entry point mounts.
+class AuthSyncRuntime {
+  AuthSyncRuntime({
+    required Store store,
+    required TokenProvider tokenProvider,
+    // `this._config` / `this._buildClient` are initializing formals: callers
+    // still pass `config:` / `buildClient:` (the underscore is stripped from the
+    // external name) while the private fields are seeded directly.
+    required this._config,
+    required this._buildClient,
+    Duration debounce = kSyncDebounce,
+    Duration period = kSyncPeriod,
+  }) : _commands = Commands(store),
+       auth = AuthController(tokenProvider) {
+    scheduler = SyncScheduler(
+      store: store,
+      client: _currentClient,
+      auth: auth,
+      pushEnabled: () => _config.pushEnabled,
+      debounce: debounce,
+      period: period,
+    );
+  }
+
+  final ConfigController _config;
+  final TasksApi Function(String accessToken) _buildClient;
+  final Commands _commands;
+
+  /// The auth state machine (signed out / signed in / needs-reauth). Public so
+  /// the entry point and tests can read the live state.
+  final AuthController auth;
+
+  /// The background sync scheduler. Public so the entry point and tests can read
+  /// its sanitized status and drive a run.
+  late final SyncScheduler scheduler;
+
+  /// The Tasks client for the current live session, rebuilt on every
+  /// (re)login/restore. Null while signed out — the scheduler only reads it
+  /// through [_currentClient] on the authed path.
+  TasksApi? _client;
+
+  TasksApi _currentClient() {
+    final c = _client;
+    if (c == null) {
+      throw StateError('no authenticated Tasks client (signed out)');
+    }
+    return c;
+  }
+
+  void _rebuildClient() {
+    final token = auth.accessToken;
+    if (token == null) return;
+    _client = _buildClient(token);
+  }
+
+  /// The provider overrides that mount this runtime into the widget tree: the
+  /// live auth/status streams (seeded then subscribed), the four action seams,
+  /// and the real sidebar footer.
+  List<Override> get overrides => [
+    authSnapshotProvider.overrideWith((ref) => _authSnapshots()),
+    syncStatusStreamProvider.overrideWith((ref) => _syncStatuses()),
+    refreshActionProvider.overrideWithValue(refresh),
+    freshSyncActionProvider.overrideWithValue(freshSync),
+    signInActionProvider.overrideWithValue(_signInAction),
+    signOutActionProvider.overrideWithValue(_signOutAction),
+    sidebarFooterProvider.overrideWithValue(const SidebarAuthSyncFooter()),
+  ];
+
+  // Seed the CURRENT snapshot first (the `changes` broadcast stream has no
+  // initial replay), then follow every transition. Subscription is established
+  // at first-frame build, well before the detached restore emits.
+  Stream<AuthSnapshot> _authSnapshots() async* {
+    yield auth.snapshot;
+    yield* auth.changes;
+  }
+
+  Stream<SyncStatusView> _syncStatuses() async* {
+    yield scheduler.status;
+    yield* scheduler.statuses;
+  }
+
+  // ── The ordered startup task ────────────────────────────────────────────────
+
+  /// Silent restore, then — only if a session came back AND auto-sync-on-start
+  /// is enabled — one auto-sync. The awaitable ordered prefix of [start]; it
+  /// never spawns the background loop, so tests can assert the ordering without
+  /// a never-ending run.
+  Future<void> restoreAndAutoSync() async {
+    final restored = await auth.restore();
+    if (!restored) return;
+    _rebuildClient();
+    if (_config.autoSyncOnStart) {
+      await _syncNow();
+    }
+  }
+
+  /// Launch the background sync loop (mutation-debounced + periodic). Runs
+  /// forever; the entry point spawns it once, detached.
+  void startLoop() => unawaited(scheduler.runLoop());
+
+  /// The ONE detached startup task: restore → (auto-sync) → loop. Spawn after
+  /// the first frame; never awaited on the render path.
+  Future<void> start() async {
+    await restoreAndAutoSync();
+    startLoop();
+  }
+
+  // ── The UI action seams ─────────────────────────────────────────────────────
+
+  /// Manual refresh (mobile pull-to-refresh, footer/Properties "Sync now"): a
+  /// real sync when a live session exists, otherwise a no-op — the reactive
+  /// store already keeps every view live, so there is nothing to "reload".
+  Future<void> refresh() => _syncNow();
+
+  /// Fresh sync: drop synced local data (local-only lists survive) and re-pull
+  /// from Google, the source of truth. The local clear runs regardless; the
+  /// re-pull runs only when authed.
+  Future<void> freshSync() async {
+    await _commands.freshSync();
+    await _syncNow();
+  }
+
+  /// The interactive sign-in gesture: go live, build the client, and kick off a
+  /// first sync so the account's tasks appear without a second gesture.
+  Future<void> signIn() async {
+    await auth.signIn();
+    _rebuildClient();
+    await _syncNow();
+  }
+
+  /// Drop the session and go offline. The client is discarded so a stale one can
+  /// never push after logout.
+  Future<void> signOut() async {
+    await auth.logout();
+    _client = null;
+  }
+
+  /// Flush pending local changes to Google before the process exits (desktop
+  /// close hook). Delegates to the scheduler, which only acts when it can safely
+  /// push (signed in, push enabled, session alive, something pending).
+  Future<void> flushOnExit() => scheduler.flushOnExit();
+
+  /// Release the auth + scheduler streams. Call at shutdown.
+  Future<void> dispose() async {
+    await scheduler.dispose();
+    await auth.dispose();
+  }
+
+  Future<void> _syncNow() async {
+    if (!auth.isAuthenticated || auth.needsReauth) return;
+    try {
+      await scheduler.runSyncIfAuthed();
+    } on SyncError catch (e) {
+      // The scheduler already recorded/sanitized the failure into its status
+      // (which the UI renders); a rethrow here would only crash the gesture.
+      Log.debug('manual sync failed: $e');
+    }
+  }
+
+  VoidCallback get _signInAction =>
+      () => unawaited(_guarded(signIn, 'sign-in'));
+  VoidCallback get _signOutAction =>
+      () => unawaited(_guarded(signOut, 'sign-out'));
+
+  // The footer/Account buttons are VoidCallbacks; a cancelled/denied gesture or
+  // a transient outage must never surface as an unhandled async error — log it
+  // and leave the state exactly as the controller left it (invariant #6).
+  Future<void> _guarded(Future<void> Function() action, String label) async {
+    try {
+      await action();
+    } catch (e) {
+      Log.warn('$label failed: $e');
+    }
+  }
+}

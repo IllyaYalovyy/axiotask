@@ -94,6 +94,7 @@ void main() {
     AppSettingsView? settings,
     BackupService? backup,
     Future<void> Function()? freshSync,
+    Future<void> Function()? refreshAction,
     Prefs prefs = const Prefs(),
   }) async {
     tester.view.physicalSize = const Size(1000, 1400);
@@ -109,6 +110,8 @@ void main() {
           if (backup != null) backupServiceProvider.overrideWithValue(backup),
           if (freshSync != null)
             freshSyncActionProvider.overrideWithValue(freshSync),
+          if (refreshAction != null)
+            refreshActionProvider.overrideWithValue(refreshAction),
         ],
         child: const MaterialApp(home: Scaffold(body: PropertiesDialog())),
       ),
@@ -288,6 +291,32 @@ void main() {
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(ran, 0);
+    });
+  });
+
+  group('Sync tab — sync now', () {
+    testWidgets('is disabled until authenticated', (tester) async {
+      await pumpProps(tester, settings: settingsView(authenticated: false));
+      final button = tester.widget<FilledButton>(
+        find.byKey(const Key('sync-now-button')),
+      );
+      expect(button.onPressed, isNull, reason: 'gated on authentication');
+    });
+
+    testWidgets('tapping Sync now runs the real refresh action', (
+      tester,
+    ) async {
+      var ran = 0;
+      await pumpProps(
+        tester,
+        settings: settingsView(authenticated: true),
+        refreshAction: () async => ran++,
+      );
+
+      await tester.tap(find.byKey(const Key('sync-now-button')));
+      await tester.pumpAndSettle();
+
+      expect(ran, 1, reason: 'Sync now drives the refresh (sync-when-authed)');
     });
   });
 
