@@ -356,4 +356,70 @@ void main() {
       expect(dest('upcoming', due: day(15))?.viewId, 'L1');
     });
   });
+
+  group('Focus overdue partition', () {
+    final w = window();
+
+    // Partition the Focus rows produced under [sort], so the tests exercise the
+    // real focus filter feeding the split.
+    FocusPartition partition(
+      List<StoredTask> all, {
+      SortMode sort = SortMode.due,
+    }) => partitionFocusOverdue(
+      rows: visible(all, 'focus', sort: sort),
+      allTasks: all,
+      window: w,
+    );
+
+    test('splits overdue cards above the dated ones', () {
+      final all = [
+        task('over1', due: day(-3)),
+        task('today', due: day(0)),
+        task('over2', due: day(-1)),
+        task('soon', due: day(3)),
+      ];
+      final p = partition(all);
+      // Overdue = strictly-before-today, sorted earliest-first by the due sort.
+      expect(ids(p.overdue), ['over1', 'over2']);
+      // Rest = today + the next 6 days (today is NOT overdue).
+      expect(ids(p.rest), ['today', 'soon']);
+      expect(p.overdueCount, 2);
+    });
+
+    test('is independent of sort mode — alpha keeps overdue on top', () {
+      final all = [
+        task('zeta', title: 'zeta', due: day(-2)),
+        task('alpha', title: 'alpha', due: day(1)),
+        task('mid', title: 'mid', due: day(-5)),
+      ];
+      // Under an alphabetical sort the flat focus order is alpha, mid, zeta; the
+      // partition still lifts the two overdue rows (mid, zeta) above alpha, in
+      // their alphabetical order.
+      final p = partition(all, sort: SortMode.alpha);
+      expect(ids(p.overdue), ['mid', 'zeta']);
+      expect(ids(p.rest), ['alpha']);
+    });
+
+    test('a parent is overdue by its inherited (subtask) date', () {
+      // The parent has no own due; its only unfinished subtask is overdue, so
+      // its effective due is overdue and it belongs in the Overdue bucket —
+      // proving the split reads the EFFECTIVE date, not just the own date.
+      final all = [
+        task('p', due: null),
+        task('c', parent: 'p', due: day(-4)),
+        task('other', due: day(2)),
+      ];
+      final p = partition(all);
+      expect(ids(p.overdue), ['p']);
+      expect(ids(p.rest), ['other']);
+    });
+
+    test('no overdue rows yields an empty bucket (heading is suppressed)', () {
+      final all = [task('today', due: day(0)), task('soon', due: day(4))];
+      final p = partition(all);
+      expect(p.overdue, isEmpty);
+      expect(p.overdueCount, 0);
+      expect(ids(p.rest), ['today', 'soon']);
+    });
+  });
 }
