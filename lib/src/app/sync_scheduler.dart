@@ -187,9 +187,18 @@ class SyncNotify {
 /// Wait until it is time to run a sync: either a mutation arrives (then wait out
 /// the [debounce] so a burst coalesces) or the idle [period] elapses. Mirrors
 /// the reference's `tokio::select!`: whichever arm resolves first wins, and a
-/// single guarded [Completer] makes the loser a harmless no-op (it fires into
-/// the already-completed guard). Scheduling goes through [Future.delayed] — no
-/// raw `Timer` — so the loop stays fully controllable under fake time.
+/// single guarded [Completer] makes the loser fire into the already-completed
+/// guard. Scheduling goes through [Future.delayed] — no raw `Timer` — so the
+/// loop stays fully controllable under fake time.
+///
+/// Unlike tokio's `select!`, the losing arm's future is NOT dropped here — Dart
+/// has no cancellation — so the [notify] waiter this call registers survives the
+/// idle-arm win still armed inside [SyncNotify]. If a [SyncNotify.notifyOne]
+/// then lands on that stale waiter, its permit would be spent completing a
+/// completer nobody awaits and silently lost (#186). The notified arm guards
+/// against exactly that: when it fires into an already-decided race, it re-arms
+/// the notifier so the queued mutation is handed to the NEXT
+/// [waitForSyncTrigger] instead of vanishing.
 Future<void> waitForSyncTrigger(
   SyncNotify notify,
   Duration debounce,
@@ -203,7 +212,16 @@ Future<void> waitForSyncTrigger(
   );
   unawaited(
     notify.notified().then((_) {
-      if (!result.isCompleted) result.complete(true);
+      if (!result.isCompleted) {
+        result.complete(true);
+      } else {
+        // The idle arm already decided this cycle; this permit arrived for a
+        // waiter that lost the race. Dropping it would swallow the mutation
+        // (#186) — re-arm the notifier so the next waitForSyncTrigger sees it
+        // and fires as a mutation trigger rather than waiting out another full
+        // idle period. notifyOne coalesces, so this can never over-count.
+        notify.notifyOne();
+      }
     }),
   );
 
