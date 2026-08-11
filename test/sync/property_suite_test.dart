@@ -437,7 +437,7 @@ class Harness {
         ];
         final target = _pick(targets, op.b);
         if (target == null) return;
-        final newRoot = await commands.moveTaskToList(
+        final moveToken = await commands.moveTaskToList(
           t.task.id,
           target.list.id,
         );
@@ -445,7 +445,7 @@ class Harness {
         // re-points the open panel at the new root and closes it if the held row
         // was a descendant; mirror both.
         if (held == t.task.id) {
-          hold(newRoot);
+          hold(moveToken?.newRootId);
         } else if (held != null && await store.findTaskAny(held!) == null) {
           hold(null);
         }

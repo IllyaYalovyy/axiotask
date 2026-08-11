@@ -104,6 +104,37 @@ void main() {
     expect(find.text('2 tasks deleted'), findsOneWidget);
   });
 
+  testWidgets(
+    'bulk Delete shows an Undo that restores every deleted task (F11)',
+    (tester) async {
+      final fake = await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('B', 'bread'), row('C', 'cheese')],
+        lists: oneList,
+      );
+      await ctrlClick(tester, 'apples');
+      await ctrlClick(tester, 'cheese');
+      await tester.tap(find.byKey(const Key('bulk-delete')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(fake.tasks.map((t) => t.task.title), ['bread']);
+
+      // One Undo restores the WHOLE selection (all N, not just the last).
+      expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(fake.tasks.map((t) => t.task.title).toSet(), {
+        'apples',
+        'bread',
+        'cheese',
+      });
+      expect(find.text('apples'), findsOneWidget);
+      expect(find.text('cheese'), findsOneWidget);
+    },
+  );
+
   testWidgets('bulk reschedule moves the whole selection to tomorrow', (
     tester,
   ) async {

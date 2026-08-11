@@ -194,6 +194,35 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'the move toast Undo restores the task and repoints the panel (F11)',
+      (tester) async {
+        final opened = <String>[];
+        final fake = await pumpDetail(
+          tester,
+          taskId: 'P',
+          initial: [row('P', 'Move me', listId: 'L1')],
+          lists: [list('L1', 'Work'), list('L2', 'Personal')],
+          opened: opened,
+        );
+        await tester.tap(find.byKey(const Key('list-dropdown')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Personal').last);
+        await tester.pumpAndSettle();
+        expect(fake.movedToList, ['P->L2']);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+
+        await tester.tap(find.text('Undo'));
+        await tester.pumpAndSettle();
+        // The clone is gone and the original 'P' is back in its source list…
+        expect(fake.tasks.any((t) => t.task.id == 'P-moved'), isFalse);
+        final restored = fake.tasks.firstWhere((t) => t.task.id == 'P');
+        expect(restored.listId, 'L1');
+        // …and the panel was repointed onto the restored original (not the clone).
+        expect(opened, ['P-moved', 'P']);
+      },
+    );
   });
 
   group('parent breadcrumb', () {

@@ -149,9 +149,9 @@ class FakeBackend implements Commands {
   }
 
   @override
-  Future<void> toggleComplete(String id) async {
+  Future<CompleteToken> toggleComplete(String id) async {
     final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return;
+    if (i < 0) return CompleteToken(id: id, wasCompleting: false);
     final completing = _tasks[i].task.status == TaskStatus.needsAction;
     _tasks[i] = _rebuild(
       _tasks[i],
@@ -159,6 +159,54 @@ class FakeBackend implements Commands {
         status: completing ? TaskStatus.completed : TaskStatus.needsAction,
       ),
     );
+    if (!completing) {
+      _emit();
+      return CompleteToken(id: id, wasCompleting: false);
+    }
+    // Cascade completion to open descendants, recording exactly what flipped.
+    final cascaded = <String>[];
+    final frontier = <String>[id];
+    while (frontier.isNotEmpty) {
+      final pid = frontier.removeLast();
+      for (var j = 0; j < _tasks.length; j++) {
+        if (_tasks[j].task.parent != pid) continue;
+        frontier.add(_tasks[j].task.id);
+        if (_tasks[j].task.status == TaskStatus.completed) continue;
+        cascaded.add(_tasks[j].task.id);
+        _tasks[j] = _rebuild(
+          _tasks[j],
+          _tasks[j].task.copyWith(status: TaskStatus.completed),
+        );
+      }
+    }
+    _emit();
+    return CompleteToken(
+      id: id,
+      wasCompleting: true,
+      cascadedReopenIds: cascaded,
+    );
+  }
+
+  @override
+  Future<void> undoToggleComplete(CompleteToken token) async {
+    if (token.wasCompleting) {
+      for (final id in <String>[token.id, ...token.cascadedReopenIds]) {
+        final i = _tasks.indexWhere((t) => t.task.id == id);
+        if (i < 0) continue;
+        _tasks[i] = _rebuild(
+          _tasks[i],
+          _tasks[i].task.copyWith(status: TaskStatus.needsAction),
+        );
+      }
+    } else {
+      final i = _tasks.indexWhere((t) => t.task.id == token.id);
+      if (i >= 0) {
+        _tasks[i] = _rebuild(
+          _tasks[i],
+          _tasks[i].task.copyWith(status: TaskStatus.completed),
+        );
+      }
+    }
     _emit();
   }
 
@@ -166,22 +214,91 @@ class FakeBackend implements Commands {
   Future<DeleteToken> deleteTask(String id) async {
     final i = _tasks.indexWhere((t) => t.task.id == id);
     final t = _tasks[i];
+    // Snapshot the subtree (BFS) so undo can rebuild the whole thing.
+    final subtree = <SubtreeEntry>[];
+    final frontier = <String>[id];
+    while (frontier.isNotEmpty) {
+      final pid = frontier.removeLast();
+      for (final c in _tasks.where((c) => c.task.parent == pid)) {
+        frontier.add(c.task.id);
+        subtree.add(
+          SubtreeEntry(
+            id: c.task.id,
+            parentId: c.task.parent,
+            title: c.task.title,
+            notes: c.task.notes,
+            status: c.task.status,
+            due: c.task.due,
+            position: c.task.position,
+          ),
+        );
+      }
+    }
     final token = DeleteToken(
       id: id,
       listId: t.listId,
+      parentId: t.task.parent,
       title: t.task.title,
+      notes: t.task.notes,
       status: t.task.status,
+      due: t.task.due,
       position: t.task.position,
       hadEtag: t.task.etag != null,
+      subtree: subtree,
     );
     deleted.add(token);
-    _tasks.removeAt(i);
+    final doomed = {id, ...subtree.map((e) => e.id)};
+    _tasks.removeWhere((t) => doomed.contains(t.task.id));
     _emit();
     return token;
   }
 
   @override
-  Future<void> undoDelete(DeleteToken token) async {}
+  Future<void> undoDelete(DeleteToken token) async {
+    void restore(
+      String id,
+      String? parentId,
+      String position,
+      String title,
+      String? notes,
+      TaskStatus status,
+      String? due,
+    ) {
+      if (_tasks.any((t) => t.task.id == id)) return;
+      _tasks.add(
+        StoredTask(
+          task: Task(
+            id: id,
+            parent: parentId,
+            position: position,
+            title: title,
+            notes: notes,
+            status: status,
+            due: due,
+            updated: 't',
+          ),
+          listId: token.listId,
+          syncState: SyncState.dirty,
+          localUpdated: 't',
+          pendingOp: 'create',
+        ),
+      );
+    }
+
+    restore(
+      token.id,
+      token.parentId,
+      token.position,
+      token.title,
+      token.notes,
+      token.status,
+      token.due,
+    );
+    for (final e in token.subtree) {
+      restore(e.id, e.parentId, e.position, e.title, e.notes, e.status, e.due);
+    }
+    _emit();
+  }
 
   SetDueResult _noCascade(String id, String? prior) => SetDueResult(
     undo: [DueUndoEntry(id: id, due: prior)],
@@ -315,11 +432,26 @@ class FakeBackend implements Commands {
   }
 
   @override
-  Future<String> moveTaskToList(String id, String targetListId) async {
+  Future<MoveToListToken?> moveTaskToList(
+    String id,
+    String targetListId,
+  ) async {
     movedToList.add('$id->$targetListId');
     final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return id;
+    if (i < 0) return null;
     final old = _tasks[i];
+    if (old.listId == targetListId) return null;
+    final original = DeleteToken(
+      id: old.task.id,
+      listId: old.listId,
+      parentId: old.task.parent,
+      title: old.task.title,
+      notes: old.task.notes,
+      status: old.task.status,
+      due: old.task.due,
+      position: old.task.position,
+      hadEtag: old.task.etag != null,
+    );
     final newId = '$id-moved';
     _tasks[i] = StoredTask(
       task: old.task.copyWith(id: newId),
@@ -329,7 +461,38 @@ class FakeBackend implements Commands {
       pendingOp: 'create',
     );
     _emit();
-    return newId;
+    return MoveToListToken(
+      newRootId: newId,
+      targetListId: targetListId,
+      original: original,
+    );
+  }
+
+  @override
+  Future<void> undoMoveToList(MoveToListToken token) async {
+    _tasks.removeWhere((t) => t.task.id == token.newRootId);
+    final o = token.original;
+    if (!_tasks.any((t) => t.task.id == o.id)) {
+      _tasks.add(
+        StoredTask(
+          task: Task(
+            id: o.id,
+            parent: o.parentId,
+            position: o.position,
+            title: o.title,
+            notes: o.notes,
+            status: o.status,
+            due: o.due,
+            updated: 't',
+          ),
+          listId: o.listId,
+          syncState: SyncState.dirty,
+          localUpdated: 't',
+          pendingOp: 'create',
+        ),
+      );
+    }
+    _emit();
   }
 
   @override

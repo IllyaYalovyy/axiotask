@@ -285,6 +285,121 @@ void main() {
     });
   });
 
+  group('undoToggleComplete', () {
+    // F11/#184: a swipe-to-complete is reversible; undo of a leaf completion
+    // returns it to open with its completion stamp cleared.
+    test('undo of a leaf completion reopens it and clears the stamp', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'buy milk');
+
+      final token = await commands.toggleComplete('T1');
+      expect(token.wasCompleting, isTrue);
+      expect(
+        (await store.findTaskAny('T1'))!.task.status,
+        TaskStatus.completed,
+      );
+
+      await commands.undoToggleComplete(token);
+      final t = (await store.findTaskAny('T1'))!;
+      expect(t.task.status, TaskStatus.needsAction);
+      expect(t.task.completed, isNull);
+      expect(t.syncState, SyncState.dirty);
+    });
+
+    // The exactness requirement: completing a parent cascades only its OPEN
+    // descendants; undo must reopen exactly that set and leave a descendant that
+    // was already completed before the swipe untouched.
+    test(
+      'undo reopens exactly the cascade set, sparing already-completed subtasks',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(store, 'C1', 'L1', 'open child', parent: 'P');
+        await seedTask(
+          store,
+          'C2',
+          'L1',
+          'already-done child',
+          parent: 'P',
+          status: TaskStatus.completed,
+        );
+
+        final token = await commands.toggleComplete('P');
+        // Only the open child rode the cascade; C2 was skipped.
+        expect(token.cascadedReopenIds, <String>['C1']);
+        for (final id in ['P', 'C1', 'C2']) {
+          expect(
+            (await store.findTaskAny(id))!.task.status,
+            TaskStatus.completed,
+            reason: '$id completed after the swipe',
+          );
+        }
+
+        await commands.undoToggleComplete(token);
+        // P and C1 return to the pre-swipe open state.
+        expect(
+          (await store.findTaskAny('P'))!.task.status,
+          TaskStatus.needsAction,
+        );
+        expect(
+          (await store.findTaskAny('C1'))!.task.status,
+          TaskStatus.needsAction,
+        );
+        // C2 was completed BEFORE the swipe — undo leaves it completed.
+        expect(
+          (await store.findTaskAny('C2'))!.task.status,
+          TaskStatus.completed,
+          reason: 'a pre-completed subtask must not be reopened by undo',
+        );
+      },
+    );
+
+    // A reopen never cascades, so its undo simply re-completes the one row.
+    test('undo of a reopen re-completes the row', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'done', status: TaskStatus.completed);
+
+      final token = await commands.toggleComplete('T1'); // reopen
+      expect(token.wasCompleting, isFalse);
+      expect(token.cascadedReopenIds, isEmpty);
+      expect(
+        (await store.findTaskAny('T1'))!.task.status,
+        TaskStatus.needsAction,
+      );
+
+      await commands.undoToggleComplete(token);
+      final t = (await store.findTaskAny('T1'))!;
+      expect(t.task.status, TaskStatus.completed);
+      expect(t.task.completed, isNotNull);
+    });
+
+    // Non-happy path: a row in the token vanished between complete and undo —
+    // undo must skip it, not throw, and still reopen the survivors.
+    test('undo skips a cascade row that has since vanished', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C1', 'L1', 'child', parent: 'P');
+
+      final token = await commands.toggleComplete('P');
+      await store.deleteTaskHard('C1'); // the child is gone before undo
+
+      await commands.undoToggleComplete(token);
+      expect(
+        (await store.findTaskAny('P'))!.task.status,
+        TaskStatus.needsAction,
+      );
+      expect(await store.findTaskAny('C1'), isNull);
+    });
+  });
+
   group('setNotes', () {
     test('sets notes, marks dirty, and clears to null on empty', () async {
       final store = await freshStore();
@@ -1280,7 +1395,7 @@ void main() {
         await seedList(store, 'L2');
         await seedTask(store, 'T1', 'L1', 'Task to move'); // has etag e1
 
-        final newId = await commands.moveTaskToList('T1', 'L2');
+        final newId = (await commands.moveTaskToList('T1', 'L2'))!.newRootId;
         expect(newId, isNot('T1'), reason: 'the moved task gets a fresh id');
 
         // Old list no longer shows the task (tombstoned, not visible).
@@ -1306,7 +1421,7 @@ void main() {
       await seedList(store, 'L2');
       await seedLocalTask(store, 'local-1', 'L1', 'unsynced'); // no etag
 
-      final newId = await commands.moveTaskToList('local-1', 'L2');
+      final newId = (await commands.moveTaskToList('local-1', 'L2'))!.newRootId;
       expect(newId, isNot('local-1'));
 
       // The original is gone entirely — never synced, so nothing to tombstone.
@@ -1343,14 +1458,15 @@ void main() {
       expect(await store.listTasks('L1'), isEmpty);
     });
 
-    test('moving to the same list is a no-op returning the same id', () async {
+    test('moving to the same list is a no-op with no undo token', () async {
       final store = await freshStore();
       var n = 0;
       final commands = Commands(store, newId: () => 'new-${n++}');
       await seedList(store, 'L1');
       await seedTask(store, 'T1', 'L1', 'stay');
 
-      expect(await commands.moveTaskToList('T1', 'L1'), 'T1');
+      // Nothing moved → no token (the UI shows no toast, offers no undo).
+      expect(await commands.moveTaskToList('T1', 'L1'), isNull);
       final l1 = await store.listTasks('L1');
       expect(l1, hasLength(1), reason: 'no clone created');
       expect(l1.single.task.id, 'T1');
@@ -1389,7 +1505,7 @@ void main() {
         webViewLink: 'https://tasks.google.com/task/T1',
       );
 
-      final newId = await commands.moveTaskToList('T1', 'L2');
+      final newId = (await commands.moveTaskToList('T1', 'L2'))!.newRootId;
       final clone = (await store.findTaskAny(newId))!;
       expect(clone.task.etag, isNull);
       expect(clone.task.webViewLink, isNull);
@@ -1426,6 +1542,94 @@ void main() {
         expect(orig.pendingOp, 'delete');
         // The clone still landed in L2.
         expect(await store.listTasks('L2'), hasLength(1));
+      },
+    );
+
+    // F11/#185: a cross-list move is reversible. Undo removes the clone from the
+    // target and restores the original row in its source list under its own id.
+    test('undo restores the moved task in its original list', () async {
+      final store = await freshStore();
+      var n = 0;
+      final commands = Commands(store, newId: () => 'new-${n++}');
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      await seedTask(store, 'T1', 'L1', 'movable');
+
+      final token = (await commands.moveTaskToList('T1', 'L2'))!;
+      expect(await store.listTasks('L1'), isEmpty);
+      expect(await store.listTasks('L2'), hasLength(1));
+
+      await commands.undoMoveToList(token);
+      // Clone gone from the target; original back in the source under its id.
+      expect(await store.listTasks('L2'), isEmpty);
+      final l1 = await store.listTasks('L1');
+      expect(l1, hasLength(1));
+      expect(l1.single.task.id, 'T1');
+      expect(l1.single.task.title, 'movable');
+    });
+
+    // Undo restores the WHOLE subtree the move carried along, with the original
+    // ids and parent links intact.
+    test(
+      'undo restores the whole subtree with original ids and parents',
+      () async {
+        final store = await freshStore();
+        var n = 0;
+        final commands = Commands(store, newId: () => 'new-${n++}');
+        await seedList(store, 'L1');
+        await seedList(store, 'L2');
+        await seedTask(store, 'P', 'L1', 'parent');
+        await seedTask(
+          store,
+          'C1',
+          'L1',
+          'sub one',
+          parent: 'P',
+          position: '1',
+        );
+        await seedTask(
+          store,
+          'C2',
+          'L1',
+          'sub two',
+          parent: 'P',
+          position: '2',
+        );
+
+        final token = (await commands.moveTaskToList('P', 'L2'))!;
+        expect(await store.listTasks('L2'), hasLength(3));
+
+        await commands.undoMoveToList(token);
+        expect(await store.listTasks('L2'), isEmpty);
+        final l1 = await store.listTasks('L1');
+        expect(l1.map((t) => t.task.id).toSet(), <String>{'P', 'C1', 'C2'});
+        expect(l1.firstWhere((t) => t.task.id == 'C1').task.parent, 'P');
+        expect(l1.firstWhere((t) => t.task.id == 'C2').task.parent, 'P');
+      },
+    );
+
+    // Non-happy path: the clone was already removed (e.g. its delete pushed and
+    // Google cascaded it away) before undo. Undo must still restore the original,
+    // not throw on the missing clone.
+    test(
+      'undo still restores the original when the clone is already gone',
+      () async {
+        final store = await freshStore();
+        var n = 0;
+        final commands = Commands(store, newId: () => 'new-${n++}');
+        await seedList(store, 'L1');
+        await seedList(store, 'L2');
+        await seedLocalTask(store, 'local-1', 'L1', 'unsynced');
+
+        final token = (await commands.moveTaskToList('local-1', 'L2'))!;
+        // Simulate the clone vanishing before undo runs.
+        await store.deleteTaskHard(token.newRootId);
+
+        await commands.undoMoveToList(token);
+        final l1 = await store.listTasks('L1');
+        expect(l1, hasLength(1));
+        expect(l1.single.task.id, 'local-1');
+        expect(l1.single.task.title, 'unsynced');
       },
     );
   });

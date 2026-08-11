@@ -363,12 +363,26 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   ) async {
     final commands = ref.read(commandsProvider);
     final messenger = ScaffoldMessenger.of(context);
-    final newId = await commands.moveTaskToList(id, targetListId);
-    if (!mounted) return;
+    final token = await commands.moveTaskToList(id, targetListId);
+    if (!mounted || token == null) return;
     messenger
       ..clearSnackBars()
-      ..showSnackBar(SnackBar(content: Text('Moved to $targetTitle')));
-    widget.onOpenTask(newId);
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Moved to $targetTitle'),
+          duration: const Duration(seconds: 30),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              commands.undoMoveToList(token);
+              // Repoint the panel to the restored original (revived in place, so
+              // its id is stable) rather than the now-deleted clone.
+              widget.onOpenTask(token.original.id);
+            },
+          ),
+        ),
+      );
+    widget.onOpenTask(token.newRootId);
   }
 
   @override
