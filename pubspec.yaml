@@ -42,6 +42,12 @@ dependencies:
   flutter_riverpod: ">=3.3.2 <3.4.0"
   # Persistence — drift 2.34.x, SQL-first on bundled sqlite3 (RESEARCH §2).
   drift: ">=2.34.0 <2.35.0"
+  # Bundles a native libsqlite3 into the app so drift's NativeDatabase can
+  # dlopen it at runtime (F2, #178). Desktop-Linux links the system sqlite, but
+  # Android has no usable system libsqlite3 for the plugin to load on API 24+,
+  # so without this the store cannot open and the app dies on first launch on
+  # device. Must be a runtime dependency so the .so ships in the APK.
+  sqlite3_flutter_libs: ^0.5.24
   # Time discipline — package:clock everywhere; DateTime.now() is banned in
   # product code (RFC-011 testing strategy / RESEARCH §6).
   clock: ^1.1.2

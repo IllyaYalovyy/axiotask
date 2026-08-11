@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access for Google Tasks sync. Flutter's default templates put
+         INTERNET only in the debug/profile manifest overlays, but a RELEASE APK
+         merges just this main manifest — so it must be declared here or sync has
+         no network on a real install (F2, #179). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="axiotask"
         android:name="${applicationName}"
