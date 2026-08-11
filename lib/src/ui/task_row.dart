@@ -63,6 +63,7 @@ class TaskRow extends StatefulWidget {
     this.onPickDate,
     this.onOpenUrl,
     this.selected = false,
+    this.selectionActive = false,
     this.onSelectToggle,
     this.onContextMenu,
     this.onShowActions,
@@ -126,8 +127,15 @@ class TaskRow extends StatefulWidget {
   /// accent bar and a tinted background (BulkOps).
   final bool selected;
 
-  /// Toggle this row's selection. Wired to a Ctrl/Cmd-click on the body; `null`
-  /// disables selection entry for this row.
+  /// Whether a multi-select is currently active anywhere in the list (at least
+  /// one row selected). On a touch platform this flips a plain body tap from
+  /// "open the detail" to "toggle this row's membership" — the standard mobile
+  /// multi-select where a long-press enters the mode and taps then extend it.
+  /// The mouse keeps its plain-tap-opens / Ctrl-click-selects behavior.
+  final bool selectionActive;
+
+  /// Toggle this row's selection. Wired to a Ctrl/Cmd-click on the body (desktop)
+  /// and a long-press (touch); `null` disables selection entry for this row.
   final VoidCallback? onSelectToggle;
 
   /// Open the desktop right-click context menu at the given GLOBAL pointer
@@ -240,14 +248,25 @@ class _TaskRowState extends State<TaskRow> {
     widget.onEditDone?.call();
   }
 
-  /// A body tap: a revealed swipe strip closes first (touch); otherwise a
-  /// Ctrl/Cmd-modified tap toggles selection (BulkOps) and a plain tap opens the
-  /// detail panel.
+  /// A body tap: a revealed swipe strip closes first (touch); on a touch
+  /// platform with a selection already active a plain tap toggles this row's
+  /// membership (F18); otherwise a Ctrl/Cmd-modified tap toggles selection
+  /// (BulkOps) and a plain tap opens the detail panel.
   void _onBodyTap() {
     // A tap anywhere on a row with the swipe strip open closes it and does
     // nothing else (reference: a revealed strip is dismissed by tapping away).
     if (_actionsOpen) {
       _closeStrip();
+      return;
+    }
+    // Touch selection mode (F18): once a long-press has entered a selection, a
+    // plain tap on a coarse pointer toggles membership rather than opening the
+    // detail. Gated to a touch platform so the mouse keeps plain-tap-opens
+    // (its selection entry is the Ctrl-click / context-menu "Select").
+    if (widget.selectionActive &&
+        widget.onSelectToggle != null &&
+        coarsePointerPlatform(Theme.of(context).platform)) {
+      widget.onSelectToggle!();
       return;
     }
     final keys = HardwareKeyboard.instance.logicalKeysPressed;

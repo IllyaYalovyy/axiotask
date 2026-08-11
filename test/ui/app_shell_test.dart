@@ -14,6 +14,7 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/router.dart';
+import 'package:axiotask/src/ui/sidebar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -185,7 +186,13 @@ void main() {
       lists: [storedList('L1', 'Work')],
       tasks: [storedTask('T1', 'a'), storedTask('T2', 'b')],
     );
-    expect(find.text('Work'), findsOneWidget);
+    // Scoped to the sidebar: the default 'all' view now also tags each row with
+    // its list name (F18 cross-list tag), so an unscoped find.text('Work') would
+    // match the row tags too. The assertion here is about the sidebar entry.
+    expect(
+      find.descendant(of: find.byType(Sidebar), matching: find.text('Work')),
+      findsOneWidget,
+    );
     // Two open top-level tasks in the list → a "2" badge (All Tasks + the list).
     expect(find.text('2'), findsWidgets);
   });

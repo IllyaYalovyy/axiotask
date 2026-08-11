@@ -230,6 +230,16 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   static String? _bareDue(String? due) =>
       (due == null || due.length < 10) ? due : due.substring(0, 10);
 
+  /// The title of the list with [listId], or `null` when it is unknown — the
+  /// cross-list row tag (F18) omits the tag rather than mislabel a row whose
+  /// list has not loaded yet.
+  String? _listTitleOrNull(String listId) {
+    for (final l in _lists) {
+      if (l.list.id == listId) return l.list.title;
+    }
+    return null;
+  }
+
   /// The title of the list with [listId], for the landing toast — falls back to
   /// the first known list (the lists set is never empty once a create landed).
   String _listTitle(String listId) => _lists
@@ -480,6 +490,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       task: t,
       lists: _lists,
       demotable: demotable,
+      selected: _selectedIds.contains(t.task.id),
+      onToggleSelect: () => _toggleSelect(t.task.id),
       onEditTitle: () => setState(() => _editId = t.task.id),
       onEditNotes: () =>
           (widget.onOpenTaskNotes ?? widget.onOpenTask)(t.task.id),
@@ -1025,6 +1037,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     UrlOpener openUrl,
   ) {
     final t = stored.task;
+    // In a cross-list view (any smart view aggregates across lists) every row is
+    // tagged with the list it lives in, so a task's home is legible at a glance;
+    // a single concrete-list view needs no tag (F18). The tag is the list's own
+    // title, resolved from the current lists set.
+    final listTag = _isSmartView ? _listTitleOrNull(stored.listId) : null;
     return TaskRow(
       key: ValueKey(t.id),
       title: t.title,
@@ -1035,7 +1052,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       pendingSync: stored.syncState == SyncState.dirty,
       subtaskDone: subDone[t.id] ?? 0,
       subtaskTotal: subTotal[t.id] ?? 0,
+      listTag: listTag,
       selected: _selectedIds.contains(t.id),
+      selectionActive: _selectedIds.isNotEmpty,
       onSelectToggle: () => _toggleSelect(t.id),
       onContextMenu: (pos) => _showRowActions(stored, globalPosition: pos),
       onShowActions: () => _showRowActions(stored),
