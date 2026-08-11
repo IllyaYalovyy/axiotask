@@ -28,10 +28,12 @@ void main() {
     List<StoredTaskList> lists = const [],
     Set<String> excluded = const {},
     Widget? footer,
+    TargetPlatform? platform,
   }) async {
     final cap = _Captured();
     await tester.pumpWidget(
       MaterialApp(
+        theme: platform == null ? null : ThemeData(platform: platform),
         home: Scaffold(
           body: Row(
             children: [
@@ -58,6 +60,47 @@ void main() {
     await tester.pumpAndSettle();
     return cap;
   }
+
+  group('list drag handle 48dp touch target (F19 #198)', () {
+    double handleHeight(WidgetTester tester) => tester
+        .getSize(
+          find
+              .ancestor(
+                of: find.byIcon(Icons.drag_indicator),
+                matching: find.byType(ReorderableDragStartListener),
+              )
+              .first,
+        )
+        .height;
+
+    testWidgets('the drag handle is a ≥48dp target on a touch pointer', (
+      tester,
+    ) async {
+      // In the drawer the handle is the only touch grab point for reorder; a
+      // finger needs a 48dp target.
+      await pump(
+        tester,
+        lists: [list('L1', 'My Tasks')],
+        platform: TargetPlatform.android,
+      );
+      expect(handleHeight(tester), greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('the drag handle stays compact (<48dp) on a mouse pointer', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        lists: [list('L1', 'My Tasks')],
+        platform: TargetPlatform.linux,
+      );
+      expect(
+        handleHeight(tester),
+        lessThan(48),
+        reason: 'the desktop sidebar keeps its dense list rows',
+      );
+    });
+  });
 
   testWidgets('renders the five smart views and selects one on tap', (
     tester,

@@ -125,6 +125,54 @@ void main() {
     });
   });
 
+  group('action toast (F19 #198)', () {
+    testWidgets(
+      'showAction renders a CUSTOM-labelled button that fires and dismisses',
+      (tester) async {
+        // The landing toast (#190) routes through the one feedback surface with
+        // a "View" jump — not "Undo". The button carries the custom label and
+        // dismissing the toast on tap works the same as an undo.
+        var viewed = 0;
+        final c = await pumpOverlay(tester);
+        c.showAction(
+          'Added "buy milk" to Focus',
+          actionLabel: 'View',
+          onAction: () => viewed++,
+        );
+        await tester.pump();
+
+        expect(find.text('Added "buy milk" to Focus'), findsOneWidget);
+        expect(find.widgetWithText(TextButton, 'View'), findsOneWidget);
+        expect(
+          find.widgetWithText(TextButton, 'Undo'),
+          findsNothing,
+          reason: 'the action label is "View", not the default "Undo"',
+        );
+
+        await tester.tap(find.text('View'));
+        await tester.pump();
+        expect(viewed, 1);
+        expect(find.text('Added "buy milk" to Focus'), findsNothing);
+        await flush(tester);
+      },
+    );
+
+    testWidgets(
+      'disposing the controller cancels a pending auto-dismiss timer',
+      (tester) async {
+        // Regression guard for the migration: undo toasts live 30s. If their
+        // timer were an uncancellable Future.delayed, a widget test that raised
+        // one and ended would leave a pending timer (a teardown failure).
+        // dispose() must cancel it — proven by ending the test WITHOUT pumping
+        // past the 30s life: a leaked timer fails with "A Timer is still
+        // pending", so this test passing IS the guarantee.
+        final c = ToastController();
+        c.showUndo('Deleted "x"', () {}); // schedules the 30s timer
+        c.dispose(); // must cancel it
+      },
+    );
+  });
+
   group('ToastStack', () {
     testWidgets(
       'an error toast and an undo toast coexist so Undo stays reachable',

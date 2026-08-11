@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'toast_harness.dart' show wrapWithToast;
+
 StoredTask row(
   String id,
   String title, {
@@ -548,6 +550,8 @@ Future<FakeBackend> pumpDetail(
         if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
       ],
       child: MaterialApp(
+        // Mount the F19 toast overlay so the panel's delete/move undo renders.
+        builder: wrapWithToast,
         home: Scaffold(
           body: TaskDetail(
             taskId: taskId,

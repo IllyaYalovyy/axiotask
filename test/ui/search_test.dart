@@ -91,6 +91,48 @@ void main() {
       expect(find.text('No tasks found'), findsOneWidget);
     });
 
+    testWidgets('respects the soft-keyboard inset — the box stays above the IME '
+        '(F19 #198)', (tester) async {
+      // The failure this prevents: with the keyboard up (viewInsets.bottom),
+      // the search box is laid out against the FULL screen height and the IME
+      // covers the very field being typed into. Padding by the inset keeps the
+      // box above it. Rendered on a short surface where a tall keyboard would
+      // otherwise overlap the box (the real overlay is a fullscreen route, not
+      // a Scaffold body, so it must handle the inset itself).
+      const keyboard = 220.0;
+      tester.view.physicalSize = const Size(400, 300);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(viewInsets: const EdgeInsets.only(bottom: keyboard)),
+              child: SearchOverlay(
+                tasks: const [],
+                listTitles: const {},
+                onSelect: (_) {},
+                onClose: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // The field's bottom edge stays above the keyboard's top (300 - 220).
+      final fieldBottom = tester.getRect(find.byType(TextField)).bottom;
+      expect(
+        fieldBottom,
+        lessThanOrEqualTo(300 - keyboard),
+        reason: 'the search field must sit above the on-screen keyboard',
+      );
+    });
+
     testWidgets('open tasks rank before completed ones', (tester) async {
       await _pumpSearch(tester, [
         _row('done', 'alpha done', done: true),

@@ -31,6 +31,10 @@ void main() {
           row('B', 'Beta', position: '2'),
         ],
         lists: [list('L1', 'My Tasks')],
+        // Double-tap-to-rename is a DESKTOP affordance (F19 #198 drops it on a
+        // touch pointer so the open-tap fires without the double-tap delay), so
+        // this guard runs on the mouse platform where that gesture lives.
+        platform: TargetPlatform.linux,
       );
 
       // Enter inline rename on row A (double-tap its title). The two-tap-with-gap

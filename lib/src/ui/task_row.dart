@@ -499,7 +499,15 @@ class _TaskRowState extends State<TaskRow> {
                             (_hovering || _stripRevealedByTouch) && !_editing,
                         child: _QuickDateStrip(
                           hasDue: (widget.due ?? '').isNotEmpty,
-                          onSetDue: widget.onSetDue!,
+                          // A latched (swiped-open) strip closes the instant a
+                          // date is picked (F19 #198): the reschedule is done, so
+                          // the strip must not sit open over the row waiting for a
+                          // tap-away. A desktop hover strip is not latched, so
+                          // closing is a no-op there (the mouse still governs it).
+                          onSetDue: (move) {
+                            widget.onSetDue!(move);
+                            if (_stripRevealedByTouch) _closeStrip();
+                          },
                           dense: !_stripRevealedByTouch,
                         ),
                       ),
@@ -557,10 +565,18 @@ class _TaskRowState extends State<TaskRow> {
         onTapOutside: (_) => _commit(),
       );
     }
+    // Double-tap-to-rename is a DESKTOP affordance only. On a touch platform an
+    // onDoubleTap recognizer would make every open-tap wait out the ~300ms
+    // double-tap window before firing — a sluggish tap-to-open on the primary
+    // mobile gesture. Drop it there (rename on touch is the ⋯ / long-press
+    // menu's "Edit title"); the mouse keeps double-click-to-rename (F19 #198).
+    final doubleTapToRename = coarsePointerPlatform(theme.platform)
+        ? null
+        : _startEdit;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _onBodyTap,
-      onDoubleTap: _startEdit,
+      onDoubleTap: doubleTapToRename,
       child: Padding(
         padding: const EdgeInsets.only(top: 12, bottom: 2),
         child: Row(
@@ -699,12 +715,42 @@ class _TaskRowState extends State<TaskRow> {
     return InkWell(
       onTap: widget.onPickDate,
       borderRadius: BorderRadius.circular(4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        child: child,
+      // A touch pointer gets a full 48dp hit target on this small date segment
+      // (F19 #198 — a finger can't reliably land on ~20dp of text); the mouse
+      // keeps the compact desktop segment (it's precise, and the row stays
+      // dense — the desktop UX standard).
+      child: touchTarget(
+        theme.platform,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          child: child,
+        ),
       ),
     );
   }
+}
+
+/// Enlarge [child] to a ≥48dp hit area on a coarse (touch) pointer, leaving it
+/// compact on a mouse. The glyph is unchanged — only the tappable region grows
+/// (F19 #198's 48dp audit). Shared by the metadata badges (the due segment and
+/// the link badge) that would otherwise be sub-48dp touch targets.
+///
+/// The box is exactly 48dp tall and at least 48dp wide, but shrink-wraps its
+/// width to the content (`widthFactor: 1`) so it does NOT expand to fill the
+/// metadata [Wrap] and shove the following badges onto a second run — it sits
+/// inline, vertically centered, beside the subtask progress and list tag.
+Widget touchTarget(TargetPlatform platform, Widget child) {
+  if (!coarsePointerPlatform(platform)) return child;
+  return SizedBox(
+    height: 48,
+    child: Center(
+      widthFactor: 1,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48),
+        child: child,
+      ),
+    ),
+  );
 }
 
 /// A [HorizontalDragGestureRecognizer] that refuses pointers whose down-event
@@ -860,27 +906,32 @@ class _LinkBadge extends StatelessWidget {
         key: const Key('link-badge'),
         onTap: () => onOpen(url),
         borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.open_in_new,
-                size: 14,
-                color: theme.colorScheme.primary,
-                semanticLabel: 'Open link',
-              ),
-              if (extra > 0) ...[
-                const SizedBox(width: 2),
-                Text(
-                  '+$extra',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+        // A finger gets the full 48dp target; the mouse keeps it compact
+        // (F19 #198's 48dp audit — see [touchTarget]).
+        child: touchTarget(
+          theme.platform,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.open_in_new,
+                  size: 14,
+                  color: theme.colorScheme.primary,
+                  semanticLabel: 'Open link',
                 ),
+                if (extra > 0) ...[
+                  const SizedBox(width: 2),
+                  Text(
+                    '+$extra',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

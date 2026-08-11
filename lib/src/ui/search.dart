@@ -169,60 +169,69 @@ class _SearchOverlayState extends State<SearchOverlay> {
         SingleActivator(LogicalKeyboardKey.arrowUp): () =>
             _move(-1, results.length),
       },
-      child: SafeArea(
-        child: Align(
-          alignment: const Alignment(0, -0.6),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Material(
-                elevation: 8,
-                borderRadius: BorderRadius.circular(12),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: _query,
-                      focusNode: _fieldFocus,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Search tasks…',
-                        prefixIcon: Icon(Icons.search),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
-                        ),
-                      ),
-                      textInputAction: TextInputAction.done,
-                      onChanged: (_) => _onQueryChanged(),
-                      onSubmitted: (_) => _activateSelected(results),
-                    ),
-                    if (results.isNotEmpty)
-                      Flexible(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 360),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: results.length,
-                            itemBuilder: (context, i) => _ResultRow(
-                              task: results[i].task,
-                              listTitle: widget.listTitles[results[i].listId],
-                              parentTitle: _parentTitle(results[i]),
-                              selected: i == _selectedIdx,
-                              onTap: () => _activate(results[i]),
-                            ),
+      // Respect the soft-keyboard inset (F19 #198): when the on-screen keyboard
+      // is up, its height is reported as viewInsets.bottom. Padding the overlay
+      // by it keeps the search box and its results ABOVE the keyboard on a phone
+      // instead of letting the IME cover the very field being typed into.
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SafeArea(
+          child: Align(
+            alignment: const Alignment(0, -0.6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: _query,
+                        focusNode: _fieldFocus,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          hintText: 'Search tasks…',
+                          prefixIcon: Icon(Icons.search),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 16,
                           ),
                         ),
-                      )
-                    else if (hasQuery)
-                      const Padding(
-                        padding: EdgeInsets.all(20),
-                        child: Text('No tasks found'),
+                        textInputAction: TextInputAction.done,
+                        onChanged: (_) => _onQueryChanged(),
+                        onSubmitted: (_) => _activateSelected(results),
                       ),
-                  ],
+                      if (results.isNotEmpty)
+                        Flexible(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 360),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: results.length,
+                              itemBuilder: (context, i) => _ResultRow(
+                                task: results[i].task,
+                                listTitle: widget.listTitles[results[i].listId],
+                                parentTitle: _parentTitle(results[i]),
+                                selected: i == _selectedIdx,
+                                onTap: () => _activate(results[i]),
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (hasQuery)
+                        const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: Text('No tasks found'),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),

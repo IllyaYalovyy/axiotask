@@ -33,9 +33,12 @@ void main() {
     List<String>? toggled,
     List<String>? renamed,
     List<String>? picked,
+    List<String>? openedUrl,
+    TargetPlatform? platform,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
+        theme: platform == null ? null : ThemeData(platform: platform),
         home: Scaffold(
           body: TaskRow(
             title: title,
@@ -51,6 +54,7 @@ void main() {
             onToggle: () => toggled?.add(title),
             onRename: (v) => renamed?.add(v),
             onPickDate: picked == null ? null : () => picked.add(title),
+            onOpenUrl: openedUrl?.add,
           ),
         ),
       ),
@@ -89,7 +93,9 @@ void main() {
       tester,
     ) async {
       final renamed = <String>[];
-      await pumpRow(tester, renamed: renamed);
+      // Double-tap-to-rename is a DESKTOP affordance (F19 #198); pin the mouse
+      // platform where it lives.
+      await pumpRow(tester, renamed: renamed, platform: TargetPlatform.linux);
 
       await tester.tap(find.text('buy milk'));
       await tester.pump(const Duration(milliseconds: 40));
@@ -109,7 +115,7 @@ void main() {
       tester,
     ) async {
       final renamed = <String>[];
-      await pumpRow(tester, renamed: renamed);
+      await pumpRow(tester, renamed: renamed, platform: TargetPlatform.linux);
 
       await tester.tap(find.text('buy milk'));
       await tester.pump(const Duration(milliseconds: 40));
@@ -122,6 +128,43 @@ void main() {
 
       expect(renamed, isEmpty);
     });
+
+    testWidgets(
+      'on a touch pointer a double-tap does NOT rename — and the FIRST tap '
+      'opens immediately (F19 #198: no double-tap delay on the open gesture)',
+      (tester) async {
+        // The failure this prevents: onDoubleTap left on the row title makes
+        // every touch open-tap wait out the ~300ms double-tap window before it
+        // fires — a sluggish tap-to-open on the primary mobile gesture. On a
+        // coarse pointer the row must have NO double-tap recognizer, so a single
+        // tap opens with no delay and a second tap never enters inline rename.
+        final opened = <String>[];
+        final renamed = <String>[];
+        await pumpRow(
+          tester,
+          opened: opened,
+          renamed: renamed,
+          platform: TargetPlatform.android,
+        );
+
+        // A single tap opens the detail without any pump past a double-tap gap.
+        await tester.tap(find.text('buy milk'));
+        await tester.pump();
+        expect(opened, ['buy milk'], reason: 'open-tap fires immediately');
+
+        // A second tap after the double-tap window never opens the rename editor.
+        await tester.tap(find.text('buy milk'));
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tap(find.text('buy milk'));
+        await settle(tester);
+        expect(
+          find.byType(TextField),
+          findsNothing,
+          reason: 'touch has no double-tap-to-rename',
+        );
+        expect(renamed, isEmpty);
+      },
+    );
   });
 
   group('completion (T7.2)', () {
@@ -274,6 +317,57 @@ void main() {
         await settle(tester);
       });
       expect(picked, ['buy milk']);
+    });
+  });
+
+  group('metadata badge 48dp touch targets (F19 #198)', () {
+    // The tap target for the metadata badges (the due segment, the link badge)
+    // is the InkWell wrapping the glyph. On a touch pointer it must be ≥48dp so
+    // a finger can land on it; on a mouse it stays compact (the desktop row is
+    // dense — the vision's standard).
+    double dueSegmentHeight(WidgetTester tester) => tester
+        .getSize(
+          find.ancestor(
+            of: find.text('no date'),
+            matching: find.byType(InkWell),
+          ),
+        )
+        .height;
+
+    testWidgets('the due segment is a ≥48dp target on a touch pointer', (
+      tester,
+    ) async {
+      await pumpRow(
+        tester,
+        picked: <String>[],
+        platform: TargetPlatform.android,
+      );
+      expect(dueSegmentHeight(tester), greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('the due segment stays compact (<48dp) on a mouse pointer', (
+      tester,
+    ) async {
+      await pumpRow(tester, picked: <String>[], platform: TargetPlatform.linux);
+      expect(
+        dueSegmentHeight(tester),
+        lessThan(48),
+        reason: 'the desktop row keeps its dense metadata line',
+      );
+    });
+
+    testWidgets('the link badge is a ≥48dp target on a touch pointer', (
+      tester,
+    ) async {
+      await pumpRow(
+        tester,
+        notes: 'see https://example.com for details',
+        openedUrl: <String>[],
+        platform: TargetPlatform.android,
+      );
+      final badge = tester.getSize(find.byKey(const Key('link-badge')));
+      expect(badge.width, greaterThanOrEqualTo(48));
+      expect(badge.height, greaterThanOrEqualTo(48));
     });
   });
 }

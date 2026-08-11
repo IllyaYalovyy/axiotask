@@ -9,11 +9,17 @@
 // The overlay mounts ABOVE the router's Navigator (via MaterialApp.builder), so
 // a toast out-stacks every modal overlay — dialogs, the detail panel, pickers.
 // That is invariant #11 made structural: feedback that a modal paints over
-// protects nothing (#172). Timers are ordinary `Timer`s (deterministic under
-// `tester.pump`) and are cancelled on dismiss and on [ToastController.dispose].
+// protects nothing (#172). This is the ONE feedback surface (F19 #198): undo
+// and info notices route here, never through ScaffoldMessenger — a SnackBar
+// renders BELOW modal routes, so an undo raised from the detail panel or a
+// dialog would be swallowed by the very surface it belongs to.
+//
+// Auto-dismiss runs on a per-toast [RestartableTimer] (package:async — the repo
+// bans a raw dart:async `Timer` below lib/): cancellable, so a dismiss or a
+// [ToastController.dispose] tears its timer down and no widget test ends with a
+// pending 30-second undo timer.
 
-import 'dart:async';
-
+import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -36,6 +42,7 @@ class ToastData {
     required this.message,
     required this.variant,
     this.onUndo,
+    this.actionLabel,
   });
 
   /// A process-unique id (the stack key and the dismiss handle).
@@ -47,8 +54,14 @@ class ToastData {
   /// Info vs error styling.
   final ToastVariant variant;
 
-  /// The revert action; when non-null the toast shows an Undo button.
+  /// The action run by the toast's button; when non-null the toast shows a
+  /// text button. It is the undo revert for an undo toast, or the jump for a
+  /// landing toast (see [actionLabel]).
   final VoidCallback? onUndo;
+
+  /// The button's label — defaults to "Undo" when null, so an undo toast needs
+  /// no label. A landing/info toast passes its own ("View").
+  final String? actionLabel;
 }
 
 /// Owns the live toast list and each toast's auto-dismiss timer. A
@@ -57,6 +70,9 @@ class ToastData {
 /// a [BuildContext].
 class ToastController extends ChangeNotifier {
   final List<ToastData> _toasts = <ToastData>[];
+  // The live auto-dismiss timers, keyed by toast id — cancelled on dismiss and
+  // on dispose so nothing outlives its toast (or the controller).
+  final Map<int, RestartableTimer> _timers = <int, RestartableTimer>{};
   int _seq = 0;
   bool _disposed = false;
 
@@ -64,27 +80,33 @@ class ToastController extends ChangeNotifier {
   List<ToastData> get toasts => List<ToastData>.unmodifiable(_toasts);
 
   /// Show a toast; returns its id. [duration] `null` means it persists until
-  /// dismissed (or reverted).
+  /// dismissed (or reverted). [onUndo] wires the action button, [actionLabel]
+  /// names it (defaults to "Undo").
   int show(
     String message, {
     ToastVariant variant = ToastVariant.info,
     VoidCallback? onUndo,
+    String? actionLabel,
     Duration? duration,
   }) {
     final id = _seq++;
     _toasts.add(
-      ToastData(id: id, message: message, variant: variant, onUndo: onUndo),
+      ToastData(
+        id: id,
+        message: message,
+        variant: variant,
+        onUndo: onUndo,
+        actionLabel: actionLabel,
+      ),
     );
     if (duration != null) {
-      // Auto-dismiss via a controllable delay (never a raw Timer — banned below
-      // lib/ as an uncontrollable time source). The callback is idempotent: it
-      // only removes the toast if it is still present and the controller is
-      // alive, so an early manual dismiss or disposal makes it a harmless no-op.
-      unawaited(
-        Future<void>.delayed(duration).then((_) {
-          if (!_disposed && _toasts.any((t) => t.id == id)) dismiss(id);
-        }),
-      );
+      // Auto-dismiss via a cancellable RestartableTimer (never a raw Timer —
+      // banned below lib/ as an uncontrollable time source). Stored so dismiss
+      // and dispose can cancel it: no widget test ends with a pending 30s undo
+      // timer, and an already-dismissed toast's timer never fires late.
+      _timers[id] = RestartableTimer(duration, () {
+        if (!_disposed) dismiss(id);
+      });
     }
     notifyListeners();
     return id;
@@ -107,6 +129,23 @@ class ToastController extends ChangeNotifier {
   /// Show an info toast (4s life).
   int showInfo(String message) => show(message, duration: kInfoToastDuration);
 
+  /// Show an info toast with a single labelled action (e.g. a landing toast's
+  /// "View" jump). Lives [duration] (default 6s — long enough to act on, short
+  /// enough not to linger) if not acted on.
+  int showAction(
+    String message, {
+    required String actionLabel,
+    required VoidCallback onAction,
+    Duration duration = const Duration(seconds: 6),
+  }) {
+    return show(
+      message,
+      onUndo: onAction,
+      actionLabel: actionLabel,
+      duration: duration,
+    );
+  }
+
   /// Show an undo toast: a message plus an Undo button that runs [onUndo] and
   /// then dismisses the toast. Lasts [duration] (default 30s) if not acted on.
   int showUndo(
@@ -117,9 +156,10 @@ class ToastController extends ChangeNotifier {
     return show(message, onUndo: onUndo, duration: duration);
   }
 
-  /// Remove toast [id] (a no-op if it is already gone). Any still-pending
-  /// auto-dismiss for it becomes a no-op (the guarded callback re-checks).
+  /// Remove toast [id] (a no-op if it is already gone) and cancel its pending
+  /// auto-dismiss timer so it can never fire late.
   void dismiss(int id) {
+    _timers.remove(id)?.cancel();
     final before = _toasts.length;
     _toasts.removeWhere((t) => t.id == id);
     if (_toasts.length != before && !_disposed) notifyListeners();
@@ -134,6 +174,10 @@ class ToastController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    for (final timer in _timers.values) {
+      timer.cancel();
+    }
+    _timers.clear();
     _toasts.clear();
     super.dispose();
   }
@@ -274,7 +318,7 @@ class ToastCard extends StatelessWidget {
                 TextButton(
                   onPressed: onUndo,
                   style: TextButton.styleFrom(foregroundColor: fg),
-                  child: const Text('Undo'),
+                  child: Text(toast.actionLabel ?? 'Undo'),
                 ),
               ],
               // A small glyph, but the default 48dp IconButton hit area is kept

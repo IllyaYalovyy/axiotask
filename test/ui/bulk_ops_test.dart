@@ -120,7 +120,7 @@ void main() {
       expect(fake.tasks.map((t) => t.task.title), ['bread']);
 
       // One Undo restores the WHOLE selection (all N, not just the last).
-      expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
       await tester.tap(find.text('Undo'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
