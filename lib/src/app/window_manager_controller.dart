@@ -45,3 +45,32 @@ class WindowSizePersister with WindowListener {
     unawaited(_service.persistCurrentSize());
   }
 }
+
+/// Runs a final flush ([AuthSyncRuntime.flushOnExit]) before the desktop window
+/// actually closes — the port of the reference's exit sync. `window_manager`
+/// only fires `onWindowClose` when close is prevented, so [attach] sets
+/// `setPreventClose(true)`; the handler awaits the flush (bounded inside the
+/// scheduler) and then destroys the window. Thin plugin glue, like
+/// [WindowManagerController]: exercised on a real desktop window only, its logic
+/// (the scheduler's bounded [flushOnExit]) is fully faked-and-tested elsewhere.
+class WindowCloseFlusher with WindowListener {
+  WindowCloseFlusher(this._flush);
+
+  final Future<void> Function() _flush;
+
+  /// Register the close handler and prevent an immediate close so the flush can
+  /// run first. Call once after the window is shown.
+  Future<void> attach() async {
+    windowManager.addListener(this);
+    await windowManager.setPreventClose(true);
+  }
+
+  @override
+  void onWindowClose() async {
+    try {
+      await _flush();
+    } finally {
+      await windowManager.destroy();
+    }
+  }
+}

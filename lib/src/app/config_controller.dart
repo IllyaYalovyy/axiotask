@@ -40,6 +40,11 @@ class ConfigController {
   /// OAuth scopes currently configured (display-only).
   List<String> get scopes => _google.scopes;
 
+  /// The desktop OAuth client credentials + scopes. The composition root (F5)
+  /// reads these to build the desktop [OAuthConfig]; Android ignores them (Play
+  /// Services identifies the app by package + SHA-1, RFC-010).
+  GoogleConfig get google => _google;
+
   /// Persist `push_enabled = [value]` durably, THEN flip the in-memory value.
   /// If the write fails the in-memory state is left untouched (#171).
   Future<void> setPushEnabled(bool value) async {

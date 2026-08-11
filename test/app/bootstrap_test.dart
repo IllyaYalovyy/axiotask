@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:axiotask/src/app/bootstrap.dart';
 import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/instance.dart';
+import 'package:axiotask/src/auth/token_store.dart';
 import 'package:axiotask/src/store/store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -115,6 +116,39 @@ void main() {
 
       expect(result, isA<BootstrapFailed>());
       expect((result as BootstrapFailed).message, isNotEmpty);
+    },
+  );
+
+  test(
+    'a persisted session (tokens.json) suppresses the "My Tasks" seed',
+    () async {
+      // Desktop keeps a refresh token beside the DB; its presence is the real
+      // "signed in" state at seed time, so the store must NOT be pre-seeded —
+      // the account's real lists arrive from the first sync (ensure_default_list
+      // gates on is_authenticated).
+      final dbFile = dbPathIn(dataBase, env: const {});
+      final tokensFile = tokensFileBeside(dbFile);
+      tokensFile.parent.createSync(recursive: true);
+      FileTokenStore(tokensFile).save(
+        const StoredTokens(
+          accessToken: 'a',
+          refreshToken: 'r',
+          scope: 'https://www.googleapis.com/auth/tasks',
+        ),
+      );
+
+      final ready =
+          await bootstrap(
+                dataBase: dataBase,
+                configBase: configBase,
+                env: const {},
+              )
+              as BootstrapReady;
+      addTearDown(ready.database.close);
+
+      // No local seed: a signed-in user's lists come from sync.
+      final lists = await Store(ready.database).allLists();
+      expect(lists, isEmpty);
     },
   );
 

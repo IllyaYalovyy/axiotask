@@ -16,6 +16,7 @@ import 'package:flutter/material.dart'
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../auth/auth_controller.dart' show AuthSnapshot;
 import '../model/task_view.dart';
 import '../store/database.dart';
 import '../store/store.dart';
@@ -237,23 +238,52 @@ final pendingPushCountProvider = FutureProvider<int>(
   (ref) => ref.watch(storeProvider).pendingPushCount(),
 );
 
-/// The sanitized sync-status view the Sync tab renders. Defaults to "never
-/// synced"; the scheduler-integration task overrides it with the live stream.
-final syncStatusViewProvider = Provider<SyncStatusView>(
-  (ref) => const SyncStatusView.initial(),
+/// The live auth snapshot. The composition root (F5) overrides this with the
+/// [AuthController]'s seeded-then-subscribed stream (seed the current snapshot
+/// first — `changes` has no initial replay — then follow every transition).
+/// Default: a single signed-out snapshot, so the derived seams below read
+/// "signed out" whenever the runtime is not mounted (widget tests, error
+/// screen).
+final authSnapshotProvider = StreamProvider<AuthSnapshot>(
+  (ref) => Stream.value(
+    const AuthSnapshot(isAuthenticated: false, needsReauth: false),
+  ),
 );
 
-/// Whether a live Google session exists. Auth-integration overrides this;
-/// signed-out is the safe default (the sync actions gate on it).
-final authenticatedProvider = Provider<bool>((ref) => false);
+/// The live sanitized sync-status stream. F5 overrides this with the
+/// scheduler's status seeded-then-subscribed to its post-run emissions (the F4
+/// sanitized surface). Default: a single "never synced" view.
+final syncStatusStreamProvider = StreamProvider<SyncStatusView>(
+  (ref) => Stream.value(const SyncStatusView.initial()),
+);
 
-/// Whether the stored session is dead (needs re-auth). Overridden by auth.
-final needsReauthProvider = Provider<bool>((ref) => false);
+/// The sanitized sync-status view the Sync tab and footer render, derived from
+/// the live [syncStatusStreamProvider] (its latest value, or "never synced"
+/// before the first emission).
+final syncStatusViewProvider = Provider<SyncStatusView>(
+  (ref) =>
+      ref.watch(syncStatusStreamProvider).value ??
+      const SyncStatusView.initial(),
+);
 
-/// Run the OAuth sign-in from the Account tab. No-op until auth is wired.
+/// Whether a live Google session exists, derived from [authSnapshotProvider].
+/// Signed-out is the safe default (the sync actions gate on it).
+final authenticatedProvider = Provider<bool>(
+  (ref) => ref.watch(authSnapshotProvider).value?.isAuthenticated ?? false,
+);
+
+/// Whether the stored session is dead (needs re-auth), derived from
+/// [authSnapshotProvider].
+final needsReauthProvider = Provider<bool>(
+  (ref) => ref.watch(authSnapshotProvider).value?.needsReauth ?? false,
+);
+
+/// Run the OAuth sign-in from the Account tab / footer. A no-op default until
+/// the composition root (F5) overrides it with the real gesture.
 final signInActionProvider = Provider<VoidCallback>((ref) => () {});
 
-/// Drop the session from the Account tab. No-op until auth is wired.
+/// Drop the session from the Account tab / footer. A no-op default until F5
+/// overrides it with the real logout.
 final signOutActionProvider = Provider<VoidCallback>((ref) => () {});
 
 /// Execute a fresh sync (clear local synced data + full re-pull). Defaults to
