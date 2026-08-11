@@ -185,6 +185,125 @@ void main() {
     });
   });
 
+  group('swipe edge gating (F15 #193)', () {
+    testWidgets('a right-swipe starting in the left drawer-edge gutter is '
+        'ignored — no complete', (tester) async {
+      final toggled = <String>[];
+      await pumpRow(tester, toggled: toggled);
+
+      // Start the drag at the far left edge (inside the 20px drawer-edge
+      // gutter) and swipe right past the complete threshold. The Scaffold
+      // drawer / system back gesture owns that gutter, so the row must not
+      // treat it as a complete.
+      final rect = tester.getRect(rowFinder());
+      await tester.dragFrom(
+        Offset(rect.left + 4, rect.center.dy),
+        const Offset(200, 0),
+      );
+      await settle(tester);
+
+      expect(
+        toggled,
+        isEmpty,
+        reason: 'an edge-started swipe is not a row complete',
+      );
+    });
+
+    testWidgets('a center-started right-swipe still completes', (tester) async {
+      final toggled = <String>[];
+      await pumpRow(tester, toggled: toggled);
+
+      final rect = tester.getRect(rowFinder());
+      await tester.dragFrom(rect.center, const Offset(200, 0));
+      await settle(tester);
+
+      expect(toggled, [
+        'buy milk',
+      ], reason: 'a drag well inside the row still completes');
+    });
+
+    testWidgets(
+      'a swipe starting in the right system-gesture inset is ignored',
+      (tester) async {
+        final toggled = <String>[];
+        final moves = <DateMove>[];
+        // A full-width row under a MediaQuery that reserves a right-edge
+        // system-gesture inset (as gesture-nav Android does).
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  systemGestureInsets: const EdgeInsets.only(right: 60),
+                ),
+                child: Scaffold(
+                  body: TaskRow(
+                    key: const Key('row'),
+                    title: 'buy milk',
+                    completed: false,
+                    onOpen: () {},
+                    onToggle: () => toggled.add('buy milk'),
+                    onRename: (_) {},
+                    onSetDue: (m) => moves.add(m),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        // Start the drag inside the right inset and swipe left; the
+        // system back gesture owns that gutter, so the strip must not reveal.
+        final rect = tester.getRect(rowFinder());
+        await tester.dragFrom(
+          Offset(rect.right - 5, rect.center.dy),
+          const Offset(-200, 0),
+        );
+        await settle(tester);
+
+        expect(
+          find.byKey(const Key('quick-date-today')),
+          findsNothing,
+          reason: 'a swipe from the system-gesture inset is ignored',
+        );
+        expect(toggled, isEmpty);
+        expect(moves, isEmpty);
+      },
+    );
+  });
+
+  group('completed-row swipe-right no-op (F15 #193)', () {
+    testWidgets('swipe right on an already-completed row does NOT un-complete '
+        'it', (tester) async {
+      final toggled = <String>[];
+      await pumpRow(tester, completed: true, toggled: toggled);
+
+      final rect = tester.getRect(rowFinder());
+      await tester.dragFrom(rect.center, const Offset(200, 0));
+      await settle(tester);
+
+      expect(
+        toggled,
+        isEmpty,
+        reason: 'swipe-right must not toggle a completed row back to open',
+      );
+    });
+
+    testWidgets('the checkbox is still the explicit un-complete affordance', (
+      tester,
+    ) async {
+      final toggled = <String>[];
+      await pumpRow(tester, completed: true, toggled: toggled);
+
+      await tester.tap(find.byKey(const Key('row-checkbox-target')));
+      await settle(tester);
+
+      expect(toggled, [
+        'buy milk',
+      ], reason: 'tapping the checkbox remains the way to re-open a task');
+    });
+  });
+
   group('long-press → select', () {
     testWidgets('a long-press toggles selection', (tester) async {
       final selected = <String>[];

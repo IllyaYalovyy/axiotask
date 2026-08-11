@@ -16,6 +16,8 @@
 // hover strip + right-click menu; the gesture arena disambiguates a horizontal
 // swipe from the list's vertical scroll and a stationary long-press from either.
 
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -145,6 +147,17 @@ class _TaskRowState extends State<TaskRow> {
   // Touch gestures only — the mouse keeps the hover strip + right-click menu.
   static const Set<PointerDeviceKind> _touchOnly = {PointerDeviceKind.touch};
 
+  // F15 (#193) swipe edge gating: a horizontal drag whose pointer-down lands in
+  // the leading drawer-edge band or either system-gesture inset belongs to the
+  // Scaffold drawer / OS back gesture, not to the row. The row's drag recognizer
+  // refuses those pointers outright (never enters the arena) so the drawer/back
+  // gesture wins them. Matches Scaffold's own `_kEdgeDragWidth` for the drawer.
+  static const double _drawerEdgeWidth = 20;
+  // Live edge limits in GLOBAL x (recomputed each build from the MediaQuery):
+  // a pointer-down at x ≤ [_leftEdgeLimit] or x ≥ [_rightEdgeLimit] is ignored.
+  double _leftEdgeLimit = _drawerEdgeWidth;
+  double _rightEdgeLimit = double.infinity;
+
   // Cumulative horizontal travel of the in-flight swipe (for the end decision).
   double _swipeDx = 0;
   // The content's live horizontal offset (0 closed, negative while peeking/open).
@@ -270,8 +283,12 @@ class _TaskRowState extends State<TaskRow> {
       // `.swipe-actions-peeking` translates the content, `-open` does not).
       _peeking = false;
       _swipeOffset = 0;
-      if (dx >= _swipeThreshold && !_actionsOpen) {
-        // Swipe right → complete (fire after the frame settles).
+      if (dx >= _swipeThreshold && !_actionsOpen && !widget.completed) {
+        // Swipe right → complete (fire after the frame settles). A row that is
+        // already completed has nothing to complete: swipe-right is a no-op —
+        // it must never toggle the task back open (F15 #193). Re-opening stays
+        // an explicit affordance (the checkbox / detail panel), never a stray
+        // right-swipe.
         _actionsOpen = false;
         complete = true;
       } else if (dx <= -_swipeThreshold && widget.onSetDue != null) {
@@ -290,20 +307,50 @@ class _TaskRowState extends State<TaskRow> {
     });
   }
 
+  /// Whether a pointer-down at [globalPosition] falls in the drawer-edge /
+  /// system-gesture gutter, where the row must NOT claim the horizontal drag
+  /// (F15 #193). The limits are refreshed from the MediaQuery each build.
+  bool _startsInEdgeGutter(Offset globalPosition) {
+    final x = globalPosition.dx;
+    return x <= _leftEdgeLimit || x >= _rightEdgeLimit;
+  }
+
   /// Wrap [child] with the touch-only gesture layer: a horizontal swipe
   /// (complete / reveal) and a long-press (select). Gated to a touch pointer so
   /// the mouse keeps hover + right-click; a translucent behavior keeps the inner
   /// tap/checkbox targets hittable, and the arena resolves a swipe against the
-  /// list's vertical scroll and a stationary long-press against either.
+  /// list's vertical scroll and a stationary long-press against either. The
+  /// horizontal drag uses an edge-aware recognizer that refuses pointers landing
+  /// in the drawer-edge / system-gesture gutter so those forward to the drawer /
+  /// OS back gesture untouched (F15 #193).
   Widget _wrapTouchGestures(Widget child) {
-    return GestureDetector(
+    return RawGestureDetector(
       behavior: HitTestBehavior.translucent,
-      supportedDevices: _touchOnly,
-      onLongPress: widget.onSelectToggle,
-      onHorizontalDragStart: _onSwipeStart,
-      onHorizontalDragUpdate: _onSwipeUpdate,
-      onHorizontalDragEnd: _onSwipeEnd,
-      onHorizontalDragCancel: _onSwipeCancel,
+      gestures: <Type, GestureRecognizerFactory>{
+        _EdgeAwareHorizontalDragRecognizer:
+            GestureRecognizerFactoryWithHandlers<
+              _EdgeAwareHorizontalDragRecognizer
+            >(
+              () => _EdgeAwareHorizontalDragRecognizer(
+                debugOwner: this,
+                supportedDevices: _touchOnly,
+                startsInEdgeGutter: _startsInEdgeGutter,
+              ),
+              (recognizer) => recognizer
+                ..onStart = _onSwipeStart
+                ..onUpdate = _onSwipeUpdate
+                ..onEnd = _onSwipeEnd
+                ..onCancel = _onSwipeCancel,
+            ),
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+              () => LongPressGestureRecognizer(
+                debugOwner: this,
+                supportedDevices: _touchOnly,
+              ),
+              (recognizer) => recognizer.onLongPress = widget.onSelectToggle,
+            ),
+      },
       child: child,
     );
   }
@@ -322,8 +369,15 @@ class _TaskRowState extends State<TaskRow> {
     // the coarse-pointer path to every context action — it must be a persistent
     // affordance. On the expanded desktop layout the right-click menu carries
     // them instead, so the row stays clean.
-    final compact =
-        MediaQuery.sizeOf(context).width < ListDetailScaffold.breakpoint;
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < ListDetailScaffold.breakpoint;
+    // Refresh the swipe edge-gutter limits (F15 #193): the leading gutter is the
+    // wider of the drawer edge band and the left system-gesture inset; the
+    // trailing gutter is the right system-gesture inset. Touch drags starting
+    // inside either forward to the drawer / OS back gesture, not the row.
+    final gestureInsets = MediaQuery.systemGestureInsetsOf(context);
+    _leftEdgeLimit = math.max(_drawerEdgeWidth, gestureInsets.left);
+    _rightEdgeLimit = width - gestureInsets.right;
     final showOverflow = compact && widget.onShowActions != null;
     // The quick-date strip is revealed by hover (a non-touch affordance); the
     // coarse-pointer swipe path is T8.1.
@@ -611,6 +665,30 @@ class _TaskRowState extends State<TaskRow> {
         child: child,
       ),
     );
+  }
+}
+
+/// A [HorizontalDragGestureRecognizer] that refuses pointers whose down-event
+/// lands in the drawer-edge / system-gesture gutter (F15 #193). Rejecting the
+/// pointer here means the recognizer never enters the gesture arena for it, so
+/// the Scaffold's drawer edge-drag / the OS back gesture claims it unopposed —
+/// as opposed to swallowing the drag and no-op'ing, which would deaden the edge.
+class _EdgeAwareHorizontalDragRecognizer
+    extends HorizontalDragGestureRecognizer {
+  _EdgeAwareHorizontalDragRecognizer({
+    required this.startsInEdgeGutter,
+    super.debugOwner,
+    super.supportedDevices,
+  });
+
+  /// Returns true when a pointer-down at the given GLOBAL position falls inside
+  /// the gutter the row must cede to the drawer / system back gesture.
+  final bool Function(Offset globalPosition) startsInEdgeGutter;
+
+  @override
+  bool isPointerAllowed(PointerEvent event) {
+    if (startsInEdgeGutter(event.position)) return false;
+    return super.isPointerAllowed(event);
   }
 }
 
