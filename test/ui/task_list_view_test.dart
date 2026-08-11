@@ -123,13 +123,31 @@ class FakeBackend implements Commands {
   }
 
   @override
-  Future<void> toggleComplete(String id) async {
+  Future<CompleteToken> toggleComplete(String id) async {
     final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return;
+    if (i < 0) return CompleteToken(id: id, wasCompleting: false);
     final completing = _tasks[i].task.status == TaskStatus.needsAction;
     _tasks[i] = StoredTask(
       task: _tasks[i].task.copyWith(
         status: completing ? TaskStatus.completed : TaskStatus.needsAction,
+      ),
+      listId: _tasks[i].listId,
+      syncState: SyncState.dirty,
+      localUpdated: 't',
+    );
+    _emit();
+    return CompleteToken(id: id, wasCompleting: completing);
+  }
+
+  @override
+  Future<void> undoToggleComplete(CompleteToken token) async {
+    final i = _tasks.indexWhere((t) => t.task.id == token.id);
+    if (i < 0) return;
+    _tasks[i] = StoredTask(
+      task: _tasks[i].task.copyWith(
+        status: token.wasCompleting
+            ? TaskStatus.needsAction
+            : TaskStatus.completed,
       ),
       listId: _tasks[i].listId,
       syncState: SyncState.dirty,
@@ -213,7 +231,13 @@ class FakeBackend implements Commands {
       throw UnimplementedError();
 
   @override
-  Future<String> moveTaskToList(String id, String targetListId) async =>
+  Future<MoveToListToken?> moveTaskToList(
+    String id,
+    String targetListId,
+  ) async => throw UnimplementedError();
+
+  @override
+  Future<void> undoMoveToList(MoveToListToken token) async =>
       throw UnimplementedError();
 
   @override
@@ -430,6 +454,29 @@ void main() {
     // Completed → hidden from the open list (show-completed defaults off).
     expect(find.text('apples'), findsNothing);
   });
+
+  testWidgets(
+    'completing a task shows an Undo toast whose Undo reopens it (F11)',
+    (tester) async {
+      await pumpView(tester, initial: [row('A', 'apples', '5')]);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TaskRow),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await settle(tester);
+      // Completed → hidden from the open list, and an undo toast is offered.
+      expect(find.text('apples'), findsNothing);
+      expect(find.text('Completed "apples"'), findsOneWidget);
+      expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+
+      await tester.tap(find.text('Undo'));
+      await settle(tester);
+      // Undo reopened it → back in the open list.
+      expect(find.text('apples'), findsOneWidget);
+    },
+  );
 
   testWidgets('show-completed pref keeps completed tasks visible', (
     tester,

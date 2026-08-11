@@ -158,6 +158,56 @@ class DeleteToken {
   final List<SubtreeEntry> subtree;
 }
 
+/// The undo handle returned by [Commands.toggleComplete]. A completion that
+/// cascades (a parent completing its open descendants — Google does this
+/// server-side, #106) records EXACTLY the ids this call flipped: the toggled
+/// row plus every descendant it completed. Undo reopens precisely that set, so a
+/// descendant that was ALREADY completed before the swipe stays completed and
+/// the pre-swipe state is restored to the row (F11/#184). A reopen never
+/// cascades, so its token carries an empty [cascadedReopenIds] and undo simply
+/// re-completes the one row.
+class CompleteToken {
+  const CompleteToken({
+    required this.id,
+    required this.wasCompleting,
+    this.cascadedReopenIds = const [],
+  });
+
+  /// The toggled task's id.
+  final String id;
+
+  /// True when this call COMPLETED the task (so undo reopens); false when it
+  /// reopened it (so undo re-completes).
+  final bool wasCompleting;
+
+  /// The descendant ids this completion cascaded — the exact set undo reopens
+  /// alongside [id]. Empty for a reopen, or for a leaf/childless completion.
+  final List<String> cascadedReopenIds;
+}
+
+/// The undo handle returned by [Commands.moveTaskToList]. A cross-list move is a
+/// delete-from-old + create-in-new (Google has no native cross-list move), so
+/// undo removes the freshly created clone subtree ([newRootId], in
+/// [targetListId]) and restores the pre-move subtree from [original] — the same
+/// snapshot a delete captures, replayed through [Commands.undoDelete] (F11/#185).
+class MoveToListToken {
+  const MoveToListToken({
+    required this.newRootId,
+    required this.targetListId,
+    required this.original,
+  });
+
+  /// The clone root created in the target list; deleting it removes the whole
+  /// moved subtree (Google's own DELETE cascade takes the descendants).
+  final String newRootId;
+
+  /// The list the subtree was moved INTO.
+  final String targetListId;
+
+  /// The pre-move subtree snapshot, restored in the original list on undo.
+  final DeleteToken original;
+}
+
 /// One row's due date as it stood BEFORE a [Commands.setDue] edit, captured so
 /// the edit and its parent/subtask cascade revert together as a single undo unit
 /// (#164). Port of `commands.rs::DueUndoEntry`.
@@ -265,7 +315,7 @@ class Commands {
   /// we mirror it locally and push the same, keeping subtask progress and date
   /// propagation truthful now instead of after the next pull. Un-completing
   /// never cascades (the server leaves children completed in that direction).
-  Future<void> toggleComplete(String id) async {
+  Future<CompleteToken> toggleComplete(String id) async {
     final t = await _findTask(id);
     final completing = t.task.status == TaskStatus.needsAction;
     final now = nowUtcString();
@@ -284,17 +334,23 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
-    if (!completing) return;
+    if (!completing) {
+      return CompleteToken(id: id, wasCompleting: false);
+    }
 
-    // Cascade to open descendants. One level of nesting is the invariant, but
-    // walk a frontier anyway so the rule holds even if bad data nests deeper.
+    // Cascade to open descendants, recording EXACTLY the ids this call flips so
+    // undo can reopen that set alone (an already-completed descendant is skipped
+    // and must stay completed on undo). One level of nesting is the invariant,
+    // but walk a frontier anyway so the rule holds even if bad data nests deeper.
     final siblings = await _store.listTasks(t.listId);
+    final cascaded = <String>[];
     final frontier = <String>[id];
     while (frontier.isNotEmpty) {
       final pid = frontier.removeLast();
       for (final child in siblings.where((c) => c.task.parent == pid)) {
         frontier.add(child.task.id);
         if (child.task.status == TaskStatus.completed) continue;
+        cascaded.add(child.task.id);
         final cnow = nowUtcString();
         await _store.upsertTask(
           StoredTask(
@@ -310,6 +366,51 @@ class Commands {
         );
       }
     }
+    return CompleteToken(
+      id: id,
+      wasCompleting: true,
+      cascadedReopenIds: cascaded,
+    );
+  }
+
+  /// Revert a [toggleComplete] from its [CompleteToken]. A completion is undone
+  /// by reopening EXACTLY the toggled row and the descendants that completion
+  /// cascaded ([CompleteToken.cascadedReopenIds]) — restoring the pre-swipe
+  /// state without disturbing descendants that were already completed. A reopen
+  /// is undone by re-completing the one row (a reopen never cascaded). A row that
+  /// has since vanished is skipped — best-effort, matching [undoDelete].
+  Future<void> undoToggleComplete(CompleteToken token) async {
+    final now = nowUtcString();
+    if (token.wasCompleting) {
+      for (final id in <String>[token.id, ...token.cascadedReopenIds]) {
+        final t = await _store.findTaskAny(id);
+        if (t == null || t.syncState == SyncState.deleted) continue;
+        await _store.upsertTask(
+          StoredTask(
+            task: t.task.copyWith(
+              status: TaskStatus.needsAction,
+              completed: null,
+            ),
+            listId: t.listId,
+            syncState: SyncState.dirty,
+            localUpdated: now,
+            pendingOp: dirtyOp(t.task.etag),
+          ),
+        );
+      }
+      return;
+    }
+    final t = await _store.findTaskAny(token.id);
+    if (t == null || t.syncState == SyncState.deleted) return;
+    await _store.upsertTask(
+      StoredTask(
+        task: t.task.copyWith(status: TaskStatus.completed, completed: now),
+        listId: t.listId,
+        syncState: SyncState.dirty,
+        localUpdated: now,
+        pendingOp: dirtyOp(t.task.etag),
+      ),
+    );
   }
 
   /// Overwrite a task's notes and mark it dirty (`''` clears the field, matching
@@ -509,12 +610,25 @@ class Commands {
   /// taken by the FK `ON DELETE CASCADE`.
   Future<DeleteToken> deleteTask(String id) async {
     final t = await _findTask(id);
-
-    // Snapshot the descendants (BFS → parents before children) so undo can
-    // rebuild them after the delete's server-side cascade destroys them.
     final list = await _store.listTasks(t.listId);
+    final token = _snapshotSubtree(t, list);
+
+    if (await _store.serverMayHold(id)) {
+      final descendantIds = [for (final e in token.subtree) e.id];
+      await _store.tombstoneSubtree(id, descendantIds, nowUtcString());
+    } else {
+      await _store.deleteTaskHard(id);
+    }
+    return token;
+  }
+
+  /// Capture [root] and its whole subtree from [list] (BFS → parents before
+  /// children) as a [DeleteToken], so undo can rebuild the subtree after a
+  /// server-side cascade destroys it. Shared by [deleteTask] and [moveTaskToList]
+  /// (whose undo restores the pre-move subtree the same way a delete-undo does).
+  DeleteToken _snapshotSubtree(StoredTask root, List<StoredTask> list) {
     final subtree = <SubtreeEntry>[];
-    final frontier = <String>[id];
+    final frontier = <String>[root.task.id];
     while (frontier.isNotEmpty) {
       final pid = frontier.removeLast();
       for (final c in list.where((c) => c.task.parent == pid)) {
@@ -532,27 +646,18 @@ class Commands {
         );
       }
     }
-
-    final token = DeleteToken(
-      id: t.task.id,
-      listId: t.listId,
-      parentId: t.task.parent,
-      title: t.task.title,
-      notes: t.task.notes,
-      status: t.task.status,
-      due: t.task.due,
-      position: t.task.position,
-      hadEtag: t.task.etag != null,
+    return DeleteToken(
+      id: root.task.id,
+      listId: root.listId,
+      parentId: root.task.parent,
+      title: root.task.title,
+      notes: root.task.notes,
+      status: root.task.status,
+      due: root.task.due,
+      position: root.task.position,
+      hadEtag: root.task.etag != null,
       subtree: subtree,
     );
-
-    if (await _store.serverMayHold(id)) {
-      final descendantIds = [for (final e in subtree) e.id];
-      await _store.tombstoneSubtree(id, descendantIds, nowUtcString());
-    } else {
-      await _store.deleteTaskHard(id);
-    }
-    return token;
   }
 
   /// Restore a deleted task (and its subtree) from an undo [DeleteToken]. Port of
@@ -864,12 +969,21 @@ class Commands {
   /// The subtree moves together — deleting a parent deletes its children both on
   /// Google (verified live) and via the local FK cascade, so leaving subtasks
   /// behind would silently destroy them once the parent's delete pushed.
-  Future<String> moveTaskToList(String id, String targetListId) async {
+  Future<MoveToListToken?> moveTaskToList(
+    String id,
+    String targetListId,
+  ) async {
     final old = await _findTask(id);
-    if (old.listId == targetListId) return id; // already there
+    // Already there → nothing moved, nothing to undo.
+    if (old.listId == targetListId) return null;
 
     final now = nowUtcString();
     final siblings = await _store.listTasks(old.listId);
+
+    // Snapshot the pre-move subtree BEFORE any removal, so undo can restore the
+    // original rows (same machinery as a delete-undo) after this move tombstones
+    // or hard-deletes them.
+    final original = _snapshotSubtree(old, siblings);
 
     // Recreate the root, then each descendant level under its recreated
     // parent's new id. A stack visits parents before children, so `clones` is
@@ -926,7 +1040,25 @@ class Commands {
       tombstones: tombstones,
       hardDeletes: hardDeletes,
     );
-    return newRootId;
+    return MoveToListToken(
+      newRootId: newRootId,
+      targetListId: targetListId,
+      original: original,
+    );
+  }
+
+  /// Revert a [moveTaskToList] from its [MoveToListToken]. The freshly created
+  /// clone subtree (rooted at [MoveToListToken.newRootId]) is deleted — removing
+  /// it from the target list (Google's own DELETE cascade takes the descendants)
+  /// — and the pre-move subtree is restored in its original list via
+  /// [undoDelete], the same snapshot-replay a delete-undo uses. Best-effort: a
+  /// clone already gone is skipped.
+  Future<void> undoMoveToList(MoveToListToken token) async {
+    final clone = await _store.findTaskAny(token.newRootId);
+    if (clone != null && clone.syncState != SyncState.deleted) {
+      await deleteTask(token.newRootId);
+    }
+    await undoDelete(token.original);
   }
 
   /// Decide how one original row is removed after its subtree was recreated in

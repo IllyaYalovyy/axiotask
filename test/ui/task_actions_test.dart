@@ -134,6 +134,29 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
       expect(fake.movedToList, ['A->L2']);
     });
+
+    testWidgets(
+      'a list move surfaces an undoable toast naming the target (F11)',
+      (tester) async {
+        final fake = await pumpList(
+          tester,
+          initial: [row('A', 'apples')],
+          lists: twoLists,
+        );
+        await rightClick(tester, 'apples');
+        await tester.tap(find.byKey(const Key('taskmenu-move')));
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('taskmenu-move-L2')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+        expect(fake.movedToList, ['A->L2']);
+        // The toast names the destination and carries an Undo (wired to
+        // undoMoveToList; the tap-through round-trip is covered in the detail
+        // panel test, whose dropdown path keeps the Undo button on-screen).
+        expect(find.text('Moved "apples" to Errands'), findsOneWidget);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+      },
+    );
   });
 
   group('ContextMenu — leaf actions', () {

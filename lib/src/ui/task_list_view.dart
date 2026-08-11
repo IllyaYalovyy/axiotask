@@ -14,6 +14,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/commands.dart' show DeleteToken;
 import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
@@ -354,11 +355,33 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _bulkDelete() async {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    final messenger = ScaffoldMessenger.of(context);
     _clearSelection();
+    // Capture every delete token so one Undo restores all N (each with its own
+    // subtree, parent, and position) — the same undoDelete the single-row delete
+    // uses, replayed across the selection.
+    final tokens = <DeleteToken>[];
     for (final id in ids) {
-      await commands.deleteTask(id);
+      tokens.add(await commands.deleteTask(id));
     }
-    if (mounted) _bulkToast(ids.length, 'deleted');
+    if (!mounted || tokens.isEmpty) return;
+    final n = tokens.length;
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('$n task${n == 1 ? '' : 's'} deleted'),
+          duration: const Duration(seconds: 30),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              for (final token in tokens) {
+                commands.undoDelete(token);
+              }
+            },
+          ),
+        ),
+      );
   }
 
   Future<void> _bulkMove() async {
@@ -416,8 +439,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
   }
 
-  /// Move [t]'s subtree to [targetListId] and toast (no undo — matches the
-  /// reference's 5s move info toast).
+  /// Move [t]'s subtree to [targetListId] and surface an undoable toast (F11:
+  /// undoMoveToList reverses the delete-from-old + create-in-new, restoring the
+  /// pre-move subtree in its original list).
   Future<void> _moveToList(StoredTask t, String targetListId) async {
     if (t.listId == targetListId) return; // already there
     final title = t.task.title;
@@ -428,14 +452,20 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         )
         .list
         .title;
-    await ref.read(commandsProvider).moveTaskToList(t.task.id, targetListId);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
+    final commands = ref.read(commandsProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    final token = await commands.moveTaskToList(t.task.id, targetListId);
+    if (!mounted || token == null) return;
+    messenger
       ..clearSnackBars()
       ..showSnackBar(
         SnackBar(
           content: Text('Moved "$title" to $listTitle'),
-          duration: const Duration(seconds: 5),
+          duration: const Duration(seconds: 30),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => commands.undoMoveToList(token),
+          ),
         ),
       );
   }
@@ -474,6 +504,29 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final url = t.task.webViewLink;
     if (url == null || url.isEmpty) return;
     await ref.read(urlOpenerProvider)(url);
+  }
+
+  /// Toggle [stored]'s completion. A COMPLETION (checkbox tick or swipe-right,
+  /// the primary mobile gesture) surfaces a 30-second Undo toast whose token
+  /// carries the exact cascade set, so undo restores the pre-swipe state — an
+  /// already-completed subtask is never reopened. A reopen is silent (no toast).
+  Future<void> _toggle(StoredTask stored) async {
+    final commands = ref.read(commandsProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    final token = await commands.toggleComplete(stored.task.id);
+    if (!mounted || !token.wasCompleting) return;
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Completed "${stored.task.title}"'),
+          duration: const Duration(seconds: 30),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () => commands.undoToggleComplete(token),
+          ),
+        ),
+      );
   }
 
   /// Delete [t] with a 30-second Undo toast (mirrors the detail panel's delete).
@@ -805,7 +858,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         if (_editId == t.id) setState(() => _editId = null);
       },
       onOpen: () => widget.onOpenTask(t.id),
-      onToggle: () => ref.read(commandsProvider).toggleComplete(t.id),
+      onToggle: () => _toggle(stored),
       onRename: (v) => ref.read(commandsProvider).renameTask(t.id, v),
       onSetDue: (m) => _quickMove(t.id, m),
       onPickDate: () => _openDatePicker(t.id, t.due),
