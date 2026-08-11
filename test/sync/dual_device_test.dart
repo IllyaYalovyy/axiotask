@@ -1,5 +1,5 @@
 // Dual-device property tests — two app instances over ONE shared fake Google
-// (MIGRATION-PLAN §3, §5 T5.11). The single-device suite (property_suite.dart)
+// (MIGRATION-PLAN §3, §5 T5.11). The single-device suite (property_suite_test.dart)
 // proves one engine stays consistent with one server; this proves the CROSSING
 // the lone engine is blind to: two devices editing shared rows offline,
 // reconnecting in generator-drawn order, and having to converge.
@@ -20,7 +20,7 @@ import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'dual_device.dart';
-import 'property_suite.dart';
+import 'property_suite_test.dart';
 
 /// Sequences explored per dual property on a normal `flutter test`. Smaller
 /// than the single-device count: each dual case drives two whole engines and an

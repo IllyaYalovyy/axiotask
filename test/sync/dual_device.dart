@@ -6,7 +6,7 @@
 //
 // ## What the single-device suite cannot see
 //
-// `property_suite.dart` proves one app instance stays consistent with one
+// `property_suite_test.dart` proves one app instance stays consistent with one
 // server. The bug class it is blind to is the CROSSING: two devices editing the
 // same shared row offline, reconnecting in whatever order the generator drew,
 // and having to converge. A dropped pull, a phantom local row, or a row wedged
@@ -43,7 +43,7 @@ import 'package:axiotask/src/model/task.dart';
 import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'property_suite.dart';
+import 'property_suite_test.dart';
 
 /// Rounds the two-device heal may take before the shared fixpoint. Each round
 /// drains A then B to their own fixpoints; the two can ping-pong (A's drain
@@ -238,7 +238,8 @@ class CanonRow implements Comparable<CanonRow> {
   final String? due;
   final bool completed;
 
-  String get _key => '$listTitle $parentTitle $title';
+  String get _key =>
+      '$listTitle${String.fromCharCode(0)}$parentTitle${String.fromCharCode(0)}$title';
 
   @override
   int compareTo(CanonRow other) => _key.compareTo(other._key);

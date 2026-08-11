@@ -778,7 +778,7 @@ class Row implements Comparable<Row> {
   final String? due;
   final bool completed;
 
-  String get _key => '$listId $id';
+  String get _key => '$listId${String.fromCharCode(0)}$id';
 
   @override
   int compareTo(Row other) => _key.compareTo(other._key);
