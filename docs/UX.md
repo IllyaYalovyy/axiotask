@@ -12,7 +12,7 @@ been verified merely because it loaded successfully.
 |---|---|---|
 | Inactive | Sync was stopped, or usable Tasks authorization is absent | “Sync stopped” with Resume, or “No authorization” with Connect; never green |
 | Good | A complete sync succeeded within the freshness window and no work, failure, or uncertainty is newer | Green icon, “Up to date,” and exact last-success time |
-| Failed | The latest required attempt failed/timed out, or freshness expired without active verification | Persistent failure/stale reason, last-success time, pending count, and retry/action |
+| Failed | The latest required attempt failed/timed out, or freshness expired without active verification | Persistent concrete reason—no connection, remote failure, application failure, or stale—plus last-success time, pending count, and any available action |
 | Pending | Verification, synchronization, retry, or durable unconfirmed work is active or queued | Yellow icon, precise activity/reason, and pending count; never green |
 
 Color is never the only signal. A small status icon can summarize health, but
@@ -24,7 +24,7 @@ of sync health.
 
 Desktop places health in the always-visible application header and exposes
 details without leaving the current work. Android uses the top app bar plus a
-persistent banner for degraded/action-required states. Neither platform hides
+persistent banner for failed states. Neither platform hides
 an expired token in a settings screen or transient toast.
 
 ## Information architecture
@@ -91,8 +91,23 @@ Errors answer three questions:
 
 Transient, already-retrying conditions stay calm but visible in sync details.
 Persistent failures affecting freshness or durability appear near the affected
-workflow and in global health. Raw exception text and opaque status codes are
-available only as sanitized diagnostic references.
+workflow and in global health. The release product shows safe diagnostic codes
+and summaries rather than raw exceptions or payloads.
+
+## Development diagnostics
+
+Debug development builds must not require terminal or filesystem access to
+understand a failure. A clearly marked Diagnostics surface is reachable in one
+interaction from sync details and provides a live, searchable event stream with
+copy, explicit export, and clear actions. It includes sensitive task content,
+remote payload context, operation/database transitions, and stack traces needed
+for debugging, and continuously warns that the view and its exports contain
+private test-account data.
+
+This surface is not the release UX. Release builds provide only the bounded,
+production-safe diagnostic history and have no hidden gesture, setting, or
+runtime flag that can enable the sensitive development view. Neither build logs
+credentials or uploads diagnostics automatically.
 
 ## Accessibility and visual validation
 

@@ -24,10 +24,11 @@ user to trust stale data or a status light unrelated to remote success.
 
 ## Decision
 
-Choose option 3. Repository transactions create durable operations. A serialized
-coordinator reacts to startup, resume, connectivity hints, committed mutations,
-foreground cadence, and explicit retry. It coalesces bursts and invokes a
-Flutter-independent engine.
+Choose option 3. Repository transactions create durable, coalesced desired
+remote state for each changed resource. A serialized coordinator reacts to
+startup, resume, connectivity hints, committed mutations, foreground cadence,
+and explicit retry. It coalesces bursts and invokes a Flutter-independent
+engine.
 
 `SyncHealth` is derived below the UI from the sync-enabled flag, authorization,
 current phase, last attempt, last verified successful run, failures since
@@ -35,15 +36,19 @@ success, pending count, uncertain operations, and connectivity hints. It exposes
 four top-level outcomes: Inactive, Good, Failed, and Pending. Inactive carries a
 mandatory `syncStopped` or `noAuthorization` reason. Good requires a complete
 remote sync inside a bounded freshness window and no newer failure, queued run,
-pending work, or uncertainty. Failed includes request/run timeout and expired
-freshness when verification is not active. Active/queued verification and
-unconfirmed work are Pending. No authorization is emitted only by the
-authorization adapter for absent credentials/scope or a terminal Google
-authorization rejection; ordinary network failure remains Failed.
+pending work, or uncertainty. Failed carries a concrete reason such as
+`noConnection`, `remoteFailure`, `applicationFailure`, or `stale`; it includes
+request/run timeout and expired freshness when verification is not active.
+Active/queued verification and unconfirmed work are Pending. No authorization
+is emitted only by the authorization adapter for absent credentials/scope or a
+terminal Google authorization rejection; ordinary network failure remains
+Failed.
 
 Stopping sync is a durable scheduler control, not sign-out: it prevents new
 runs, safely cancels an active run, and preserves credentials, cache, and queued
-operations. Resume schedules immediate catch-up. A run may publish remote pages
+desired state. Editing remains fully available and continues coalescing durable
+desired state while synchronization is stopped. Resume schedules immediate
+catch-up. A run may publish remote pages
 incrementally, but health cannot become Good or advance last verified success
 until the complete run succeeds.
 
@@ -64,5 +69,6 @@ one testable definition of inactive, pending, failed, and good synchronization.
 - A connectivity event schedules verification but can never turn health green.
 - The UI can disappear or process can die without losing acknowledged intent.
 - Scheduler behavior is deterministic with an injected clock.
-- The architecture reserves explicit uncertain/attention states without making
-  manual conflict copies the default strategy.
+- The architecture preserves explicit uncertain outcomes and failure reasons
+  without inventing a generic manual-intervention bucket or making manual
+  conflict copies the default strategy.

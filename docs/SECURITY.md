@@ -93,16 +93,38 @@ repository when they identify a developer's Google Cloud project.
 
 ## Diagnostics
 
-Allowed diagnostic fields include stable event/error code, operation kind,
-phase, duration, status class, retry count, and aggregate counts.
+Production and development diagnostics are separate security products, not two
+verbosity settings on the same unrestricted logger.
 
-Forbidden fields include task titles/notes, email addresses, bearer tokens,
-authorization codes, refresh tokens, PKCE values, raw request/response bodies,
-SQL values, and full URLs with query parameters.
+The **production diagnostic sink** accepts structured safe fields: stable
+event/error code, operation kind, phase, duration, status class, retry count,
+aggregate counts, and a sanitized cause. It rejects task titles/notes, email
+addresses, raw remote IDs, raw request/response bodies, SQL values, and full URLs
+with query parameters.
 
-Logging APIs accept structured safe fields rather than an arbitrary interpolated
-message at sensitive boundaries. Error mapping tests feed recognizable canary
-secrets/task text and assert they do not appear in output.
+The **development sensitive sink** exists only in debug development
+composition. It records enough local evidence to investigate content-dependent
+and state-dependent failures without sampling or suppressing failures or
+boundary/state transitions: task titles/notes, decoded Google request and
+response data, redacted authorization state/errors, remote IDs,
+desired-state/attempt/coordinator transitions, database operations/values,
+repository/UI commands, stack traces, and timing. Debug builds label this
+history as containing private task data and expose a searchable live view with
+copy, explicit export, and clear actions. Its files and exports are bounded,
+local, and ignored by Git. They are never loaded from or written to normal
+release diagnostic storage.
+
+Some data is forbidden in **every** sink: bearer and refresh tokens,
+authorization headers and codes, client secrets, PKCE verifiers, DPoP private
+keys, secure-store values, and unredacted OAuth callback URLs. Redaction occurs
+at the sensitive adapter boundary before an event can reach either sink; a
+debug flag cannot bypass it.
+
+Tests feed recognizable credential and task-content canaries through every
+error path. Production output must contain neither. Development output must
+retain the task-content canary needed to reproduce the issue while still
+excluding every credential canary. A release-composition test proves that the
+sensitive sink and renderer cannot be constructed or enabled at runtime.
 
 There is no telemetry, remote crash reporting, or automatic diagnostics upload.
 

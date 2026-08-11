@@ -5,7 +5,7 @@
 
 ## Problem
 
-Offline edits, uncertain remote operations, base state, account isolation,
+Offline edits, uncertain remote outcomes, base state, account isolation,
 preferences, and sync health must survive crashes atomically. Google assigns a
 task ID only after create, so using the remote ID as UI/local identity couples
 sync to open editors and navigation.
@@ -39,8 +39,9 @@ For identity:
 ## Decision
 
 Choose Drift/SQLite and identity option 3. Acknowledged mutations atomically
-write visible state and durable operation intent. Every account, list, task,
-parent reference, UI selection, and pending operation uses stable local keys.
+write visible state and one coalesced durable desired-state record per changed
+resource. Every account, list, task, parent reference, UI selection, and
+desired-state record uses stable local keys.
 Remote IDs and etags are external metadata, never primary application identity.
 Remote-key uniqueness is scoped by Google account and resource type.
 

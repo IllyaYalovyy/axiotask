@@ -10,11 +10,12 @@ revision `20260804`, retrieved on 2026-08-09. Human-readable Google documentatio
 is linked at each claim. Documentation can change independently of this file, so
 the discovery revision and research date are part of the evidence.
 
-No live probe was run for this research pass. The repository contains no
-dedicated test-account configuration, and no normal application credentials or
-personal task data were inspected. Consequently, this document does not label
-any claim **Observed by a controlled probe**. Historical Rust probes are useful
-leads only and are explicitly marked for reverification.
+No live probe was run for this research pass, and no credentials or personal
+task data were inspected. Dedicated existing development credentials outside
+the repository have since been approved for the controlled probe plan below.
+Consequently, this document does not yet label any claim **Observed by a
+controlled probe**. Historical Rust probes are useful leads only and are
+explicitly marked for reverification.
 
 ## Evidence labels
 
@@ -293,7 +294,7 @@ rate-limit response details remain Unknown.
 |---|---|---|
 | Conditional semantics for task PATCH/UPDATE/DELETE and list PATCH/DELETE | Determines which concurrent writes can be detected rather than overwritten. | **Yes — P1/P2.** |
 | No documented idempotency key or create lookup after a lost response | Determines whether an uncertain create can be retried without duplicates and how it can be reconciled. | **Yes — P5.** |
-| Pagination behavior under concurrent mutations and page-token interruption | Determines what evidence can establish a complete pull. | **Yes — P3.** |
+| Pagination behavior under concurrent mutations and page-token interruption | Determines whether anything stronger than “all documented pages were consumed” can be claimed. | No for the conservative foundation, which assumes no atomic snapshot and never deletes from listing absence alone. P3 is required before adopting stronger absence handling. |
 | Tombstone field shape/retention, parent-delete cascade, and list-deletion aftermath | Determines reliable deletion detection and hierarchy cleanup. | **Yes — P4.** |
 | Cross-list move identity, descendant behavior, and uncertain-response behavior | Determines whether a move is one recoverable mutation or requires a different model. | **Yes — P6/P7.** |
 | Parent/completion cascade semantics | Determines convergence for the supported task/subtask relationship. | **Yes — P8.** |

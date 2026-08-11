@@ -33,6 +33,13 @@ disposable data, explicit invocation, and cleanup. Android authentication needs
 a physical-device gate. UI uses unit/ViewModel/widget/integration tests, curated
 goldens, and actual screenshot inspection with synthetic data.
 
+Diagnostics have separate verified compositions. Release tests assert that
+task-content and credential canaries never reach the production-safe sink.
+Debug-development tests assert that task-content and detailed API/storage
+context are retained locally while credential canaries remain redacted, and
+that the sensitive in-app viewer is easy to reach. Release composition cannot
+construct or enable that sensitive sink or viewer at runtime.
+
 ## Rationale
 
 Stateful fakes and real SQLite provide broad deterministic evidence for
@@ -47,3 +54,5 @@ isolation prevents normal verification from touching personal data or accounts.
 - A small number of manual/opt-in platform gates remain necessary evidence.
 - No source-grep tests, arbitrary sleeps, personal-data recordings, or implicit
   real-account fallback are accepted.
+- Sensitive development diagnostics use only synthetic or dedicated test-account
+  data, remain local/ignored, and are never uploaded automatically.

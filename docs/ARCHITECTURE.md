@@ -97,7 +97,8 @@ be reimplemented in desktop widgets, mobile widgets, or SQL:
 - top-level plus one-subtask-level rules;
 - smart-view membership and effective dates;
 - validated move, reorder, complete, reschedule, and bulk commands;
-- typed failures and retry/user-action classifications;
+- typed failures with explicit authorization, connection, remote-service,
+  persistence, unsupported-data, and application-failure reasons;
 - synchronization ports and outcomes.
 
 Models are immutable Dart classes or sealed types with explicit equality and
@@ -153,9 +154,9 @@ interprets raw HTTP or database errors.
 Every task and list receives a stable local primary key before any remote
 request. The nullable Google resource ID is a separate external key, unique
 within its Google account and resource type.
-Widgets, parents, selections, pending operations, and navigation use the local
-key. A successful create fills the remote key without replacing application
-identity.
+Widgets, parents, selections, desired-state records, and navigation use the
+local key. A successful create fills the remote key without replacing
+application identity.
 
 The initial local key is a SQLite-assigned 64-bit integer wrapped in an opaque
 Dart value type. UUIDs add no correctness benefit because keys never need to be
@@ -163,7 +164,7 @@ generated independently by multiple stores. If Stage 4 discovers such a need,
 that premise must be revisited explicitly.
 
 The schema supports multiple isolated Google accounts from its first version:
-every remote object, snapshot, pending operation, sync attempt, and
+every remote object, snapshot, desired-state record, sync attempt, and
 account-specific preference is owned by a stable Google account subject. The
 initial product permits one configured account and exposes no switching UI.
 Future multi-account support can activate multiple existing account partitions
@@ -176,7 +177,7 @@ Drift over SQLite is the durable store for all non-secret application state:
 
 - account-scoped task lists and tasks;
 - remote snapshots/versions needed for reconciliation;
-- pending and uncertain remote operations;
+- coalesced desired remote state, pending attempts, and uncertain outcomes;
 - synchronization attempts and last verified success;
 - account-scoped/relational view settings, list exclusions, and local ordering;
 - restart-safe recovery checkpoints and schema metadata.
@@ -187,13 +188,14 @@ Small device-local presentation settings that do not require relational
 integrity—initially theme, visual density, and onboarding dismissal—use
 `SharedPreferencesAsync` behind `PreferencesRepository`. They are explicitly
 non-critical: failure may recover to a documented default and report a
-sanitized diagnostic. Pending operations, sync metadata, account identity,
+sanitized diagnostic. Desired state, sync metadata, account identity,
 list references, and any setting that changes task queries never use this
 store.
 
 Writes that acknowledge a user mutation atomically update the visible local
-row and its durable pending operation in one transaction. If that transaction
-fails, the UI reports failure and does not pretend the change was accepted.
+row and its coalesced durable desired-state record in one transaction. If that
+transaction fails, the UI reports failure and does not pretend the change was
+accepted.
 
 The production database runs through one Drift connection hosted away from the
 UI isolate. SQLite foreign keys are enabled. WAL, busy handling, checkpointing,
@@ -217,10 +219,10 @@ Import and export are required safety features, not an alternate local backend.
 Exports are explicit, versioned, account-aware files that contain no OAuth
 credentials or DPoP keys and warn that task data is sensitive. Import parses and
 validates the complete file before making changes, presents a summary, and
-converts accepted changes into the same durable repository operations used by
-normal edits. It cannot write around account isolation, operation history, or
-the synchronization engine. Exact format, merge behavior, and rollback rules
-receive their own specification before implementation.
+converts accepted changes into the same durable desired-state records used by
+normal edits. It cannot write around account isolation, synchronization state,
+or the synchronization engine. Exact format, merge behavior, and rollback
+rules receive their own specification before implementation.
 
 ## Authentication boundary
 
@@ -232,8 +234,8 @@ No Tasks authorization
 Connecting
 Connected + authorized for Tasks
 Connected but authorization refresh pending
-User action required
-Transient authorization failure
+Authorization rejected or expired
+Authorization request failed
 ```
 
 Android uses Flutter's maintained `google_sign_in` plugin and its authorization
@@ -270,9 +272,11 @@ back to a plaintext file.
 Stopping synchronization is not sign-out or authorization revocation. It
 persists an account-scoped `syncEnabled = false`, prevents new runs, requests
 cancellation of an active run at the next safe boundary, and leaves
-authorization, cached tasks, and pending operations untouched. Resuming sets the
-flag and schedules an immediate catch-up run. The application does not initially
-provide account removal, sign-out, or authorization-revocation workflows.
+authorization, cached tasks, and pending desired state untouched. Task editing
+remains fully available and continues to update/coalesce durable desired state
+while synchronization is stopped. Resuming sets the flag and schedules an
+immediate catch-up run. The application does not initially provide account
+removal, sign-out, or authorization-revocation workflows.
 
 Required OAuth configuration is validated before connection starts. Missing or
 malformed configuration disables connection with an actionable setup result;
@@ -286,15 +290,18 @@ an arbitrary exception string. Each failure carries:
 - stable diagnostic code;
 - safe category (`network`, `authorization`, `rateLimit`, `remote`,
   `persistence`, `configuration`, `unsupportedRemoteState`, or `internal`);
-- operation context without task content or credentials;
+- typed operation context;
 - transient/permanent/unknown retry classification;
-- whether user action is required;
-- a safe user-facing summary and optional recovery action;
-- a sanitized underlying cause for local diagnostics.
+- a concrete user-facing impact and optional action when one actually exists;
+- a production-safe diagnostic summary;
+- development-only sensitive context when the debug composition enables it.
 
 Programmer defects still throw and fail tests. Low-level exceptions are mapped
-once at their adapter boundary. UI messages explain impact and action rather
-than dumping stack traces, SQL, HTTP bodies, or filesystem paths.
+once at their adapter boundary. Release UI messages explain impact and action
+rather than dumping stack traces, SQL, HTTP bodies, or filesystem paths. Debug
+builds additionally expose the detailed local event log described under
+Observability; this deliberate development behavior is never enabled by a
+runtime switch in a release build.
 
 Persistence and authorization failures are never silently converted to
 defaults. Corrupt non-critical preferences may be quarantined and reset to a
@@ -336,7 +343,7 @@ Flutter, view models, current selection, editing focus, or navigation.
 - latest failure since that success;
 - durable pending and uncertain operation counts;
 - foreground/connectivity hint;
-- whether user action is required.
+- the latest explicit failure reason.
 
 Those facts produce exactly four top-level outcomes:
 
@@ -344,13 +351,15 @@ Those facts produce exactly four top-level outcomes:
    absent. The reason is mandatory: `syncStopped` or `noAuthorization`.
 2. **Failed** — the latest required completed attempt failed or timed out, or a
    previously good result exceeded its freshness deadline and verification is
-   not actively running. Any pending count remains visible.
+   not actively running. The reason distinguishes `noConnection`,
+   `remoteFailure`, `applicationFailure`, and `stale`; any pending count remains
+   visible.
 3. **Pending** — authorization is usable and a run, queued trigger, required
-   foreground verification, scheduled retry, or durable unconfirmed operation
-   exists. This includes an active retry after a failure.
+   foreground verification, scheduled retry, or durable unconfirmed desired
+   state exists. This includes an active retry after a failure.
 4. **Good** — synchronization is enabled, authorization is usable, a complete
    remote run succeeded within the freshness window, and there is no newer
-   failure, active/queued work, pending operation, or uncertain operation.
+   failure, active/queued work, pending desired state, or uncertain outcome.
 
 Evaluation uses that order except that an actively running retry is Pending
 rather than Failed. Connectivity is evidence for scheduling only and never
@@ -424,13 +433,29 @@ See [TESTING.md](TESTING.md) for the verification layers and isolation rules.
 ## Observability and privacy
 
 Synchronization emits structured events with stable codes, run/operation IDs,
-phase, duration, counts, and sanitized failure categories. It never logs task
-titles, notes, tokens, authorization codes, email addresses, raw response
-bodies, SQL values, or URLs containing query parameters.
+phase, duration, counts, and typed failure reasons. Logging has two deliberately
+different products:
 
-Recent sync-attempt summaries are stored locally and shown in a human-readable
-diagnostics view. Detailed debug logs use a bounded local sink and are opt-in to
-export. There is no remote logging or telemetry.
+- **Release product:** a bounded local diagnostic history contains only
+  production-safe summaries. It excludes task content, account details, raw
+  request/response bodies, SQL values, raw remote IDs, and full URLs. The user
+  can inspect, copy, export, and clear this safe history from Diagnostics.
+- **Development product:** a debug-only sensitive sink records the information
+  needed to reconstruct failures. It does not sample or suppress errors or
+  boundary/state transitions: it includes task titles/notes, decoded Google
+  request and response data, redacted authorization state/errors, remote IDs,
+  desired-state/attempt/coordinator transitions, database operations/values,
+  repository/UI commands, stack traces, and timing. A visibly marked in-app
+  Diagnostics surface provides live viewing, search, copy/export, and clear
+  without requiring a terminal or filesystem access.
+
+Credential scrubbing is unconditional. Neither product may log access or
+refresh tokens, authorization headers or codes, client secrets, PKCE verifiers,
+DPoP private keys, secure-store values, or unredacted OAuth callback URLs. The
+development sink is compiled/composed only into debug development builds; a
+release build has no runtime flag capable of enabling it. Both histories are
+bounded and local, exports are explicit, and there is no telemetry, remote
+logging, crash upload, or automatic diagnostics upload.
 
 ## Composition and build modes
 
@@ -439,8 +464,10 @@ plugins and storage paths. Test and screenshot entry points construct the same
 application with temporary stores, synthetic accounts, fake time, and fake
 Google services.
 
-Test/demo composition is enabled by a separate Dart entry point used only in
-debug/test builds, not by a runtime secret flag in production.
+Test/demo composition and sensitive development diagnostics are enabled by
+separate Dart entry points used only in debug/test builds, not by a runtime
+secret flag in production. Release verification proves that the sensitive sink
+and its detailed renderers are unreachable from the production composition.
 
 ## Sources informing this design
 

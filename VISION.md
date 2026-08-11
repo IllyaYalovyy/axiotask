@@ -38,7 +38,8 @@ actual state of the connection understandable at a glance:
 - when synchronization last completed successfully;
 - whether local changes are waiting to reach Google;
 - whether the displayed data may be stale;
-- whether an error needs user action.
+- the concrete reason for any failure and any action the application can
+  actually offer.
 
 A healthy indicator is allowed only after a verified successful synchronization
 within the current freshness window and while no newer failure or unsent change
@@ -57,10 +58,11 @@ recoverable after restart.
 
 Conflict labels or duplicated "conflicted copies" are not an adequate primary
 strategy. Most concurrent changes should be reconciled automatically using
-operation semantics and known base state. Only genuinely ambiguous cases should
-require user attention, and no acknowledged edit may disappear silently.
-Deletion is decisive: when a task is deleted, edits to that deleted task no
-longer matter.
+operation semantics and known base state. When safe automatic progress is not
+possible, synchronization stops for the affected scope with a concrete failure
+reason instead of inventing a generic manual-intervention state. No acknowledged
+edit may disappear silently. Deletion is decisive: when a task is deleted, edits
+to that deleted task no longer matter.
 
 ### 3. Offline continuity, not a second backend
 
@@ -101,9 +103,16 @@ local domain model.
 ### 7. Privacy and security by default
 
 There is no telemetry, analytics, advertising, or account system beyond Google
-authorization. OAuth tokens are stored only in platform secure storage. Task
-contents, credentials, full request URLs, and personal account details must not
-appear in logs, fixtures, screenshots, or the repository.
+authorization. OAuth tokens are stored only in platform secure storage.
+Production diagnostics never contain task contents, credentials, full request
+URLs, or personal account details. Development builds deliberately provide
+local, visibly marked sensitive diagnostics—including task content and detailed
+API/storage context—so failures can be investigated rather than hidden. Those
+diagnostics are bounded, easy to inspect and clear, excluded from release
+builds, never uploaded automatically, and never committed. Credentials,
+authorization material, and private keys are never logged in any build.
+Personal account/task data never enters committed fixtures, screenshots, or
+repository artifacts; synthetic or dedicated test-account data is used instead.
 
 ### 8. Engineering quality is product quality
 

@@ -41,11 +41,11 @@ unique temporary directory when WAL, restart, locks, or durability matter.
 Tests cover:
 
 - constraints and account isolation;
-- visible mutation plus pending operation atomicity;
+- visible mutation plus desired-state-record atomicity;
 - rollback on injected failure;
 - reactive query emission;
 - schema validation and every supported migration;
-- restart with pending and uncertain operations;
+- restart with pending desired state and uncertain attempts;
 - corrupt/missing database behavior without silent replacement;
 - relational/account preference integrity separately from sync-critical state.
 
@@ -59,8 +59,11 @@ No test path is obtained from the production application-data resolver.
 
 A local scripted HTTP server verifies exact request method, path, query,
 headers, pagination, encoding, strict response decoding, etags, `Retry-After`,
-timeouts, cancellation, and error mapping. It also verifies that diagnostics do
-not contain authorization headers, task content, or unsafe URLs.
+timeouts, cancellation, and error mapping. Production-sink tests verify that
+diagnostics contain neither authorization material nor task content. Separate
+development-sink tests verify that task-content and decoded-payload canaries are
+retained for investigation while authorization headers, tokens, PKCE values,
+DPoP keys, and other credential canaries remain absent.
 
 These are protocol tests, not synchronization tests.
 
@@ -112,6 +115,12 @@ Widget tests render views with injected ViewModels and verify semantics,
 keyboard/touch actions, focus, scrolling, adaptive breakpoints, accessibility
 labels, text scaling, and important error/recovery surfaces.
 
+Debug-only widget tests cover the live, searchable sensitive Diagnostics view,
+its persistent privacy warning, copy/export/clear actions, and one-interaction
+access from sync details. Release-composition tests prove that this sensitive
+view and sink cannot be constructed or enabled by runtime state; the release
+Diagnostics view exposes only production-safe summaries.
+
 Desktop and phone constraints are explicit fixtures. Widget tests never use the
 normal database or platform auth.
 
@@ -140,7 +149,7 @@ isolated database and stateful fake. Core workflows run on Fedora and Android:
 - stop/resume sync without credential, cache, or queued-operation loss;
 - export/import validation, account isolation, and eventual Google convergence;
 - lifecycle pause/resume and Android predictive back;
-- restart with pending operations.
+- restart with pending desired state.
 
 Plugin-specific tests run separately where a real platform implementation is
 required.

@@ -53,6 +53,21 @@ sync oracle.
 No command silently selects a real Google account or normal application-data
 directory.
 
+## Development versus release diagnostics
+
+The scaffold must provide a clearly named debug development entry point that
+composes the sensitive local diagnostic sink and its in-app viewer. It records
+all application failures and the boundary/state-transition evidence needed to
+reproduce them, including test-account task content and detailed API/database
+context, without sampling or suppressing errors. The viewer is one interaction
+from sync details and supports live search, copy, explicit export, and clear.
+Rotating log files and exports remain inside ignored development storage.
+
+The normal release entry point cannot construct that sink or viewer. It exposes
+only production-safe local summaries. Tests must prove the separation; it is
+not a convention and cannot be changed with a runtime flag. Credential and
+authorization material is redacted before either logging path in every build.
+
 ## `ktask`
 
 `ktask` state is local orchestration, not product source. `.ktask/` remains
