@@ -236,15 +236,27 @@ class AppShell extends ConsumerWidget {
     // the scaffold's own PopScope. Both PopScopes register on the same route, so
     // a blocked back fires BOTH callbacks — the `!detailOpen` guard below keeps
     // this one from ALSO clearing the selection on the back that closes a detail
-    // (one back is exactly one rung). The drawer is never a rung: the framework
-    // dismisses it, and caching it would deaden back across a rotation (T8.2).
+    // (one back is exactly one rung).
+    //
+    // The open drawer is the framework's OWN rung, above every app-owned one: it
+    // registers a LocalHistoryEntry, but a route's PopScope entries preempt local
+    // history in `ModalRoute.popDisposition` — so when a selection makes THIS
+    // PopScope `canPop: false`, the framework's drawer-close never runs and this
+    // back would clear the selection while leaving the drawer stacked over it
+    // (F14/#192). So gate the whole ladder on the drawer: if it is open, close it
+    // and stop (one back is one rung). Read `isDrawerOpen` at pop time, never
+    // cached — a cached flag would deaden back after a rotation unmounts the
+    // compact scaffold mid-open (T8.2).
     final selectionActive = ref.watch(selectionBackHandleProvider);
     final detailOpen = sel.taskId != null;
     return PopScope(
       canPop: !(showOnboarding || selectionActive),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (showOnboarding) {
+        final scaffoldState = scaffoldKey.currentState;
+        if (scaffoldState?.isDrawerOpen ?? false) {
+          scaffoldState!.closeDrawer();
+        } else if (showOnboarding) {
           dismissOnboarding();
         } else if (!detailOpen && selectionActive) {
           ref.read(selectionBackHandleProvider.notifier).clear();

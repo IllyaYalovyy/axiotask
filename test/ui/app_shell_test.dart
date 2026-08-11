@@ -339,6 +339,52 @@ void main() {
       },
     );
 
+    testWidgets(
+      'back closes an open drawer FIRST, leaving a selection behind it intact',
+      (tester) async {
+        // F14 (#192): the drawer is the framework's own back rung. When it sits
+        // OVER an active selection, one back must close only the drawer — it
+        // must not ALSO clear the selection hidden behind it.
+        final router = buildAppRouter(initialViewId: 'all');
+        await pumpPhone(
+          tester,
+          store: seenPrefs(),
+          router: router,
+          tasks: [storedTask('T1', 'my task')],
+        );
+
+        // A selection is active …
+        await tester.longPress(find.text('my task'));
+        await tester.pumpAndSettle();
+        expect(find.byType(BulkBar), findsOneWidget);
+
+        // … and the user opens the drawer over it.
+        await tester.tap(find.byTooltip('Open navigation menu'));
+        await tester.pumpAndSettle();
+        final drawerSidebar = find.byKey(
+          const Key('sidebar-lists-reorderable'),
+        );
+        expect(drawerSidebar, findsOneWidget);
+
+        // First back: only the drawer closes; the selection survives.
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        await tester.pumpAndSettle();
+        expect(drawerSidebar, findsNothing, reason: 'the drawer closed first');
+        expect(
+          find.byType(BulkBar),
+          findsOneWidget,
+          reason:
+              'the back that closes the drawer must not clear a selection '
+              'sitting behind it — one back is one rung',
+        );
+
+        // Second back: now (drawer gone) the selection clears.
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        await tester.pumpAndSettle();
+        expect(find.byType(BulkBar), findsNothing);
+      },
+    );
+
     testWidgets('back on the first-launch welcome dismisses it (persisted)', (
       tester,
     ) async {
