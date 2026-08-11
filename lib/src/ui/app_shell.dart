@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/task_view.dart';
@@ -162,6 +163,15 @@ class AppShell extends ConsumerWidget {
       isDark: _resolvedDark(context, prefs.theme),
     );
 
+    // The system-back close of the detail is a go_router navigation via the
+    // scaffold's PopScope — it never runs the panel's own flush-on-close, and
+    // unmounting the panel disposes the focused field before a blur can persist
+    // it. Flush the detail's pending edits BEFORE navigating away (#183).
+    void closeDetail() {
+      ref.read(pendingEditsProvider).flush(PendingEdit.detail);
+      context.go(viewPath(sel.viewId));
+    }
+
     final scaffold = ListDetailScaffold(
       sidebar: sidebar,
       scaffoldKey: scaffoldKey,
@@ -187,7 +197,7 @@ class AppShell extends ConsumerWidget {
               key: ValueKey(sel.taskId),
               taskId: sel.taskId!,
               autofocusNotes: sel.focusNotes,
-              onClose: () => context.go(viewPath(sel.viewId)),
+              onClose: closeDetail,
               onOpenTask: (id) => context.go(viewPath(sel.viewId, taskId: id)),
               onPrev: prevTaskId == null
                   ? null
@@ -196,7 +206,7 @@ class AppShell extends ConsumerWidget {
                   ? null
                   : () => context.go(viewPath(sel.viewId, taskId: nextTaskId)),
             ),
-      onCloseDetail: () => context.go(viewPath(sel.viewId)),
+      onCloseDetail: closeDetail,
     );
 
     // Overlay the welcome above the shell. Dismissal persists onboardingSeen,

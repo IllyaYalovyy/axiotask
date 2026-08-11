@@ -14,6 +14,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
@@ -136,6 +137,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // title"; cleared when that row leaves edit mode.
   String? _editId;
 
+  // The app-wide pending-edits registry, captured in initState so dispose can
+  // unregister the quick-add draft flush without an unsafe `ref` lookup (#183).
+  late final PendingEdits _pendingEdits;
+
   bool get _isSmartView => SmartView.byId(widget.viewId) != null;
 
   /// The list a fresh bulk insert targets: the current list, or the first list
@@ -161,10 +166,18 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncBackHandle();
     });
+    // A non-empty quick-add draft is an in-progress "create a task" edit; commit
+    // it when the app is backgrounded so a swiped-away process never loses it
+    // (#183). Only the app-lifecycle path flushes the quick-add (a detail close
+    // does not touch it). Captured so [dispose] unregisters without a `ref`
+    // lookup on a deactivated widget.
+    _pendingEdits = ref.read(pendingEditsProvider)
+      ..register(PendingEdit.quickAdd, _flushDraft);
   }
 
   @override
   void dispose() {
+    _pendingEdits.unregister(PendingEdit.quickAdd, _flushDraft);
     _quickAdd.dispose();
     // The FocusNode is owned by quickAddFocusProvider (app-wide) — not disposed
     // here.
@@ -182,8 +195,20 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
 
   Future<void> _submit() async {
+    final id = await _createFromDraft();
+    if (id == null || !mounted) return;
+    // Creating a task never opens the panel on its own; if it was already open,
+    // follow it to the new task instead of leaving a stale one selected.
+    if (widget.selectedTaskId != null) widget.onOpenTask(id);
+  }
+
+  /// Commit the current quick-add draft as a task (never an empty one), pin it,
+  /// and clear the field. Returns the new id, or null when there is nothing to
+  /// create (empty draft, or no list to create in). Shared by the Enter/+ submit
+  /// and the app-backgrounded flush (#183).
+  Future<String?> _createFromDraft() async {
     final title = _quickAdd.text.trim();
-    if (title.isEmpty) return; // never create an empty task
+    if (title.isEmpty) return null; // never create an empty task
 
     // Resolve the date from the current input BEFORE any await (the field is
     // only cleared after the create lands).
@@ -197,20 +222,24 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final target = _isSmartView
         ? (_lists.isEmpty ? null : _lists.first.list.id)
         : widget.viewId;
-    if (target == null) return; // no list to create in
+    if (target == null) return null; // no list to create in
 
     final stored = await ref
         .read(commandsProvider)
         .createTask(listId: target, title: title, due: due);
-    if (!mounted) return;
+    if (!mounted) return stored.task.id;
     setState(() {
       _newestId = stored.task.id;
       _quickAdd.clear();
       _dateIgnoredFor = '';
     });
-    // Creating a task never opens the panel on its own; if it was already open,
-    // follow it to the new task instead of leaving a stale one selected.
-    if (widget.selectedTaskId != null) widget.onOpenTask(stored.task.id);
+    return stored.task.id;
+  }
+
+  /// The quick-add's entry in the pending-edits registry — commit the draft on
+  /// the way to the background so a killed process never drops it (#183).
+  void _flushDraft() {
+    _createFromDraft();
   }
 
   /// Apply a one-gesture quick-date move from the hover strip, then surface any

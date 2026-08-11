@@ -28,9 +28,11 @@
 // is typing (only an unfocused field is refreshed). The undo toast/stack proper
 // is T7.8; the SnackBars here are the minimal honest home until then.
 
+import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/dates.dart' show DateMove;
@@ -93,6 +95,18 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   // persisted values without re-reading the provider off the widget tree.
   StoredTask? _current;
 
+  // Debounce for save-on-change: a focused field is persisted [_debounceDelay]
+  // after the last keystroke, so an edit is never minutes-unsaved waiting for a
+  // blur that a crash or a swiped-away process may never bring (#183). A
+  // RestartableTimer (the repo bans a raw dart:async Timer below lib/, see
+  // TESTING.md; Future.delayed can't be cancelled) is reset on each keystroke
+  // and cancelled on dispose, so it never outlives the panel.
+  static const _debounceDelay = Duration(seconds: 1);
+  RestartableTimer? _debounce;
+
+  // Captured once so [dispose] can unregister without an unsafe `ref` lookup.
+  late final PendingEdits _pendingEdits;
+
   @override
   void initState() {
     super.initState();
@@ -103,10 +117,16 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     _notesFocus.addListener(() {
       if (!_notesFocus.hasFocus) _saveNotes();
     });
+    // Register the persist-now hook for the paths that skip blur-save: the
+    // system back that closes this panel, and the app being backgrounded (#183).
+    _pendingEdits = ref.read(pendingEditsProvider)
+      ..register(PendingEdit.detail, _flushEdits);
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _pendingEdits.unregister(PendingEdit.detail, _flushEdits);
     _title.dispose();
     _notes.dispose();
     _newSubtask.dispose();
@@ -114,6 +134,33 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     _notesFocus.dispose();
     _newSubtaskFocus.dispose();
     super.dispose();
+  }
+
+  /// Persist any pending title/notes edits immediately (diff-only), cancelling a
+  /// scheduled debounce since it has now happened. The registry entry for the
+  /// system-back close and the app-backgrounded flush.
+  void _flushEdits() {
+    _debounce?.cancel();
+    _saveTitle();
+    _saveNotes();
+  }
+
+  /// Schedule (or restart) a debounced save after the current keystroke burst —
+  /// so a focused field left mid-edit is persisted without waiting for a blur
+  /// (#183).
+  void _scheduleSave() {
+    final debounce = _debounce;
+    if (debounce == null || !debounce.isActive) {
+      _debounce = RestartableTimer(_debounceDelay, _onDebounce);
+    } else {
+      debounce.reset();
+    }
+  }
+
+  /// The debounce fired: persist if still mounted (the panel may have closed
+  /// between the last keystroke and the timer).
+  void _onDebounce() {
+    if (mounted) _flushEdits();
   }
 
   /// Seed the fields from [task], or refresh an UNFOCUSED field when the store
@@ -413,6 +460,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   border: OutlineInputBorder(),
                 ),
                 textInputAction: TextInputAction.done,
+                onChanged: (_) => _scheduleSave(),
                 onSubmitted: (_) => _saveTitle(),
               ),
               // Google assigns the webViewLink on sync; a not-yet-synced task
@@ -449,6 +497,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                 focusNode: _notesFocus,
                 minLines: 3,
                 maxLines: 6,
+                onChanged: (_) => _scheduleSave(),
                 decoration: const InputDecoration(
                   labelText: 'Notes',
                   alignLabelWithHint: true,
