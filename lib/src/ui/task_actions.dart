@@ -79,6 +79,8 @@ List<TaskMenuEntry> buildTaskMenu({
   required StoredTask task,
   required List<StoredTaskList> lists,
   required bool demotable,
+  required bool selected,
+  required VoidCallback onToggleSelect,
   required VoidCallback onEditTitle,
   required VoidCallback onEditNotes,
   required void Function(DateMove move) onSetDue,
@@ -93,6 +95,16 @@ List<TaskMenuEntry> buildTaskMenu({
 }) {
   final isSubtask = task.task.parent != null;
   return [
+    // A VISIBLE entry into multi-select (F18): the reference reached selection
+    // only by Ctrl-click (invisible to a first-time user and impossible under
+    // touch). This makes it discoverable and gives touch a menu route in
+    // addition to the long-press. Reads "Deselect" for an already-selected row.
+    TaskMenuItem(
+      id: 'select',
+      icon: selected ? Icons.check_box : Icons.check_box_outline_blank,
+      label: selected ? 'Deselect' : 'Select',
+      onInvoke: onToggleSelect,
+    ),
     TaskMenuItem(
       id: 'edit',
       icon: Icons.edit_outlined,
