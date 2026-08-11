@@ -160,11 +160,12 @@ class BackupService {
     var listsWritten = 0;
     var tasksWritten = 0;
 
-    // First pass: know every task id the backup carries so a child whose parent
-    // is also being restored is NOT wrongly re-homed to top level.
-    final backupTaskIds = <String>{
+    // First pass: capture every restored task's declared parent so the
+    // normalization pass can walk the ancestry (order-independent, and so a
+    // child whose parent is also being restored is NOT wrongly re-homed).
+    final backupParent = <String, String?>{
       for (final l in backup.lists)
-        for (final t in l.tasks) t.id,
+        for (final t in l.tasks) t.id: t.parent,
     };
 
     for (final l in backup.lists) {
@@ -188,14 +189,11 @@ class BackupService {
         // Skip a task already present locally (non-destructive).
         if (await store.findTaskAny(t.id) != null) continue;
 
-        // FK safety: a parent that exists neither locally nor in this backup
-        // would dangle — re-home the task to top level (subtasks are one level).
-        var parent = t.parent;
-        if (parent != null &&
-            !backupTaskIds.contains(parent) &&
-            await store.findTaskAny(parent) == null) {
-          parent = null;
-        }
+        // Normalize the parent to keep nesting at one level: a dangling parent
+        // re-homes to top level (FK safety), and a >1-level chain flattens onto
+        // its top-level ancestor (F13/#191) — a backup from an older/buggy build
+        // could carry a nest no list view can render.
+        final parent = await _normalizeParent(t.parent, backupParent);
 
         await store.upsertTask(
           StoredTask(
@@ -222,5 +220,47 @@ class BackupService {
     }
 
     return ImportResult(path: path, lists: listsWritten, tasks: tasksWritten);
+  }
+
+  /// Resolve the parent a restored task should attach to so nesting never
+  /// exceeds one level. Walks up the ancestry — the backup's declared parents
+  /// first ([backupParent]), then the local store — to the nearest TOP-LEVEL
+  /// task and attaches there:
+  ///
+  /// - [parent] `null` (or unresolvable to any real row): stays top level.
+  /// - a top-level parent: kept as-is (the one allowed level).
+  /// - a parent that is itself a subtask: the chain FLATTENS onto its top-level
+  ///   ancestor, so a 3-level backup lands as valid one-level subtasks under the
+  ///   root instead of an unrenderable nest (F13/#191).
+  /// - a parent that dangles higher up: the child below the missing node is
+  ///   itself re-homed to top level, so the task attaches there.
+  ///
+  /// A corrupt cycle bails to the last valid candidate rather than looping.
+  Future<String?> _normalizeParent(
+    String? parent,
+    Map<String, String?> backupParent,
+  ) async {
+    final seen = <String>{};
+    // `child` is the node one level below `cur` in the walk — a valid
+    // top-level candidate once `cur` is found to be missing.
+    String? child;
+    var cur = parent;
+    while (cur != null) {
+      if (!seen.add(cur)) return child; // cycle guard
+      final String? next;
+      if (backupParent.containsKey(cur)) {
+        next = backupParent[cur];
+      } else {
+        final local = await store.findTaskAny(cur);
+        // `cur` exists nowhere: it dangles, so the node below it (`child`) is
+        // top level — attach there (`null` when `cur` was the original parent).
+        if (local == null) return child;
+        next = local.task.parent;
+      }
+      if (next == null) return cur; // `cur` is a top-level task → attach here
+      child = cur;
+      cur = next;
+    }
+    return null;
   }
 }
