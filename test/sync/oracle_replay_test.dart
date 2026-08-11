@@ -23,7 +23,7 @@ import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'dual_device.dart';
-import 'property_suite.dart';
+import 'property_suite_test.dart';
 
 /// The committed corpus both this suite and the reference oracle replay.
 final File _corpusFile = File('test/sync/corpus/dual_corpus.jsonl');
