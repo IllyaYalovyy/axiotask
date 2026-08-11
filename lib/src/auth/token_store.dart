@@ -92,12 +92,23 @@ class InMemoryTokenStore implements TokenStore {
   void clear() => _tokens = null;
 }
 
+/// Runs `chmod 600` on [path] and returns the process exit code. Injectable so
+/// the failure path (a non-zero exit) is testable without arranging a real
+/// permission error on the host filesystem.
+typedef ChmodRunner = int Function(String path);
+
 /// File-backed token store: JSON at [file], created 0600 (owner-only) on POSIX.
 class FileTokenStore implements TokenStore {
-  FileTokenStore(this.file);
+  FileTokenStore(this.file, {ChmodRunner? chmod}) : _chmod = chmod ?? _run600;
 
   /// The `tokens.json` file (beside the DB in production).
   final File file;
+
+  /// How to apply owner-only permissions; defaults to the real `chmod`.
+  final ChmodRunner _chmod;
+
+  static int _run600(String path) =>
+      Process.runSync('chmod', ['600', path]).exitCode;
 
   @override
   StoredTokens? load() {
@@ -116,11 +127,25 @@ class FileTokenStore implements TokenStore {
   @override
   void save(StoredTokens tokens) {
     file.parent.createSync(recursive: true);
+    // Create the file empty and lock it to 0600 BEFORE any token bytes land, so
+    // the refresh token is never — not even momentarily — in a world/group
+    // readable file. If the lockdown fails there is no secret on disk to leak,
+    // and the empty placeholder is removed so it cannot wedge a later load().
+    file.writeAsStringSync('', flush: true);
+    try {
+      _restrictPermissions();
+    } on TokenStoreException {
+      try {
+        file.deleteSync();
+      } on FileSystemException {
+        // Nothing more to do — surface the original restriction failure.
+      }
+      rethrow;
+    }
     file.writeAsStringSync(
       const JsonEncoder.withIndent('  ').convert(tokens.toJson()),
       flush: true,
     );
-    _restrictPermissions();
   }
 
   @override
@@ -136,13 +161,24 @@ class FileTokenStore implements TokenStore {
   /// Set the tokens file to 0600 so the refresh token is not world/group
   /// readable. POSIX only; dart:io has no chmod, so we shell out to `chmod`
   /// (desktop is Linux, and Android never reaches this code).
+  ///
+  /// A failure to restrict is a save failure, not a swallowed best effort: a
+  /// non-zero `chmod` exit — or a missing `chmod` binary — means the refresh
+  /// token cannot be secured, so we refuse to write it in the clear.
   void _restrictPermissions() {
     if (Platform.isWindows) return;
+    final int exitCode;
     try {
-      Process.runSync('chmod', ['600', file.path]);
-    } on ProcessException {
-      // A missing chmod is not fatal — the tokens are still written; the
-      // permission hardening is best effort on an unexpected platform.
+      exitCode = _chmod(file.path);
+    } on ProcessException catch (e) {
+      throw TokenStoreException(
+        'could not restrict tokens.json permissions: ${e.message}',
+      );
+    }
+    if (exitCode != 0) {
+      throw TokenStoreException(
+        'chmod 600 on tokens.json failed (exit $exitCode)',
+      );
     }
   }
 }
