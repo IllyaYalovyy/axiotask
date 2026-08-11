@@ -24,7 +24,7 @@ This draft deliberately does **not** decide:
 - push-versus-pull ordering or mutation dependencies;
 - retry eligibility, backoff, cadence, freshness duration, or timeouts;
 - recovery of an uncertain create or other uncertain remote mutation;
-- cross-list move decomposition;
+- cross-list move reconciliation and uncertain-response recovery;
 - import/export merge policy.
 
 Those decisions require later specification sections and, where identified by
@@ -133,9 +133,12 @@ The Google resource ID is nullable external metadata:
   invariant violation, not a local-only list/task.
 
 Remote-key uniqueness is account- and resource-type-scoped as required by ADR
-0002. The Google contract does not establish task-ID behavior during cross-list
-moves, so the later move specification must not assume stability or replacement
-until probe P7 resolves it.
+0002. Controlled probe P7 moved single tasks and a parent subtree across lists
+while preserving task IDs and carrying the child. Cross-list movement therefore
+uses Google's `destinationTasklist` mutation and stable identity; it is not
+decomposed into clone/delete. Because replay from the original list returned 404
+after a landed move, uncertain recovery must read the destination by the same ID
+before retrying or interpreting source absence.
 
 ## Domain, projected, and remote-base state
 
@@ -155,7 +158,9 @@ domain behavior.
 
 Due is a calendar date. The domain does not model a Google Tasks due time or
 deadline because the documented API discards and cannot return that time.
-Exact wire normalization remains gated on API-contract probe P9.
+Controlled probe P9 establishes the wire spelling: encode the product date as
+UTC midnight and expect `00:00:00.000Z`. Arbitrary local-offset timestamps are
+forbidden because Google first maps the instant to its UTC calendar date.
 
 Projected state is materialized so repository streams and restart behavior are
 deterministic. It must always be transactionally consistent with the
@@ -188,8 +193,10 @@ The following invariants apply:
    advance the base as though the operation were confirmed.
 7. Collection ETags are not change cursors; the API contract documents neither
    their conditional semantics nor what changes them.
-8. Resource ETag presence does not prove that PATCH, UPDATE, DELETE, or MOVE
-   honors `If-Match`. Conditional policy remains blocked on probes P1/P2.
+8. Controlled P1 evidence shows task PATCH, UPDATE, DELETE, and MOVE honor
+   `If-Match`: stale returned 412 without mutation, while current/`*`/absent
+   succeeded. P2 shows task-list PATCH, UPDATE, and DELETE ignore it. Task
+   mutation policy may use preconditions; list conflict policy may not.
 
 The exact base field set is finalized with conflict policy. Omitting a field
 that can distinguish a real remote change from server normalization is not
@@ -336,8 +343,10 @@ atomic snapshot: Google does not document snapshot isolation across pages.
 Therefore listing absence alone is never sufficient to delete a previously
 known local resource. It creates a verification candidate for the later
 deletion/conflict policy. Pagination, validation, or unsupported-data failure
-also disables all absence processing for the affected scope. Probe P3 can
-improve the evidence but does not block this conservative foundation.
+also disables all absence processing for the affected scope. P3 directly
+confirmed the risk: a task inserted after page 1 was omitted from the continued
+walk even though every page-token request succeeded, then appeared in a clean
+enumeration.
 
 On startup, a durable run with no final outcome is marked interrupted. Its
 claimed `inFlight` attempts are treated under the uncertainty rule above.
@@ -553,10 +562,16 @@ specification or capability-research actions:
 2. Define retry/backoff/cadence/freshness/timeout policy. A failure always remains
    visible with its concrete reason; it becomes Pending only when a recovery run
    is actually queued or active.
-3. Run controlled probe P3 to improve evidence about concurrent pagination. The
-   foundation already assumes no atomic snapshot and never deletes from listing
-   absence alone, so this probe does not block the next specification draft.
-4. Run controlled probes P1/P2/P5–P8 using the approved dedicated development
-   credentials and disposable uniquely named data. Use the results to define
-   uncertain create/move/delete recovery without blind replay or duplicate
-   creation.
+3. Define uncertain-create recovery under the demonstrated constraint that an
+   identical retry creates a second resource and Google exposes no idempotency
+   key or client-selected ID. Content/time matching must be treated as ambiguous
+   when it cannot identify exactly one candidate.
+4. Define mutation-specific uncertain recovery from P6/P7: read back desired
+   state before repeating PATCH/rename; treat repeated DELETE as idempotent in
+   the observed ordinary case; verify cross-list destination by stable ID before
+   retrying after source 404.
+5. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
+   cases. The current probe establishes only malformed bearer as 401.
+6. Probe `webViewLink` presence/navigation with an ordinary and recurring task
+   created in the current Google UI before implementing the recurrence escape
+   hatch.

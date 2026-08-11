@@ -1,6 +1,6 @@
 # Google Tasks API contract evidence
 
-Research snapshot: 2026-08-09. This document records the externally observable
+Research snapshot: 2026-08-11 UTC. This document records the externally observable
 Google Tasks API behavior on which Stage 4 synchronization may depend. It is an
 evidence inventory, not a synchronization policy.
 
@@ -10,19 +10,18 @@ revision `20260804`, retrieved on 2026-08-09. Human-readable Google documentatio
 is linked at each claim. Documentation can change independently of this file, so
 the discovery revision and research date are part of the evidence.
 
-No live probe was run for this research pass, and no credentials or personal
-task data were inspected. Dedicated existing development credentials outside
-the repository have since been approved for the controlled probe plan below.
-Consequently, this document does not yet label any claim **Observed by a
-controlled probe**. Historical Rust probes are useful leads only and are
-explicitly marked for reverification.
+Controlled probes were run on 2026-08-11 UTC with approved credentials for a
+dedicated development account and disposable uniquely prefixed data. Credentials,
+raw IDs, and raw output remained outside Git; committed observations below are
+sanitized. Historical Rust probes remain leads only unless the new run reproduced
+them explicitly.
 
 ## Evidence labels
 
 | Label | Meaning in this document |
 |---|---|
 | **Officially documented** | Stated by current primary Google documentation or the current official discovery document. |
-| **Observed by a controlled probe** | Reproduced during this research pass with disposable data and sanitized evidence. No rows currently have this label. |
+| **Observed by a controlled probe** | Reproduced during the 2026-08-11 controlled runs with disposable data and sanitized evidence recorded below. |
 | **Inherited historical evidence needing reverification** | Recorded by the read-only Rust project, but not independently reproduced for this contract. |
 | **Inference** | A conclusion from documented presence or absence, not an explicit Google promise. |
 | **Unknown** | Neither current documentation nor a controlled current probe establishes the behavior. |
@@ -113,7 +112,7 @@ Sources: [`tasklists.list`](https://developers.google.com/workspace/tasks/refere
 | Assigned-task coverage | `showAssigned` defaults to `false`. | **Officially documented** | Product requests keep it false; assigned tasks are outside scope. |
 | Incremental filters | `updatedMin`, `completedMin/Max`, and `dueMin/Max` are available. The time filters use RFC 3339. | **Officially documented** | No filter is documented as a lossless synchronization cursor. |
 | Collection limits | Up to 20,000 non-hidden tasks per list and 100,000 tasks total at one time. | **Officially documented** | A client must not assume a smaller dataset. The documentation does not explain behavior beyond those limits. |
-| Snapshot isolation across pages | Google does not state that page tokens represent one immutable snapshot or define behavior when resources change between pages. | **Unknown** | A controlled concurrent-mutation probe is required before claiming one run is an atomic snapshot. |
+| Snapshot isolation across pages | Google does not document an immutable snapshot. In P3, a task inserted after page 1 was absent from the continued enumeration but present in a clean enumeration; continuation still returned 200. | **Observed by a controlled probe** | One page-token walk is demonstrably not a complete atomic snapshot under concurrent insertion. |
 | Token lifetime and replay | No lifetime, single-use rule, consistency rule, or invalidation behavior is documented for `nextPageToken`. | **Unknown** | Resume semantics after interruption cannot be inferred. |
 | Ordering of list results | No stable ordering guarantee is documented for task-list or task collection pages. Task `position` orders siblings after retrieval, but does not order pages. | **Unknown** | Page order must not be treated as hierarchy/order evidence. |
 | Change feed or sync token | Neither the methods nor discovery revision `20260804` exposes a change-feed or sync-token operation. | **Inference** | Any complete-change claim must be based on available listings, not an invented delta API. |
@@ -141,15 +140,15 @@ Sources: [`tasklists.insert`](https://developers.google.com/workspace/tasks/refe
 | Replace task | `tasks.update` uses PUT and returns the resulting `Task`. The Tasks performance guide says omitted optional fields in an update are cleared. | **Officially documented** | Exact writable-field validation remains endpoint-specific. |
 | Delete task | `tasks.delete` deletes the specified task and returns an empty body on success. | **Officially documented** | The method page does not specify descendant effects, tombstone lifetime, or conditional headers. |
 | Reorder/reparent | `tasks.move` returns the moved task. Omit `parent` for top level; omit `previous` for first among its siblings. Named parent/previous must exist in the relevant list and must not be hidden. | **Officially documented** | Response adoption is possible, but ID/ETag/position changes need current observation. |
-| Cross-list move | `destinationTasklist` moves a task to another list. Repeating tasks cannot be moved between lists. | **Officially documented** | Identity stability, descendant handling, and atomicity are not documented. |
+| Cross-list move | `destinationTasklist` moves a task to another list. P7 moved both a single task and a parent subtree while preserving IDs; the child followed the parent. | **Officially documented; observed by a controlled probe** | A received-success cross-list move preserves identity in the probed cases. Repeating-task restrictions remain documented separately. |
 | Position ordering | Positions are opaque strings; their lexicographic comparison orders siblings. | **Officially documented** | Only relative sibling comparison is contractual. |
 | Position generation | The server’s allocation/rebalancing algorithm is not documented. | **Unknown** | Do not infer arithmetic or stability properties from one observed position format. |
 | Previous-sibling errors | The method documents validity constraints, but not status codes when `previous`, `parent`, or the subject disappears concurrently. | **Unknown** | Exact error classification and recovery require probes. |
-| Task conditional mutation | Task and list resources contain ETags. The Tasks performance guide gives a generic `If-Match` example for APIs that use ETags, but does not state which Tasks endpoints honor it or their exact stale response. | **Unknown** | Patch/update/delete/move must each be probed before a conflict guarantee uses `If-Match`. |
-| List conditional mutation | No Tasks endpoint page defines stale-ETag behavior for rename or delete. | **Unknown** | List rename/delete conflict detection cannot be claimed. |
+| Task conditional mutation | P1 sent stale/current/`*`/absent `If-Match` to task PATCH, UPDATE, DELETE, and MOVE. Every stale request returned 412 without changing the task; current, `*`, and absent variants succeeded. | **Observed by a controlled probe** | All four probed task mutations can use ETag preconditions; this remains endpoint behavior rather than a documented Google guarantee. |
+| List conditional mutation | P2 sent stale/current/`*`/absent `If-Match` to task-list PATCH, UPDATE, and DELETE. Every variant succeeded, including stale ETags. | **Observed by a controlled probe** | Task-list rename/delete ignores `If-Match`; list conflict policy cannot depend on it. |
 | Successful mutation response | Insert, patch, update, and move document a resource response; delete documents an empty response. | **Officially documented** | Google does not guarantee that every echoed field is canonical beyond the resource schema. |
-| Lost response after mutation | Google does not document a mutation-status lookup, operation ID, or exactly-once receipt for Tasks. | **Unknown** | A transport failure can leave whether the server committed unresolved. Each mutation class needs a probe/reconciliation design. |
-| Duplicate-create prevention | Insert exposes no request ID, idempotency key, conditional-create parameter, or client-selected resource ID in discovery revision `20260804`. | **Inference** | No public duplicate-prevention capability is visible; behavior after retrying an uncertain create must be probed. |
+| Lost response after mutation | P5/P6/P7 discarded a successful response before read-back/replay. Identical task/list creates duplicated; repeated PATCH/list rename changed version metadata again; repeated DELETE returned 204; repeated same-list MOVE was a 200 no-op; retrying a completed cross-list MOVE from the original list returned 404 while the same ID remained in the destination. | **Observed by a controlled probe** | Recovery must be operation-specific. Blind replay is unsafe for create and misleading for cross-list move. |
+| Duplicate-create prevention | Discovery exposes no request ID, idempotency key, conditional-create parameter, or client-selected resource ID. P5 repeated identical task and list POSTs; both calls returned 200 and produced two different IDs. | **Inference; observed by a controlled probe** | Blind retry of an uncertain create demonstrably creates duplicates. |
 | Invalid generic PATCH | The Tasks performance guide says an invalid patch returns `400` or `422` and leaves the resource unchanged. | **Officially documented** | This is a guide-level range, not an endpoint-specific matrix. |
 | Endpoint validation details | Exact codes and resource effects for each invalid Tasks field/limit are not documented. | **Unknown** | Probe representative invalid fields and limits; do not assume one code for every validation error. |
 
@@ -163,17 +162,17 @@ evidence for exact Tasks endpoint status codes or conditional behavior.
 | Behavior | Contract evidence | Label | Open consequence |
 |---|---|---|---|
 | Soft-deleted flag/listing | A `Task` has `deleted`, and `tasks.list` can include deleted tasks with `showDeleted=true`. | **Officially documented** | The API exposes a task deletion marker through filtered listing. |
-| Tombstone shape/retention | Google does not document which other fields remain, direct-GET behavior, or retention duration. | **Unknown** | Tombstone shape and retention require a controlled probe. |
-| Parent deletion | The delete method does not document whether subtasks are deleted, detached, hidden, or otherwise transformed. | **Unknown** | Descendant reconciliation cannot rely on a cascade until reverified. |
+| Tombstone shape/retention | P4 direct-GET returned 200 with `deleted=true` after deletion. A directly deleted task retained `due`, `etag`, `links`, `notes`, `position`, `status`, `title`, `updated`, and `webViewLink` in this run. PATCH returned a 200 deleted echo and changed the stored tombstone title; MOVE returned 404. | **Observed by a controlled probe** | Tombstones are readable and mutable in surprising ways, but one run proves no retention duration. Deletion remains terminal for product policy. |
+| Parent deletion | P4 deleting a parent soft-deleted its child. Direct child GET returned 200 with `deleted=true`; the returned child no longer contained `parent`. | **Observed by a controlled probe** | Parent deletion cascades in the probed ordinary-task case. |
 | List tombstone surface | The task-list collection exposes no documented deletion marker or `showDeleted` parameter. | **Inference** | No public list-tombstone capability is visible in discovery revision `20260804`. |
-| List-deletion aftermath | The delete method returns no body; subsequent task visibility and repeated-delete behavior are not documented. | **Unknown** | Disappearance detection and task behavior after list deletion require a probe. |
+| List-deletion aftermath | P4 list DELETE returned 204; later list GET, task listing, and direct task GET returned 404. Repeated list DELETE returned 204, and list GET remained 404 after two seconds. | **Observed by a controlled probe** | Repeated delete is idempotent in the probed window; no list tombstone/task recovery surface was observed. |
 | Parent/subtask creation | `tasks.insert` accepts a `parent`; omitting it creates a top-level task. Assigned tasks cannot be parents or children. | **Officially documented** | Supports the product’s single subtask level. Exact missing/hidden-parent failures require probes. |
 | Parent/subtask move | `tasks.move` changes `parent`; completed hidden tasks, assigned tasks, and repeating tasks have documented nesting restrictions. | **Officially documented** | Product scope remains exactly one subtask level regardless of deeper undocumented/legacy behavior. |
 | Subtask count | `tasks.move` documents a maximum of 2,000 subtasks per task. | **Officially documented** | The product must not assume a larger supported sibling set. |
-| Completion cascade | Current method/resource documentation does not define whether completing, reopening, moving under, or inserting under a completed parent changes descendants. | **Unknown** | All supported parent/subtask completion transitions require probes. |
+| Completion cascade | P8 completing a parent completed its child; reopening the parent did not reopen the child. Reopening a child under a completed parent returned 200 but remained completed. Inserting or moving an open child under a completed parent returned it completed. | **Observed by a controlled probe** | The adapter must adopt the returned/refetched cascade state rather than assume the requested open state landed. |
 | Clear completed | `tasks.clear` marks completed tasks in the list as hidden and returns an empty body. | **Officially documented** | Complete enumeration must account for hidden tasks. Exact field/ETag changes are unknown. |
 | Due date | `due` accepts an RFC 3339 representation but stores only a date; time is discarded and unavailable through the API. | **Officially documented** | No time-of-day or deadline can be synchronized through this API. |
-| Due timezone/canonical echo | Google does not specify the canonical returned offset, fractional precision, normalization zone, or behavior for every valid offset. | **Unknown** | Probe multiple offsets and date-boundary cases; compare semantic dates, not an unverified wire spelling. |
+| Due timezone/canonical echo | P9 converted the supplied instant to its UTC calendar date and returned midnight UTC with milliseconds. Offset inputs crossed to the prior/next UTC date. Bare/invalid strings returned 400; empty string and JSON `null` cleared/omitted due. | **Observed by a controlled probe** | The encoder must intentionally send a UTC-midnight representation of the product date; it must never reuse an arbitrary local-offset timestamp. |
 | Completion timestamp | `completed` is RFC 3339 and absent for incomplete tasks. | **Officially documented** | Who assigns/clears it and its precision under status transitions are not documented. |
 | Hidden/completed listing | First-party-completed tasks may require both `showCompleted=true` and `showHidden=true`; `clear` makes completed tasks hidden. | **Officially documented** | A default request is not a complete account view. |
 | Web UI link meaning | `webViewLink` is an output-only absolute Google Tasks Web UI link. | **Officially documented** | It is distinct from a user-authored URL in task text. |
@@ -195,10 +194,10 @@ Sources: [Tasks quotas and limits](https://developers.google.com/workspace/tasks
 | OAuth scope | Read/write requires `https://www.googleapis.com/auth/tasks`; read-only access can use `tasks.readonly`. | **Officially documented** | Synchronization mutations require the write scope. |
 | Access-token expiry | Access tokens have limited lifetimes and may be refreshed. | **Officially documented** | Expiry is normal and must not be represented as healthy synchronization. |
 | Refresh-token failure | Google documents several invalidation/expiry causes and `invalid_grant` during refresh, including revoked grants and some session policies. | **Officially documented** | The auth layer can receive a terminal reauthorization condition. Exact Tasks request payloads remain separate. |
-| Tasks authentication response | The exact status/body/header matrix for expired, revoked, wrong-scope, or malformed bearer tokens is not documented on Tasks endpoint pages. | **Unknown** | Controlled probes are required to map failures without relying on message text. |
+| Tasks authentication response | P11 sent a malformed bearer token to task-list listing and received 401 with `WWW-Authenticate`; the JSON error contained `code`, `errors`, `message`, and `status`. Expired, revoked, and wrong-scope cases were not probed. | **Observed by a controlled probe; otherwise unknown** | The adapter may classify this observed malformed-token shape as unauthorized but must not generalize it to unprobed auth failures. |
 | Daily quota | Courtesy limit is 50,000 queries/day; Google warns that projects may have different quotas visible in Cloud Console. | **Officially documented** | The public number is not a complete per-project runtime limit. |
 | Per-minute/user limits | No Tasks-specific public contract was found for per-minute, per-user, or burst limits. | **Unknown** | Runtime status and headers must be captured in a controlled quota-safe probe if possible. |
-| Rate-limit response | Tasks documentation does not promise an exact HTTP status, error reason, or `Retry-After` header. | **Unknown** | Do not make a Tasks-specific retry claim from another Google API’s documentation. |
+| Rate-limit response | A discarded initial unpaced probe run encountered HTTP 403 with structured reason `quotaExceeded` and no `Retry-After`; no threshold was established or intentionally exhausted. | **Observed by a controlled probe** | Treat 403 quota reasons as remote throttling, retain pending work, and use client backoff when no server delay is supplied. Do not treat every 403 as quota. |
 | Transient server errors | No Tasks-specific status matrix, retry duration, or service-level guarantee was found. | **Unknown** | Generic Google guidance can inform a later conservative policy but is not this API’s verified contract. |
 | Error envelope | Tasks endpoint pages do not specify a stable JSON error schema or stable human-readable messages. | **Unknown** | Error parsing must not depend on undocumented prose; exact structured fields need observation. |
 | Lost connection | TCP reset, timeout, cancellation, and response truncation are transport outcomes, not evidence that a mutation did or did not commit. | **Inference** | The uncertain-mutation cases must be specified per operation after probing. |
@@ -231,7 +230,7 @@ Historical source locations:
 | Task move required an explicit zero-length body, changed the task ETag, and returned 404 for a deleted `previous` anchor while an unknown subject returned 400. | **Inherited historical evidence needing reverification** | Correct transport and ambiguity classification. |
 | Parent deletion cascaded; completion of a parent completed descendants; reopening the parent did not reopen children. | **Inherited historical evidence needing reverification** | Parent/subtask convergence. |
 | Inserting or moving an open child under a completed parent returned it completed; inserting a child did not change the parent ETag. | **Inherited historical evidence needing reverification** | Response adoption and concurrent hierarchy changes. |
-| Deleted tasks remained directly readable with `deleted=true`; PATCH of a deleted task returned a success echo while the stored tombstone remained unchanged. | **Inherited historical evidence needing reverification** | Delete/edit races and the danger of trusting a mutation echo alone. |
+| Deleted tasks remained directly readable with `deleted=true`; PATCH of a deleted task returned a success echo while the stored tombstone remained unchanged. | **Inherited historical evidence needing reverification** | P4 reproduced direct readability and the success echo but contradicted “stored unchanged”: the tombstone title changed while `deleted=true` remained. |
 | A full timestamp due value was normalized to midnight UTC; an empty string cleared due; a bare date was rejected. | **Inherited historical evidence needing reverification** | Exact due wire encoding, which current documentation does not fully specify. |
 | Unknown parent, field-size boundaries, and invalid due values produced permanent 4xx errors. | **Inherited historical evidence needing reverification** | Validation classification without relying on message strings. |
 
@@ -242,7 +241,7 @@ tests as current truth until the controlled probes below reproduce them.
 
 ### Safety and reproducibility setup
 
-The next probe run must use a dedicated Google test account and a dedicated OAuth
+Every probe run must use a dedicated Google test account and a dedicated OAuth
 client authorized only for the Tasks scope. Credential and token files must be
 outside this repository. The operator must verify the account identity before
 the first write. No probe may enumerate or mutate a normal application account.
@@ -288,33 +287,74 @@ rate-limit response. If normal quota-safe probing encounters throttling, record
 the sanitized status, structured reason, and `Retry-After` presence. Otherwise
 rate-limit response details remain Unknown.
 
+## Controlled probe evidence — 2026-08-11 UTC
+
+### Reproducible setup and custody
+
+- Go `1.25.12` standard-library harness; current source-set SHA-256
+  `37b853d05397982ecb5da24f486e0457a43d9c87bc224e566f5bc41d2af9e63a`.
+- Dedicated development account, OAuth grant limited to the Tasks scope, and
+  disposable `axiotask-contract-probe-<UTC>-<random>` lists only.
+- Successful runs paced requests by 800 ms. Each request/response—including
+  task content and raw IDs—was written to a mode-`0600`, Git-ignored local log;
+  authorization headers, tokens, client credentials, and refresh responses were
+  never logged.
+- Main run: 68 sanitized observations across P1–P9 and the safe P11 malformed
+  bearer case; sanitized-record SHA-256
+  `71d3d57dfe9dc6f2366555b71f1b371aa59379dbb28ee7500b5e8e1445452852`.
+- Focused corrected run: 34 observations across P1/P2/P7 after fixing malformed
+  PUT probe bodies and adding MOVE preconditions/cross-list replay;
+  sanitized-record SHA-256
+  `ddd01ef21f756699e99f3ec9adfd7ee2ade75a905ab12cf2bef8f9aee0d09696`.
+- Each successful run performed prefix-scoped deletion and a zero-match
+  re-enumeration. A separate cleanup-only invocation independently reconfirmed
+  zero matching lists for both prefixes.
+- One earlier unpaced run was discarded after 403 `quotaExceeded` responses.
+  It left 26 prefixed lists temporarily; a later prefix-scoped cleanup deleted
+  all 26 and confirmed zero remaining. Only the rate-limit response itself is
+  retained as evidence from that run.
+
+### Sanitized observations
+
+| Probe | Observed result | Specification consequence |
+|---|---|---|
+| P1 task preconditions | PATCH, UPDATE, DELETE, and MOVE returned 412 and made no change with a stale ETag. Current, `*`, and absent preconditions succeeded (200 for resource-returning mutations, 204 for DELETE). | Use `If-Match` for task mutations formed against a confirmed base. A 412 is conclusive stale-base evidence, not a transient failure. |
+| P2 list preconditions | PATCH, UPDATE, and DELETE succeeded even with a stale ETag. Rename changed ETag; stale DELETE removed the list. | List ETags cannot provide conditional-write protection. Delete remains decisive; rename needs explicit non-atomic reconciliation policy. |
+| P3 concurrent pagination | All original tokens remained accepted. A task inserted after page 1 was omitted from that walk and appeared in a clean enumeration. Single patch/move/delete task trials and insert/patch/delete list trials showed no duplicate/omission relative to the subsequent clean view. | Treat every paged walk as non-atomic. One clean trial cannot promote the unaffected cases to guarantees. |
+| P4 deletion | Task delete produced readable tombstones; parent delete cascaded to its child. PATCH of a deleted task returned 200 and changed tombstone content while leaving it deleted; MOVE returned 404. List deletion made the list and its tasks unreadable, while repeated list DELETE returned 204. | Never resurrect or conflict-copy a deleted task from a mutation echo. Adopt deletion as terminal and treat list absence separately from task tombstones. |
+| P5 uncertain create | Repeating an identical task POST or list POST returned 200 twice and produced two distinct resources. | An uncertain create cannot be blindly replayed. The API supplies no verified exactly-once create mechanism. |
+| P6 uncertain non-create | Repeated identical task PATCH and list rename returned 200 and changed ETag/`updated` again. Repeated task DELETE returned 204. Repeated same-list MOVE returned 200 without another position/ETag change. | Read-back can identify landed desired state, but replay effects differ by operation and must be specified individually. |
+| P7 move/order | Same-list reorder/reparent and cross-list moves preserved task IDs. A parent cross-list move carried its child. Deleted `previous` returned 404; fabricated `previous` returned 400. Retrying a landed cross-list move from the original list returned 404 while the same ID remained in the destination. | Cross-list move is not a clone/delete operation. Recovery must search the destination by stable ID before interpreting source-list 404. |
+| P8 completion | Parent completion cascaded to children; parent reopen did not. Child reopen under a completed parent returned 200 but remained completed. Insert/move under a completed parent returned a completed child. Clear returned 204 and all observed completed rows were hidden. | Mutation echoes/read-back and server cascades are authoritative; requested `needsAction` cannot be assumed to land under a completed parent. |
+| P9 due | Google normalized valid instants to the corresponding UTC date at `00:00:00.000Z`. Offset boundary inputs moved to the prior/next UTC date. Bare/invalid values returned 400; empty string and JSON `null` cleared/omitted due. | Encode the product date directly as UTC midnight. Do not serialize a local-offset instant and assume its written calendar date survives. |
+| P11 malformed bearer | Malformed bearer produced 401, `WWW-Authenticate`, and JSON error fields `code`, `errors`, `message`, and `status`. | This case is unauthorized. Expired, revoked, and wrong-scope classification still needs separate safe evidence. |
+
 ## Remaining unknowns and specification blockers
 
 | Unknown | Stage 4 effect | Blocks synchronization specification? |
 |---|---|---|
-| Conditional semantics for task PATCH/UPDATE/DELETE and list PATCH/DELETE | Determines which concurrent writes can be detected rather than overwritten. | **Yes — P1/P2.** |
-| No documented idempotency key or create lookup after a lost response | Determines whether an uncertain create can be retried without duplicates and how it can be reconciled. | **Yes — P5.** |
-| Pagination behavior under concurrent mutations and page-token interruption | Determines whether anything stronger than “all documented pages were consumed” can be claimed. | No for the conservative foundation, which assumes no atomic snapshot and never deletes from listing absence alone. P3 is required before adopting stronger absence handling. |
-| Tombstone field shape/retention, parent-delete cascade, and list-deletion aftermath | Determines reliable deletion detection and hierarchy cleanup. | **Yes — P4.** |
-| Cross-list move identity, descendant behavior, and uncertain-response behavior | Determines whether a move is one recoverable mutation or requires a different model. | **Yes — P6/P7.** |
-| Parent/completion cascade semantics | Determines convergence for the supported task/subtask relationship. | **Yes — P8.** |
-| Exact auth-failure mapping | Determines when the system has lost authorization versus encountered a retryable request failure; truthful sync health depends on the distinction. | **Yes — P11.** |
-| Exact due wire normalization | A date-only domain is documented, but encoder/decoder fixtures need a verified spelling. | No; P9 is required before adapter implementation. |
+| Task-list rename race policy | List PATCH/UPDATE/DELETE ignore stale `If-Match`, so a check-then-write race cannot be closed with the public precondition behavior. | **Yes as a policy decision, not a capability probe.** |
+| Uncertain create recovery | P5 proves blind replay duplicates and discovery exposes no idempotency/client-ID facility. Content/time matching can itself be ambiguous. | **Yes — define a conservative automatic reconciliation rule and its irreducible failure case.** |
+| Concurrent pagination beyond the observed cases | P3 proves at least concurrent insertion can be omitted; it cannot establish every possible interleaving. | No. The specification must assume non-atomic pagination and may not delete from one listing absence. |
+| Tombstone retention duration | P4 establishes immediate shape and ordinary parent cascade, not how long task tombstones remain readable. | No for delete-wins convergence; do not rely on indefinite tombstone retention. |
+| Cross-list move recovery policy | P7 establishes stable IDs, subtree movement, and source 404 after replay. | No capability blocker. Specify destination-by-ID read-back before retry. |
+| Exact expired/revoked/wrong-scope auth mapping | P11 establishes malformed bearer only. Truthful sync health still needs platform-auth and token-refresh evidence for the other terminal cases. | **Yes for those auth adapter slices.** |
+| Due encoder implementation | P9 establishes the accepted UTC-midnight spelling and offset hazard. | No evidence blocker; require adapter contract tests before implementation is accepted. |
 | `webViewLink` presence and recurrence navigation | Affects the recurrence-management escape hatch, not core content synchronization. | No; P10 blocks that UX slice. |
-| Tasks-specific `Retry-After`, rate-limit, and transient-error matrix | Affects retry timing and diagnostics. Safe probe may not be able to force it. | No; it remains an explicit uncertainty in the specification. |
+| Full rate-limit/transient-error matrix | One 403 `quotaExceeded` without `Retry-After` was observed; other reasons/statuses and thresholds remain unknown. | No; use reason-aware conservative backoff and retain the observed failure visibly. |
 | Unexpected/malformed success bodies | Server occurrence is unknowable; adapter behavior can be defined and tested with synthetic fixtures. | No; P12 informs strict adapter tests. |
 
 ## Evidence quality conclusion
 
-Current primary documentation is strong for resource shape, supported methods,
-filters, pagination mechanics, list/task limits, date-only due semantics,
-completed/hidden visibility, and the existence of the Google UI recurrence
-feature. It is weak for synchronization-critical concurrency, atomic listing,
-deletion retention, uncertain mutation outcomes, endpoint-specific failures, and
-retry hints.
+Current primary documentation remains strongest for resource shape and method
+surface. The controlled runs now provide current evidence for task versus list
+preconditions, non-atomic pagination, deletion/cascade behavior, replay effects,
+stable-ID cross-list movement, completion cascades, UTC due normalization, one
+auth failure, and one quota response.
 
-The historical Rust probes identify precise questions and credible prior
-outcomes, but they are not accepted as current facts because this pass neither
-reproduced them nor found sanitized raw output suitable for independent review.
-The synchronization specification must not begin by silently assuming answers
-to the rows marked as blockers.
+The evidence sharply reduces capability uncertainty but does not invent policy.
+Uncertain create remains intrinsically ambiguous without server idempotency;
+list rename lacks an atomic precondition; auth cases beyond malformed bearer and
+recurrence navigation remain unverified. Historical Rust claims are accepted
+only where the new results reproduce them, and the deleted-tombstone mutation
+claim is explicitly superseded by the contradictory current observation.
