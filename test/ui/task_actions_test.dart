@@ -154,7 +154,7 @@ void main() {
         // undoMoveToList; the tap-through round-trip is covered in the detail
         // panel test, whose dropdown path keeps the Undo button on-screen).
         expect(find.text('Moved "apples" to Errands'), findsOneWidget);
-        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+        expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
       },
     );
   });

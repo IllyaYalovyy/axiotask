@@ -27,6 +27,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
+import 'toast_harness.dart' show wrapWithToast;
+
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 
 StoredTask row(
@@ -307,6 +309,7 @@ void main() {
             ),
           ],
           child: MaterialApp(
+            builder: wrapWithToast,
             home: Scaffold(
               body: TaskListView(
                 viewId: viewId,
@@ -360,13 +363,32 @@ void main() {
         await tester.enterText(find.byType(TextField), 'buy milk tomorrow');
         await tester.pump();
       });
-      // Preview chip shows a FRIENDLY relative date, never the ISO (#78b).
-      expect(find.widgetWithText(InputChip, 'tomorrow'), findsOneWidget);
+      // Preview chip shows a FRIENDLY relative date, never the ISO (#78b). On
+      // the default (touch) test platform the × is a standalone 48dp button so
+      // the chip is a plain Chip (F19 #198); the label is the same either way.
+      expect(find.widgetWithText(Chip, 'tomorrow'), findsOneWidget);
       // The typed title is untouched in the field.
       final field = tester.widget<TextField>(find.byType(TextField).first);
       expect(field.controller?.text, 'buy milk tomorrow');
     },
   );
+
+  testWidgets('QuickAdd: on touch the preview × is a ≥48dp target (F19 #198)', (
+    tester,
+  ) async {
+    // The failure this prevents: the InputChip's built-in delete glyph is a
+    // sub-48dp target, so on a phone a finger struggles to keep the parsed
+    // phrase as literal text. On a touch pointer the × is a standalone 48dp
+    // IconButton. (Default test platform is touch.)
+    await pumpView(tester);
+    await withClock(_clock, () async {
+      await tester.enterText(find.byType(TextField), 'call bank tomorrow');
+      await tester.pump();
+    });
+    final size = tester.getSize(find.widgetWithIcon(IconButton, Icons.close));
+    expect(size.width, greaterThanOrEqualTo(48));
+    expect(size.height, greaterThanOrEqualTo(48));
+  });
 
   testWidgets(
     'QuickAdd: keeping the date phrase as title text applies no due date',
@@ -375,13 +397,10 @@ void main() {
       await withClock(_clock, () async {
         await tester.enterText(find.byType(TextField), 'call bank tomorrow');
         await tester.pump();
-        // Dismiss the preview (the chip's ×) — keep the phrase as literal text.
-        await tester.tap(
-          find.descendant(
-            of: find.byType(InputChip),
-            matching: find.byIcon(Icons.close),
-          ),
-        );
+        // Dismiss the preview (the × "Keep as text") — keep the phrase as
+        // literal text. Found by tooltip so it works whether the × is the
+        // InputChip's delete glyph (mouse) or the standalone button (touch).
+        await tester.tap(find.byTooltip('Keep as text'));
         await tester.pump();
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await settle(tester);
@@ -404,7 +423,7 @@ void main() {
       await withClock(_clock, () async {
         await tester.enterText(find.byType(TextField), 'pay rent 2026-07-01');
         await tester.pump();
-        expect(find.widgetWithText(InputChip, 'Jul 1'), findsOneWidget);
+        expect(find.widgetWithText(Chip, 'Jul 1'), findsOneWidget);
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await settle(tester);
       });
@@ -437,7 +456,7 @@ void main() {
       expect(find.widgetWithText(TaskRow, 'buy milk'), findsNothing);
       // …and the landing toast names the task and where it went, with a jump.
       expect(find.text('Added "buy milk" to Focus'), findsOneWidget);
-      expect(find.widgetWithText(SnackBarAction, 'View'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'View'), findsOneWidget);
     },
   );
 
@@ -488,7 +507,7 @@ void main() {
         await tester.enterText(find.byType(TextField), 'buy milk');
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await settle(tester);
-        await tester.tap(find.widgetWithText(SnackBarAction, 'View'));
+        await tester.tap(find.widgetWithText(TextButton, 'View'));
         await tester.pump();
       });
       expect(openedInView, ['focus/NEW']);
@@ -546,7 +565,7 @@ void main() {
       // Completed → hidden from the open list, and an undo toast is offered.
       expect(find.text('apples'), findsNothing);
       expect(find.text('Completed "apples"'), findsOneWidget);
-      expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
 
       await tester.tap(find.text('Undo'));
       await settle(tester);
@@ -751,8 +770,8 @@ void main() {
 
       await hoverRow(tester);
       await tester.tap(find.byKey(const Key('quick-date-today')));
-      await tester.pump(); // resolve setDue → schedule the SnackBar
-      await tester.pump(const Duration(milliseconds: 750)); // animate it in
+      await tester.pump(); // resolve setDue → raise the cascade toast
+      await tester.pump(const Duration(milliseconds: 750)); // let it settle in
 
       expect(find.text('1 subtask date moved to match'), findsOneWidget);
 

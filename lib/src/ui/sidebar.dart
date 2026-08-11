@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 
 import '../store/stored.dart';
+import 'task_row.dart' show touchTarget;
 import 'views.dart';
 
 /// The adaptive navigation sidebar.
@@ -415,10 +416,17 @@ class _ListRow extends StatelessWidget {
                 children: [
                   ReorderableDragStartListener(
                     index: index,
-                    child: Icon(
-                      Icons.drag_indicator,
-                      size: 18,
-                      color: colors.onSurfaceVariant,
+                    // The drag handle is the ONLY grab point for touch reorder
+                    // in the drawer; a finger needs a 48dp target (F19 #198). The
+                    // glyph stays 18dp — only the hit area grows, and only on a
+                    // coarse pointer so the desktop sidebar stays compact.
+                    child: touchTarget(
+                      Theme.of(context).platform,
+                      Icon(
+                        Icons.drag_indicator,
+                        size: 18,
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 4),

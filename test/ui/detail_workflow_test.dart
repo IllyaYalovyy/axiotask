@@ -211,7 +211,7 @@ void main() {
         await tester.tap(find.text('Personal').last);
         await tester.pumpAndSettle();
         expect(fake.movedToList, ['P->L2']);
-        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+        expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
 
         await tester.tap(find.text('Undo'));
         await tester.pumpAndSettle();

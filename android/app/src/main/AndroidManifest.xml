@@ -4,10 +4,15 @@
          merges just this main manifest — so it must be declared here or sync has
          no network on a real install (F2, #179). -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Opt into the Android 13+ predictive back gesture (F19 #198): the OS
+         drives the back animation and Flutter's Navigator participates, so the
+         system back gesture/button is a first-class citizen on modern Android
+         instead of the legacy onBackPressed path. -->
     <application
         android:label="axiotask"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

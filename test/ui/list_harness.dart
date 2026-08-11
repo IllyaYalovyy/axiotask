@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'detail_harness.dart' show FakeBackend;
+import 'toast_harness.dart' show wrapWithToast;
 
 /// A fixed clock so the quick-date bulk ops resolve deterministically.
 final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
@@ -66,6 +67,8 @@ Future<FakeBackend> pumpList(
           // the "⋯" overflow at every width, a desktop platform reaches the same
           // actions by right-click. Tests pin the desktop path by overriding it.
           theme: platform == null ? null : ThemeData(platform: platform),
+          // Mount the F19 toast overlay so migrated undo/info toasts render.
+          builder: wrapWithToast,
           home: Scaffold(
             body: TaskListView(
               viewId: viewId,

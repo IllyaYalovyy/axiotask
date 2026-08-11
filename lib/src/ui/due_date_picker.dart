@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 
 import '../app/commands.dart' show Commands, SetDueResult;
 import 'date_format.dart' show parseLocalDate;
+import 'toast.dart' show ToastController;
 
 /// What the picker returned. `null` from [showDueDatePicker] means the user
 /// dismissed it (Cancel / barrier tap) — leave the date untouched.
@@ -142,27 +143,19 @@ String? dueCascadeMessage(SetDueResult res) {
   return '$n subtask date${n == 1 ? '' : 's'} moved to match';
 }
 
-/// Surface the #164 cascade for [res] as an undoable SnackBar, or do nothing
-/// when the edit moved no other row. Shared by every due surface (the list
-/// row's quick strip and the detail panel) so one edit-cascade-undo phrasing
-/// lives in one place. The whole cascade reverts as one unit via
-/// [Commands.undoSetDue].
+/// Surface the #164 cascade for [res] as an undoable toast, or do nothing when
+/// the edit moved no other row. Shared by every due surface (the list row's
+/// quick strip and the detail panel) so one edit-cascade-undo phrasing lives in
+/// one place. Routes through the [ToastController] — the one feedback surface
+/// (F19 #198) that out-stacks the detail panel a cascade may be edited from,
+/// where a ScaffoldMessenger SnackBar would be hidden behind the panel. The
+/// whole cascade reverts as one unit via [Commands.undoSetDue].
 void offerDueCascadeUndo(
-  ScaffoldMessengerState messenger,
+  ToastController toasts,
   Commands commands,
   SetDueResult res,
 ) {
   final message = dueCascadeMessage(res);
   if (message == null) return;
-  messenger
-    ..clearSnackBars()
-    ..showSnackBar(
-      SnackBar(
-        content: Text(message),
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () => commands.undoSetDue(res.undo),
-        ),
-      ),
-    );
+  toasts.showUndo(message, () => commands.undoSetDue(res.undo));
 }

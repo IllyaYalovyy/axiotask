@@ -30,48 +30,61 @@ class OnboardingIntro extends StatelessWidget {
     return Material(
       key: const Key('onboarding-intro'),
       color: colors.scrim.withValues(alpha: 0.6),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: Card(
-            margin: const EdgeInsets.all(24),
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.checklist_rounded,
-                    size: 40,
-                    color: colors.primary,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Welcome to axiotask',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
+      // Centered when it fits, scrollable when it doesn't (F19 #198): at a large
+      // system text scale (2.0) the fixed card would overflow a short phone
+      // viewport and throw a RenderFlex error. A scroll view whose child is at
+      // least the viewport height keeps the card centered normally and lets it
+      // scroll — never clip — when the enlarged text makes it taller than the
+      // screen.
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 460),
+                child: Card(
+                  margin: const EdgeInsets.all(24),
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.checklist_rounded,
+                          size: 40,
+                          color: colors.primary,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Welcome to axiotask',
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Capture a task in the quick-add field at the top. End the '
+                          'text with a date — like “tomorrow” or 2026-08-03 — and '
+                          'axiotask schedules it for you automatically.',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: FilledButton(
+                            key: const Key('onboarding-dismiss'),
+                            onPressed: onDismiss,
+                            child: const Text('Start using axiotask'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Capture a task in the quick-add field at the top. End the '
-                    'text with a date — like “tomorrow” or 2026-08-03 — and '
-                    'axiotask schedules it for you automatically.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      key: const Key('onboarding-dismiss'),
-                      onPressed: onDismiss,
-                      child: const Text('Start using axiotask'),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

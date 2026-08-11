@@ -25,8 +25,10 @@
 //     of its own (that would silently take the subtree, with no undo).
 //
 // Live-tracking updates a field from the store WITHOUT clobbering what the user
-// is typing (only an unfocused field is refreshed). The undo toast/stack proper
-// is T7.8; the SnackBars here are the minimal honest home until then.
+// is typing (only an unfocused field is refreshed). Delete/move undo and the
+// #164 cascade route through the app-wide [ToastController] (F19 #198) — the one
+// feedback surface that out-stacks THIS panel, where a ScaffoldMessenger
+// SnackBar would render behind it and be unreachable.
 
 import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
@@ -41,6 +43,7 @@ import '../model/task_tree.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'toast.dart';
 import 'url_detect.dart';
 import 'url_opener.dart';
 
@@ -226,20 +229,13 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     _saveTitle();
     _saveNotes();
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final token = await commands.deleteTask(task.task.id);
     if (!mounted) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Deleted "${task.task.title}"'),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () => commands.undoDelete(token),
-          ),
-        ),
-      );
+    toasts.showUndo(
+      'Deleted "${task.task.title}"',
+      () => commands.undoDelete(token),
+    );
     widget.onClose();
   }
 
@@ -285,11 +281,11 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// Set the task's OWN due date from a one-gesture quick move, surfacing any
   /// #164 cascade as an undoable toast.
   Future<void> _quickDue(String id, DateMove move) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
     final res = await commands.setDue(id, move);
     if (!mounted) return;
-    offerDueCascadeUndo(messenger, commands, res);
+    offerDueCascadeUndo(toasts, commands, res);
   }
 
   /// Open the calendar for [id] on [currentDue] and apply the choice (a picked
@@ -297,7 +293,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// A dismissed picker leaves the date untouched. Shared by the task's own due
   /// badge and each subtask's inline due button.
   Future<void> _pickDue(String id, String? currentDue) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
     final pick = await showDueDatePicker(context, initial: currentDue);
     if (pick == null || !mounted) return;
@@ -306,7 +302,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
       DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
     };
     if (!mounted) return;
-    offerDueCascadeUndo(messenger, commands, res);
+    offerDueCascadeUndo(toasts, commands, res);
   }
 
   /// Reopen every completed subtask of [parentId] (#89). Un-completing a parent
@@ -362,26 +358,15 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     String targetTitle,
   ) async {
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final token = await commands.moveTaskToList(id, targetListId);
     if (!mounted || token == null) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Moved to $targetTitle'),
-          duration: const Duration(seconds: 30),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () {
-              commands.undoMoveToList(token);
-              // Repoint the panel to the restored original (revived in place, so
-              // its id is stable) rather than the now-deleted clone.
-              widget.onOpenTask(token.original.id);
-            },
-          ),
-        ),
-      );
+    toasts.showUndo('Moved to $targetTitle', () {
+      commands.undoMoveToList(token);
+      // Repoint the panel to the restored original (revived in place, so its id
+      // is stable) rather than the now-deleted clone.
+      widget.onOpenTask(token.original.id);
+    });
     widget.onOpenTask(token.newRootId);
   }
 

@@ -35,6 +35,7 @@ import 'search.dart';
 import 'sort_dropdown.dart';
 import 'task_actions.dart';
 import 'task_row.dart';
+import 'toast.dart';
 import 'url_opener.dart';
 import 'views.dart';
 
@@ -196,7 +197,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
 
   Future<void> _submit() async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final created = await _createFromDraft();
     if (created == null || !mounted) return;
     // Landing feedback (#190): when the new task's date fails the current view's
@@ -211,7 +212,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     );
     if (dest != null) {
       _landingToast(
-        messenger,
+        toasts,
         dest,
         subject: 'Added "${created.task.title}"',
         taskIds: [created.task.id],
@@ -250,28 +251,25 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// The #190 landing toast: "`<subject>` to `<where>`" with a **View** jump to
   /// the view that actually shows the just-created task(s). Fired only when the
   /// current view hides the create — an in-view create stays toast-free. The
-  /// jump opens the first created task in [dest] so the user lands on it.
+  /// jump opens the first created task in [dest] so the user lands on it. Routes
+  /// through the [ToastController] (F19 #198) so it out-stacks any open modal.
   void _landingToast(
-    ScaffoldMessengerState messenger,
+    ToastController toasts,
     LandingDestination dest, {
     required String subject,
     required List<String> taskIds,
   }) {
     final jump = widget.onOpenInView;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('$subject to ${dest.label}'),
-          duration: const Duration(seconds: 6),
-          action: (jump == null || taskIds.isEmpty)
-              ? null
-              : SnackBarAction(
-                  label: 'View',
-                  onPressed: () => jump(dest.viewId, taskIds.first),
-                ),
-        ),
+    final message = '$subject to ${dest.label}';
+    if (jump == null || taskIds.isEmpty) {
+      toasts.showInfo(message);
+    } else {
+      toasts.showAction(
+        message,
+        actionLabel: 'View',
+        onAction: () => jump(dest.viewId, taskIds.first),
       );
+    }
   }
 
   /// Commit the current quick-add draft as a task (never an empty one), pin it,
@@ -317,18 +315,18 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// Apply a one-gesture quick-date move from the hover strip, then surface any
   /// #164 cascade as an undoable toast.
   Future<void> _quickMove(String id, DateMove move) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
     final res = await commands.setDue(id, move);
     if (!mounted) return;
-    offerDueCascadeUndo(messenger, commands, res);
+    offerDueCascadeUndo(toasts, commands, res);
   }
 
   /// Open the calendar for [id] on its current [currentDue], apply the choice
   /// (a picked day via `setDueRaw`, Clear via `setDue`), then surface any #164
   /// cascade. A dismissed picker leaves the date untouched.
   Future<void> _openDatePicker(String id, String? currentDue) async {
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
     final pick = await showDueDatePicker(context, initial: currentDue);
     if (pick == null || !mounted) return;
@@ -337,7 +335,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
     };
     if (!mounted) return;
-    offerDueCascadeUndo(messenger, commands, res);
+    offerDueCascadeUndo(toasts, commands, res);
   }
 
   /// Open the live search over EVERY task. Selecting a result navigates to it —
@@ -382,14 +380,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// A 4-second info toast reporting a bulk op's outcome ("N tasks `<verb>`").
   void _bulkToast(int n, String verb) {
     if (n <= 0) return;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('$n task${n == 1 ? '' : 's'} $verb'),
-          duration: const Duration(seconds: 4),
-        ),
-      );
+    ref
+        .read(toastControllerProvider)
+        .showInfo('$n task${n == 1 ? '' : 's'} $verb');
   }
 
   Future<void> _bulkComplete() async {
@@ -426,7 +419,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _bulkDelete() async {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     _clearSelection();
     // Capture every delete token so one Undo restores all N (each with its own
     // subtree, parent, and position) — the same undoDelete the single-row delete
@@ -437,22 +430,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
     if (!mounted || tokens.isEmpty) return;
     final n = tokens.length;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('$n task${n == 1 ? '' : 's'} deleted'),
-          duration: const Duration(seconds: 30),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () {
-              for (final token in tokens) {
-                commands.undoDelete(token);
-              }
-            },
-          ),
-        ),
-      );
+    toasts.showUndo('$n task${n == 1 ? '' : 's'} deleted', () {
+      for (final token in tokens) {
+        commands.undoDelete(token);
+      }
+    });
   }
 
   Future<void> _bulkMove() async {
@@ -526,21 +508,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         .list
         .title;
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final token = await commands.moveTaskToList(t.task.id, targetListId);
     if (!mounted || token == null) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Moved "$title" to $listTitle'),
-          duration: const Duration(seconds: 30),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () => commands.undoMoveToList(token),
-          ),
-        ),
-      );
+    toasts.showUndo(
+      'Moved "$title" to $listTitle',
+      () => commands.undoMoveToList(token),
+    );
   }
 
   /// Detach a subtask back to top level, directly after its former parent.
@@ -585,41 +559,25 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// already-completed subtask is never reopened. A reopen is silent (no toast).
   Future<void> _toggle(StoredTask stored) async {
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final token = await commands.toggleComplete(stored.task.id);
     if (!mounted || !token.wasCompleting) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Completed "${stored.task.title}"'),
-          duration: const Duration(seconds: 30),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () => commands.undoToggleComplete(token),
-          ),
-        ),
-      );
+    toasts.showUndo(
+      'Completed "${stored.task.title}"',
+      () => commands.undoToggleComplete(token),
+    );
   }
 
   /// Delete [t] with a 30-second Undo toast (mirrors the detail panel's delete).
   Future<void> _delete(StoredTask t) async {
     final commands = ref.read(commandsProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final toasts = ref.read(toastControllerProvider);
     final token = await commands.deleteTask(t.task.id);
     if (!mounted) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Deleted "${t.task.title}"'),
-          duration: const Duration(seconds: 30),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () => commands.undoDelete(token),
-          ),
-        ),
-      );
+    toasts.showUndo(
+      'Deleted "${t.task.title}"',
+      () => commands.undoDelete(token),
+    );
   }
 
   /// Open the BulkAdd dialog (prefilled with [initialText]) and create the
@@ -669,23 +627,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         listTitle: _listTitle(result.listId),
         window: dateWindowNow(),
       );
-      final messenger = ScaffoldMessenger.of(context);
+      final toasts = ref.read(toastControllerProvider);
       if (dest == null) {
-        messenger
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(countPrefix),
-              duration: const Duration(seconds: 4),
-            ),
-          );
+        toasts.showInfo(countPrefix);
       } else {
-        _landingToast(
-          messenger,
-          dest,
-          subject: countPrefix,
-          taskIds: createdIds,
-        );
+        _landingToast(toasts, dest, subject: countPrefix, taskIds: createdIds);
       }
     }
   }
@@ -1229,13 +1175,24 @@ class _QuickAddBar extends StatelessWidget {
           if (preview != null && preview.isNotEmpty) ...[
             const SizedBox(width: 8),
             // The chip renders a FRIENDLY relative date, never the raw ISO
-            // (#78b); its × keeps the phrase as literal title text.
-            InputChip(
-              label: Text(formatDue(preview)),
-              deleteIcon: const Icon(Icons.close, size: 18),
-              deleteButtonTooltipMessage: 'Keep as text',
-              onDeleted: onDismissPreview,
-            ),
+            // (#78b); its × keeps the phrase as literal title text. On a touch
+            // pointer the InputChip's built-in delete glyph is a sub-48dp target,
+            // so the × becomes a standalone 48dp IconButton beside a plain chip
+            // (F19 #198); the mouse keeps the compact inline InputChip.
+            if (coarsePointerPlatform(Theme.of(context).platform)) ...[
+              Chip(label: Text(formatDue(preview))),
+              IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Keep as text',
+                onPressed: onDismissPreview,
+              ),
+            ] else
+              InputChip(
+                label: Text(formatDue(preview)),
+                deleteIcon: const Icon(Icons.close, size: 18),
+                deleteButtonTooltipMessage: 'Keep as text',
+                onDeleted: onDismissPreview,
+              ),
           ],
           const SizedBox(width: 8),
           IconButton.filled(

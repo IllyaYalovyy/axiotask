@@ -130,6 +130,35 @@ void main() {
       expect(moves, [DateMove.tomorrow]);
     });
 
+    testWidgets('picking a date on the latched strip closes it (F19 #198)', (
+      tester,
+    ) async {
+      // The failure this prevents: after a swipe-left latches the strip open,
+      // tapping a quick-date button reschedules but leaves the strip sitting
+      // open over the row — the user then has to tap away to dismiss it. The
+      // action is done, so the strip must close itself.
+      final moves = <DateMove>[];
+      await pumpRow(tester, moves: moves);
+
+      await tester.drag(rowFinder(), const Offset(-180, 0));
+      await settle(tester);
+      expect(
+        find.byKey(const Key('quick-date-today')),
+        findsOneWidget,
+        reason: 'the strip latched open after the swipe',
+      );
+
+      await tester.tap(find.byKey(const Key('quick-date-today')));
+      await settle(tester);
+
+      expect(moves, [DateMove.today], reason: 'the reschedule still fires');
+      expect(
+        find.byKey(const Key('quick-date-today')),
+        findsNothing,
+        reason: 'the strip closes itself after the action',
+      );
+    });
+
     testWidgets('a partial left swipe peeks the strip and the content follows '
         'the finger', (tester) async {
       await pumpRow(tester);
