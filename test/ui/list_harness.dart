@@ -33,6 +33,7 @@ Future<FakeBackend> pumpList(
   List<String>? opened,
   List<String>? openedNotes,
   Size size = const Size(1200, 1400),
+  TargetPlatform? platform,
   UrlOpener? urlOpener,
   String Function()? newId,
 }) async {
@@ -60,6 +61,11 @@ Future<FakeBackend> pumpList(
           if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
         ],
         child: MaterialApp(
+          // The per-row action surface is chosen by POINTER capability, not
+          // window width (F16 #194) — a touch platform (default in tests) shows
+          // the "⋯" overflow at every width, a desktop platform reaches the same
+          // actions by right-click. Tests pin the desktop path by overriding it.
+          theme: platform == null ? null : ThemeData(platform: platform),
           home: Scaffold(
             body: TaskListView(
               viewId: viewId,

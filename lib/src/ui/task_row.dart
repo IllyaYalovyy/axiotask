@@ -24,8 +24,24 @@ import 'package:flutter/services.dart';
 
 import '../model/dates.dart';
 import 'date_format.dart';
-import 'list_detail_scaffold.dart';
 import 'url_detect.dart';
+
+/// Whether [platform] is a touch-primary platform — a coarse pointer with no
+/// hover and no secondary-tap (Android/iOS/Fuchsia). There the "⋯" overflow is
+/// the ONLY route to a row's context actions, so [TaskRow] renders it at EVERY
+/// width; a mouse platform (Linux/macOS/Windows) reaches the same actions by
+/// right-click, so the overflow stays hidden. The action-surface choice is by
+/// pointer capability, never window width — width only picks the layout
+/// (F16 #194). Read from `Theme.of(context).platform` so it is overridable in
+/// tests and follows the running platform in production.
+bool coarsePointerPlatform(TargetPlatform platform) => switch (platform) {
+  TargetPlatform.android ||
+  TargetPlatform.iOS ||
+  TargetPlatform.fuchsia => true,
+  TargetPlatform.linux ||
+  TargetPlatform.macOS ||
+  TargetPlatform.windows => false,
+};
 
 /// One tappable task row. Stateful to host the inline-rename editor and the
 /// desktop hover state that reveals the quick-date strip.
@@ -119,7 +135,8 @@ class TaskRow extends StatefulWidget {
   final void Function(Offset globalPosition)? onContextMenu;
 
   /// Open the touch action sheet (the coarse-pointer "⋯" overflow); `null`
-  /// hides the overflow button. Rendered persistently on compact/touch layouts.
+  /// hides the overflow button. Rendered persistently on a touch platform at
+  /// every width (F16 #194 — see [coarsePointerPlatform]).
   final VoidCallback? onShowActions;
 
   /// When true, the row enters inline-rename mode (the context menu's
@@ -365,12 +382,14 @@ class _TaskRowState extends State<TaskRow> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // On a compact/touch layout (no hover, no right-click) the "⋯" overflow is
-    // the coarse-pointer path to every context action — it must be a persistent
-    // affordance. On the expanded desktop layout the right-click menu carries
-    // them instead, so the row stays clean.
+    // The "⋯" overflow is the coarse-pointer path to every context action, and
+    // the choice to show it is by POINTER CAPABILITY, never window width
+    // (F16 #194): a touch pointer has no hover and no right-click, so on a touch
+    // platform the overflow must render at EVERY width — a tablet or landscape
+    // phone past the 600dp LAYOUT breakpoint still needs it. A mouse platform
+    // reaches the same actions by right-click, so the overflow stays hidden and
+    // the row stays clean. Width picks the list/detail layout, not this surface.
     final width = MediaQuery.sizeOf(context).width;
-    final compact = width < ListDetailScaffold.breakpoint;
     // Refresh the swipe edge-gutter limits (F15 #193): the leading gutter is the
     // wider of the drawer edge band and the left system-gesture inset; the
     // trailing gutter is the right system-gesture inset. Touch drags starting
@@ -378,7 +397,8 @@ class _TaskRowState extends State<TaskRow> {
     final gestureInsets = MediaQuery.systemGestureInsetsOf(context);
     _leftEdgeLimit = math.max(_drawerEdgeWidth, gestureInsets.left);
     _rightEdgeLimit = width - gestureInsets.right;
-    final showOverflow = compact && widget.onShowActions != null;
+    final showOverflow =
+        coarsePointerPlatform(theme.platform) && widget.onShowActions != null;
     // The quick-date strip is revealed by hover (a non-touch affordance); the
     // coarse-pointer swipe path is T8.1.
     final content = MouseRegion(
