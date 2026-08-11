@@ -697,6 +697,24 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       window: dateWindowNow(),
       newestId: _newestId,
     );
+    // Focus renders an "Overdue (N)" headed bucket above the dated one (F17):
+    // the overdue cards are lifted to the front (their internal order kept) and
+    // a heading marks the split. Every other view is a single ungrouped list.
+    final displayTasks = <StoredTask>[];
+    var overdueCount = 0;
+    if (widget.viewId == SmartView.focus.id) {
+      final part = partitionFocusOverdue(
+        rows: tasks,
+        allTasks: all,
+        window: dateWindowNow(),
+      );
+      overdueCount = part.overdueCount;
+      displayTasks
+        ..addAll(part.overdue)
+        ..addAll(part.rest);
+    } else {
+      displayTasks.addAll(tasks);
+    }
     // Per-row derived metadata over the FULL task set (subtasks included): the
     // inherited date (earliest unfinished subtask) and the subtask progress
     // counts. Subtasks never render as rows — they only feed a parent's badges.
@@ -755,7 +773,16 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             onDelete: _bulkDelete,
             onClear: _clearSelection,
           ),
-        Expanded(child: _listArea(tasks, dueInfo, subDone, subTotal, openUrl)),
+        Expanded(
+          child: _listArea(
+            displayTasks,
+            overdueCount,
+            dueInfo,
+            subDone,
+            subTotal,
+            openUrl,
+          ),
+        ),
       ],
     );
   }
@@ -766,8 +793,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// only fires at scroll offset 0, a pull begun after scrolling DOWN never
   /// refreshes (it just scrolls). Ports the reference's from-the-top pull rule
   /// via Flutter-native means.
+  ///
+  /// When [overdueCount] > 0 (Focus with overdue cards) an "Overdue (N)" heading
+  /// is rendered as the first list item, above the [overdueCount] leading rows;
+  /// the remaining rows follow after a gap. The heading occupies a list slot, so
+  /// both list types offset their row indices by 1 when it is present.
   Widget _listArea(
     List<StoredTask> tasks,
+    int overdueCount,
     Map<String, DueInfo> dueInfo,
     Map<String, int> subDone,
     Map<String, int> subTotal,
@@ -785,6 +818,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final listPadding = mobile
         ? const EdgeInsets.only(bottom: 88)
         : EdgeInsets.zero;
+
+    // The heading is present only when there ARE overdue cards to head; it then
+    // shifts every row down one slot in the list's index space.
+    final headerOffset = overdueCount > 0 ? 1 : 0;
 
     final Widget content;
     if (tasks.isEmpty) {
@@ -815,13 +852,23 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         buildDefaultDragHandles: false,
         physics: physics,
         padding: listPadding,
-        itemCount: tasks.length,
-        onReorderItem: (oldIndex, newIndex) =>
-            _onReorder(tasks, oldIndex, newIndex),
+        itemCount: tasks.length + headerOffset,
+        // Drag indices are in list-item space (the heading is item 0); map them
+        // back to row indices, clamping a drop above the heading to the top row.
+        onReorderItem: (oldIndex, newIndex) => _onReorder(
+          tasks,
+          oldIndex - headerOffset,
+          (newIndex - headerOffset).clamp(0, tasks.length - 1),
+        ),
         itemBuilder: (context, i) {
-          final stored = tasks[i];
-          return Row(
-            key: ValueKey('reorder-${stored.task.id}'),
+          if (headerOffset == 1 && i == 0) {
+            // A non-draggable heading (no ReorderableDragStartListener) — it
+            // stays put while the overdue rows drag around it.
+            return _overdueHeading(overdueCount);
+          }
+          final ti = i - headerOffset;
+          final stored = tasks[ti];
+          final row = Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               ReorderableDragStartListener(
@@ -845,15 +892,28 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               ),
             ],
           );
+          return _bucketSpaced(
+            row,
+            ti,
+            overdueCount,
+            key: ValueKey('reorder-${stored.task.id}'),
+          );
         },
       );
     } else {
       content = ListView.builder(
         physics: physics,
         padding: listPadding,
-        itemCount: tasks.length,
-        itemBuilder: (context, i) =>
-            _taskRow(tasks[i], dueInfo, subDone, subTotal, openUrl),
+        itemCount: tasks.length + headerOffset,
+        itemBuilder: (context, i) {
+          if (headerOffset == 1 && i == 0) return _overdueHeading(overdueCount);
+          final ti = i - headerOffset;
+          return _bucketSpaced(
+            _taskRow(tasks[ti], dueInfo, subDone, subTotal, openUrl),
+            ti,
+            overdueCount,
+          );
+        },
       );
     }
 
@@ -912,6 +972,47 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     );
     if (ok != true) return;
     await ref.read(commandsProvider).clearCompleted(listId);
+  }
+
+  /// The Focus view's "Overdue (N)" section heading — a small, bold, error-toned
+  /// label that names the count of overdue cards below it (F17). Rendered only
+  /// when there is at least one overdue card.
+  Widget _overdueHeading(int count) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      key: const Key('overdue-heading'),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Text(
+        'Overdue ($count)',
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: scheme.error,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+
+  /// Wrap [row] with the inter-bucket gap when it is the FIRST row after the
+  /// overdue bucket (Focus's dated bucket starts at index [overdueCount]), so
+  /// the two buckets read as distinct groups; otherwise return [row] as-is. When
+  /// a [key] is given it is carried on the returned widget (the reorderable list
+  /// requires a stable per-item key).
+  Widget _bucketSpaced(
+    Widget row,
+    int taskIndex,
+    int overdueCount, {
+    Key? key,
+  }) {
+    final firstRest = overdueCount > 0 && taskIndex == overdueCount;
+    if (firstRest) {
+      return Padding(
+        key: key,
+        padding: const EdgeInsets.only(top: 10),
+        child: row,
+      );
+    }
+    return key == null ? row : KeyedSubtree(key: key, child: row);
   }
 
   /// One [TaskRow] for [stored], wired to selection, the action surface, inline

@@ -285,6 +285,51 @@ List<StoredTask> visibleTasksForView({
   return result;
 }
 
+/// The Focus view's two visual buckets: [overdue] rows (effective due strictly
+/// before today) render under an "Overdue (N)" heading, ABOVE the [rest]
+/// (today + the next 6 days). Ported from App.svelte's `focusOverdueFirst` /
+/// TodayView's `partitionByCard`.
+class FocusPartition {
+  const FocusPartition({required this.overdue, required this.rest});
+
+  /// Overdue-by-effective-date rows, in the source order — the "Overdue (N)"
+  /// bucket.
+  final List<StoredTask> overdue;
+
+  /// The remaining focus rows (today + the next 6 days), in the source order.
+  final List<StoredTask> rest;
+
+  /// The heading count — the number of overdue cards. Rows are top-level only
+  /// (invariant #1), so this is a card count.
+  int get overdueCount => overdue.length;
+}
+
+/// Split the Focus view's already-sorted [rows] into an overdue bucket and the
+/// rest, PRESERVING each bucket's internal order. Because the split runs on top
+/// of whatever order [rows] arrived in, the "Overdue" bucket sits above the
+/// dated one independent of the sort mode — the partition only lifts overdue
+/// cards, it never re-sorts them. A row is overdue when its effective due (its
+/// own date, else the earliest unfinished-subtask date) is strictly before
+/// today — exactly the Missed predicate ([inMissed]). Only the Focus view calls
+/// this; every other view renders a single ungrouped list.
+FocusPartition partitionFocusOverdue({
+  required List<StoredTask> rows,
+  required List<StoredTask> allTasks,
+  required DateWindow window,
+}) {
+  final effective = _effectiveDue(allTasks);
+  final overdue = <StoredTask>[];
+  final rest = <StoredTask>[];
+  for (final t in rows) {
+    if (inMissed(effective(t.task.id), window)) {
+      overdue.add(t);
+    } else {
+      rest.add(t);
+    }
+  }
+  return FocusPartition(overdue: overdue, rest: rest);
+}
+
 /// Deterministic comparator for [sort]. Ties break by position then id so the
 /// order never depends on the input order (Dart's sort is not stable).
 int _compare(
