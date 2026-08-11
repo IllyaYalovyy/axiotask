@@ -114,6 +114,22 @@ void main() {
     expect(find.text('Added 2 tasks'), findsOneWidget);
   });
 
+  testWidgets(
+    'landing (#190): bulk-add from a dated view names Unscheduled (undated rows)',
+    (tester) async {
+      // Missed is a dated smart view; bulk-added rows are always undated, so
+      // they land in Unscheduled — invisible to Missed. The toast must say so.
+      await pumpList(tester, initial: const [], lists: lists, viewId: 'missed');
+      await openBulkAdd(tester);
+      await tester.enterText(find.byKey(const Key('bulk-add-text')), 'x\ny');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('bulk-add-submit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('Added 2 tasks to Unscheduled'), findsOneWidget);
+    },
+  );
+
   testWidgets('Cancel closes the dialog without creating anything', (
     tester,
   ) async {
