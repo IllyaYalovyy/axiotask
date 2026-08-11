@@ -639,6 +639,111 @@ void main() {
     );
   });
 
+  group('finish_cross_list_move atomic window (kill-window)', () {
+    // Build a fresh-id clone of [orig] under [targetList], as move_task_to_list
+    // recreates it: a brand-new remote row (no etag) queued to push as a create.
+    StoredTask cloneOf(String newId, StoredTask orig, String targetList) =>
+        StoredTask(
+          task: Task(
+            id: newId,
+            position: orig.task.position,
+            title: orig.task.title,
+            status: orig.task.status,
+            updated: _t0,
+          ),
+          listId: targetList,
+          syncState: SyncState.dirty,
+          localUpdated: _t0,
+          pendingOp: 'create',
+        );
+
+    // The original tombstoned in place: kept as a row so its own delete pushes.
+    StoredTask tombstoneOf(StoredTask orig) => StoredTask(
+      task: orig.task,
+      listId: orig.listId,
+      syncState: SyncState.deleted,
+      localUpdated: _t0,
+      pendingOp: 'delete',
+    );
+
+    test('lands the clone AND removes the original together', () async {
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertList(listOf('L2'));
+      final orig = taskOf('T1', 'L1', null, '1'); // synced (etag e1)
+      await s.upsertTask(orig);
+
+      await s.finishCrossListMove(
+        clones: [cloneOf('clone-1', orig, 'L2')],
+        tombstones: [tombstoneOf(orig)],
+        hardDeletes: const [],
+      );
+
+      expect(
+        await s.listTasks('L1'),
+        isEmpty,
+        reason: 'the original is tombstoned out of its old list',
+      );
+      final l2 = await s.listTasks('L2');
+      expect(
+        l2.single.task.id,
+        'clone-1',
+        reason: 'the clone landed in target',
+      );
+      expect(l2.single.pendingOp, 'create');
+      // The original survives as a tombstone whose own delete still pushes.
+      final orphan = (await s.findTaskAny('T1'))!;
+      expect(orphan.syncState, SyncState.deleted);
+      expect(orphan.pendingOp, 'delete');
+    });
+
+    test(
+      'a crash during removal rolls the clone back — never both originals and clones live',
+      () async {
+        // The #182 kill-window guarantee: move_task_to_list clones the subtree,
+        // then removes each original, as separate writes — so a crash after the
+        // clones land but before the removals leaves BOTH the originals and
+        // their clones live, silently duplicating the moved subtree (P8).
+        // Forcing the removal write to fault (a subclass models the process
+        // dying right after the clone) proves the window is one transaction: the
+        // clone is rolled back too, so the store holds the original alone and the
+        // next run re-moves it from a clean start.
+        final s = _CrashDuringMoveRemovalStore(await AppDatabase.openMemory());
+        addTearDown(s.db.close);
+        await s.upsertList(listOf('L1'));
+        await s.upsertList(listOf('L2'));
+        final orig = taskOf('T1', 'L1', null, '1');
+        await s.upsertTask(orig);
+
+        await expectLater(
+          s.finishCrossListMove(
+            clones: [cloneOf('clone-1', orig, 'L2')],
+            tombstones: const [],
+            hardDeletes: const ['T1'],
+          ),
+          throwsA(anything),
+          reason: 'the removal write faults, standing in for a crash',
+        );
+
+        expect(
+          (await s.listTasks('L1')).single.task.id,
+          'T1',
+          reason: 'the original survives — its removal was rolled back',
+        );
+        expect(
+          await s.listTasks('L2'),
+          isEmpty,
+          reason: 'the clone was rolled back too — never both live',
+        );
+        expect(
+          await s.findTaskAny('clone-1'),
+          isNull,
+          reason: 'no half-applied clone left behind',
+        );
+      },
+    );
+  });
+
   group('finish_move atomic pair (kill-window)', () {
     // Stage a task carrying a pending move, so finish_move has both an intent to
     // clear and a landed response to adopt. Returns the fresh store.
@@ -783,5 +888,18 @@ class _CrashAfterClearMoveStore extends Store {
     String serverUpdated,
   ) async {
     throw StateError('simulated crash after clear_move');
+  }
+}
+
+/// A store whose [deleteTaskHard] always faults — stands in for the process
+/// dying (or a write erroring) during a cross-list move's removal phase, right
+/// after the clones were upserted, exercising the finish_cross_list_move
+/// transaction's rollback.
+class _CrashDuringMoveRemovalStore extends Store {
+  _CrashDuringMoveRemovalStore(super.db);
+
+  @override
+  Future<void> deleteTaskHard(String id) async {
+    throw StateError('simulated crash during cross-list move removal');
   }
 }

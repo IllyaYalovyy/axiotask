@@ -872,13 +872,15 @@ class Commands {
     final siblings = await _store.listTasks(old.listId);
 
     // Recreate the root, then each descendant level under its recreated
-    // parent's new id. A stack visits parents before children.
+    // parent's new id. A stack visits parents before children, so `clones` is
+    // already parent-before-child — the order the FK needs at insert time.
     final recreated = <(StoredTask, String)>[]; // (original node, new id)
+    final clones = <StoredTask>[];
     final frontier = <(StoredTask, String?)>[(old, null)];
     while (frontier.isNotEmpty) {
       final (node, newParent) = frontier.removeLast();
       final newId = _newId();
-      await _store.upsertTask(
+      clones.add(
         StoredTask(
           task: Task(
             id: newId,
@@ -908,27 +910,43 @@ class Commands {
     }
     final newRootId = recreated.firstWhere((e) => e.$1.task.id == id).$2;
 
-    // Remove the originals: descendants first, then the root — the root's
-    // delete is what cascades the descendants away on the server.
+    // Classify each original for removal: descendants first, then the root — the
+    // root's delete is what cascades the descendants away on the server. The
+    // clone-then-remove window is one transaction ([Store.finishCrossListMove]),
+    // so a crash can never leave both an original and its clone live (#182/P8).
+    final tombstones = <StoredTask>[];
+    final hardDeletes = <String>[];
     for (final (node, _) in recreated.skip(1)) {
-      await _removeMovedOriginal(node, now);
+      await _classifyMovedOriginal(node, now, tombstones, hardDeletes);
     }
-    await _removeMovedOriginal(old, now);
+    await _classifyMovedOriginal(old, now, tombstones, hardDeletes);
+
+    await _store.finishCrossListMove(
+      clones: clones,
+      tombstones: tombstones,
+      hardDeletes: hardDeletes,
+    );
     return newRootId;
   }
 
-  /// Remove one original row after its subtree was recreated in another list.
-  /// A row the server MAY hold ([Store.serverMayHold]: it has an etag, or an
-  /// in-flight-create marker says its insert may have committed) is TOMBSTONED,
-  /// not hard-deleted: the server only cascades the moved subtree away once the
-  /// ROOT's delete lands, and if a pull happens first a hard-deleted row is
-  /// RESURRECTED from the server, duplicating the moved subtree (P8). A
-  /// tombstone pushes its own delete and the pull cannot re-add it; a redundant
-  /// server cascade then 404s = success. A row the server has never seen is
-  /// hard-deleted. Port of `AppState::remove_moved_original`.
-  Future<void> _removeMovedOriginal(StoredTask row, String now) async {
+  /// Decide how one original row is removed after its subtree was recreated in
+  /// another list, appending to [tombstones] or [hardDeletes] for the caller's
+  /// single move transaction. A row the server MAY hold ([Store.serverMayHold]:
+  /// it has an etag, or an in-flight-create marker says its insert may have
+  /// committed) is TOMBSTONED, not hard-deleted: the server only cascades the
+  /// moved subtree away once the ROOT's delete lands, and if a pull happens first
+  /// a hard-deleted row is RESURRECTED from the server, duplicating the moved
+  /// subtree (P8). A tombstone pushes its own delete and the pull cannot re-add
+  /// it; a redundant server cascade then 404s = success. A row the server has
+  /// never seen is hard-deleted. Port of `AppState::remove_moved_original`.
+  Future<void> _classifyMovedOriginal(
+    StoredTask row,
+    String now,
+    List<StoredTask> tombstones,
+    List<String> hardDeletes,
+  ) async {
     if (await _store.serverMayHold(row.task.id)) {
-      await _store.upsertTask(
+      tombstones.add(
         StoredTask(
           task: row.task,
           listId: row.listId,
@@ -938,7 +956,7 @@ class Commands {
         ),
       );
     } else {
-      await _store.deleteTaskHard(row.task.id);
+      hardDeletes.add(row.task.id);
     }
   }
 
