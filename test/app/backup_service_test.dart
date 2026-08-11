@@ -214,6 +214,45 @@ void main() {
       expect(restored.task.parent, isNull, reason: 're-homed to top level');
     });
 
+    test('flattens a >1-level chain on restore (one level deep)', () async {
+      // A(top) → B → C is three levels; a valid store never holds it (F13/#191
+      // refuses it at every create/move door), but a backup written by an
+      // older/buggy build might. Restore must land C under the top-level
+      // ancestor A so no list view holds an unrenderable nest. B — a valid
+      // one-level subtask — is left untouched.
+      final backup = Backup.build('2026-06-08T00:00:00Z', [
+        (
+          _list('L1', 'Inbox'),
+          [
+            _task('A', 'L1', 'root'),
+            _task('B', 'L1', 'child', parent: 'A'),
+            _task('C', 'L1', 'grandchild', parent: 'B'),
+          ],
+        ),
+      ]);
+      final out = File('${tmp.path}/deep.json')
+        ..writeAsStringSync(backup.toJsonPretty());
+
+      final dst = await freshStore();
+      final result = await service(dst).importFrom(from: out);
+      expect(result.tasks, 3);
+
+      final tasks = await dst.listTasks('L1');
+      String? parentOf(String id) =>
+          tasks.firstWhere((t) => t.task.id == id).task.parent;
+      expect(parentOf('A'), isNull);
+      expect(
+        parentOf('B'),
+        'A',
+        reason: 'a valid one-level subtask is unchanged',
+      );
+      expect(
+        parentOf('C'),
+        'A',
+        reason: 'the third level is flattened onto the top-level ancestor',
+      );
+    });
+
     test('refuses a backup written by a newer app version', () async {
       final future = {
         'version': backupVersion + 1,

@@ -178,6 +178,49 @@ void main() {
       await commands.createTask(listId: 'L1', title: 'x');
       expect(await store.listTasks('L1'), hasLength(1));
     });
+
+    // F13/#191: creating a subtask under a task that is ITSELF a subtask would
+    // make a third level — refused HERE so no list view ever holds an
+    // unrenderable nest and nothing is written.
+    test('refuses creating under a subtask (one level deep)', () async {
+      final store = await freshStore();
+      final commands = Commands(store, newId: () => 'GC');
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C', 'L1', 'subtask', parent: 'P');
+
+      await expectLater(
+        commands.createTask(listId: 'L1', parentId: 'C', title: 'grandchild'),
+        throwsA(
+          isA<CommandError>().having(
+            (e) => e.message,
+            'message',
+            contains('subtask'),
+          ),
+        ),
+      );
+
+      // Refused before any write — the list still holds only P and C.
+      final tasks = await store.listTasks('L1');
+      expect(tasks.map((t) => t.task.id), unorderedEquals(['P', 'C']));
+    });
+
+    // The one allowed level still works: a subtask under a top-level task.
+    test('allows creating a subtask under a top-level task', () async {
+      final store = await freshStore();
+      final commands = Commands(store, newId: () => 'C1');
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+
+      final created = await commands.createTask(
+        listId: 'L1',
+        parentId: 'P',
+        title: 'child',
+      );
+
+      expect(created.task.parent, 'P');
+      expect((await store.findTaskAny('C1'))!.task.parent, 'P');
+    });
   });
 
   group('renameTask', () {

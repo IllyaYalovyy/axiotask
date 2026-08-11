@@ -268,12 +268,26 @@ class Commands {
   /// canonicalized to Google's form and an unparseable value is dropped. A new
   /// top-level task has no subtasks and no parent, so setting the date here is
   /// equivalent to the #164-cascade-aware `set_due` (which lands in T5.1).
+  ///
+  /// The one-level invariant (#1, RFC-009 §F) is enforced HERE too: creating
+  /// under a task that is ITSELF a subtask would make a third level, so it is
+  /// refused before any write (F13/#191) — the same gate [moveTask] applies, so
+  /// no create-vs-move door can slip a nest no list view can render into the
+  /// store.
   Future<StoredTask> createTask({
     required String listId,
     String? parentId,
     required String title,
     String? due,
   }) async {
+    if (parentId != null) {
+      final siblings = await _store.listTasks(listId);
+      if (siblings.any((s) => s.task.id == parentId && s.task.parent != null)) {
+        throw const CommandError(
+          'cannot nest under a subtask: subtasks are one level deep',
+        );
+      }
+    }
     final now = nowUtcString();
     final stored = StoredTask(
       task: Task(
