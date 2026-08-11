@@ -632,6 +632,43 @@ class Store {
     });
   }
 
+  /// Apply a cross-list move's clone+removal window as ONE atomic unit
+  /// (kill-safety, #182): upsert every recreated [clones] row (parent before
+  /// child), then remove each original — TOMBSTONE the ones the server may hold
+  /// ([tombstones], upserted as `deleted`) and hard-delete the ones it never saw
+  /// ([hardDeletes]) — all in a SINGLE transaction.
+  ///
+  /// Kill-window: split across many separate writes (as `move_task_to_list` /
+  /// `remove_moved_original` are in the reference), a crash after the clones land
+  /// but before the originals are removed leaves BOTH the originals and their
+  /// clones live — the moved subtree is silently duplicated (P8). Wrapped here, a
+  /// kill rolls the whole window back: neither clone nor removal persists and the
+  /// next run re-attempts the move from a clean starting point.
+  ///
+  /// Writes only — Google has no native cross-list move, so this is purely local
+  /// bookkeeping; the clone's `create` and the original's `delete` push later,
+  /// never an API call inside the transaction (§2). The caller owns the subtree
+  /// walk and the [serverMayHold] classification, so the ordered lists arrive
+  /// ready to apply (descendants before their root in [tombstones]/[hardDeletes],
+  /// matching the reference's removal order).
+  Future<void> finishCrossListMove({
+    required List<StoredTask> clones,
+    required List<StoredTask> tombstones,
+    required List<String> hardDeletes,
+  }) async {
+    await _db.transaction(() async {
+      for (final clone in clones) {
+        await upsertTask(clone);
+      }
+      for (final tombstone in tombstones) {
+        await upsertTask(tombstone);
+      }
+      for (final id in hardDeletes) {
+        await deleteTaskHard(id);
+      }
+    });
+  }
+
   // ── list confirm / remap ──────────────────────────────────────────────────
 
   /// Mark a list in-sync after a successful push.
