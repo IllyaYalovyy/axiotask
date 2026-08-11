@@ -282,6 +282,50 @@ void main() {
       });
     });
 
+    test('an idle-arm win must not swallow a later notifyOne (#186)', () {
+      // The lost-permit race: the first cycle goes idle (period wins), which
+      // leaves a stale notified() waiter registered inside SyncNotify. A
+      // mutation then arrives. If notifyOne() completes that dead waiter
+      // without re-arming the permit, the mutation is swallowed and the next
+      // cycle waits out ANOTHER full idle period instead of firing promptly.
+      fakeAsync((async) {
+        final notify = SyncNotify();
+
+        // Cycle 1: no mutation → the idle period wins.
+        Duration? firstFiredAt;
+        waitForSyncTrigger(
+          notify,
+          debounce,
+          period,
+        ).then((_) => firstFiredAt = async.elapsed);
+        async.flushTimers();
+        expect(firstFiredAt, period, reason: 'the idle arm wins cycle 1');
+
+        // A mutation lands AFTER cycle 1 already resolved on the idle arm.
+        notify.notifyOne();
+
+        // Cycle 2 must observe that mutation immediately — a debounce trigger,
+        // not a full idle period. Without the fix the queued permit is lost
+        // and this fires at +period instead.
+        final startedAt = async.elapsed;
+        Duration? secondFiredAt;
+        waitForSyncTrigger(
+          notify,
+          debounce,
+          period,
+        ).then((_) => secondFiredAt = async.elapsed);
+        async.flushTimers();
+
+        expect(
+          secondFiredAt! - startedAt,
+          debounce,
+          reason:
+              'the queued mutation fires after the debounce, not the '
+              'period — the permit survived the idle-arm win',
+        );
+      });
+    });
+
     test(
       'rapid mutations coalesce into one trigger, then fall to the period',
       () {
