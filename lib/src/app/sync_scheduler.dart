@@ -88,15 +88,23 @@ String syncUserMessage(SyncError e) => switch (e) {
 /// The human, internals-free text of an API error — the Dart port of the
 /// reference's `ApiError` `Display`. Only the variants that carry no internal
 /// detail are surfaced this way (see [syncUserMessage]).
+///
+/// [AuthExpired] (a refresh-denial string) and [Network] (transport text that
+/// can embed the full request URL + query params, #135) are both intercepted
+/// upstream before they could reach here — [AuthExpired] by the reauth branch
+/// in [SyncScheduler._recordOutcome], [Network] by [syncUserMessage]'s own arm
+/// — so those arms are dead. They are kept OFF this surface deliberately: were
+/// a future caller to route one through, it must still get a calm, log-pointing
+/// sentence, never the raw detail (#187).
 String apiUserText(ApiError e) => switch (e) {
   Unauthorized() => 'unauthorized',
-  AuthExpired(:final message) => 'session expired — sign in again ($message)',
   NotFound() => 'not found',
   PreconditionFailed() => 'precondition failed (etag mismatch)',
   RateLimited() => 'rate limited',
   ServerError(:final status) => 'server error: $status',
-  Network(:final message) => 'network: $message',
   OtherApiError(:final message) => 'other: $message',
+  AuthExpired() ||
+  Network() => 'Sync hit an error — the details are in the log.',
 };
 
 /// How to log one permanent sync failure, and what to remember for the next run.
@@ -237,8 +245,8 @@ class SyncScheduler {
 
   final SyncNotify _notify = SyncNotify();
   final SyncStatus _status = SyncStatus();
-  final StreamController<SyncStatus> _statusController =
-      StreamController<SyncStatus>.broadcast();
+  final StreamController<SyncStatusView> _statusController =
+      StreamController<SyncStatusView>.broadcast();
 
   /// Serializes sync runs — only one runs at a time (prevents double-push
   /// races). The tail of the currently-running (or last) run.
@@ -254,15 +262,17 @@ class SyncScheduler {
   /// the id the UI operates on. `null` when nothing is being edited.
   String? _heldCreateId;
 
-  /// A snapshot of the current sync status and running stats.
-  SyncStatus get status => _status.clone();
-
-  /// The UI-safe projection of [status] — never carries the raw error (#131).
-  SyncStatusView get statusView => SyncStatusView.of(_status);
+  /// A snapshot of the current sync status — the UI-safe projection. It carries
+  /// the sanitized [SyncStatusView.lastError] and NEVER the raw error detail:
+  /// [SyncStatus.lastRawError] (which may hold raw SQL / a request URL) stays
+  /// private to the scheduler as its log-dedup key (#131/#187).
+  SyncStatusView get status => SyncStatusView.of(_status);
 
   /// Emitted once after every sync run so the UI can react to background syncs,
-  /// not just manual "Sync now" clicks. Each event is an independent snapshot.
-  Stream<SyncStatus> get statuses => _statusController.stream;
+  /// not just manual "Sync now" clicks. Each event is an independent, sanitized
+  /// snapshot — the same projection [status] returns, so no raw error text can
+  /// ride the stream to a subscriber (#131/#187).
+  Stream<SyncStatusView> get statuses => _statusController.stream;
 
   /// Wake the background loop (a mutation happened). A no-op unless the loop is
   /// running and — via its own auth gate — actually authenticated.
@@ -347,7 +357,11 @@ class SyncScheduler {
     }
 
     _recordOutcome(outcome, error);
-    final snapshot = _status.clone();
+    // Emit the SANITIZED projection, not the raw record: the internal
+    // lastRawError (dedup key, may carry SQL) must never reach a subscriber
+    // (#131/#187). SyncStatusView.of is an independent snapshot, so a later
+    // run's mutation can't retroactively alter what a listener received.
+    final snapshot = SyncStatusView.of(_status);
     if (!_statusController.isClosed) _statusController.add(snapshot);
 
     if (error != null) throw error;
@@ -372,8 +386,6 @@ class SyncScheduler {
       _status.lastPushed = outcome.pushed;
       _status.lastConflicts = outcome.conflicts;
       _status.lastDeleted = outcome.deleted;
-      _status.changedListIds = List.of(outcome.changedListIds);
-      _status.listsChanged = outcome.listsChanged;
       _status.totalSyncs += 1;
       // A row the server rejected stays dirty and would retry silently forever —
       // tell the user instead of hiding it behind a green "synced" state.
@@ -385,8 +397,6 @@ class SyncScheduler {
     }
 
     final e = error!;
-    _status.changedListIds = [];
-    _status.listsChanged = false;
     if (e.isAuthExpired) {
       // The refresh token is dead — stop the background retry churn and tell the
       // user what to actually do. Its own state, distinct from needs-attention.

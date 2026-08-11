@@ -171,7 +171,11 @@ class GoogleSignInAuthGateway implements GoogleAuthGateway {
         GoogleSignInExceptionCode.interrupted ||
         GoogleSignInExceptionCode.uiUnavailable =>
           const GoogleAuthorization.needsInteraction(),
-        _ => throw GoogleAuthUnavailable('${e.code.name}: ${e.description}'),
+        // The plugin's `description` is raw Play-Services text that can carry
+        // account/config specifics, and this message is logged verbatim
+        // upstream (auth_controller.restore) — so classify by the STABLE error
+        // code only and never let the raw description ride into the log (#187).
+        _ => throw GoogleAuthUnavailable(e.code.name),
       };
     }
   }

@@ -95,6 +95,41 @@ void main() {
     });
   });
 
+  group('apiUserText — the internals-free API-error text', () {
+    test('the already-human variants keep their (internals-free) text', () {
+      expect(apiUserText(const Unauthorized()), 'unauthorized');
+      expect(apiUserText(const NotFound()), 'not found');
+      expect(
+        apiUserText(const PreconditionFailed()),
+        'precondition failed (etag mismatch)',
+      );
+      expect(apiUserText(const RateLimited()), 'rate limited');
+      expect(apiUserText(const ServerError(503)), 'server error: 503');
+    });
+
+    test('AuthExpired and Network never surface their raw detail (#187)', () {
+      // These two arms carry raw detail (a refresh-denial string; transport
+      // text that can embed the request URL + query params, #135). They are
+      // dead — intercepted upstream — but apiUserText is a public function, so
+      // routing one through must still yield a calm, log-pointing sentence with
+      // NONE of the raw text.
+      const secretGrant = 'invalid_grant: token for user@example.com revoked';
+      const secretUrl =
+          'error sending request for url '
+          '(https://tasks.googleapis.com/tasks/v1/lists?key=SECRET)';
+
+      final auth = apiUserText(const AuthExpired(secretGrant));
+      expect(auth, isNot(contains('invalid_grant')));
+      expect(auth, isNot(contains('user@example.com')));
+      expect(auth.toLowerCase(), contains('log'), reason: 'points at the log');
+
+      final net = apiUserText(const Network(secretUrl));
+      expect(net, isNot(contains('https://')));
+      expect(net, isNot(contains('SECRET')));
+      expect(net.toLowerCase(), contains('log'));
+    });
+  });
+
   group('classifyPermanentFailure — log-dedup keyed on the RAW detail (#131)', () {
     test('logs at ERROR only when new or changed', () {
       final boom = SyncApiError(const OtherApiError('boom'));
@@ -179,7 +214,6 @@ void main() {
       final exposed = [
         view.lastError,
         view.lastSynced,
-        ...view.changedListIds,
       ].whereType<String>().join(' ');
       expect(exposed, isNot(contains('secret_col')));
     });

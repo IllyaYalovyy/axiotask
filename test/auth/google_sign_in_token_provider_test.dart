@@ -378,6 +378,36 @@ void main() {
       );
     });
 
+    test('a transient GMS failure carries ONLY the classified code, never the '
+        'raw Play-Services description (#187)', () async {
+      // The plugin's `description` can carry account/config specifics and is
+      // logged verbatim upstream (auth_controller.restore); it must NOT ride
+      // the exception. Only the stable error code survives.
+      const rawDescription =
+          'GMS blew up for user@example.com — token nonsense';
+      platform.initException = GoogleSignInException(
+        code: GoogleSignInExceptionCode.providerConfigurationError,
+        description: rawDescription,
+      );
+
+      await expectLater(
+        GoogleSignInAuthGateway().authorize(interactive: false),
+        throwsA(
+          isA<GoogleAuthUnavailable>()
+              .having(
+                (e) => e.message,
+                'message is the classified code',
+                GoogleSignInExceptionCode.providerConfigurationError.name,
+              )
+              .having(
+                (e) => e.message,
+                'no raw description',
+                isNot(contains('user@example.com')),
+              ),
+        ),
+      );
+    });
+
     test('a cancelled gesture is interaction-required, not a crash', () async {
       platform.authenticateException = _exception(
         GoogleSignInExceptionCode.canceled,
