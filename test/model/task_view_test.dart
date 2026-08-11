@@ -285,4 +285,75 @@ void main() {
       expect(SortMode.byId('bogus'), SortMode.manual);
     });
   });
+
+  // The #190 landing-feedback decision: given a fresh create's due and the view
+  // it was made in, where (if anywhere) must a toast say it went. Protects the
+  // invariant "quick-add/bulk-add never leaves an invisible, silent create".
+  group('landingDestinationFor', () {
+    LandingDestination? dest(
+      String viewId, {
+      String? due,
+      String listId = 'L1',
+      String listTitle = 'My Tasks',
+    }) => landingDestinationFor(
+      viewId: viewId,
+      due: due,
+      listId: listId,
+      listTitle: listTitle,
+      window: window(),
+    );
+
+    test('an in-view create returns null (no toast)', () {
+      // Focus create born due today shows in Focus.
+      expect(dest('focus', due: day(0)), isNull);
+      // Upcoming create at its +7 default shows in Upcoming.
+      expect(dest('upcoming', due: day(7)), isNull);
+      // A concrete list always shows its own create, dated or not.
+      expect(dest('L1', due: null), isNull);
+      expect(dest('L1', due: day(30)), isNull);
+      // 'all' shows every create.
+      expect(dest('all', due: null), isNull);
+    });
+
+    test('a Missed create (born due today) lands in Focus', () {
+      final d = dest('missed', due: day(0));
+      expect(d?.viewId, 'focus');
+      expect(d?.label, 'Focus');
+    });
+
+    test('an out-of-window scheduled create lands in its list', () {
+      // "next month" is past Focus (+7) and Upcoming (+14) — only the list and
+      // All Tasks hold it, so the toast names the list.
+      final d = dest('focus', due: day(30));
+      expect(d?.viewId, 'L1');
+      expect(d?.label, 'My Tasks');
+    });
+
+    test('an undated bulk-add from a dated view lands in Unscheduled', () {
+      final d = dest('focus', due: null);
+      expect(d?.viewId, 'unscheduled');
+      expect(d?.label, 'Unscheduled');
+      // …and from Missed too (its default create is dated, but a bulk row is not).
+      expect(dest('missed', due: null)?.viewId, 'unscheduled');
+    });
+
+    test(
+      'an overdue create prefers Missed over Focus (both would show it)',
+      () {
+        // An explicit past date typed from Upcoming: it belongs to Missed (and
+        // also Focus) — name Missed, its natural home.
+        final d = dest('upcoming', due: day(-3));
+        expect(d?.viewId, 'missed');
+        expect(d?.label, 'Missed');
+      },
+    );
+
+    test('the inclusive +14 boundary stays visible in Upcoming (no toast)', () {
+      // today+14 is the inclusive upper bound of Upcoming — a create there must
+      // NOT toast as if it went elsewhere.
+      expect(dest('upcoming', due: day(14)), isNull);
+      // A day past the window does leave Upcoming → toast the list.
+      expect(dest('upcoming', due: day(15))?.viewId, 'L1');
+    });
+  });
 }

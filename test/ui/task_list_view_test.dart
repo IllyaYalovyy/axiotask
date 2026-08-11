@@ -418,6 +418,83 @@ void main() {
     },
   );
 
+  // ── QuickAdd landing feedback (#190) ──────────────────────────────────────
+  // A create whose date fails the current view's predicate must never vanish
+  // silently: the bar toasts WHERE it went, with a jump. An in-view create,
+  // which the newest-pin already surfaces, stays toast-free.
+
+  testWidgets(
+    'QuickAdd landing (#190): a Missed create toasts that it landed in Focus',
+    (tester) async {
+      final openedInView = <String>[];
+      await pumpView(tester, viewId: 'missed', openedInView: openedInView);
+      await withClock(_clock, () async {
+        await tester.enterText(find.byType(TextField), 'buy milk');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+      });
+      // Born due today, so it is NOT overdue — the Missed view never shows it…
+      expect(find.widgetWithText(TaskRow, 'buy milk'), findsNothing);
+      // …and the landing toast names the task and where it went, with a jump.
+      expect(find.text('Added "buy milk" to Focus'), findsOneWidget);
+      expect(find.widgetWithText(SnackBarAction, 'View'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'QuickAdd landing (#190): an out-of-window date toasts the list it went to',
+    (tester) async {
+      await pumpView(tester, viewId: 'focus', openedInView: <String>[]);
+      await withClock(_clock, () async {
+        // "next month" is past Focus's window (today+7) — it lands nowhere in a
+        // date smart view, only in its list and All Tasks.
+        await tester.enterText(find.byType(TextField), 'pay rent next month');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+      });
+      expect(find.widgetWithText(TaskRow, 'pay rent next month'), findsNothing);
+      expect(
+        find.text('Added "pay rent next month" to My Tasks'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('QuickAdd landing (#190): an in-view create stays toast-free', (
+    tester,
+  ) async {
+    await pumpView(tester, viewId: 'focus', openedInView: <String>[]);
+    await withClock(_clock, () async {
+      // No explicit date in Focus → born due today → visible right here.
+      await tester.enterText(find.byType(TextField), 'buy milk');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await settle(tester);
+    });
+    expect(find.widgetWithText(TaskRow, 'buy milk'), findsOneWidget);
+    expect(find.textContaining('Added to'), findsNothing);
+  });
+
+  testWidgets(
+    'QuickAdd landing (#190): tapping View jumps to the destination view',
+    (tester) async {
+      final openedInView = <String>[];
+      await pumpView(
+        tester,
+        viewId: 'missed',
+        newId: () => 'NEW',
+        openedInView: openedInView,
+      );
+      await withClock(_clock, () async {
+        await tester.enterText(find.byType(TextField), 'buy milk');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+        await tester.tap(find.widgetWithText(SnackBarAction, 'View'));
+        await tester.pump();
+      });
+      expect(openedInView, ['focus/NEW']);
+    },
+  );
+
   testWidgets('NewTaskPrepend: a new task lands at the top of the list', (
     tester,
   ) async {

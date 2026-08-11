@@ -196,18 +196,79 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
 
   Future<void> _submit() async {
-    final id = await _createFromDraft();
-    if (id == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final created = await _createFromDraft();
+    if (created == null || !mounted) return;
+    // Landing feedback (#190): when the new task's date fails the current view's
+    // filter it renders nowhere here — toast WHERE it actually went (with a
+    // jump) rather than leaving a silent, invisible create.
+    final dest = landingDestinationFor(
+      viewId: widget.viewId,
+      due: _bareDue(created.task.due),
+      listId: created.listId,
+      listTitle: _listTitle(created.listId),
+      window: dateWindowNow(),
+    );
+    if (dest != null) {
+      _landingToast(
+        messenger,
+        dest,
+        subject: 'Added "${created.task.title}"',
+        taskIds: [created.task.id],
+      );
+    }
     // Creating a task never opens the panel on its own; if it was already open,
     // follow it to the new task instead of leaving a stale one selected.
-    if (widget.selectedTaskId != null) widget.onOpenTask(id);
+    if (widget.selectedTaskId != null) widget.onOpenTask(created.task.id);
+  }
+
+  /// The created task's own due reduced to a bare `YYYY-MM-DD` so it compares
+  /// against the smart-view window bounds (which are bare) — a fresh task has no
+  /// subtasks, so its effective due is its own explicit date. Truncating the
+  /// stored RFC-3339 form keeps a boundary-day create (e.g. today+14) classified
+  /// exactly, not one day off.
+  static String? _bareDue(String? due) =>
+      (due == null || due.length < 10) ? due : due.substring(0, 10);
+
+  /// The title of the list with [listId], for the landing toast — falls back to
+  /// the first known list (the lists set is never empty once a create landed).
+  String _listTitle(String listId) => _lists
+      .firstWhere((l) => l.list.id == listId, orElse: () => _lists.first)
+      .list
+      .title;
+
+  /// The #190 landing toast: "`<subject>` to `<where>`" with a **View** jump to
+  /// the view that actually shows the just-created task(s). Fired only when the
+  /// current view hides the create — an in-view create stays toast-free. The
+  /// jump opens the first created task in [dest] so the user lands on it.
+  void _landingToast(
+    ScaffoldMessengerState messenger,
+    LandingDestination dest, {
+    required String subject,
+    required List<String> taskIds,
+  }) {
+    final jump = widget.onOpenInView;
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('$subject to ${dest.label}'),
+          duration: const Duration(seconds: 6),
+          action: (jump == null || taskIds.isEmpty)
+              ? null
+              : SnackBarAction(
+                  label: 'View',
+                  onPressed: () => jump(dest.viewId, taskIds.first),
+                ),
+        ),
+      );
   }
 
   /// Commit the current quick-add draft as a task (never an empty one), pin it,
-  /// and clear the field. Returns the new id, or null when there is nothing to
-  /// create (empty draft, or no list to create in). Shared by the Enter/+ submit
-  /// and the app-backgrounded flush (#183).
-  Future<String?> _createFromDraft() async {
+  /// and clear the field. Returns the created task, or null when there is
+  /// nothing to create (empty draft, or no list to create in). Shared by the
+  /// Enter/+ submit and the app-backgrounded flush (#183).
+  Future<StoredTask?> _createFromDraft() async {
     final title = _quickAdd.text.trim();
     if (title.isEmpty) return null; // never create an empty task
 
@@ -228,13 +289,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final stored = await ref
         .read(commandsProvider)
         .createTask(listId: target, title: title, due: due);
-    if (!mounted) return stored.task.id;
+    if (!mounted) return stored;
     setState(() {
       _newestId = stored.task.id;
       _quickAdd.clear();
       _dateIgnoredFor = '';
     });
-    return stored.task.id;
+    return stored;
   }
 
   /// The quick-add's entry in the pending-edits registry — commit the draft on
@@ -562,7 +623,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     );
     if (result == null || !mounted) return;
     final commands = ref.read(commandsProvider);
-    var created = 0;
+    final createdIds = <String>[];
     if (result.mode == BulkAddMode.titleNotes) {
       final all = result.text.split('\n');
       final title = all.first.trim();
@@ -573,23 +634,47 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           title: title,
         );
         if (notes.isNotEmpty) await commands.setNotes(task.task.id, notes);
-        created = 1;
+        createdIds.add(task.task.id);
       }
     } else {
       for (final line in splitBulkLines(result.text)) {
-        await commands.createTask(listId: result.listId, title: line);
-        created++;
+        final task = await commands.createTask(
+          listId: result.listId,
+          title: line,
+        );
+        createdIds.add(task.task.id);
       }
     }
-    if (mounted && created > 0) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('Added $created task${created == 1 ? '' : 's'}'),
-            duration: const Duration(seconds: 4),
-          ),
+    if (mounted && createdIds.isNotEmpty) {
+      final n = createdIds.length;
+      final countPrefix = 'Added $n task${n == 1 ? '' : 's'}';
+      // Bulk-added rows are always undated, so from a dated smart view they land
+      // in Unscheduled, invisible to that view — name where they went (#190).
+      final dest = landingDestinationFor(
+        viewId: widget.viewId,
+        due: null,
+        listId: result.listId,
+        listTitle: _listTitle(result.listId),
+        window: dateWindowNow(),
+      );
+      final messenger = ScaffoldMessenger.of(context);
+      if (dest == null) {
+        messenger
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(countPrefix),
+              duration: const Duration(seconds: 4),
+            ),
+          );
+      } else {
+        _landingToast(
+          messenger,
+          dest,
+          subject: countPrefix,
+          taskIds: createdIds,
         );
+      }
     }
   }
 

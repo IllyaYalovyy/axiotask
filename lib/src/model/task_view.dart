@@ -111,6 +111,77 @@ bool inMissed(String? effectiveDue, DateWindow w) =>
 /// Unscheduled: no effective due at all.
 bool isUnscheduled(String? effectiveDue) => effectiveDue == null;
 
+/// A place a freshly-created task can be found (and jumped to): the [viewId] to
+/// navigate to and the human [label] the landing toast names. See
+/// [landingDestinationFor].
+class LandingDestination {
+  const LandingDestination(this.viewId, this.label);
+
+  /// The view id to navigate to when the toast's jump action is tapped.
+  final String viewId;
+
+  /// The human name of that view/list — what the "Added to X" toast reads.
+  final String label;
+}
+
+/// Whether a just-created task with due [due] in list [listId] would render in
+/// the CURRENT [viewId]. A fresh task has no subtasks, so its effective due is
+/// its own [due]. Smart date views test their predicate; `all` shows everything;
+/// a concrete list view shows its own tasks. (List exclusion is not modelled
+/// here — a quick-add/bulk-add targets a real list the user is working in.)
+bool _visibleAfterCreate(
+  String viewId, {
+  required String? due,
+  required String listId,
+  required DateWindow window,
+}) => switch (viewId) {
+  'focus' => inFocus(due, window),
+  'upcoming' => inUpcoming(due, window),
+  'missed' => inMissed(due, window),
+  'unscheduled' => isUnscheduled(due),
+  'all' => true,
+  _ => listId == viewId,
+};
+
+/// Where a freshly-created task actually lands when the CURRENT [viewId] filters
+/// it out — the destination to name in the "Added to X" toast and to jump to
+/// (#190). Returns `null` when the task IS visible in [viewId] (the newest-pin
+/// already shows it, so no toast fires and an in-view create stays silent).
+///
+/// [due] is the created task's own due date; [listId]/[listTitle] name the list
+/// it was created in — the destination for a scheduled task that falls outside
+/// every date window (e.g. a quick-add "next month" from Focus lives only in its
+/// list and All Tasks). Overdue prefers Missed over Focus (both would show it);
+/// a born-today task from Missed lands in Focus; a bulk-added undated row from a
+/// dated view lands in Unscheduled. Generalizes the reference App.svelte "landed
+/// in Focus" toast to every case a view can hide a create.
+LandingDestination? landingDestinationFor({
+  required String viewId,
+  required String? due,
+  required String listId,
+  required String listTitle,
+  required DateWindow window,
+}) {
+  if (_visibleAfterCreate(viewId, due: due, listId: listId, window: window)) {
+    return null;
+  }
+  if (inMissed(due, window)) {
+    return const LandingDestination('missed', 'Missed');
+  }
+  if (inFocus(due, window)) {
+    return const LandingDestination('focus', 'Focus');
+  }
+  if (inUpcoming(due, window)) {
+    return const LandingDestination('upcoming', 'Upcoming');
+  }
+  if (isUnscheduled(due)) {
+    return const LandingDestination('unscheduled', 'Unscheduled');
+  }
+  // Scheduled, but beyond every date window: findable only in its list (and All
+  // Tasks). Name the list.
+  return LandingDestination(listId, listTitle);
+}
+
 /// The ids of the four date-window smart views (All is handled separately — it
 /// imposes no date filter and ignores list exclusion).
 const _dateSmartViews = {'focus', 'upcoming', 'missed', 'unscheduled'};
