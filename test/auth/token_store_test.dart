@@ -92,6 +92,39 @@ void main() {
       expect(file.statSync().mode & 0x1FF, 0x180);
     });
 
+    test('restricts to 0600 BEFORE any token content is written', () {
+      if (Platform.isWindows) return; // POSIX permission model only.
+      final file = tokensFile();
+      int? bytesWhenRestricted;
+      final store = FileTokenStore(
+        file,
+        chmod: (path) {
+          // Observe the file exactly when permissions are applied: it must be
+          // empty, so the refresh token never touches a world-readable file.
+          bytesWhenRestricted = File(path).lengthSync();
+          return Process.runSync('chmod', ['600', path]).exitCode;
+        },
+      );
+      store.save(sampleTokens());
+      expect(bytesWhenRestricted, 0);
+      // ...and the landed file (now holding the tokens) is still 0600.
+      expect(file.statSync().mode & 0x1FF, 0x180);
+      expect(store.load(), sampleTokens());
+    });
+
+    test('save throws when the permission restriction fails', () {
+      final file = tokensFile();
+      // A chmod that reports a non-zero exit code: hardening failed, so the
+      // refresh token must NOT be left sitting in an unrestricted file.
+      final store = FileTokenStore(file, chmod: (_) => 1);
+      expect(
+        () => store.save(sampleTokens()),
+        throwsA(isA<TokenStoreException>()),
+      );
+      // Nothing readable was left behind.
+      expect(file.existsSync(), isFalse);
+    });
+
     test('a malformed tokens.json surfaces a TokenStoreException', () {
       final file = tokensFile()..writeAsStringSync('{not json');
       expect(
