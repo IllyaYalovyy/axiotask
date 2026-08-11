@@ -21,6 +21,7 @@ import 'dart:async';
 
 import '../app/auth_state.dart';
 import '../app/logging.dart';
+import 'auth_error.dart';
 import 'token_provider.dart';
 
 /// The three auth states (invariant #6).
@@ -113,23 +114,56 @@ class AuthController implements AuthState {
   }
 
   /// The interactive sign-in gesture. On success the session goes live and any
-  /// re-auth banner clears; on failure the state is left EXACTLY as it was (a
-  /// cancelled/denied gesture must never flip the app to a false signed-in
-  /// state — invariant #6). The provider's failure propagates to the caller.
+  /// re-auth banner clears. An EXPECTED auth-flow failure (cancelled/denied,
+  /// interaction-required, transient outage) propagates to the caller with the
+  /// state left EXACTLY as it was — a cancelled gesture must never flip the app
+  /// to a false signed-in state (invariant #6). An UNEXPECTED failure — the
+  /// session could not be persisted ([TokenStoreException] from a tokens.json
+  /// write/chmod IO error), or any other stray error — never escapes raw: it is
+  /// logged and mapped to a clean signed-out state WITH an emission, so the
+  /// gesture can never crash the app with an unhandled async error (F9 / #189).
   Future<void> signIn() async {
-    final token = await _provider.authorize(interactive: true);
-    _accessToken = token;
-    _isAuthenticated = true;
-    _needsReauth = false;
-    _emit();
+    try {
+      final token = await _provider.authorize(interactive: true);
+      _accessToken = token;
+      _isAuthenticated = true;
+      _needsReauth = false;
+      _emit();
+    } on TokenStoreException catch (e) {
+      // The gesture reached the endpoint but the session could not be PERSISTED
+      // (a tokens.json write / chmod IO failure). We cannot claim a live
+      // session that won't survive a restart, so degrade to a clean signed-out
+      // state WITH an emission rather than letting a raw store error escape the
+      // gesture unobserved (F9 / #189).
+      Log.warn('sign-in could not persist the session ($e); signed out');
+      _resetToSignedOut();
+    } on AuthException {
+      // A genuine auth-flow failure (denied consent, state mismatch, no refresh
+      // token): surface to the caller with state untouched — a cancelled
+      // gesture must never flip the app to a false signed-in state (#6).
+      rethrow;
+    } on TokenProviderException {
+      // Interaction-required / a transient outage: surface to the caller with
+      // state untouched; the UI's guarded action logs it.
+      rethrow;
+    } catch (e) {
+      // Truly unexpected — never let the gesture crash with an unhandled async
+      // error; degrade to signed-out WITH an emission.
+      Log.warn('sign-in failed unexpectedly ($e); signed out');
+      _resetToSignedOut();
+    }
   }
 
   /// Silent startup restore. Returns true iff a live session was recovered
-  /// with NO user gesture. Both failure shapes return false and stay quietly
+  /// with NO user gesture. Every failure shape returns false and stays quietly
   /// signed out with no banner: [TokenProviderInteractionRequired] usually
-  /// means the user simply never signed in, and [TokenProviderUnavailable]
+  /// means the user simply never signed in, [TokenProviderUnavailable]
   /// (no network / GMS updating) is transient — the user can still sign in
-  /// manually, and nothing loops at startup.
+  /// manually, and nothing loops at startup — and any UNEXPECTED error (a
+  /// malformed tokens.json raising [TokenStoreException], or a stray store IO
+  /// error) is caught, logged, and mapped to a signed-out emission. This runs
+  /// DETACHED after the first frame, so it must NEVER reject: an unobserved
+  /// throw would kill the startup task silently (F9 / #189).
   Future<bool> restore() async {
     try {
       final token = await _provider.authorize(interactive: false);
@@ -145,6 +179,15 @@ class AuthController implements AuthState {
       Log.warn(
         'auth unavailable at startup (${e.message}); starting signed out',
       );
+      return false;
+    } catch (e) {
+      // Unexpected — a malformed tokens.json (TokenStoreException) or any other
+      // error reading the store. This runs DETACHED after the first frame, so
+      // it must never die unobserved: log, fall to a clean signed-out state
+      // WITH an emission, and report "not restored" so auto-sync is skipped
+      // (F9 / #189).
+      Log.warn('startup restore failed unexpectedly ($e); starting signed out');
+      _resetToSignedOut();
       return false;
     }
   }
@@ -172,6 +215,16 @@ class AuthController implements AuthState {
     if (restored && autoSyncOnStart) {
       await onAutoSync();
     }
+  }
+
+  /// Fall to a clean signed-out state (no session, no banner) and EMIT it, so a
+  /// failure on the detached startup / sign-in path is observable to the UI
+  /// stream instead of dying unobserved (F9 / #189).
+  void _resetToSignedOut() {
+    _accessToken = null;
+    _isAuthenticated = false;
+    _needsReauth = false;
+    _emit();
   }
 
   void _emit() {

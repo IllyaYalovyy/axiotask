@@ -25,6 +25,8 @@
 // ONLY if Google refuses an access-token authorization without it — which it
 // does not for the `tasks` scope.
 
+import 'package:flutter/services.dart'
+    show MissingPluginException, PlatformException;
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'token_provider.dart';
@@ -177,6 +179,19 @@ class GoogleSignInAuthGateway implements GoogleAuthGateway {
         // code only and never let the raw description ride into the log (#187).
         _ => throw GoogleAuthUnavailable(e.code.name),
       };
+    } on MissingPluginException {
+      // The google_sign_in plugin is not registered on this host (a non-Android
+      // target, or a build that stripped it): an environmental unavailability,
+      // not a dead grant. Degrade to the transient-outage path instead of
+      // letting the raw error escape into the app (#189).
+      throw const GoogleAuthUnavailable('google_sign_in plugin unavailable');
+    } on PlatformException catch (e) {
+      // A raw method-channel failure from Play Services (a GMS crash, transport
+      // error, or misconfiguration): NOT a GoogleSignInException, so it would
+      // otherwise escape raw. Classify by the STABLE `code` only — the raw
+      // `message` can carry account/config specifics and is logged verbatim
+      // upstream (auth_controller.restore), so it must never ride out (#187).
+      throw GoogleAuthUnavailable('platform error: ${e.code}');
     }
   }
 

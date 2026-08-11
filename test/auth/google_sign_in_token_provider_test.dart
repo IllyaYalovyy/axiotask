@@ -18,6 +18,7 @@
 import 'package:axiotask/src/auth/auth_controller.dart';
 import 'package:axiotask/src/auth/google_sign_in_token_provider.dart';
 import 'package:axiotask/src/auth/token_provider.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_sign_in_platform_interface/google_sign_in_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -67,6 +68,10 @@ class _MockPlatform extends GoogleSignInPlatform
     with MockPlatformInterfaceMixin {
   // Scripted outcomes.
   GoogleSignInException? initException;
+  // A raw (non-GoogleSignInException) failure thrown from init — models a
+  // method-channel PlatformException or a MissingPluginException escaping the
+  // plugin.
+  Exception? initRawError;
   AuthenticationResults? lightweightResult; // null => no cached session
   AuthenticationResults? authenticateResult;
   GoogleSignInException? authenticateException;
@@ -85,6 +90,7 @@ class _MockPlatform extends GoogleSignInPlatform
   Future<void> init(InitParameters params) async {
     initCalls++;
     lastInit = params;
+    if (initRawError != null) throw initRawError!;
     if (initException != null) throw initException!;
   }
 
@@ -405,6 +411,46 @@ void main() {
                 isNot(contains('user@example.com')),
               ),
         ),
+      );
+    });
+
+    test('a raw PlatformException translates to GoogleAuthUnavailable, '
+        'carrying only the stable code (#187)', () async {
+      // A method-channel failure is NOT a GoogleSignInException; before F9 it
+      // escaped the gateway raw. Its `message` can carry account specifics and
+      // is logged verbatim upstream, so only the stable `code` may survive.
+      platform.initRawError = PlatformException(
+        code: 'GMS_TRANSPORT',
+        message: 'blew up for user@example.com',
+      );
+
+      await expectLater(
+        GoogleSignInAuthGateway().authorize(interactive: false),
+        throwsA(
+          isA<GoogleAuthUnavailable>()
+              .having(
+                (e) => e.message,
+                'stable code',
+                contains('GMS_TRANSPORT'),
+              )
+              .having(
+                (e) => e.message,
+                'no raw message',
+                isNot(contains('user@example.com')),
+              ),
+        ),
+      );
+    });
+
+    test('a MissingPluginException translates to GoogleAuthUnavailable, '
+        'not a raw escape', () async {
+      platform.initRawError = MissingPluginException(
+        'No implementation found for method init',
+      );
+
+      await expectLater(
+        GoogleSignInAuthGateway().authorize(interactive: false),
+        throwsA(isA<GoogleAuthUnavailable>()),
       );
     });
 
