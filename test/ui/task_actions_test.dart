@@ -370,27 +370,71 @@ void main() {
     });
   });
 
-  group('touch action sheet (coarse pointer)', () {
-    testWidgets('the "⋯" overflow opens a sheet carrying every action', (
+  // The action surface is chosen by POINTER capability, not window width
+  // (F16 #194): a touch pointer (no hover, no right-click) always gets the "⋯"
+  // overflow — even a tablet / landscape phone past the 600dp LAYOUT breakpoint
+  // — while a mouse pointer reaches the same actions by right-click and the
+  // overflow stays hidden. Width picks the list/detail LAYOUT, never the surface.
+  group('action surface is pointer-gated, not width-gated (F16 #194)', () {
+    testWidgets(
+      'a touch pointer shows the "⋯" overflow at 700dp (past the 600dp '
+      'breakpoint) carrying every action',
+      (tester) async {
+        await pumpList(
+          tester,
+          initial: [row('A', 'apples', webViewLink: 'https://g/1')],
+          lists: oneList,
+          // A tablet / landscape phone: expanded LAYOUT, still a coarse pointer.
+          size: const Size(700, 900),
+          platform: TargetPlatform.android,
+        );
+        expect(find.byKey(const Key('row-overflow')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('row-overflow')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+        // The sheet carries the FULL action set (nothing is unreachable on a
+        // touch pointer that lacks hover and right-click).
+        expect(find.byKey(const Key('taskmenu-edit')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-notes')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-due')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-move')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-duplicate')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-details')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-open-google')), findsOneWidget);
+        expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
+      },
+    );
+
+    testWidgets('a compact touch phone still shows the "⋯" overflow', (
       tester,
     ) async {
       await pumpList(
         tester,
-        initial: [row('A', 'apples', webViewLink: 'https://g/1')],
+        initial: [row('A', 'apples')],
         lists: oneList,
-        size: const Size(420, 900), // compact → the "⋯" renders
+        size: const Size(420, 900),
+        platform: TargetPlatform.android,
       );
       expect(find.byKey(const Key('row-overflow')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('row-overflow')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 350));
-      // The same action ids surface in the sheet.
-      expect(find.byKey(const Key('taskmenu-duplicate')), findsOneWidget);
-      expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
-      expect(find.byKey(const Key('taskmenu-open-google')), findsOneWidget);
     });
 
-    testWidgets('no "⋯" overflow on the expanded desktop layout', (
+    testWidgets('the desktop mouse path shows NO "⋯" at the SAME 700dp width — '
+        'right-click carries the actions instead', (tester) async {
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples')],
+        lists: oneList,
+        // Same width as the touch case above; only the pointer differs.
+        size: const Size(700, 900),
+        platform: TargetPlatform.linux,
+      );
+      expect(find.byKey(const Key('row-overflow')), findsNothing);
+      // The desktop path is unchanged: a right-click still opens the menu.
+      await rightClick(tester, 'apples');
+      expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
+    });
+
+    testWidgets('the desktop mouse path shows NO "⋯" on a wide window either', (
       tester,
     ) async {
       await pumpList(
@@ -398,6 +442,7 @@ void main() {
         initial: [row('A', 'apples')],
         lists: oneList,
         size: const Size(1200, 900),
+        platform: TargetPlatform.linux,
       );
       expect(find.byKey(const Key('row-overflow')), findsNothing);
     });

@@ -71,6 +71,7 @@ Widget _shellAt(
   Size size, {
   TextScaler textScaler = TextScaler.noScaling,
   ThemeData? theme,
+  TargetPlatform platform = TargetPlatform.android,
 }) {
   return MediaQuery(
     data: MediaQueryData(size: size, textScaler: textScaler),
@@ -81,7 +82,11 @@ Widget _shellAt(
         listsProvider.overrideWith((ref) => Stream.value(const [_myTasks])),
       ],
       child: Theme(
-        data: theme ?? buildLightTheme(),
+        // The per-row "⋯" overflow is pointer-gated, not width-gated (F16 #194):
+        // the desktop form factor is a mouse platform (no overflow — right-click
+        // instead), the phone form factor a touch platform (overflow shown). The
+        // goldens pin each factor on its real platform so the surface is correct.
+        data: (theme ?? buildLightTheme()).copyWith(platform: platform),
         child: ListDetailScaffold(
           sidebar: Sidebar(
             selectedViewId: SmartView.all.id,
@@ -132,7 +137,7 @@ void main() {
         GoldenTestScenario(
           name: 'expanded',
           constraints: BoxConstraints.tight(desktop),
-          child: _shellAt(desktop),
+          child: _shellAt(desktop, platform: TargetPlatform.linux),
         ),
       ],
     ),
@@ -166,7 +171,11 @@ void main() {
         GoldenTestScenario(
           name: 'desktop dark',
           constraints: BoxConstraints.tight(desktop),
-          child: _shellAt(desktop, theme: buildDarkTheme()),
+          child: _shellAt(
+            desktop,
+            theme: buildDarkTheme(),
+            platform: TargetPlatform.linux,
+          ),
         ),
         GoldenTestScenario(
           name: 'phone dark',
