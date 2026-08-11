@@ -116,7 +116,7 @@ void main() {
   group('notifier stream', () {
     test('emits exactly one snapshot on a successful run', () async {
       final h = await makeHarness();
-      final seen = <SyncStatus>[];
+      final seen = <SyncStatusView>[];
       final sub = h.scheduler.statuses.listen(seen.add);
       addTearDown(sub.cancel);
 
@@ -131,7 +131,7 @@ void main() {
 
     test('still emits a snapshot on a failed run', () async {
       final h = await makeHarness();
-      final seen = <SyncStatus>[];
+      final seen = <SyncStatusView>[];
       final sub = h.scheduler.statuses.listen(seen.add);
       addTearDown(sub.cancel);
 
@@ -142,6 +142,53 @@ void main() {
 
       expect(seen, hasLength(1), reason: 'failure still notifies the observer');
       expect(seen.single.lastError, isNotNull, reason: 'failure surfaces it');
+    });
+
+    test('the public surface emits the sanitized projection — no raw error '
+        'text ever rides a snapshot (#131/#187)', () async {
+      final h = await makeHarness(push: true);
+      h.client.seedList('L1', 'Inbox');
+
+      // Type it as Object so this asserts the RUNTIME type of what's emitted:
+      // the sanitized SyncStatusView, never the internal SyncStatus (which
+      // carries lastRawError — raw SQL/transport text one Text() from the UI).
+      final seen = <Object>[];
+      final sub = h.scheduler.statuses.listen(seen.add);
+      addTearDown(sub.cancel);
+
+      // A permanent failure whose RAW typed detail (the scheduler's dedup key)
+      // is `SyncError.api(ApiError.other(...))` — wrapper markers the sanitized
+      // user message never carries.
+      h.client.failNext(
+        Method.listTasklists,
+        () => const OtherApiError('schema mismatch: tasks.blorp missing'),
+      );
+      await expectLater(h.scheduler.runSync(), throwsA(isA<Object>()));
+      await pumpEventQueue();
+
+      // What the stream emitted, and what the getter returns, are BOTH the
+      // sanitized view — the projection is applied at the public boundary.
+      final emitted = seen.single;
+      expect(
+        emitted,
+        isA<SyncStatusView>(),
+        reason: 'the public stream must project, not leak the raw record',
+      );
+      expect(h.scheduler.status, isA<SyncStatusView>());
+
+      // Every string the projection can expose carries no raw toString marker.
+      final view = emitted as SyncStatusView;
+      final exposed = [
+        view.lastError,
+        view.lastSynced,
+      ].whereType<String>().join('\n');
+      expect(view.lastError, isNotNull, reason: 'the failure still surfaces');
+      expect(
+        exposed,
+        isNot(contains('SyncError.')),
+        reason: 'no raw SyncError.toString() marker on the public snapshot',
+      );
+      expect(exposed, isNot(contains('ApiError.')));
     });
   });
 

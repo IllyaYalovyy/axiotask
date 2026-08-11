@@ -23,13 +23,6 @@ class SyncStatus {
   int lastConflicts = 0;
   int lastDeleted = 0;
 
-  /// Task rows changed in these list ids during the most recent successful
-  /// sync. Lets the UI refresh affected lists instead of reloading everything.
-  List<String> changedListIds = [];
-
-  /// List metadata or membership changed; the UI must reload list metadata.
-  bool listsChanged = false;
-
   /// Number of successful syncs since the app started.
   int totalSyncs = 0;
 
@@ -67,8 +60,6 @@ class SyncStatus {
     ..lastPushed = lastPushed
     ..lastConflicts = lastConflicts
     ..lastDeleted = lastDeleted
-    ..changedListIds = List.of(changedListIds)
-    ..listsChanged = listsChanged
     ..totalSyncs = totalSyncs
     ..lastError = lastError
     ..lastRawError = lastRawError
@@ -87,8 +78,6 @@ class SyncStatusView {
     required this.lastPushed,
     required this.lastConflicts,
     required this.lastDeleted,
-    required this.changedListIds,
-    required this.listsChanged,
     required this.totalSyncs,
     required this.lastError,
     required this.needsAttention,
@@ -102,8 +91,6 @@ class SyncStatusView {
     lastPushed: s.lastPushed,
     lastConflicts: s.lastConflicts,
     lastDeleted: s.lastDeleted,
-    changedListIds: List.of(s.changedListIds),
-    listsChanged: s.listsChanged,
     totalSyncs: s.totalSyncs,
     lastError: s.lastError,
     needsAttention: s.needsAttention,
@@ -115,8 +102,6 @@ class SyncStatusView {
   final int lastPushed;
   final int lastConflicts;
   final int lastDeleted;
-  final List<String> changedListIds;
-  final bool listsChanged;
   final int totalSyncs;
 
   /// The most recent sync error — the *sanitized* text, cleared on next success.
@@ -132,8 +117,6 @@ class SyncStatusView {
       lastPushed = 0,
       lastConflicts = 0,
       lastDeleted = 0,
-      changedListIds = const [],
-      listsChanged = false,
       totalSyncs = 0,
       lastError = null,
       needsAttention = false,
