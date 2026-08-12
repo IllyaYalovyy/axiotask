@@ -917,60 +917,53 @@ class Commands {
     await _store.recordMove(id, t.listId, parentId, previousId);
   }
 
-  /// Move [id] one step [direction] (`'up'` | `'down'`) among its siblings.
-  /// Swaps the two rows' `position` strings so the new order renders at once,
-  /// then records a `pending_moves` row naming the sibling the task now follows
-  /// (Google reorders through the move API). A step at the list boundary is a
-  /// no-op — no write, nothing queued. Field-level sync state is preserved (the
-  /// order pushes via the move axis, not a patch). Port of
-  /// `commands.rs::reorder_task_inner`.
+  /// Move [id] to [targetIndex] among its siblings (same parent + list, in
+  /// position order), in a SINGLE operation: reassign the affected rows'
+  /// `position` strings so the new order renders at once, then record ONE
+  /// `pending_moves` row naming the sibling the task now follows. This is the
+  /// collapsed form of what used to be N awaited single-step [reorderTask]
+  /// swaps (F20 #199) — a drag drop, or a subtask move that crosses hidden
+  /// completed rows, is now one command and one queued move, not N round-trips.
   ///
-  /// The panel measures drag distance against the FULL sibling list, so with
-  /// "Hide completed" on it emits as many single-step swaps as needed to cross
-  /// hidden completed rows (#90) — each call here is one such step.
-  Future<void> reorderTask(String id, String direction) async {
+  /// [targetIndex] is clamped to the sibling range; a move to the row's current
+  /// index (or a clamp landing there) is a no-op — no write, nothing queued.
+  /// The moved row lands at [targetIndex] and every row it passes shifts one
+  /// slot to fill the gap: the SET of `position` strings is preserved and simply
+  /// reassigned by slot, so the net effect is identical to N adjacent swaps.
+  /// Field-level sync state is preserved (order pushes via the move axis, not a
+  /// patch). Evolution of `commands.rs::reorder_task_inner`.
+  Future<void> reorderTaskToIndex(String id, int targetIndex) async {
     final t = await _findTask(id);
     final all = await _store.listTasks(t.listId);
     final siblings = all.where((s) => s.task.parent == t.task.parent).toList();
-    final idx = siblings.indexWhere((s) => s.task.id == id);
-    if (idx < 0) return;
+    final from = siblings.indexWhere((s) => s.task.id == id);
+    if (from < 0) return;
+    final to = targetIndex.clamp(0, siblings.length - 1);
+    if (to == from) return; // no-op: nothing moved, nothing queued
 
-    final int swapIdx;
-    if (direction == 'up' && idx > 0) {
-      swapIdx = idx - 1;
-    } else if (direction == 'down' && idx < siblings.length - 1) {
-      swapIdx = idx + 1;
-    } else {
-      return; // no-op at the boundary
+    // The position strings by slot, and the rows reordered into their new slots.
+    final positions = [for (final s in siblings) s.task.position];
+    final reordered = [...siblings];
+    reordered.insert(to, reordered.removeAt(from));
+
+    final now = nowUtcString();
+    for (var i = 0; i < reordered.length; i++) {
+      final row = reordered[i];
+      final desired = positions[i];
+      if (row.task.position == desired) continue; // slot unaffected by the move
+      await _store.upsertTask(
+        StoredTask(
+          task: row.task.copyWith(position: desired),
+          listId: row.listId,
+          syncState: row.syncState,
+          localUpdated: now,
+          pendingOp: row.pendingOp,
+        ),
+      );
     }
 
-    final other = siblings[swapIdx];
-    final now = nowUtcString();
-    // Swap the two positions, preserving each row's field-level sync state.
-    await _store.upsertTask(
-      StoredTask(
-        task: t.task.copyWith(position: other.task.position),
-        listId: t.listId,
-        syncState: t.syncState,
-        localUpdated: now,
-        pendingOp: t.pendingOp,
-      ),
-    );
-    await _store.upsertTask(
-      StoredTask(
-        task: other.task.copyWith(position: t.task.position),
-        listId: other.listId,
-        syncState: other.syncState,
-        localUpdated: now,
-        pendingOp: other.pendingOp,
-      ),
-    );
-
-    // The sibling the task now follows: moving up, that is two slots back (or
-    // nothing if it reached the top); moving down, it is the row it hopped over.
-    final String? newPrevious = direction == 'up'
-        ? (idx >= 2 ? siblings[idx - 2].task.id : null)
-        : siblings[idx + 1].task.id;
+    // The sibling the moved task now follows, in the NEW order.
+    final newPrevious = to == 0 ? null : reordered[to - 1].task.id;
     await _store.recordMove(id, t.listId, t.task.parent, newPrevious);
   }
 
