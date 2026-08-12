@@ -1,14 +1,14 @@
 # Synchronization specification
 
 - Status: **Draft**
-- Scope: foundational state, authority, persistence, and component boundaries
-- Updated: 2026-08-10
+- Scope: foundational state, authority, persistence, reconciliation, and component boundaries
+- Updated: 2026-08-11
 
 ## Purpose and scope
 
-This draft defines what local and remote state mean before later sections choose
-conflict outcomes, mutation ordering, retry/backoff behavior, or implementation
-details. It is normative for the state and authority model only.
+This draft defines what local and remote state mean and the automatic
+reconciliation policy. Retry timing, detailed run ordering, and implementation
+remain later work.
 
 Normative inputs are [VISION.md](../VISION.md), the accepted
 [target architecture](ARCHITECTURE.md), accepted ADRs, and the verified
@@ -20,11 +20,8 @@ this draft.
 
 This draft deliberately does **not** decide:
 
-- conflict resolution or field/row merge behavior;
 - push-versus-pull ordering or mutation dependencies;
 - retry eligibility, backoff, cadence, freshness duration, or timeouts;
-- recovery of an uncertain create or other uncertain remote mutation;
-- cross-list move reconciliation and uncertain-response recovery;
 - import/export merge policy.
 
 Those decisions require later specification sections and, where identified by
@@ -65,10 +62,9 @@ misrepresenting that request. These authorities cover different facts:
 - sync evidence answers “may this display be called current?”
 
 Remote authority does not permit a pull to erase durable pending intent. Local
-intent does not make Axiotask an independent system of record and does not by
-itself decide a conflict against a newer remote change. The later conflict
-policy must reconcile both facts without silently discarding acknowledged work,
-except where an explicitly accepted product rule applies.
+intent does not make Axiotask an independent system of record. The automatic
+policy below reconciles both facts and records every accepted whole-record,
+structural, or deletion loss explicitly.
 
 ### Authority by operating condition
 
@@ -185,8 +181,8 @@ The following invariants apply:
 3. Starting a local edit does not overwrite its base.
 4. A pending desired-state record identifies the base against which its intent
    was first formed. Later local commands replace its desired projection while
-   retaining that base until remote confirmation or later conflict policy
-   explicitly rebases it.
+   retaining that base until remote confirmation or reconciliation explicitly
+   rebases or supersedes it.
 5. A validated mutation response may update the base only through the operation
    acknowledgement transaction.
 6. A malformed, unsupported, partial, or ambiguously committed response cannot
@@ -220,7 +216,8 @@ restart:
   and structural projection needed to reach that state;
 - the original relevant remote base reference/ETag and remote ID, when known;
 - local dependency references needed to express list/parent/sibling ordering;
-- lifecycle state, generation, and local causal sequence;
+- dirty content/structure/lifecycle facets, content or list-title
+  `localModifiedAt`, lifecycle state, generation, and local causal sequence;
 - attempt, uncertainty, and failure metadata;
 - creation and last-transition times from the injected clock.
 
@@ -248,9 +245,10 @@ record. Attempt history must not be confused with current desired state.
 |---|---|---|
 | `pending` | Locally acknowledged and not currently claimed by a remote attempt. | Contributes to unconfirmed count and prevents Good. |
 | `inFlight` | Ownership of a remote attempt was recorded before a request could produce a side effect. | Prevents another engine run from blindly issuing the same operation. |
-| `uncertain` | Google may have committed, but the client cannot prove either outcome. | Intent, base, attempt evidence, and projected state remain; blind replay and silent clearing are forbidden. |
+| `uncertain` | Google may have committed, but the client cannot prove either outcome. | Intent, base, attempt evidence, and projected state remain until the operation-specific recovery policy confirms, supersedes, or explicitly retries it. |
 | `failed` | The latest attempt has a conclusive non-success outcome; unlike `uncertain`, evidence establishes that Google did not confirm that attempt. | Intent remains unresolved with a typed failure; retry/terminal policy is deferred. |
 | `confirmed` | A Google success result and its local consequences were committed atomically. | No longer contributes to unresolved counts. If no newer generation exists, the desired-state record may be removed/compacted in that transaction. |
+| `superseded` | Reconciliation selected newer Google state or authoritative deletion instead of an acknowledged local facet. | The losing facet no longer contributes to unresolved counts. Its typed resolution remains in bounded attempt history; the desired-state record may be removed when no other facet remains. |
 
 `confirmed` is remote confirmation. It is distinct from local acknowledgement,
 which creates `pending`.
@@ -267,21 +265,152 @@ local transaction commits
           │
           ▼
        pending ───────► inFlight ───────► confirmed
+          │                │
+          └────────────────┴────────────► superseded
                            │
                            ├────────────► uncertain
                            └────────────► failed
 
 pending ─────────────────────────────────► failed
-failed/uncertain ─────────────────────────► pending | confirmed
+failed/uncertain ─────────────────────────► pending | confirmed | superseded
 ```
 
-Transitions on the final line are placeholders for later recovery, conflict,
-and retry policy; they are possibilities, not selected behavior.
+The reconciliation policy below selects confirmation, supersession, or a new
+pending attempt. Retry timing remains later work.
 No transition may discard acknowledged intent without an explicit resolution.
 
-Confirmed desired-state records are not an audit log. After the acknowledgement
-transaction no longer needs a record for current correctness, it may remove or
-compact it. Bounded attempt summaries remain available for health and
+## Automatic reconciliation and conflict policy
+
+### Deliberately small model
+
+Reconciliation uses four rules:
+
+1. Task content is one record containing title, notes, due date, and completion
+   status. It uses whole-record last-write-wins; fields are never independently
+   merged.
+2. List title is one record and uses the same last-write-wins rule.
+3. Parent, list membership, and sibling order are structural state. If both the
+   local desired structure and Google changed from the base, Google wins.
+4. Deletion wins over every edit, move, reorder, completion change, and create
+   dependency, regardless of timestamps.
+
+This intentionally fits a personal task list rather than a collaborative text
+system. There are no conflict copies, three-way notes merges, per-field clocks,
+or routine conflict questions. More machinery is justified only by observed
+failures that this policy cannot handle acceptably.
+
+Each desired-state generation records independently whether content, structure,
+or lifecycle is dirty. That is still one coalesced desired-state record, not an
+operation log. It lets independent operations commute—for example, retaining a
+remote move while applying newer local content—without mixing old and new text
+fields. When local task content wins, the adapter writes every supported
+writable content field and the verified clear representation for absent values;
+it never sends a sparse changed-field patch that would accidentally retain part
+of the losing remote snapshot.
+
+### Timestamp rule
+
+Each local content edit commits one UTC `localModifiedAt` for the complete task
+content projection. A list rename does the same for its complete title record.
+Google's output-only `updated` is the remote record timestamp. When both local
+and Google content differ from the same remote base:
+
+- local wins only when `localModifiedAt` is strictly later than Google
+  `updated`;
+- Google wins when its timestamp is later or equal;
+- missing or malformed required timestamps are an application failure, not a
+  guessed conflict result.
+
+The local timestamp comes from the injected wall clock and is persisted in the
+same transaction as the desired state. Device-clock error can therefore choose
+the wrong winner; that is an accepted limitation of this simple policy. A
+successful local write receives a new Google server timestamp, so another host
+will subsequently treat that Google record as the newer remote state. This and
+the Google-on-equality tie-break prevent oscillation after pending work is
+resolved.
+
+Google `updated` is not used for structure: the API does not contractually make
+it a modification clock for move/reorder state. Structural conflict detection
+compares the current Google parent/list/order with the stored remote base.
+
+### Content and structure policies
+
+| State | Preconditions | Decision and retry | Durable transition | User-visible result and convergence | Data-loss analysis | Required tests |
+|---|---|---|---|---|---|---|
+| Task title | Task exists on both sides; title participates in the complete content snapshot. | If only one snapshot changed from base, use it. If both changed, apply the timestamp rule to the whole snapshot. A local winner is written with the latest ETag; 412 refetches and reevaluates. | Winning Google snapshot becomes base/projection. Losing content facet becomes `superseded`; a successful local write becomes `confirmed`. | The whole winning task appears. Google-winning stale edits are aggregated in sync details; there is no per-task question. All hosts converge after observing the winning Google version. | Every field from the older content snapshot, including title, is intentionally discarded. No unrelated task changes. | Local-only change; remote-only change; local-newer, remote-newer, equal timestamp; 412 then each outcome; restart before resolution. |
+| Notes | Same as title; notes are not a merge document. | Same whole-content timestamp rule. Never concatenate, diff3-merge, or create a conflict copy. | Same as title. | Notes come entirely from the winning task snapshot. | Older notes are intentionally discarded, avoiding corrupted or duplicated prose. | Disjoint and overlapping edits must both choose one whole snapshot; empty/null notes; long notes. |
+| Due date | Same as title; due is the normalized date-only value. | Same whole-content timestamp rule, encoded as verified UTC midnight when local wins. | Same as title. | One complete task snapshot wins; no mixed title/date record is created. | The older due value is intentionally discarded. | Set/change/clear on both sides; UTC-boundary encoding; timestamp ties. |
+| Completion status | Same as title, plus current parent state is known. | Same whole-content rule, except Google completion cascades are authoritative. A child that Google keeps completed beneath a completed parent is accepted even when local content is newer; Axiotask never reopens the parent implicitly. | Adopt returned/refetched cascade state and mark an impossible child-reopen facet `superseded`. | Parent/child status matches Google; sync details explain an automatically rejected child reopen without prompting. | The impossible local reopen is lost by explicit policy; no other content or sibling is changed. | Parent completion cascade, parent reopen, child reopen beneath completed parent, restart, and newer competing content. |
+| Parent relationship | Local structure is dirty and the current Google parent is compared with the base. | If Google structure changed, discard the local reparent and use Google. Otherwise issue MOVE with current ETag; 412 refetches and reevaluates. | Google parent becomes base/projection; conflicting local structure becomes `superseded`, otherwise successful MOVE is `confirmed`. | Google parent is shown after a conflict. Once one host moves successfully, other pending conflicting hosts discard their moves and converge. | Only the losing relationship is discarded. Content remains governed independently. | Local-only/remote-only/concurrent reparent; content concurrent with move; 412; completed-parent result; one-level validation. |
+| List membership | Local cross-list move is dirty and current Google membership is compared with the base. | Google wins a membership conflict. With no remote structural change, use `destinationTasklist` and current ETag. On uncertain response, look for the same Google task ID in the destination before retrying. | Adopt Google membership or confirm the successful stable-ID move; clear only the losing structure facet. | Task appears once in Google's selected list. Competing clients cannot move it back on every sync. | Losing local membership is discarded; task content and stable local identity remain. | Concurrent cross-list moves; move versus content edit; uncertain landed move; source 404/destination hit; subtree movement. |
+| Manual ordering | Local sibling placement is dirty; compare target parent/list and relevant sibling order with the base. | Any Google change to that structural scope wins. Otherwise MOVE using the current valid `previous` anchor and ETag. A missing/deleted anchor triggers refetch and reevaluation, not a fabricated order. | Adopt Google order and supersede local reorder, or confirm returned canonical position. | Google order becomes stable across hosts; opaque positions are never synthesized. | Only the losing local placement is discarded. No sibling is deleted or rewritten. | First/middle/last; concurrent reorder; insertion/deletion/move of anchor; equal-looking positions; restart. |
+| List title | List exists on both sides and current/base/local titles and timestamps are available. | Whole-title last-write-wins. Google list endpoints ignore `If-Match`; a local winner is patched once and the response/read-back is adopted. A later Google rename wins on its later server timestamp. | Winning list becomes base/projection; local facet is `confirmed` or `superseded`. | One title is shown everywhere after subsequent sync; no rename conflict prompt. | Older title is intentionally discarded. Tasks in the list are untouched. | Local/remote/concurrent rename; equal timestamp; rename racing PATCH; lost response/read-back; deletion during rename. |
+
+An aggregate production-safe resolution entry such as “3 stale offline changes
+were replaced by newer Google changes” makes acknowledged loss visible without
+creating one dialog or conflict object per task. Debug diagnostics include the
+affected task IDs and complete development-only state under the existing
+privacy rules.
+
+### Operation crossings
+
+| Crossing | Preconditions | Decision and retry | Durable transition | User-visible result and convergence | Data-loss analysis | Required tests |
+|---|---|---|---|---|---|---|
+| Create versus create | Separate successful creates have different Google IDs, even when content is identical. | Treat them as independent tasks/lists. Never deduplicate by content. | Each remote ID maps to its own stable local ID and base. | Both objects remain visible and converge normally. | None; intentional duplicates are preserved. | Identical and different concurrent creates from two clients; parent/list dependencies. |
+| Edit versus edit | Both complete task-content snapshots changed from one base. | Apply whole-record timestamp rule; local winner uses current ETag and reevaluates after 412. | Winner becomes base/projection; loser is recorded as `superseded`. | One whole task record remains; no mixed notes/title/date/status. | Entire older content snapshot is intentionally lost and reported in the aggregate resolution summary. | Every content field, overlapping notes, clock equality/skew, repeated 412, process restart. |
+| Local edit versus remote delete | Local content is pending and Google positively reports a task tombstone, or its list is authoritatively deleted. A task 404 by itself is not deletion evidence because cross-list moves preserve IDs. | Delete wins. Do not PATCH, clone, or preserve the edit elsewhere. | Mark task deleted; clear content/structure intents as `superseded` with resolution `deleteWon`; update base/tombstone evidence atomically. | Task disappears and pending count falls; aggregate sync details report deletion resolution. | Pending edit is intentionally lost. Only the identified task/list scope is affected. | Direct tombstone, parent cascade, deleted list, edit during in-flight delete, task moved from old list, restart. |
+| Local delete versus remote edit | Local lifecycle is deleted while Google changed content or structure. | Delete wins. Resolve the task's current list by stable Google ID, then DELETE with its current ETag; 412 repeats resolution. A tombstone confirms deletion; an old-list 404 does not. | Delete attempt becomes `confirmed`; remote edits and every local non-delete facet become superseded. | Task disappears on all hosts. | Remote edit is intentionally lost by the hard-delete rule. | Remote content/move/reorder before delete; repeated delete; old-list 404 with live destination task; 412; uncertain delete read-back. |
+| Move versus edit | One side changed structure and the other content, with no competing change to the same facet. | Operations commute: retain Google structure and reconcile content by its rule, or retain Google content and apply uncontested local structure. | Publish both facet results in one valid projection; independently confirm/supersede dirty facets. | User sees the winning complete content in the selected Google structure. | No loss when facets are independent. If both also changed content/structure, each facet's normal rule applies. | Both directions, all content fields, cross-list move, 412 between operations, restart. |
+| Move versus delete | Any task/list/ancestor deletion competes with a move. | Delete wins; do not retry the move or recreate at its destination. | Move facet becomes `superseded` with resolution `deleteWon`; verified deletion is published atomically. | Deleted task does not reappear. | Move is intentionally lost. A task positively found alive under the same Google ID outside a deleted list is not treated as that list's deleted descendant. | Local/remote delete, parent cascade, list deletion, uncertain cross-list move already landed. |
+| Concurrent moves | Local structure differs from base and current Google structure also differs. | Google structure wins regardless of local timestamps. No local replay. | Adopt Google parent/list/order and mark local structure `superseded`. | The next completed sync is stable; clients do not move the task back and forth. | Losing local placement is intentionally discarded; content remains independent. | Same-list reorder, reparent, cross-list move, three sequential hosts, restart with pending move. |
+| Local operation against remotely deleted list | Positive list deletion/404 is established; local descendants or intents still reference it. | List deletion wins. Cancel creates, edits, moves, and reorders still dependent on that list; never recreate the list automatically. | In one account/list-scoped transaction mark the list removed, supersede its dependent intents, and remove its projected contents. Preserve remote-ID evidence needed to recognize a task already moved to another surviving list. | The list and tasks still belonging to it disappear; unrelated lists remain intact. | All pending work inside the deleted list is intentionally lost. A task positively observed in another list under the same Google ID survives. | Offline task/list creation, pending edits, parent/child rows, concurrent landed move-out, unrelated-list invariants, pagination failure, restart. |
+| Remote changes while local work is pending | A current Google record and stored base are available before issuing the pending generation. | Reconcile lifecycle first, then structure, then complete content. Orthogonal facets commute; same-facet conflicts use the rules above. | Update base and projection together; clear only resolved facets and retain newer local generations. | Partial validated changes may appear while health remains Pending/Failed; final state follows Google plus any uncontested/newer local content. | Loss occurs only through explicit whole-record, structural-Google, or deletion rules. | Remote mutation in every engine phase; newer local generation during publish; partial-page failure; restart. |
+| Changes from multiple devices | Each installation has its own local IDs and pending timestamps; Google IDs/base state connect confirmed records. | Every host applies the same rules. A successful content write gets a newer Google timestamp; a successful structure change becomes the Google structure that conflicting hosts retain. | Each host confirms or supersedes its local facets, then stores the same Google base. | Hosts converge after their pending work and complete enumerations finish; no conflict questions or ping-pong moves. | Earlier whole content and losing offline structure can be discarded as specified; independent creates remain. | Two- and three-host model tests with varied sync order, offline duration, crashes, and repeated full sync. |
+
+### Uncertain mutations
+
+Uncertain recovery is operation-specific:
+
+| Mutation | Preconditions | Decision and retry | Durable transition | User-visible result and convergence | Data-loss analysis | Required tests |
+|---|---|---|---|---|---|---|
+| Task/list create | An insert may have committed, its response was not durably acknowledged, and no Google ID is mapped. | Never match by content. Return the generation to `pending` and retry the insert when retry scheduling permits. Bind the local ID to the ID from the first response durably received. | Preserve every uncertain attempt. Successful acknowledgement maps one Google ID and confirms the desired generation; any earlier committed object is later ingested with a separate local ID. | The intended object confirms; a possible duplicate may later appear and remains. Hosts converge on both real Google IDs. | No task is guessed away or conflated. A duplicate is the accepted cost and is diagnosed. | Lost response before/after server commit; crash before acknowledgement; repeated uncertain retries; identical intentional remote create; task and list variants. |
+| Task content/list title | A known Google ID exists and a write may have committed. | Read back. Confirm an exact landed desired snapshot; otherwise reevaluate whole-record timestamps and retry only while local still wins. | Read-back and resolution atomically update base/projection and move the generation to `confirmed`, `superseded`, or `pending`. | The normal whole-record winner appears; no duplicate or conflict prompt. | Only the older complete record is lost under the normal timestamp rule. | Landed/not-landed response loss, newer remote write before read-back, equal timestamp, list rename, restart. |
+| Delete | A known Google ID exists and DELETE may have committed. | Read back by stable ID. A tombstone confirms. An old-list 404 triggers current-list resolution; delete a live moved task with its current ETag. Absence without positive deletion evidence remains uncertain. | Confirm verified deletion, or retain uncertainty/current-ID evidence until the authoritative delete can run. | The task eventually disappears once positively deleted; no moved survivor is mistaken for success. | Remote edits/moves are intentionally lost to deletion; unrelated IDs are untouched. | Tombstone, live task, cross-list move, old-list 404, deleted list, repeated uncertainty, restart. |
+| Move/reorder | A known Google ID exists and MOVE may have committed. | Resolve current membership by stable ID, including a possible third list. Confirm if landed; otherwise Google wins changed structure, or retry only when base structure still holds. | Update canonical structure/base and mark the facet `confirmed`, `superseded`, or `pending` atomically. | One Google placement remains and competing clients stop replaying stale moves. | Only the losing local placement is discarded. | Landed same/cross-list move, source 404, third-list move, changed anchor, no-op retry, restart. |
+
+The create rule deliberately prefers a rare visible duplicate over content
+matching that could conflate two intentional tasks or silently lose an
+acknowledged create. None of these normal reconciliation cases requires a
+manual-conflict state. Transport, authorization, malformed-data, or persistence
+failures remain visible through ordinary `SyncHealth` and diagnostics.
+
+### Deletion evidence and scope safety
+
+Deletion is product-terminal, but it is applied only from positive evidence:
+
+- a task tombstone, a confirmed local DELETE, or a verified Google parent
+  cascade establishes task deletion; a missing row in one listing and a 404 in
+  an old source list do not;
+- a successful local list DELETE or direct 404 for a previously confirmed list
+  establishes list deletion because lists cannot move;
+- deleting a parent sends one parent DELETE. Known children are resolved from
+  their Google results/tombstones, not deleted independently from a stale local
+  parent relationship; a child already moved away therefore survives;
+- deleting a list supersedes work scoped to that list. Remote-ID evidence is
+  retained so a task positively discovered in a surviving list is recognized
+  as a moved survivor rather than deleted or duplicated;
+- every publish/delete transaction is constrained by account key and explicit
+  local/remote IDs. It never applies a broad absence-based delete to a page,
+  account, sibling set, or unrelated list.
+
+Required invariant tests seed unrelated siblings, children, lists, accounts,
+pending creates, and a concurrently moved child around every deletion. They
+assert that only positively deleted resources and still-dependent provisional
+resources disappear. Pagination failure must disable absence processing.
+
+Confirmed and superseded desired-state records are not an audit log. After the
+resolution transaction no longer needs a record for current correctness, it may
+remove or compact it. Bounded attempt summaries remain available for health and
 diagnostics; their exact time/size budget is an implementation configuration to
 be tested, not a product-policy question.
 
@@ -316,11 +445,11 @@ foreground scheduling opportunity. Correctness therefore never depends on an
 exit callback or an in-memory event.
 
 Remote acknowledgement also uses one transaction: validate the response,
-update remote ID/base/ETag and projected state as allowed by later policy,
-confirm the attempted generation, remove/compact the desired-state record when
-no newer generation exists, and record attempt consequences. A crash cannot
-leave a remote ID rebound while the desired state still appears safe to issue
-as a new create.
+update remote ID/base/ETag and projected state as allowed by this policy,
+confirm or supersede the attempted generation, remove/compact the desired-state
+record when no newer generation exists, and record attempt consequences. A
+crash cannot leave a remote ID rebound while the desired state still appears
+safe to issue as a new create.
 
 ## Structural synchronization phases
 
@@ -341,8 +470,8 @@ Every required listing follows page tokens until termination for every required
 scope. That establishes completion of the documented listing procedure, not an
 atomic snapshot: Google does not document snapshot isolation across pages.
 Therefore listing absence alone is never sufficient to delete a previously
-known local resource. It creates a verification candidate for the later
-deletion/conflict policy. Pagination, validation, or unsupported-data failure
+known local resource. It creates a verification candidate under the deletion
+evidence rules above. Pagination, validation, or unsupported-data failure
 also disables all absence processing for the affected scope. P3 directly
 confirmed the risk: a task inserted after page 1 was omitted from the continued
 walk even though every page-token request succeeded, then appeared in a clean
@@ -549,29 +678,20 @@ no runtime path to the sensitive sink.
 - UI/editor state influencing synchronization eligibility.
 - Account switching in the initial product.
 - Conflict-copy behavior inherited from Rust.
-- A generic HTTP retry interceptor or retry policy in this draft.
+- A generic HTTP retry interceptor or retry-timing policy in this draft.
 
 ## Remaining Stage 4 work and evidence
 
 No current item below requires a product answer from the user. They are concrete
 specification or capability-research actions:
 
-1. Define the conflict matrix for remote base, current Google state, and current
-   desired state. Preserve the established rule that deletion wins; specify the
-   remaining edit/move/reorder crossings without default conflict copies.
-2. Define retry/backoff/cadence/freshness/timeout policy. A failure always remains
+1. Define retry/backoff/cadence/freshness/timeout policy. A failure always remains
    visible with its concrete reason; it becomes Pending only when a recovery run
    is actually queued or active.
-3. Define uncertain-create recovery under the demonstrated constraint that an
-   identical retry creates a second resource and Google exposes no idempotency
-   key or client-selected ID. Content/time matching must be treated as ambiguous
-   when it cannot identify exactly one candidate.
-4. Define mutation-specific uncertain recovery from P6/P7: read back desired
-   state before repeating PATCH/rename; treat repeated DELETE as idempotent in
-   the observed ordinary case; verify cross-list destination by stable ID before
-   retrying after source 404.
-5. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
+2. Choose structural phase ordering and dependency scheduling consistent with
+   this conflict policy, including bounded reevaluation after repeated 412s.
+3. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
    cases. The current probe establishes only malformed bearer as 401.
-6. Probe `webViewLink` presence/navigation with an ordinary and recurring task
+4. Probe `webViewLink` presence/navigation with an ordinary and recurring task
    created in the current Google UI before implementing the recurrence escape
    hatch.

@@ -68,7 +68,7 @@ Source: [Task resource](https://developers.google.com/workspace/tasks/reference/
 | Field | Contract evidence | Label | Synchronization significance |
 |---|---|---|---|
 | `kind` | Output-only resource type; always `tasks#task`. | **Officially documented** | Validate if present; it is not identity. |
-| `id` | Task identifier. | **Officially documented** | Remote task identity within its account/list context; cross-list stability remains unknown. |
+| `id` | Task identifier. P7 preserved it during same-list and cross-list moves. | **Officially documented; observed by a controlled probe** | Remote task identity is stable across the probed move operations. |
 | `etag` | Resource ETag. | **Officially documented** | Presence is documented; endpoint-specific conditional behavior requires probes. |
 | `title` | Title; maximum length 1,024 characters. | **Officially documented** | Mutable user content. |
 | `updated` | Output-only RFC 3339 last-modification timestamp. | **Officially documented** | A version hint. Ordering, uniqueness, and cursor semantics are not documented. |
@@ -139,7 +139,7 @@ Sources: [`tasklists.insert`](https://developers.google.com/workspace/tasks/refe
 | Patch task | `tasks.patch` updates a task with patch semantics and returns the resulting `Task`. | **Officially documented** | Google’s Tasks performance guide documents generic merge semantics: omitted fields remain, supplied fields change, and `null` removes a field where valid. Per-field acceptance still requires verification. |
 | Replace task | `tasks.update` uses PUT and returns the resulting `Task`. The Tasks performance guide says omitted optional fields in an update are cleared. | **Officially documented** | Exact writable-field validation remains endpoint-specific. |
 | Delete task | `tasks.delete` deletes the specified task and returns an empty body on success. | **Officially documented** | The method page does not specify descendant effects, tombstone lifetime, or conditional headers. |
-| Reorder/reparent | `tasks.move` returns the moved task. Omit `parent` for top level; omit `previous` for first among its siblings. Named parent/previous must exist in the relevant list and must not be hidden. | **Officially documented** | Response adoption is possible, but ID/ETag/position changes need current observation. |
+| Reorder/reparent | `tasks.move` returns the moved task. Omit `parent` for top level; omit `previous` for first among its siblings. Named parent/previous must exist in the relevant list and must not be hidden. P7 preserved IDs and returned canonical ETag/position changes. | **Officially documented; observed by a controlled probe** | Adopt the response and treat positions as opaque. |
 | Cross-list move | `destinationTasklist` moves a task to another list. P7 moved both a single task and a parent subtree while preserving IDs; the child followed the parent. | **Officially documented; observed by a controlled probe** | A received-success cross-list move preserves identity in the probed cases. Repeating-task restrictions remain documented separately. |
 | Position ordering | Positions are opaque strings; their lexicographic comparison orders siblings. | **Officially documented** | Only relative sibling comparison is contractual. |
 | Position generation | The server’s allocation/rebalancing algorithm is not documented. | **Unknown** | Do not infer arithmetic or stability properties from one observed position format. |
@@ -333,8 +333,8 @@ rate-limit response details remain Unknown.
 
 | Unknown | Stage 4 effect | Blocks synchronization specification? |
 |---|---|---|
-| Task-list rename race policy | List PATCH/UPDATE/DELETE ignore stale `If-Match`, so a check-then-write race cannot be closed with the public precondition behavior. | **Yes as a policy decision, not a capability probe.** |
-| Uncertain create recovery | P5 proves blind replay duplicates and discovery exposes no idempotency/client-ID facility. Content/time matching can itself be ambiguous. | **Yes — define a conservative automatic reconciliation rule and its irreducible failure case.** |
+| Task-list rename race policy | List PATCH/UPDATE/DELETE ignore stale `If-Match`, so a check-then-write race cannot be closed with the public precondition behavior. | No remaining evidence blocker. `SYNC_SPEC.md` now chooses whole-title timestamp resolution and response/read-back adoption. |
+| Uncertain create recovery | P5 proves blind replay duplicates and discovery exposes no idempotency/client-ID facility. Content/time matching can itself be ambiguous. | No remaining evidence blocker. `SYNC_SPEC.md` explicitly retries, never content-matches, and accepts a possible duplicate. |
 | Concurrent pagination beyond the observed cases | P3 proves at least concurrent insertion can be omitted; it cannot establish every possible interleaving. | No. The specification must assume non-atomic pagination and may not delete from one listing absence. |
 | Tombstone retention duration | P4 establishes immediate shape and ordinary parent cascade, not how long task tombstones remain readable. | No for delete-wins convergence; do not rely on indefinite tombstone retention. |
 | Cross-list move recovery policy | P7 establishes stable IDs, subtree movement, and source 404 after replay. | No capability blocker. Specify destination-by-ID read-back before retry. |
@@ -352,9 +352,10 @@ preconditions, non-atomic pagination, deletion/cascade behavior, replay effects,
 stable-ID cross-list movement, completion cascades, UTC due normalization, one
 auth failure, and one quota response.
 
-The evidence sharply reduces capability uncertainty but does not invent policy.
-Uncertain create remains intrinsically ambiguous without server idempotency;
-list rename lacks an atomic precondition; auth cases beyond malformed bearer and
-recurrence navigation remain unverified. Historical Rust claims are accepted
-only where the new results reproduce them, and the deleted-tombstone mutation
-claim is explicitly superseded by the contradictory current observation.
+The evidence sharply reduces capability uncertainty but does not itself invent
+policy. The synchronization specification now accepts possible duplication for
+an uncertain create and resolves list titles without an atomic precondition.
+Auth cases beyond malformed bearer and recurrence navigation remain unverified.
+Historical Rust claims are accepted only where the new results reproduce them,
+and the deleted-tombstone mutation claim is explicitly superseded by the
+contradictory current observation.
