@@ -39,19 +39,16 @@ import 'toast.dart';
 import 'url_opener.dart';
 import 'views.dart';
 
-/// The reorder move a drag from [oldIndex] to landing [newIndex] over the
-/// visible [rows] should apply: a direction plus a STEP COUNT that counts only
-/// siblings in the SAME list (cross-list cards in the "all" view are skipped,
-/// mirroring ListView.svelte). [newIndex] is the ADJUSTED landing index (as
-/// delivered by ReorderableListView.onReorderItem — the down-shift is already
-/// applied). Returns `null` for a no-op (dropped in place, or only other-list
-/// cards were crossed). Visible rows are top-level only (invariant #1), so
-/// "same parent" is implicit.
-({String direction, int steps})? reorderStep(
-  List<StoredTask> rows,
-  int oldIndex,
-  int newIndex,
-) {
+/// The target SIBLING INDEX a drag from [oldIndex] to landing [newIndex] over
+/// the visible [rows] should move the dragged row to — an index within the moved
+/// row's OWN list's sibling ordering, counting only siblings in the SAME list
+/// (cross-list cards in the "all" view are skipped, mirroring ListView.svelte).
+/// [newIndex] is the ADJUSTED landing index (as delivered by
+/// ReorderableListView.onReorderItem — the down-shift is already applied).
+/// Returns `null` for a no-op (dropped in place, or only other-list cards were
+/// crossed). Visible rows are top-level only (invariant #1), so "same parent" is
+/// implicit. Feeds a single [Commands.reorderTaskToIndex] per drop (F20 #199).
+int? reorderTarget(List<StoredTask> rows, int oldIndex, int newIndex) {
   if (newIndex == oldIndex) return null;
   final moving = rows[oldIndex];
   final down = newIndex > oldIndex;
@@ -62,7 +59,12 @@ import 'views.dart';
     if (rows[i].listId == moving.listId) steps++;
   }
   if (steps == 0) return null;
-  return (direction: down ? 'down' : 'up', steps: steps);
+  // The moved row's current rank among its own list's siblings.
+  var fromSibling = 0;
+  for (var i = 0; i < oldIndex; i++) {
+    if (rows[i].listId == moving.listId) fromSibling++;
+  }
+  return down ? fromSibling + steps : fromSibling - steps;
 }
 
 /// The empty-state message for [viewId] — a per-view reassurance for a smart
@@ -694,13 +696,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         _QuickAddBar(
           controller: _quickAdd,
           focusNode: quickAddFocus,
-          previewDue: _previewDue,
+          dateIgnoredFor: _dateIgnoredFor,
           onSubmit: _submit,
           onDismissPreview: () {
             setState(() => _dateIgnoredFor = _quickAdd.text);
             quickAddFocus.requestFocus();
           },
-          onChanged: () => setState(() {}),
         ),
         const Divider(height: 1),
         _ListToolbar(
@@ -879,20 +880,18 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     return RefreshIndicator(onRefresh: _pullRefresh, child: content);
   }
 
-  /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as the
-  /// step-count reorder the command layer understands (one swap per step).
+  /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as a
+  /// SINGLE move-to-index command (F20 #199) — one store write, one queued move,
+  /// instead of N awaited single-step swaps.
   Future<void> _onReorder(
     List<StoredTask> tasks,
     int oldIndex,
     int newIndex,
   ) async {
-    final step = reorderStep(tasks, oldIndex, newIndex);
-    if (step == null) return;
+    final target = reorderTarget(tasks, oldIndex, newIndex);
+    if (target == null) return;
     final id = tasks[oldIndex].task.id;
-    final commands = ref.read(commandsProvider);
-    for (var i = 0; i < step.steps; i++) {
-      await commands.reorderTask(id, step.direction);
-    }
+    await ref.read(commandsProvider).reorderTaskToIndex(id, target);
   }
 
   /// Confirm, then permanently clear the completed tasks in the current list.
@@ -1133,34 +1132,56 @@ class _ListToolbar extends StatelessWidget {
 }
 
 /// The always-visible quick-add input, its live date preview chip, and submit.
-class _QuickAddBar extends StatelessWidget {
+///
+/// A keystroke rebuilds ONLY this bar (to update the natural-language date
+/// preview) — never the enclosing [TaskListView], so typing never re-runs
+/// `visibleTasksForView` or the per-row effective-due/subtask-count sweep (F20
+/// #199). The bar therefore owns the preview computation locally; the parent
+/// keeps [_dateIgnoredFor] (mirrored in via [dateIgnoredFor]) because its submit
+/// path still needs it, and re-reads the live controller text at submit time.
+class _QuickAddBar extends StatefulWidget {
   const _QuickAddBar({
     required this.controller,
     required this.focusNode,
-    required this.previewDue,
+    required this.dateIgnoredFor,
     required this.onSubmit,
     required this.onDismissPreview,
-    required this.onChanged,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final String? previewDue;
+
+  /// The exact input text whose parsed date the user chose to keep as literal
+  /// title text (the preview chip's ×), so its phrase is not re-read as a due
+  /// date. Owned by the parent; changing it flows a fresh value down here.
+  final String dateIgnoredFor;
   final VoidCallback onSubmit;
   final VoidCallback onDismissPreview;
-  final VoidCallback onChanged;
+
+  @override
+  State<_QuickAddBar> createState() => _QuickAddBarState();
+}
+
+class _QuickAddBarState extends State<_QuickAddBar> {
+  /// The natural-language due parsed from the CURRENT input, unless the user
+  /// dismissed it for this exact text. Recomputed on each local rebuild so a
+  /// keystroke updates only this bar. Mirrors [_TaskListViewState._previewDue],
+  /// which the parent's submit path reads from the same live controller text.
+  String? get _previewDue => widget.controller.text == widget.dateIgnoredFor
+      ? null
+      : parseQuickAddDue(widget.controller.text);
 
   @override
   Widget build(BuildContext context) {
-    final preview = previewDue;
+    final preview = _previewDue;
     return Padding(
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
           Expanded(
             child: TextField(
-              controller: controller,
-              focusNode: focusNode,
+              controller: widget.controller,
+              focusNode: widget.focusNode,
               decoration: const InputDecoration(
                 hintText: 'Add a task',
                 prefixIcon: Icon(Icons.add),
@@ -1168,8 +1189,10 @@ class _QuickAddBar extends StatelessWidget {
                 border: OutlineInputBorder(),
               ),
               textInputAction: TextInputAction.done,
-              onChanged: (_) => onChanged(),
-              onSubmitted: (_) => onSubmit(),
+              // Rebuild THIS bar only, to refresh the date preview — the task
+              // list is untouched by a keystroke (F20 #199).
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => widget.onSubmit(),
             ),
           ),
           if (preview != null && preview.isNotEmpty) ...[
@@ -1184,21 +1207,21 @@ class _QuickAddBar extends StatelessWidget {
               IconButton(
                 icon: const Icon(Icons.close, size: 18),
                 tooltip: 'Keep as text',
-                onPressed: onDismissPreview,
+                onPressed: widget.onDismissPreview,
               ),
             ] else
               InputChip(
                 label: Text(formatDue(preview)),
                 deleteIcon: const Icon(Icons.close, size: 18),
                 deleteButtonTooltipMessage: 'Keep as text',
-                onDeleted: onDismissPreview,
+                onDeleted: widget.onDismissPreview,
               ),
           ],
           const SizedBox(width: 8),
           IconButton.filled(
             tooltip: 'Add task',
             icon: const Icon(Icons.arrow_upward),
-            onPressed: onSubmit,
+            onPressed: widget.onSubmit,
           ),
         ],
       ),

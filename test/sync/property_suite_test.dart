@@ -391,7 +391,20 @@ class Harness {
       case OpKind.reorder:
         final t = _pick(await live(), op.a);
         if (t == null) return;
-        await commands.reorderTask(t.task.id, op.flag ? 'up' : 'down');
+        // A single-step up/down is one move-to-index (F20 #199): find the row's
+        // current rank among its siblings (same parent + list, position order)
+        // and target the adjacent slot; the command clamps a boundary step.
+        final sibs = (await allRows())
+            .where(
+              (s) => s.listId == t.listId && s.task.parent == t.task.parent,
+            )
+            .toList();
+        final idx = sibs.indexWhere((s) => s.task.id == t.task.id);
+        if (idx < 0) return;
+        await commands.reorderTaskToIndex(
+          t.task.id,
+          op.flag ? idx - 1 : idx + 1,
+        );
       case OpKind.moveAfter:
         final liveNow = await live();
         final t = _pick(liveNow, op.a);

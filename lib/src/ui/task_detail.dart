@@ -317,10 +317,11 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     }
   }
 
-  /// Move [subId] past its nearest VISIBLE neighbor [neighborId]. The distance
-  /// is measured against the FULL ordered [children] (position order), then
-  /// emitted as that many single-step swaps — so a reorder stays correct across
-  /// hidden completed rows when "Hide completed" is on (#90).
+  /// Move [subId] to the slot of its nearest VISIBLE neighbor [neighborId]. The
+  /// target index is taken against the FULL ordered [children] (position order),
+  /// so a reorder stays correct across hidden completed rows when "Hide
+  /// completed" is on (#90). Issued as ONE move-to-index command (F20 #199) —
+  /// crossing hidden rows no longer emits a burst of awaited single steps.
   Future<void> _reorderPast(
     String subId,
     String neighborId,
@@ -329,11 +330,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final from = children.indexWhere((c) => c.task.id == subId);
     final to = children.indexWhere((c) => c.task.id == neighborId);
     if (from < 0 || to < 0 || from == to) return;
-    final direction = to > from ? 'down' : 'up';
-    final commands = ref.read(commandsProvider);
-    for (var i = 0; i < (to - from).abs(); i++) {
-      await commands.reorderTask(subId, direction);
-    }
+    await ref.read(commandsProvider).reorderTaskToIndex(subId, to);
   }
 
   /// Detach [subId] from its parent, promoting it to top level directly after

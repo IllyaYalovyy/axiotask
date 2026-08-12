@@ -408,8 +408,8 @@ class FakeBackend implements Commands {
   }
 
   @override
-  Future<void> reorderTask(String id, String direction) async {
-    reordered.add('$id:$direction');
+  Future<void> reorderTaskToIndex(String id, int targetIndex) async {
+    reordered.add('$id:$targetIndex');
     final cur = _tasks.firstWhere((t) => t.task.id == id);
     // The sibling store indices in position order (same parent + list).
     final sibIdx =
@@ -421,15 +421,25 @@ class FakeBackend implements Commands {
         ]..sort(
           (a, b) => _tasks[a].task.position.compareTo(_tasks[b].task.position),
         );
-    final pos = sibIdx.indexWhere((i) => _tasks[i].task.id == id);
-    final swap = direction == 'up' ? pos - 1 : pos + 1;
-    if (swap < 0 || swap >= sibIdx.length) return; // boundary no-op
-    final a = sibIdx[pos];
-    final b = sibIdx[swap];
-    final pa = _tasks[a].task.position;
-    final pb = _tasks[b].task.position;
-    _tasks[a] = _rebuild(_tasks[a], _tasks[a].task.copyWith(position: pb));
-    _tasks[b] = _rebuild(_tasks[b], _tasks[b].task.copyWith(position: pa));
+    final from = sibIdx.indexWhere((i) => _tasks[i].task.id == id);
+    if (from < 0) return;
+    final to = targetIndex.clamp(0, sibIdx.length - 1);
+    if (to == from) return; // no-op
+
+    // Reassign position strings by slot: the moved row lands at [to] and the
+    // rows it passes shift one slot (mirrors Commands.reorderTaskToIndex).
+    final positions = [for (final i in sibIdx) _tasks[i].task.position];
+    final order = [...sibIdx];
+    order.insert(to, order.removeAt(from));
+    for (var slot = 0; slot < order.length; slot++) {
+      final ti = order[slot];
+      final desired = positions[slot];
+      if (_tasks[ti].task.position == desired) continue;
+      _tasks[ti] = _rebuild(
+        _tasks[ti],
+        _tasks[ti].task.copyWith(position: desired),
+      );
+    }
     _emit();
   }
 

@@ -1288,9 +1288,10 @@ void main() {
     });
   });
 
-  group('reorderTask', () {
-    // reorder_swaps_positions
-    test('swaps sibling positions so the rendered order flips', () async {
+  group('reorderTaskToIndex', () {
+    // reorder_swaps_positions: a one-slot move reassigns positions so the
+    // rendered order flips.
+    test('moving a row to an adjacent slot flips the rendered order', () async {
       final store = await freshStore();
       final commands = Commands(store);
       await seedList(store, 'L1');
@@ -1301,15 +1302,15 @@ void main() {
       var order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
       expect(order, ['T1', 'T2']);
 
-      await commands.reorderTask('T1', 'down');
+      await commands.reorderTaskToIndex('T1', 1); // T1 down to slot 1
 
       order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
-      expect(order, ['T2', 'T1'], reason: 'the swap is visible in list order');
+      expect(order, ['T2', 'T1'], reason: 'the move is visible in list order');
     });
 
-    // reorder_moves_freshly_created_task (#80): create_task once handed every
-    // row the same constant position, so the swap swapped two equal strings and
-    // did nothing on local-only rows. Reorder must actually change the order.
+    // reorder_moves_freshly_created_task (#80): create_task hands each row a
+    // DISTINCT position, so reassigning by slot actually changes the order on
+    // local-only rows (the old equal-position bug did nothing).
     test(
       'reorders a freshly created task despite create-time positions',
       () async {
@@ -1327,7 +1328,7 @@ void main() {
         final firstTitle = before[0].task.title;
         expect(lastTitle, isNot(firstTitle));
 
-        await commands.reorderTask(lastId, 'up');
+        await commands.reorderTaskToIndex(lastId, 0); // last row up to the top
 
         final after = await store.listTasks('L1');
         expect(
@@ -1339,62 +1340,68 @@ void main() {
       },
     );
 
-    // reorder_moves_subtask_across_completed_sibling (#90): with "Hide
-    // completed" on, the panel emits single-step swaps to cross hidden rows.
-    test('walks a subtask across a hidden completed sibling', () async {
-      final store = await freshStore();
-      final commands = Commands(store);
-      await seedList(store, 'L1');
-      await seedTask(store, 'P1', 'L1', 'parent');
-      await seedTask(
-        store,
-        's1',
-        'L1',
-        'alpha',
-        parent: 'P1',
-        position: '00000000000001',
-      );
-      await seedTask(
-        store,
-        's2',
-        'L1',
-        'beta',
-        parent: 'P1',
-        position: '00000000000002',
-        status: TaskStatus.completed,
-      );
-      await seedTask(
-        store,
-        's3',
-        'L1',
-        'gamma',
-        parent: 'P1',
-        position: '00000000000003',
-      );
+    // reorder_moves_subtask_across_completed_sibling (#90): a move that crosses
+    // a HIDDEN completed row is now a SINGLE move-to-index, not N swaps — the
+    // panel measures the target slot against the full sibling list.
+    test(
+      'walks a subtask across a hidden completed sibling in one move',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'P1', 'L1', 'parent');
+        await seedTask(
+          store,
+          's1',
+          'L1',
+          'alpha',
+          parent: 'P1',
+          position: '00000000000001',
+        );
+        await seedTask(
+          store,
+          's2',
+          'L1',
+          'beta',
+          parent: 'P1',
+          position: '00000000000002',
+          status: TaskStatus.completed,
+        );
+        await seedTask(
+          store,
+          's3',
+          'L1',
+          'gamma',
+          parent: 'P1',
+          position: '00000000000003',
+        );
 
-      // Drag "gamma" above "alpha": two single-step "up" swaps (across "beta").
-      await commands.reorderTask('s3', 'up');
-      await commands.reorderTask('s3', 'up');
+        // Drag "gamma" (slot 2) above "alpha" (slot 0): one move-to-index across
+        // the hidden "beta".
+        await commands.reorderTaskToIndex('s3', 0);
 
-      final subs = (await store.listTasks(
-        'L1',
-      )).where((t) => t.task.parent == 'P1').map((t) => t.task.id).toList();
-      expect(subs, [
-        's3',
-        's1',
-        's2',
-      ], reason: 'gamma first, alpha second, completed beta retained last');
-    });
+        final subs = (await store.listTasks(
+          'L1',
+        )).where((t) => t.task.parent == 'P1').map((t) => t.task.id).toList();
+        expect(subs, [
+          's3',
+          's1',
+          's2',
+        ], reason: 'gamma first, alpha second, completed beta retained last');
+      },
+    );
 
-    // A reorder at the boundary is a no-op: no position change, nothing queued.
-    test('is a no-op at the top boundary and queues no move', () async {
+    // A move to the row's own slot is a no-op: no position change, nothing
+    // queued. The command clamps out-of-range targets to the sibling range, so
+    // a boundary over-step lands here too.
+    test('a move to the current slot is a no-op and queues no move', () async {
       final store = await freshStore();
       final commands = Commands(store);
       await seedList(store, 'L1');
       await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
       await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
 
-      await commands.reorderTask('T1', 'up');
+      await commands.reorderTaskToIndex('T1', -1); // clamps to slot 0 = current
 
       final order = (await store.listTasks(
         'L1',
@@ -1403,26 +1410,35 @@ void main() {
       expect(await store.pendingMoves(), isEmpty);
     });
 
-    // The recorded move names the sibling the task now follows so the push
-    // reproduces the local order via the move API.
-    test('records the new predecessor so the move pushes', () async {
+    // A multi-slot move records ONE pending move naming the sibling the task now
+    // follows — the collapsed form of what used to be N per-step recordings.
+    test('records a single move naming the new predecessor', () async {
       final store = await freshStore();
       final commands = Commands(store);
       await seedList(store, 'L1');
       await seedTask(store, 'T1', 'L1', 'a', position: '00000000000001');
       await seedTask(store, 'T2', 'L1', 'b', position: '00000000000002');
       await seedTask(store, 'T3', 'L1', 'c', position: '00000000000003');
+      await seedTask(store, 'T4', 'L1', 'd', position: '00000000000004');
 
-      await commands.reorderTask('T3', 'up'); // T3 crosses T2 → lands after T1
+      // T4 (slot 3) up to slot 1: crosses T3 and T2 in one command.
+      await commands.reorderTaskToIndex('T4', 1);
 
       final order = (await store.listTasks(
         'L1',
       )).map((t) => t.task.id).toList();
-      expect(order, ['T1', 'T3', 'T2']);
-      final m = (await store.pendingMoves()).firstWhere(
-        (m) => m.taskId == 'T3',
+      expect(order, ['T1', 'T4', 'T2', 'T3']);
+      final moves = await store.pendingMoves();
+      expect(
+        moves.where((m) => m.taskId == 'T4'),
+        hasLength(1),
+        reason: 'one collapsed move, not one per slot crossed',
       );
-      expect(m.previousId, 'T1', reason: 'T3 now follows T1');
+      expect(
+        moves.firstWhere((m) => m.taskId == 'T4').previousId,
+        'T1',
+        reason: 'T4 now follows T1',
+      );
     });
   });
 
