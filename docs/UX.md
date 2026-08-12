@@ -11,9 +11,9 @@ been verified merely because it loaded successfully.
 | Outcome | Meaning | Required presentation |
 |---|---|---|
 | Inactive | Sync was stopped, or usable Tasks authorization is absent | “Sync stopped” with Resume, or “No authorization” with Connect; never green |
-| Good | A complete sync succeeded within the freshness window and no work, failure, or uncertainty is newer | Green icon, “Up to date,” and exact last-success time |
-| Failed | The latest required attempt failed/timed out, or freshness expired without active verification | Persistent concrete reason—no connection, remote failure, application failure, or stale—plus last-success time, pending count, and any available action |
-| Pending | Verification, synchronization, retry, or durable unconfirmed work is active or queued | Yellow icon, precise activity/reason, and pending count; never green |
+| Good | A complete sync succeeded less than five minutes ago and no work, failure, or uncertainty is newer | Green icon, “Up to date,” and exact last-success time |
+| Failed | A failure was detected, retry backoff/exhaustion is waiting, a run timed out, or last success reached five minutes without active verification | Persistent concrete reason—no connection, remote failure, application failure, or stale—plus last-success time/age, pending count, and any available action |
+| Pending | A nonfailed verification/run is active or immediately queued, a retry request is executing, or durable work awaits its eligible immediate run | Yellow icon, precise activity/reason, and pending count; never green |
 
 Color is never the only signal. A small status icon can summarize health, but
 hover/tap and an accessible label expose the outcome, detailed reason, last

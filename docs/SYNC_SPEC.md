@@ -1,14 +1,13 @@
 # Synchronization specification
 
 - Status: **Draft**
-- Scope: foundational state, authority, persistence, reconciliation, and component boundaries
+- Scope: state, authority, reconciliation, reliability, recovery, and component boundaries
 - Updated: 2026-08-11
 
 ## Purpose and scope
 
-This draft defines what local and remote state mean and the automatic
-reconciliation policy. Retry timing, detailed run ordering, and implementation
-remain later work.
+This draft defines what local and remote state mean, automatic reconciliation,
+and the complete reliability/recovery model. Implementation remains later work.
 
 Normative inputs are [VISION.md](../VISION.md), the accepted
 [target architecture](ARCHITECTURE.md), accepted ADRs, and the verified
@@ -18,11 +17,7 @@ failure modes. Their schema, push-first order, conflict-copy behavior, automatic
 hierarchy repair, timing, and unverified Google assumptions are not adopted by
 this draft.
 
-This draft deliberately does **not** decide:
-
-- push-versus-pull ordering or mutation dependencies;
-- retry eligibility, backoff, cadence, freshness duration, or timeouts;
-- import/export merge policy.
+This draft deliberately does **not** decide import/export merge policy.
 
 Those decisions require later specification sections and, where identified by
 the API contract, controlled Google probes.
@@ -37,7 +32,7 @@ the API contract, controlled Google probes.
 | Remote base | The last confirmed Google representation against which a later local intent and remote observation can be compared. |
 | Durable pending intent | An acknowledged local request that has committed to SQLite but has not yet received a transactionally recorded remote confirmation. |
 | Projected state | The user-visible local task/list state after applying acknowledged local intent to the last confirmed base. It may be newer than Google and must be shown with non-green health until confirmed. |
-| Fresh | A complete required sync run succeeded inside the configured freshness window, with no newer fact invalidating it. The duration remains unresolved. |
+| Fresh | A complete required sync run succeeded less than five minutes ago, with no newer fact invalidating it. |
 | Stale | The last confirmed remote state is older than the freshness boundary or a newer failure means currentness cannot be claimed. |
 | Uncertain outcome | A remote mutation may have committed, but the client lacks durable evidence proving committed or not committed. |
 | Desired remote state | The latest acknowledged local state that Axiotask intends Google to hold for one resource. Repeated local edits coalesce into this state rather than accumulating an event log. |
@@ -194,9 +189,11 @@ The following invariants apply:
    succeeded. P2 shows task-list PATCH, UPDATE, and DELETE ignore it. Task
    mutation policy may use preconditions; list conflict policy may not.
 
-The exact base field set is finalized with conflict policy. Omitting a field
-that can distinguish a real remote change from server normalization is not
-allowed merely to simplify persistence.
+Task bases store every supported content field, parent/list membership,
+canonical position, lifecycle flags, remote ID, ETag, and Google `updated` value.
+List bases store title, lifecycle, remote ID, ETag, and Google `updated`. Omitting
+a value that can distinguish a real remote change from server normalization is
+not allowed merely to simplify persistence.
 
 ## Durable desired state and attempts
 
@@ -231,8 +228,8 @@ Claiming remote work snapshots the exact desired-state generation into a
 durable attempt before issuing a request. A later local edit may advance the
 current desired state without changing that attempt snapshot. This prevents an
 in-flight or uncertain request from being misremembered while still avoiding an
-event log. Exact decomposition into Google create/patch/move/delete calls and
-dependency ordering are deferred.
+event log. HTTP payload construction remains adapter work; operation and
+dependency order is normative below.
 
 A sync attempt is separate evidence: it records one engine run or remote
 mutation attempt, the claimed desired-state generation, phase, start/end
@@ -246,7 +243,7 @@ record. Attempt history must not be confused with current desired state.
 | `pending` | Locally acknowledged and not currently claimed by a remote attempt. | Contributes to unconfirmed count and prevents Good. |
 | `inFlight` | Ownership of a remote attempt was recorded before a request could produce a side effect. | Prevents another engine run from blindly issuing the same operation. |
 | `uncertain` | Google may have committed, but the client cannot prove either outcome. | Intent, base, attempt evidence, and projected state remain until the operation-specific recovery policy confirms, supersedes, or explicitly retries it. |
-| `failed` | The latest attempt has a conclusive non-success outcome; unlike `uncertain`, evidence establishes that Google did not confirm that attempt. | Intent remains unresolved with a typed failure; retry/terminal policy is deferred. |
+| `failed` | The latest attempt has a conclusive non-success outcome; unlike `uncertain`, evidence establishes that Google did not confirm that attempt. | Intent remains unresolved with a typed failure and follows the retry/permanent policy below. |
 | `confirmed` | A Google success result and its local consequences were committed atomically. | No longer contributes to unresolved counts. If no newer generation exists, the desired-state record may be removed/compacted in that transaction. |
 | `superseded` | Reconciliation selected newer Google state or authoritative deletion instead of an acknowledged local facet. | The losing facet no longer contributes to unresolved counts. Its typed resolution remains in bounded attempt history; the desired-state record may be removed when no other facet remains. |
 
@@ -275,8 +272,8 @@ pending ────────────────────────
 failed/uncertain ─────────────────────────► pending | confirmed | superseded
 ```
 
-The reconciliation policy below selects confirmation, supersession, or a new
-pending attempt. Retry timing remains later work.
+The reconciliation and reliability policies below select confirmation,
+supersession, or a new pending attempt.
 No transition may discard acknowledged intent without an explicit resolution.
 
 ## Automatic reconciliation and conflict policy
@@ -451,55 +448,287 @@ record when no newer generation exists, and record attempt consequences. A
 crash cannot leave a remote ID rebound while the desired state still appears
 safe to issue as a new create.
 
-## Structural synchronization phases
+## Reliability and deterministic scheduling
 
-This phase model defines responsibilities, not push/pull ordering:
+### Injected time and randomness
 
-| Phase | Required structural result |
+All scheduling decisions depend on injected `Clock`, monotonic timer, and
+randomness ports. Persisted timestamps use UTC wall time for restart recovery
+and user display. In-process debounce, request, run, cadence, and backoff
+deadlines use monotonic time so wall-clock changes cannot extend or shorten a
+running timer. Tests supply both clocks and a deterministic jitter sequence.
+
+After restart, persisted UTC deadlines are reconstructed conservatively. A wall
+clock that moved backward cannot restore Good or extend the five-minute
+automatic-retry budget; an implausible clock discontinuity creates Pending
+verification and a diagnostic. Only a newly completed run establishes current
+freshness.
+
+### API evidence boundary
+
+This reliability model relies only on the verified API contract: no lossless
+change cursor or atomic pagination; task but not task-list `If-Match` behavior;
+duplicate-producing repeated creates; operation-specific replay observations;
+stable task IDs across probed moves; and one structured 403 `quotaExceeded`
+without `Retry-After`. Google does not publish a complete Tasks-specific
+transient-error or retry-header matrix. Status classification, timeouts,
+backoff, and exhaustion below are conservative client policy, not claims of an
+undocumented Google guarantee. Unknown cases remain explicit failures.
+
+### Run phase ordering
+
+One account-scoped run executes these phases in order:
+
+| Phase | Required result and failure boundary |
 |---|---|
-| Eligibility | Resolve account partition, durable `syncEnabled`, Tasks authorization state, startup recovery, and whether a run is permitted. No network health is inferred. |
-| Begin attempt | Create a durable run identity/start record and claim eligible work without overlapping another run for the configured account. |
-| Remote exchange | Acquire validated authorization for requests, enumerate required remote pages, and/or execute selected desired-state generations. Exact ordering and batching are unresolved. |
-| Validate and stage | Strictly decode resource fields, associate account/identity, defer parent resolution until enough of the required view is available, and track page/scope completeness. |
-| Transactional publish/acknowledge | Commit internally valid remote batches and attempt outcomes without overwriting concurrent local intent. No transaction spans network IO. |
-| Finalize | Produce a typed run report. Advance last verified success only if every required phase/page completed and no unsupported, malformed, uncertain, or failed requirement invalidates the run. |
+| 1. Recover | Resolve interrupted runs and attempts from durable state before new network work. `inFlight` mutations become operation-specific `uncertain`; unfinished read-only requests are safe to discard. |
+| 2. Check eligibility | Open/validate the account partition, read `syncEnabled`, lifecycle eligibility, retry-exhaustion latch, and authorization state. Ineligible runs issue no Google request. |
+| 3. Authorize | Obtain a usable Tasks access token, refreshing once when required. Authorization does not establish sync health. |
+| 4. Begin run | Commit a unique run ID, trigger set, start time, and two-minute monotonic deadline. This durable record is created before claiming work. |
+| 5. Enumerate Google | List every task-list page, then every required task page for each list with `showCompleted=true`, `showHidden=true`, `showDeleted=true`, and `showAssigned=false`. Validate and publish safe pages transactionally while retaining per-scope completeness evidence. |
+| 6. Reconcile and plan | Against each complete scope, compare the confirmed base, current Google state, and newest local desired generation. Apply deletion first, then structure, then whole content. Incomplete scopes produce no outbound mutation. |
+| 7. Execute operations | Claim one generation durably, then execute dependency order: authoritative list/task deletes; list creates; top-level task creates; child creates; moves/reorders; complete content writes and list renames. A deleted dependency suppresses all dependent work. Each operation is acknowledged independently before the next dependent operation. |
+| 8. Verify uncertain/conditional outcomes | Perform the operation-specific read-backs in the reconciliation section. A 412 refetches and replans the affected task, bounded by the run deadline and request-attempt budget. |
+| 9. Finalize | Commit the typed run outcome, per-scope completeness, unresolved counts, retry episode state, and—only on complete success—the last verified-success time. |
 
-Validated pages may be published incrementally. Until finalization succeeds,
-health remains non-green and the prior last-success timestamp remains unchanged.
-Every required listing follows page tokens until termination for every required
-scope. That establishes completion of the documented listing procedure, not an
-atomic snapshot: Google does not document snapshot isolation across pages.
-Therefore listing absence alone is never sufficient to delete a previously
-known local resource. It creates a verification candidate under the deletion
-evidence rules above. Pagination, validation, or unsupported-data failure
-also disables all absence processing for the affected scope. P3 directly
-confirmed the risk: a task inserted after page 1 was omitted from the continued
-walk even though every page-token request succeeded, then appeared in a clean
-enumeration.
+Remote enumeration comes before mutation so stale offline intent is never pushed
+without first observing the available current Google state. There is no second
+account-wide pull merely to make a run look stronger than the non-atomic API can
+prove. Valid mutation responses and targeted read-backs establish operation
+results; a queued follow-up run handles triggers that arrived during execution.
 
-On startup, a durable run with no final outcome is marked interrupted. Its
-claimed `inFlight` attempts are treated under the uncertainty rule above.
-Startup does not pretend the abandoned process is still synchronizing.
+### Partial publication and operation success
+
+Validated pages may be published incrementally, but a scope is complete only
+after its entire page-token chain terminates successfully. Until every required
+scope and phase succeeds, health is non-green and last verified success does not
+advance.
+
+- Failure of task-list pagination makes the account view incomplete and blocks
+  all outbound mutations for that run.
+- Failure within one task list blocks absence processing and outbound mutations
+  for that list, including tasks believed to have moved into or out of it.
+  Independently complete lists may publish and execute operations, but the run
+  still finishes Failed.
+- A malformed resource fails its containing scope; valid previously published
+  rows remain. No unsupported row is silently skipped to claim completeness.
+- Each successful mutation is acknowledged immediately in its own local
+  transaction. A later operation failure never rolls it back or causes it to be
+  replayed.
+- A failed dependency leaves its dependents `pending` and unattempted. Other
+  dependency-independent operations may continue while enough run time remains.
+- Listing absence alone never deletes. P3 proved concurrent insertion can be
+  omitted from an otherwise successful page-token walk.
+
+### Serialized runs and trigger coalescing
+
+`SyncCoordinator` permits at most one engine run for the configured account.
+Triggers are typed facts, not separate jobs:
+
+| Trigger | Scheduling rule |
+|---|---|
+| Startup | After SQLite and authorization adapters initialize, request immediate verification unless sync is stopped, reauthorization is required, or automatic retry is exhausted. Cached data starts Pending/Inactive, never Good. |
+| Foreground resume | Request immediate verification under the same eligibility rules. Multiple lifecycle notifications coalesce. |
+| Connectivity may have returned | Request immediate verification only on a transition from unavailable/unknown-failed to potentially available. It never marks Google reachable or healthy. |
+| Explicit Refresh/Retry or Resume Sync | Start immediately when no run is active. Retry/Resume clears the retry-exhaustion latch and begins a new five-minute retry episode, but cannot bypass an unexpired server `Retry-After` or missing authorization. |
+| Successful reauthorization | Clear `reauthorizationRequired` only after the adapter validates usable Tasks authorization, then request immediate verification. |
+| Local mutation | The mutation is already durable. Schedule at five seconds after the newest mutation, capped at ten seconds after the first mutation in the burst. |
+| Foreground cadence | Request verification 60 seconds after the preceding run finishes while the platform is eligible. A more urgent queued trigger wins. |
+
+A trigger arriving during a run sets one in-memory `followUpRequired` fact and
+merges its reason into the run report; it never starts an overlapping run. Local
+work is already durable, and process restart independently requires verification,
+so correctness does not require persisting transient trigger notifications.
+After finalization, the coordinator rereads durable desired state. It starts one
+immediate follow-up if eligible and work or a verification obligation still
+exists. Ten mutations during a run therefore cause at most one follow-up run.
+
+Linux remains cadence-eligible while the application process is running,
+including when its window is unfocused or minimized. Android is eligible only
+while resumed in the foreground. Android schedules no periodic/background
+worker; pause cancels at a safe boundary, stops timers/network initiation, and
+resume requests catch-up. Correctness does not depend on focus, an editor, or a
+lifecycle/exit callback.
+
+### Quiescence and API efficiency
+
+When no run is active and no eligible trigger, retry, pending generation, or
+verification obligation exists, the coordinator performs no work and holds no
+polling loop beyond the single foreground cadence timer. A completed no-op run
+does not write task/list resources, create attempts, or schedule an immediate
+follow-up.
+
+The API exposes no verified lossless change cursor, so each cadence verification
+must consume all required task-list and task pages. Within that constraint the
+engine:
+
+- coalesces edits and triggers;
+- never polls faster than the cadence without a concrete trigger/retry;
+- uses one enumeration result for reconciliation and avoids redundant GETs;
+- performs targeted reads only for conditional, uncertain, or moved resources;
+- emits no PATCH/MOVE/DELETE when desired and Google state already agree;
+- never uses `updatedMin`, collection ETags, or one listing absence as a fake
+  complete-change feed;
+- records request/page/operation counts so development tests can detect an N+1
+  regression without imposing an invented server quota threshold.
+
+## Timeouts, cancellation, and retry
+
+### Deadlines and cancellation
+
+Each HTTP attempt has a 30-second timeout. Each complete run has a two-minute
+monotonic deadline including authorization, enumeration, request retries,
+backoff waits, local transactions, and finalization. Before starting any request
+or backoff, the engine checks that its worst-case boundary fits the remaining
+run budget; otherwise it finalizes Failed without beginning that work.
+
+At the run deadline, sync stop, Android pause, or application shutdown request,
+the coordinator prevents new requests and asks the engine to cancel. The engine
+finishes or rolls back its current SQLite transaction, then stops at the next
+safe boundary. Cancellation of a read is harmless. Cancellation/timeout after a
+mutation may have left the device makes that attempt `uncertain`; it is never
+reported as not committed. No transaction is left open to wait for the network.
+
+Exit may request this bounded cancellation but is not a flush protocol. A kill,
+crash, lost battery, or missing exit callback has the same recovery semantics as
+process death.
+
+### Failure classification
+
+| Class | Examples | Automatic handling | User-visible outcome |
+|---|---|---|---|
+| Retryable transport | DNS/connect/TLS failure, connection reset, timeout, or a platform-proven lack of route | Read-only requests retry. A possibly transmitted mutation first follows uncertain-outcome recovery. | Failed immediately (`noConnection` for proven route/transport failure); Pending only while an actual retry request/run is active. |
+| Retryable remote | HTTP 429, 5xx, and the observed structured 403 `quotaExceeded` case | Backoff using the policy below. A mutation whose non-commit is not conclusive becomes uncertain before replay. Other 403 reasons are not assumed retryable. | Failed `remoteFailure` during waits; exact safe reason and retry count shown. |
+| Conditional conflict | Task HTTP 412 | Not a service retry. Refetch, reconcile, and replan while within the bounded request/run budget. | Pending during active reconciliation; automatic supersession/confirmation follows conflict policy. |
+| Authorization refreshable | Expired access token when the adapter can refresh | Refresh once, then repeat the request through the normal attempt budget. | Pending while refresh/request is active; never Good merely because refresh succeeded. |
+| Reauthorization required | Missing Tasks scope, terminal refresh rejection such as `invalid_grant`, revoked authorization, or adapter-declared unusable credentials | Persist `reauthorizationRequired`; cancel new Google work; do not back off or repeatedly refresh. | Inactive `noAuthorization`, presented prominently with Reauthorize. Cached data and pending intent remain. |
+| Permanent request | Validated 4xx such as malformed writable data, unsupported operation, or stable permission denial that is neither auth nor quota | Do not automatically retry the same request. Preserve typed failure and intent unless reconciliation supersedes it. | Failed `applicationFailure` or `remoteFailure` with concrete impact and Retry only where a changed condition could help. |
+| Application/data | Malformed success body, unsupported remote hierarchy, violated invariant, decoder defect | Stop the affected scope; never improvise or retry in a tight loop. | Failed `applicationFailure`; debug diagnostics retain full allowed context. |
+| Persistence | Transaction failure, unavailable/corrupt SQLite | Stop all remote work because outcomes cannot be acknowledged safely. | Failed `applicationFailure`, or a database recovery surface when state cannot be read. |
+
+Google Tasks does not document a complete transient-status or `Retry-After`
+matrix. The contract records one controlled 403 `quotaExceeded` response without
+`Retry-After`; classification depends on structured reason, not every 403 or
+human-readable message. Unknown responses fail closed as non-automatic until
+evidence or an adapter update classifies them.
+
+### Token refresh and reauthorization
+
+The authorization adapter supplies usable headers for each request and may
+refresh an expired or near-expiry access token once per request attempt. A Tasks
+authorization rejection invalidates the access-token view and permits one
+adapter refresh followed by one policy-controlled request attempt only when the
+adapter classifies the rejection as conclusive. A second rejection, missing
+Tasks scope, terminal refresh error, or adapter-declared revoked/unusable grant
+commits account-scoped `reauthorizationRequired` immediately.
+
+An auth response whose side-effect semantics the adapter cannot classify does
+not authorize blind mutation replay; the operation becomes uncertain and uses
+its normal recovery rule. This is deliberate because the contract has current
+Tasks evidence for malformed bearer only, not every expired/revoked/wrong-scope
+case.
+
+`reauthorizationRequired` survives restart and suppresses refresh loops,
+cadence, and remote mutation. It does not delete credentials, cached data, or
+pending intent. The UI immediately presents prominent `noAuthorization` with a
+Reauthorize action. Cancellation/dismissal leaves the state unchanged. Only a
+completed interactive authorization flow whose verified subject matches the
+account and whose Tasks scope is usable clears it; the ensuing sync is Pending
+until complete and cannot become green from login alone.
+
+### Backoff and exhaustion
+
+There is one explicit retry policy with two non-overlapping scopes. `SyncEngine`
+applies the bounded per-request retries inside a run; `SyncCoordinator` applies
+between-run backoff/exhaustion. Both use the same injected timing/jitter policy
+and persisted retry episode. The HTTP adapter reports typed outcomes and never
+hides retries.
+
+Within one active run, a retryable safe request—read-only, conclusively
+uncommitted, or resolved through uncertain-outcome recovery—receives at most
+three retries after its initial attempt. Nominal exponential delays are 1, 2,
+and 4 seconds. Injected full jitter chooses deterministically in tests from zero
+through the nominal delay. A valid server `Retry-After` later than the jittered
+delay wins.
+If that delay cannot fit before the two-minute run deadline, the run ends Failed
+instead of sleeping past its deadline.
+
+After a failed run, automatic recovery uses nominal delays of 1, 2, 4, 8, 16,
+32, then at most 60 seconds, each with full jitter and any longer valid
+`Retry-After`. The retry episode begins at the first retryable failure and ends
+five minutes later. Waiting is **Failed**, not Pending. Only an executing retry
+is Pending. Successful complete synchronization clears the episode.
+
+While the platform proves there is no route, the episode clock and backoff
+schedule continue but no doomed HTTP request is issued. A connectivity
+may-have-returned transition starts an immediate eligible attempt within the
+same episode; it does not reset the five-minute budget or imply success.
+
+When the five-minute budget expires, persist `automaticRetryExhausted` and stop
+all automatic cadence, resume, connectivity, and local-edit retries for that
+failure episode. The UI remains Failed with the concrete reason and a Retry
+button. Retry, or Resume Sync when stopped, explicitly starts a new episode. A
+valid future server `Retry-After` remains an earliest-request boundary even
+after the button is pressed; the UI explains when retry becomes available
+rather than violating it.
+
+Reauthorization-required and application/persistence failures do not consume
+this retry budget because they are not automatically retried.
+
+### Idempotency and uncertain outcomes
+
+Retry safety is decided by operation, never by HTTP method alone:
+
+| Operation | Verified behavior | Reliability rule |
+|---|---|---|
+| Enumeration/GET | Read-only request has no intended mutation. | Retry within the request budget; discarded partial bodies/pages establish no completeness. |
+| Create | P5 produced a distinct task/list for an identical repeated insert; Google exposes no idempotency key or client-selected ID. | Never content-deduplicate. An uncertain create retries under the accepted policy and may produce a diagnosed duplicate. |
+| Task content/list rename | P6 repeated writes successfully and changed version metadata again. | Read back known ID first. Confirm, supersede, or retry from current state; never assume repetition was a no-op. |
+| Delete | P6/P4 observed repeated delete success in the tested cases. | Read back/resolve stable ID first after uncertainty, then repeat only to enforce authoritative deletion. Do not generalize one status code to every missing/moved case. |
+| Move/reorder | P6 observed repeated same-list move as a no-op; P7 observed source 404 after a landed cross-list move. | Resolve current placement by stable ID before retry. Never interpret source 404 alone as deletion or failed move. |
+
+The durable attempt—not request text—is the unit of uncertainty. A timeout,
+connection loss, cancellation, malformed success response, process death after
+dispatch, or acknowledgement-transaction failure can all produce `uncertain`.
+Create, content/title, delete, and move then follow the separate recovery rows
+under **Uncertain mutations**; no generic retry layer can bypass them.
 
 ## SyncCoordinator and SyncEngine boundary
 
 | SyncCoordinator owns | SyncEngine owns |
 |---|---|
-| Observing startup, foreground resume, connectivity hints, committed-mutation notifications, explicit refresh/retry, and foreground cadence. | Executing one account-scoped run against the local sync store, authorization port, Google Tasks port, and clock. |
-| Reading `syncEnabled`, coalescing triggers, and allowing at most one active run for the configured account. | Recovering/claiming desired-state generations and attempts and performing the structural phases above. |
-| Remembering that another run is required when a trigger arrives during a run. | Strict wire validation, completeness evidence, transactional publication/acknowledgement, and typed run reports. |
-| Requesting cancellation at engine-declared safe boundaries and enforcing an outer run deadline. | Honoring cancellation only at safe boundaries; never abandoning an open local transaction. |
-| Projecting runtime scheduling facts used by SyncHealth. | Reporting facts; it does not choose UI wording, schedule itself, or mutate coordinator state. |
+| Receiving typed triggers, applying lifecycle eligibility, debounce/cadence, retry backoff/exhaustion, and injected timers/jitter. | Executing one account-scoped run against the local sync store, authorization port, Google Tasks port, and clocks. |
+| Allowing at most one run, coalescing triggers, retaining `followUpRequired`, enforcing the outer run deadline, and requesting cancellation. | Recovering/claiming generations, performing ordered phases, classifying adapter outcomes, honoring cancellation at safe boundaries, and returning a typed report. |
+| Projecting active/queued/waiting/exhausted runtime facts used by SyncHealth. | Strict wire validation, scope completeness, operation-specific uncertainty recovery, and transactional publish/acknowledgement. |
 
-The coordinator does not interpret task conflicts or mutate task, base,
-desired-state, or attempt rows; it does not infer success from connectivity or
-call widgets. The engine does not
-read lifecycle APIs, navigation, selected task, focus, editor buffers, or
-ViewModels. Repository transactions are the only path from user intent into
-durable sync work.
+The coordinator never interprets task conflicts or mutates task/base/desired
+rows. The engine never reads lifecycle APIs, navigation, selection, focus,
+editor buffers, or ViewModels and never schedules itself. Repository
+transactions are the only path from user intent into durable sync work.
 
-Retry scheduling is intentionally absent from this boundary draft. Later policy
-must place it without allowing two retry layers or weakening serialized runs.
+### Stale responses and superseded work
+
+Every request carries its run ID, operation-attempt ID, local resource key, and
+claimed desired generation in local memory; the durable attempt stores the same
+association. A response may commit only after a transaction rechecks that
+identity against current durable state.
+
+- A response for an older desired generation may update the confirmed remote
+  base when it proves what Google accepted, but it cannot overwrite a newer
+  projection or clear the newer generation.
+- A response received after timeout/cancellation is handled as evidence for its
+  recorded uncertain attempt, never as success for the current run.
+- A page from a superseded/cancelled run may publish only if the durable run is
+  still allowed to publish and its scope generation has not been replaced.
+  Otherwise it is discarded and diagnosed.
+- A run that completes while `followUpRequired` or a newer desired generation
+  exists may advance last verified success only if its own required enumeration
+  and claimed operations completed. Health remains Pending and the follow-up
+  starts immediately; the older run can never clear the obligation or produce
+  Good.
+- Finalization compares the durable run ID and state. A late finalizer cannot
+  overwrite a newer failure, retry episode, authorization state, or last-success
+  record.
 
 ## UI-observable state
 
@@ -539,22 +768,45 @@ account. Its inputs are:
 - freshness boundary and monotonic active-run deadline;
 - newest failure after the last verified success;
 - counts of `pending`, `inFlight`, `uncertain`, and `failed` work;
+- persisted `reauthorizationRequired`, retry episode, server-not-before, and
+  `automaticRetryExhausted` facts;
 - the latest explicit failure reason and safe diagnostic code.
 
 It produces exactly the accepted four top-level outcomes:
 
 | Outcome | Exact foundational rule |
 |---|---|
-| **Inactive** | `syncEnabled=false`, or the authorization adapter says usable Tasks authorization is absent/terminally rejected. Reason is mandatory: `syncStopped` or `noAuthorization`. Unresolved counts remain visible. |
-| **Failed** | The latest required completed attempt failed/timed out; a conclusive failed desired state is not actively being repaired; unsupported/application state prevents safe progress; or freshness expired without active verification. Reason is mandatory: `noConnection`, `remoteFailure`, `applicationFailure`, or `stale`. Last success and unresolved counts remain visible. |
-| **Pending** | Authorization is usable and required verification, an active/queued run, or durable unconfirmed work exists, provided no higher-priority non-active failure makes the outcome Failed. Active recovery after failure is Pending. |
-| **Good** | Sync is enabled; authorization is usable; a complete required run succeeded inside the freshness window; connectivity is not known unavailable; and there is no newer failure, required verification, active/queued work, or pending/in-flight/uncertain/failed desired state. |
+| **Inactive** | `syncEnabled=false`, or usable Tasks authorization is absent/terminally rejected. Reason is mandatory: `syncStopped` or `noAuthorization`. Reauthorization-required is persistent and prominent; unresolved counts remain visible. |
+| **Failed** | A failure has been detected and no retry request is executing; automatic backoff/exhaustion is waiting; a permanent/application/persistence failure exists; the two-minute run timed out; known connectivity proves no route; or last success is at least five minutes old without active verification. Reason is mandatory: `noConnection`, `remoteFailure`, `applicationFailure`, or `stale`. |
+| **Pending** | Authorization is usable and a nonfailed verification/run is active or immediately queued; a retry request is actually executing; local work is inside its 5–10 second debounce; or durable pending/in-flight/uncertain work awaits an eligible immediate run. A future backoff timer alone is not Pending. |
+| **Good** | Sync is enabled; authorization is usable; a complete required run succeeded less than five minutes ago; connectivity is not known unavailable; and there is no newer failure, required verification, active/queued work, follow-up, retry episode, or pending/in-flight/uncertain/failed desired state. |
 
-Evaluation order is Inactive, Failed, Pending, Good, with the accepted exception
-that an active recovery run is Pending rather than Failed. A known disconnected
-hint invalidates Good and creates a verification obligation, but does not prove
-an API failure. If freshness expires before active verification, the result is
-Failed; while verification is active it is Pending.
+Evaluation order is Inactive, Failed, Pending, Good, with one narrow exception:
+an executing retry request is Pending. Merely having an active run does not hide
+a failure detected elsewhere in that run. A known disconnected hint invalidates
+Good immediately and schedules verification when connectivity may return; a
+positive hint never proves Google reachable. At exactly five minutes after last
+verified success, health becomes Failed `stale` unless verification is actively
+executing, in which case it is Pending.
+
+### Exact transition events
+
+| Event | Result |
+|---|---|
+| Database opens, sync enabled, authorization not yet validated | Pending `checkingAuthorization`; no cached state is called current. |
+| Startup/resume trigger with usable authorization | Pending `verifying` until the run finalizes. |
+| Local mutation commits | Pending immediately; its debounce deadline is visible as queued local work. |
+| Complete successful run, no unresolved/follow-up work | Good; persist last verified success from the injected wall clock and start a five-minute monotonic freshness deadline. |
+| Complete successful run with newer pending/follow-up work | Pending; last-success may advance, but the follow-up obligation forbids green. |
+| Transport/remote/application/persistence failure is detected | Failed immediately, even before automatic backoff is exhausted. Preserve last-success time and unresolved counts. |
+| Automatic retry request begins | Pending `retrying`; if it fails, return immediately to Failed during the next wait. |
+| Five-minute retry episode exhausts | Failed with Retry; automatic triggers remain latched off for that episode. |
+| Tasks authorization becomes terminally unusable | Inactive `noAuthorization` immediately with Reauthorize; no retry timer. |
+| Reauthorization succeeds | Pending `verifying`; only a complete sync may produce Good. |
+| Connectivity becomes known unavailable | Failed `noConnection`; potentially restored connectivity queues verification but does not change health to Good. |
+| Last-success age reaches five minutes | Failed `stale`, or Pending only if verification/retry is executing. |
+| User stops synchronization | Inactive `syncStopped`; cache, authorization, and unresolved intent remain. |
+| User resumes synchronization after `syncStopped` | This explicit button clears retry exhaustion and starts a new episode with immediate verification when authorization is usable; reauthorization-required still presents Reauthorize instead of issuing a request. |
 
 Additional invariants:
 
@@ -567,13 +819,25 @@ Additional invariants:
   route; a positive connectivity hint never proves Google is reachable;
 - malformed responses, unsupported remote state, broken invariants, and local
   persistence failures use `applicationFailure` with a specific diagnostic code;
-- Google service/rate-limit failures use `remoteFailure`; retry policy may move
-  them to Pending only when recovery is actually queued or active;
+- Google service/rate-limit failures use `remoteFailure`; only an executing
+  retry request moves them temporarily to Pending;
 - a hung run becomes Failed at its monotonic deadline;
 - partial publication does not advance last verified success;
-- `confirmed` history does not count as unresolved work;
+- `confirmed` and `superseded` history do not count as unresolved work;
 - process restart re-derives runtime phase from durable attempts/desired state
   and cannot clear durable failure evidence merely by resetting memory.
+
+Green is forbidden when any of these holds: sync stopped; authorization unknown,
+refreshing, absent, or rejected; startup/resume verification outstanding;
+connectivity known unavailable; a run/retry is queued or active; last success is
+at least five minutes old or absent; any failure is newer than success; any
+required scope was partial; any follow-up is required; automatic retry is
+waiting/exhausted; or any pending, in-flight, uncertain, or failed desired state
+exists.
+
+Every non-Good state shows the exact last-success wall time and human-readable
+age, or “Never” when none exists. Failed stale presentation says how old the
+verified data is; it never replaces that fact with a generic connection icon.
 
 ## One supported subtask level
 
@@ -642,27 +906,114 @@ private keys, secure-store values, and unredacted OAuth callback URLs are never
 logged. There is no automatic upload or telemetry, and release composition has
 no runtime path to the sensitive sink.
 
-## Crash and persistence invariants
+## Process death, restart, and persistence recovery
 
-1. No transaction spans network IO.
-2. Local acknowledgement always implies durable projected state plus durable
-   intent; neither may exist alone after commit.
-3. Remote confirmation always updates identity/base/desired-state consequences in
-   one transaction.
-4. Process loss cannot convert `inFlight` to `pending` without evidence that no
-   side effect could have reached Google.
-5. Partial or malformed remote data cannot justify destructive absence
-   processing or last-success advancement.
-6. Concurrent repository edits cannot be overwritten by an engine write based
-   on an older read. The final local transaction must re-check the current
-   desired-state/projection version.
-7. A database open/write failure is visible and preserves recoverable data; no
-   empty-cache or preference-store fallback is allowed.
-8. Every unresolved record remains account-scoped and discoverable after
-   restart.
-9. Production diagnostics contain only safe structured evidence. Development
-   diagnostics contain the sensitive application/task evidence defined above,
-   but neither diagnostic path ever contains credential material.
+### Durable-boundary recovery matrix
+
+| Last durable boundary before process death | Restart interpretation and recovery | Preserved invariant |
+|---|---|---|
+| Before local mutation transaction commits | The command was never acknowledged; no projection or intent exists. | UI success never precedes durable intent. |
+| After local commit, before coordinator notification/debounce | Discover `pending` from SQLite and schedule according to startup eligibility. | Lost callbacks cannot lose work. |
+| After durable run begin, before an operation claim | Mark the run interrupted; no mutation is inferred. Start normal recovery/verification. | An abandoned runtime flag cannot remain Pending forever. |
+| After generation is claimed `inFlight`, before/while request dispatch | Conservatively mark a mutation `uncertain` unless durable transport evidence proves it could not leave the device. Apply operation-specific recovery. | No possibly committed mutation is blindly treated as unsent. |
+| After Google response, before acknowledgement transaction | The prior `inFlight` attempt is uncertain; read back/recover. A create may retry and duplicate by accepted policy. | Remote success is never invented or forgotten as safe-to-create. |
+| During acknowledgement transaction | SQLite atomicity yields either the old `inFlight` state or the complete new base/identity/resolution. Recover the former as uncertain. | Remote ID/base/projection/intent cannot be half-acknowledged. |
+| After acknowledgement, before next dependent operation | Confirmed/superseded state is retained; resume only unresolved dependents. | Partial success is not replayed or rolled back. |
+| During page publication | The page transaction is wholly present or absent. Scope completeness remains false until terminal page evidence commits. | Partial pages cannot justify absence deletion or Good. |
+| After all work, before finalization commits | Mark run interrupted; do not advance last success. Confirmed per-operation results remain. | Last success means durable complete finalization only. |
+| After finalization commits | Reconstruct health/cadence from the committed outcome and age; startup still requires new verification. | Restart cannot turn cached success directly green. |
+
+Startup recovery runs before new remote work in one serialized engine. It marks
+abandoned runs interrupted, resolves every `inFlight` mutation to `uncertain`,
+preserves newer desired generations, restores retry/reauthorization/exhaustion
+latches, and derives one verification obligation. Recovery itself is
+transactional and idempotent so a second crash repeats it safely.
+
+### Database failures
+
+A local command transaction failure rolls back projection and desired state,
+returns a typed persistence failure, and never publishes UI success. The user
+may retry the command only after storage is usable.
+
+If a remote response is received but its acknowledgement transaction fails, the
+engine starts no further Google operation. If SQLite still accepts a separate
+failure transaction, the attempt becomes `uncertain`; otherwise its already
+durable `inFlight` state produces the same result on restart. The response is
+not replayed from memory as proof after process loss.
+
+If SQLite becomes unavailable during a run, the engine cancels network work at
+the next safe boundary and health becomes Failed `applicationFailure` while
+readable cached state remains. If the database cannot be read at all, the normal
+task UI is replaced by a recovery surface: Retry Open and access to safe
+diagnostics. It does not show an empty task list, start sync, or accept edits.
+
+Malformed/corrupt database files, including their WAL/SHM companions, are closed
+and preserved in place. They are never automatically moved, overwritten,
+deleted, or replaced with an empty production database. Automatic recovery is
+limited to SQLite-supported non-destructive open/recovery steps whose result
+passes schema and integrity validation. Any quarantine, destructive reset,
+import, or replacement requires a separate explicit user action and is outside
+this synchronization run.
+
+### Reliability invariants and failure proof
+
+1. **Durable acknowledgement:** every acknowledged mutation already has one
+   transactionally consistent projection and desired-state generation. Local
+   transaction failure returns no success.
+2. **No network transaction:** no SQLite transaction spans network IO. Timeout,
+   cancellation, or process death therefore cannot strand a database lock.
+3. **Atomic remote acknowledgement:** remote identity, base, projection,
+   generation result, and attempt outcome commit together. Failure before commit
+   remains recoverably uncertain.
+4. **Serialized authority:** only one account run executes; triggers coalesce and
+   cannot create competing writers. A final transaction rechecks run and desired
+   generation before publishing.
+5. **No blind mutation replay:** uncertain outcomes use operation-specific
+   recovery. The sole deliberate exception is uncertain create, whose possible
+   duplicate is accepted and never content-deduplicated.
+6. **No destructive absence:** only positive deletion evidence applies delete;
+   incomplete/failed scopes disable absence processing. Unrelated tasks,
+   children, lists, and accounts remain outside the transaction target.
+7. **Partial success durability:** each successful operation is acknowledged;
+   later failure preserves it and leaves only unresolved/dependent work.
+8. **Truthful health:** only complete durable finalization can advance last
+   success; every failure is visible immediately and every listed green-forbidden
+   fact remains non-green.
+9. **Bounded activity:** request/run deadlines, bounded request retries,
+   five-minute automatic-retry exhaustion, and safe cancellation prevent
+   indefinite Pending or request storms.
+10. **Restart equivalence:** missing exit callbacks and process death at every
+    durable boundary reduce to persisted `pending`, `inFlight`/`uncertain`,
+    confirmed/superseded, partial-scope, or finalized state—never an unrecorded
+    success.
+11. **Account isolation:** every query, operation, attempt, retry latch, and
+    publication is account-scoped; recovery cannot attach data to a different
+    authorization subject.
+12. **Privacy-preserving evidence:** production diagnostics contain only safe
+    structured facts. Development diagnostics retain allowed sensitive task/API
+    evidence, but neither sink contains credential material.
+
+### Required reliability tests
+
+| Area | Minimum deterministic evidence |
+|---|---|
+| Debounce/coalescing | Mutations at 0/4/8 seconds run at 10 seconds; an isolated mutation runs at 5; triggers during a run produce exactly one follow-up; no overlapping engine call occurs. |
+| Cadence/lifecycle | Linux runs 60 seconds after completion while minimized; Android runs only while resumed; pause cancels safely; startup/resume/connectivity transitions behave exactly as specified. |
+| Deadlines | Boundaries immediately before/at/after 30 seconds and two minutes; no new request that cannot fit; mutation cancellation becomes uncertain. |
+| Backoff | Inject minimum/maximum jitter for 1/2/4 request delays and 1/2/4/8/16/32/60 run delays; longer `Retry-After` wins; waiting is Failed; execution is Pending; five-minute exhaustion survives restart and requires Retry. |
+| Authorization | One successful refresh; terminal refresh; second rejection; missing scope; cancelled and successful reauthorization; account-subject mismatch; no auth transition produces Good. |
+| Partial retrieval | Failure on every task-list/task page, malformed row, and one failed list among successful lists; valid pages persist, affected writes/absence handling stop, and last success does not advance. |
+| Partial operations | Success followed by independent/dependent failure for every operation class; acknowledged success is not replayed and dependents remain pending. |
+| Uncertainty/idempotency | Every create/content/title/delete/move uncertainty case from the reconciliation matrix, including accepted create duplication and cross-list source 404. |
+| Stale/superseded responses | Late response after timeout/cancel, old desired generation, cancelled run page, late finalizer, and a newer local edit during acknowledgement. |
+| Persistence/process death | Interrupt every durable-boundary matrix row; fail before/after every transaction commit; repeat startup recovery twice; unavailable/corrupt DB never becomes an empty cache. |
+| SyncHealth/freshness | Every exact transition event and every green-forbidden predicate at one millisecond before/at/after five minutes, with exact last-success age and “Never.” |
+| Efficiency/quiescence | No-op run issues listing requests but no writes/attempts/follow-up; no trigger produces no work; request counts scale with pages/lists rather than rows plus targeted recovery reads. |
+
+Model tests assert all invariants after each transition rather than checking
+source strings. Integration tests use fake clocks/randomness and strict Google,
+authorization, connectivity, lifecycle, and storage ports; real-API tests remain
+limited to capability evidence that a fake cannot establish.
 
 ## Explicit non-goals
 
@@ -678,20 +1029,15 @@ no runtime path to the sensitive sink.
 - UI/editor state influencing synchronization eligibility.
 - Account switching in the initial product.
 - Conflict-copy behavior inherited from Rust.
-- A generic HTTP retry interceptor or retry-timing policy in this draft.
+- A generic or hidden HTTP retry interceptor.
 
 ## Remaining Stage 4 work and evidence
 
 No current item below requires a product answer from the user. They are concrete
 specification or capability-research actions:
 
-1. Define retry/backoff/cadence/freshness/timeout policy. A failure always remains
-   visible with its concrete reason; it becomes Pending only when a recovery run
-   is actually queued or active.
-2. Choose structural phase ordering and dependency scheduling consistent with
-   this conflict policy, including bounded reevaluation after repeated 412s.
-3. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
+1. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
    cases. The current probe establishes only malformed bearer as 401.
-4. Probe `webViewLink` presence/navigation with an ordinary and recurring task
+2. Probe `webViewLink` presence/navigation with an ordinary and recurring task
    created in the current Google UI before implementing the recurrence escape
    hatch.

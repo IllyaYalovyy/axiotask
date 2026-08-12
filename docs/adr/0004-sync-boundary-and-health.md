@@ -52,9 +52,13 @@ catch-up. A run may publish remote pages
 incrementally, but health cannot become Good or advance last verified success
 until the complete run succeeds.
 
-Exact synchronization phases, retries, conflicts, timeout/freshness durations,
-and operation semantics are deliberately undecided here and must be specified
-in Stage 4 without weakening these health invariants.
+At ADR acceptance, exact synchronization phases, retries, conflicts,
+timeout/freshness durations, and operation semantics were deliberately deferred
+to Stage 4 without weakening these health invariants.
+
+Stage 4 refinement (2026-08-11): `SYNC_SPEC.md` now supplies those details.
+Retry backoff waiting is Failed so a detected failure remains immediately
+visible; only an executing retry request is Pending.
 
 ## Rationale
 

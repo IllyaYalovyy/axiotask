@@ -320,9 +320,11 @@ documented default; sync-critical records may not.
 
 When synchronization is enabled, it coalesces bursts, permits only one engine
 run, and remembers triggers that arrive during a run. A local mutation gets a
-short trailing debounce plus a bounded maximum wait; exact durations and retry
-policy are Stage 4 decisions tested with a fake clock. Resume and explicit retry
-are immediate. Android has no periodic background worker.
+five-second trailing debounce capped at ten seconds from the burst's first
+mutation. Foreground cadence is 60 seconds; resume and explicit retry are
+immediate. Android has no periodic background worker. Exact phase, timeout, and
+retry behavior is normative in `SYNC_SPEC.md` and tested with injected time and
+randomness.
 
 Connectivity state is only a hint to schedule work. A Wi-Fi or cellular signal
 does not prove internet or Google availability. Only an authenticated Google
@@ -354,11 +356,11 @@ Those facts produce exactly four top-level outcomes:
    not actively running. The reason distinguishes `noConnection`,
    `remoteFailure`, `applicationFailure`, and `stale`; any pending count remains
    visible.
-3. **Pending** — authorization is usable and a run, queued trigger, required
-   foreground verification, scheduled retry, or durable unconfirmed desired
-   state exists. This includes an active retry after a failure.
+3. **Pending** — authorization is usable and a nonfailed run/verification is
+   active or immediately queued, a retry request is executing, or durable work
+   awaits an eligible immediate run. Waiting for retry backoff remains Failed.
 4. **Good** — synchronization is enabled, authorization is usable, a complete
-   remote run succeeded within the freshness window, and there is no newer
+   remote run succeeded less than five minutes ago, and there is no newer
    failure, active/queued work, pending desired state, or uncertain outcome.
 
 Evaluation uses that order except that an actively running retry is Pending
@@ -366,9 +368,9 @@ rather than Failed. Connectivity is evidence for scheduling only and never
 produces Good. Startup and every foreground resume require verification, so
 cached data starts Pending. A monotonic run deadline prevents a hung request
 from remaining Pending forever; timeout becomes Failed. The persisted
-last-success wall time and a monotonic in-session freshness deadline ensure an
-old success cannot remain Good. Stage 4 must choose and test the exact request,
-run, cadence, and freshness durations without weakening these rules.
+last-success wall time and a monotonic in-session five-minute freshness deadline
+ensure an old success cannot remain Good. `SYNC_SPEC.md` fixes a 30-second
+request timeout and two-minute run deadline without weakening these rules.
 
 The authorization adapter is the only authority for `noAuthorization`. It emits
 that reason when credentials are absent, the Tasks scope is absent, or Google
