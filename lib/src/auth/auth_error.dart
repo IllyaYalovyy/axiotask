@@ -46,11 +46,13 @@ class TokenStoreException extends AuthException {
   const TokenStoreException(super.message);
 }
 
-/// The loopback redirect server received a connection whose HTTP request line
-/// could not be parsed (empty, or missing the request-target). Raised instead
-/// of a raw `RangeError` so the caller can surface a typed sign-in failure. A
-/// well-formed but non-redirect request (a browser preconnect or favicon probe)
-/// is NOT this — those are answered `404` and the accept-loop keeps waiting.
+/// The loopback redirect server received a connection whose (non-empty) HTTP
+/// request line could not be parsed — it carried no request-target. Raised
+/// instead of a raw `RangeError` so the caller can surface a typed sign-in
+/// failure. Neither a dataless connection (a speculative preconnect that sends
+/// no request line) nor a well-formed non-redirect request (a favicon probe) is
+/// this: the former is dropped as noise and the latter answered `404`, and in
+/// both cases the accept-loop keeps waiting.
 class AuthMalformedRedirect extends AuthException {
   const AuthMalformedRedirect([
     super.message = 'malformed loopback request line',

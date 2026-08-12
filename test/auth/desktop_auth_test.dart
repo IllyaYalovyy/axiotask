@@ -176,8 +176,8 @@ void main() {
       expect(await future, 'real-code');
     });
 
-    test('empty request line fails with a typed AuthException, not '
-        'a raw RangeError', () async {
+    test('drops a dataless connection (opens, sends nothing, closes) as noise '
+        'and returns the code from the real redirect that follows', () async {
       final future = awaitLoopbackRedirect(
         server,
         redirectUri: redirectUri,
@@ -185,10 +185,78 @@ void main() {
         timeout: const Duration(seconds: 5),
       );
 
-      // A connection that sends only a blank line — no method, no target.
-      await _sendRequest(server.port, '\r\n');
+      // A speculative preconnect / probe: the browser opens the loopback
+      // socket and closes it without ever sending a request line, while the
+      // user is still on the consent screen. It must NOT fail the gesture
+      // (#200) — the flow keeps waiting for the real redirect.
+      final noise = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        server.port,
+      );
+      await noise.close();
+      await noise.drain<void>();
 
-      await expectLater(future, throwsA(isA<AuthMalformedRedirect>()));
+      // The real redirect arrives on a fresh connection and signs in.
+      final okReply = await _sendRequest(
+        server.port,
+        'GET /?code=real-code&state=st HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n',
+      );
+      expect(okReply, contains('200 OK'));
+      expect(await future, 'real-code');
+    });
+
+    test('a blank request line (no method, no target) fails with a typed '
+        'AuthMalformedRedirect, not a raw RangeError', () async {
+      final future = awaitLoopbackRedirect(
+        server,
+        redirectUri: redirectUri,
+        state: 'st',
+        timeout: const Duration(seconds: 5),
+      );
+
+      // Observe the failing future BEFORE triggering it: the flow records the
+      // typed error the instant it parses the bad line, so a late listener
+      // would see it surface as an unhandled error first.
+      final expectation = expectLater(
+        future,
+        throwsA(isA<AuthMalformedRedirect>()),
+      );
+
+      // A connection that DOES send a request line, but a malformed one: a
+      // lone token with no request-target. Distinct from a dataless probe —
+      // this stays a typed failure rather than a raw RangeError.
+      await _sendRequest(server.port, 'GARBAGE\r\n\r\n');
+
+      await expectation;
+    });
+
+    test('a response-write failure still completes the sign-in with the '
+        'received code and does not escape as an unhandled error', () async {
+      // The browser delivers the real redirect, then drops the tab before the
+      // server can write its success page — a broken pipe on the response
+      // write. Simulated deterministically (a real loopback write of a small
+      // body lands in the kernel buffer and succeeds regardless of the peer):
+      // the injected writer throws a SocketException exactly as a broken pipe
+      // would. Because the code was already received, the sign-in must still
+      // complete with it — the failed write must neither discard the code
+      // (hang to timeout) nor escape as an unhandled async error (#200). An
+      // unhandled SocketException would be flagged by the test zone.
+      final future = awaitLoopbackRedirect(
+        server,
+        redirectUri: redirectUri,
+        state: 'st',
+        timeout: const Duration(seconds: 5),
+        writeResponse: (socket, status, reason, body) async {
+          throw const SocketException('broken pipe');
+        },
+      );
+
+      await _sendRequest(
+        server.port,
+        'GET /?code=real-code&state=st HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n',
+      );
+
+      expect(await future, 'real-code');
     });
 
     test('times out and cancels the server when no redirect arrives', () async {
@@ -218,12 +286,17 @@ void main() {
           timeout: const Duration(seconds: 5),
         );
 
+        // Observe the failing future before triggering it: the flow now
+        // records the typed error before writing the 400 page, so a late
+        // listener would see it as an unhandled error first.
+        final expectation = expectLater(future, throwsA(isA<AuthUserDenied>()));
+
         final reply = await _sendRequest(
           server.port,
           'GET /?error=access_denied&state=st HTTP/1.1\r\n\r\n',
         );
         expect(reply, contains('400 Bad Request'));
-        await expectLater(future, throwsA(isA<AuthUserDenied>()));
+        await expectation;
       },
     );
   });

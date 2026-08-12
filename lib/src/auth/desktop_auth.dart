@@ -247,7 +247,14 @@ Future<String> awaitLoopbackRedirect(
   required String redirectUri,
   required String state,
   required Duration timeout,
+  // Test-only seam: injected only to make a response-write failure
+  // deterministic under test — a real broken pipe on loopback is
+  // timing-dependent (a small write lands in the kernel buffer and succeeds).
+  // Production always uses [_writeResponse].
+  Future<void> Function(Socket socket, int status, String reason, String body)?
+  writeResponse,
 }) async {
+  final write = writeResponse ?? _writeResponse;
   final completer = Completer<String>();
   final open = <Socket>{};
 
@@ -262,12 +269,19 @@ Future<String> awaitLoopbackRedirect(
     try {
       final requestLine = await _readRequestLine(socket);
       if (completer.isCompleted) return;
+      if (requestLine.isEmpty) {
+        // A dataless connection: a speculative preconnect / probe that opened,
+        // sent no request line, and closed. It is noise, not the redirect —
+        // drop it and keep waiting rather than failing the gesture while the
+        // user is still on the consent screen (#200).
+        return;
+      }
       final path = _requestTarget(requestLine);
       final query = Uri.parse('$redirectUri$path').queryParameters;
       if (!query.containsKey('code') && !query.containsKey('error')) {
         // Browser preconnect / favicon probe / speculative socket — not the
         // redirect. Answer 404 and keep listening.
-        await _writeResponse(
+        await write(
           socket,
           404,
           'Not Found',
@@ -276,22 +290,32 @@ Future<String> awaitLoopbackRedirect(
         return;
       }
       final code = parseRedirect('$redirectUri$path', state);
-      await _writeResponse(
+      // Complete BEFORE writing the response: if the browser has already
+      // dropped the connection, a failed response write must not discard a
+      // received code and let the gesture hang to timeout (#200).
+      if (!completer.isCompleted) completer.complete(code);
+      await write(
         socket,
         200,
         'OK',
         '<html><body><h1>Signed in.</h1>'
             '<p>You can close this tab.</p></body></html>',
       );
-      if (!completer.isCompleted) completer.complete(code);
     } on AuthException catch (e) {
-      await _writeResponse(
+      // Record the typed failure BEFORE the courtesy write, for the same
+      // reason as the success path, and swallow a failed write so it cannot
+      // escape once the error is already recorded.
+      if (!completer.isCompleted) completer.completeError(e);
+      await write(
         socket,
         400,
         'Bad Request',
         '<html><body><p>Sign-in failed.</p></body></html>',
-      );
-      if (!completer.isCompleted) completer.completeError(e);
+      ).catchError((_) {});
+    } on SocketException {
+      // A read or flush failed on this socket — the peer reset a speculative
+      // connection, or dropped the tab mid-response. It is noise: drop it and
+      // keep waiting so it cannot escape as an unhandled async error (#200).
     } finally {
       open.remove(socket);
       await socket.close().catchError((_) => socket);
@@ -303,7 +327,10 @@ Future<String> awaitLoopbackRedirect(
   } finally {
     timer.cancel();
     await sub.cancel();
-    for (final socket in open) {
+    // Copy the live-socket set before destroying: a still-running handler's
+    // `finally` removes itself from `open`, so iterating it directly races
+    // into a ConcurrentModificationError (#200).
+    for (final socket in open.toList()) {
       socket.destroy();
     }
     await server.close();
