@@ -9,6 +9,7 @@ Start with:
 
 - [Product vision](VISION.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Vertical-slice execution plan](docs/EXECUTION_PLAN.md)
 - [Functional parity](docs/FUNCTIONAL_PARITY.md)
 - [Testing strategy](docs/TESTING.md)
 - [UX principles](docs/UX.md)
@@ -23,8 +24,9 @@ input to this design.
 
 ## Status
 
-Stage 3 architecture/design is accepted. Stage 4 will specify synchronization
-behavior and its test matrix before substantial sync code is written.
+Stages 3–5 architecture, synchronization, testing, and parity design are
+accepted. The Stage 6 vertical-slice execution plan awaits approval before
+Flutter implementation begins.
 
 No CI/CD or distribution workflow is planned. Development, testing, visual
 review, commits, and pushes are deliberately local.

@@ -92,6 +92,7 @@ the product documentation or ADRs.
 - `docs/SYNC_SPEC.md`: Stage 4 synchronization state machine and guarantees.
 - `docs/SYNC_TEST_MATRIX.md`: Stage 4 behavioral evidence plan.
 - `docs/FUNCTIONAL_PARITY.md`: Rust behavior disposition and verification.
+- `docs/EXECUTION_PLAN.md`: ordered Stage 6 implementation slices and gates.
 - `docs/TESTING.md`: local test layers and isolation.
 - `docs/UX.md`: adaptive interaction and visual review principles.
 - `docs/SECURITY.md`: threat model and privacy controls.
