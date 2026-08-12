@@ -280,6 +280,7 @@ void main() {
     String Function()? newId,
     String viewId = 'all',
     bool showCompleted = false,
+    List<String> excludedLists = const [],
     List<Override> extraOverrides = const [],
   }) async {
     final fake = FakeBackend(initial, newId: newId);
@@ -289,7 +290,7 @@ void main() {
         ProviderScope(
           overrides: [
             prefsProvider.overrideWithValue(
-              Prefs(showCompleted: showCompleted),
+              Prefs(showCompleted: showCompleted, excludedLists: excludedLists),
             ),
             commandsProvider.overrideWithValue(fake),
             allTasksProvider.overrideWith((ref) => fake.tasksStream),
@@ -477,6 +478,47 @@ void main() {
         find.text('Added "pay rent next month" to My Tasks'),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'QuickAdd landing (#190): a create into a list excluded from smart views '
+    'toasts the list, even when its date passes the view predicate',
+    (tester) async {
+      // The failure this prevents: born-due-today passes the Focus predicate,
+      // but L1 is excluded from smart views, so Focus renders NOTHING for it —
+      // without accounting for exclusion the bar would stay silent and the
+      // create would vanish. It must toast the target list instead.
+      await pumpView(
+        tester,
+        viewId: 'focus',
+        excludedLists: ['L1'],
+        openedInView: <String>[],
+      );
+      await withClock(_clock, () async {
+        await tester.enterText(find.byType(TextField), 'buy milk');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+      });
+      expect(find.widgetWithText(TaskRow, 'buy milk'), findsNothing);
+      expect(find.text('Added "buy milk" to My Tasks'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'View'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'QuickAdd landing (#190): the same create in an UNexcluded list stays '
+    'toast-free (control)',
+    (tester) async {
+      await pumpView(tester, viewId: 'focus', openedInView: <String>[]);
+      await withClock(_clock, () async {
+        await tester.enterText(find.byType(TextField), 'buy milk');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+      });
+      // Not excluded → born due today → visible right here, no toast.
+      expect(find.widgetWithText(TaskRow, 'buy milk'), findsOneWidget);
+      expect(find.textContaining('Added'), findsNothing);
     },
   );
 

@@ -237,6 +237,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       due: _bareDue(created.task.due),
       listId: created.listId,
       listTitle: _listTitle(created.listId),
+      excludedLists: ref.read(prefsControllerProvider).excludedLists.toSet(),
       window: dateWindowNow(),
     );
     if (dest != null) {
@@ -654,6 +655,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         due: null,
         listId: result.listId,
         listTitle: _listTitle(result.listId),
+        excludedLists: ref.read(prefsControllerProvider).excludedLists.toSet(),
         window: dateWindowNow(),
       );
       final toasts = ref.read(toastControllerProvider);

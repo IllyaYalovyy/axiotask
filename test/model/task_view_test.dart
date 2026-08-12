@@ -295,11 +295,13 @@ void main() {
       String? due,
       String listId = 'L1',
       String listTitle = 'My Tasks',
+      Set<String> excludedLists = const {},
     }) => landingDestinationFor(
       viewId: viewId,
       due: due,
       listId: listId,
       listTitle: listTitle,
+      excludedLists: excludedLists,
       window: window(),
     );
 
@@ -347,6 +349,29 @@ void main() {
         expect(d?.label, 'Missed');
       },
     );
+
+    test('a create into a list excluded from smart views lands in its list', () {
+      // Born due today PASSES the Focus predicate, but L1 is excluded from the
+      // smart views — Focus never shows it, so the destination is the list, not
+      // Focus. The predicate alone would wrongly return null here (#190).
+      final d = dest('focus', due: day(0), excludedLists: {'L1'});
+      expect(d?.viewId, 'L1');
+      expect(d?.label, 'My Tasks');
+      // The same create in an UNexcluded list is visible in Focus → no toast.
+      expect(dest('focus', due: day(0)), isNull);
+    });
+
+    test('excluding OTHER lists does not affect an in-view create', () {
+      // A create in L1 (visible in Focus) stays toast-free even though some
+      // other list L2 is excluded — only the created task's own list matters.
+      expect(dest('focus', due: day(0), excludedLists: {'L2'}), isNull);
+    });
+
+    test('an excluded-list create is silent in its own list view', () {
+      // Viewing the excluded list itself: the list view ignores exclusion and
+      // shows every create, so no toast (the newest-pin already surfaces it).
+      expect(dest('L1', due: day(0), excludedLists: {'L1'}), isNull);
+    });
 
     test('the inclusive +14 boundary stays visible in Upcoming (no toast)', () {
       // today+14 is the inclusive upper bound of Upcoming — a create there must

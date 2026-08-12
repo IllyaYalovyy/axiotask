@@ -126,22 +126,30 @@ class LandingDestination {
 
 /// Whether a just-created task with due [due] in list [listId] would render in
 /// the CURRENT [viewId]. A fresh task has no subtasks, so its effective due is
-/// its own [due]. Smart date views test their predicate; `all` shows everything;
-/// a concrete list view shows its own tasks. (List exclusion is not modelled
-/// here — a quick-add/bulk-add targets a real list the user is working in.)
+/// its own [due]. Smart date views test their predicate AND exclude tasks whose
+/// list is in [excludedLists] (a smart view never renders an excluded list's
+/// rows — matching [visibleTasksForView]); `all` shows everything and ignores
+/// exclusion; a concrete list view shows its own tasks (exclusion is a
+/// smart-view filter only, so the list view still renders its own rows).
 bool _visibleAfterCreate(
   String viewId, {
   required String? due,
   required String listId,
+  required Set<String> excludedLists,
   required DateWindow window,
-}) => switch (viewId) {
-  'focus' => inFocus(due, window),
-  'upcoming' => inUpcoming(due, window),
-  'missed' => inMissed(due, window),
-  'unscheduled' => isUnscheduled(due),
-  'all' => true,
-  _ => listId == viewId,
-};
+}) {
+  if (_dateSmartViews.contains(viewId) && excludedLists.contains(listId)) {
+    return false;
+  }
+  return switch (viewId) {
+    'focus' => inFocus(due, window),
+    'upcoming' => inUpcoming(due, window),
+    'missed' => inMissed(due, window),
+    'unscheduled' => isUnscheduled(due),
+    'all' => true,
+    _ => listId == viewId,
+  };
+}
 
 /// Where a freshly-created task actually lands when the CURRENT [viewId] filters
 /// it out — the destination to name in the "Added to X" toast and to jump to
@@ -155,15 +163,34 @@ bool _visibleAfterCreate(
 /// a born-today task from Missed lands in Focus; a bulk-added undated row from a
 /// dated view lands in Unscheduled. Generalizes the reference App.svelte "landed
 /// in Focus" toast to every case a view can hide a create.
+///
+/// [excludedLists] carries the smart-view list exclusions (#190): when the
+/// target list is excluded, NO smart view (Focus/Upcoming/Missed/Unscheduled)
+/// renders the task even if its date passes the predicate — so the only
+/// destination is the list itself (and All Tasks). Name the list directly
+/// rather than a smart view that would also hide it.
 LandingDestination? landingDestinationFor({
   required String viewId,
   required String? due,
   required String listId,
   required String listTitle,
+  required Set<String> excludedLists,
   required DateWindow window,
 }) {
-  if (_visibleAfterCreate(viewId, due: due, listId: listId, window: window)) {
+  if (_visibleAfterCreate(
+    viewId,
+    due: due,
+    listId: listId,
+    excludedLists: excludedLists,
+    window: window,
+  )) {
     return null;
+  }
+  // An excluded list is hidden from every smart view — the task is findable only
+  // in its list (and All Tasks), so name the list rather than a smart view that
+  // would also hide it.
+  if (excludedLists.contains(listId)) {
+    return LandingDestination(listId, listTitle);
   }
   if (inMissed(due, window)) {
     return const LandingDestination('missed', 'Missed');
