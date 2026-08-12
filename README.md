@@ -26,8 +26,10 @@ tool/dev.sh
 
 This builds and launches an **isolated dev instance** under `flutter run`
 (hot reload + visible logs). It never touches your real data: the instance
-prefix roots all state in `…/axiotask-dev/` directories, separate from the
-production app's `…/axiotask/`. Options:
+prefix roots all state in `…/axiotask-flt/` directories, separate from the
+production app's `…/axiotask/` (and from the Tauri dev instance's
+`…/axiotask-dev/` — never share a prefix across the two implementations;
+their database schemas differ). Options:
 
 - `tool/dev.sh --bundle` — build the debug bundle and run the real standalone
   binary instead of `flutter run` (note: standalone runs do not print logs).
@@ -42,8 +44,8 @@ The same isolation works for any launch: `AXIOTASK_PREFIX=foo axiotask` uses
 
 Sync needs an OAuth "Desktop app" client (Google Cloud console → APIs &
 Services → Credentials) with the Google Tasks API enabled. Put the credentials
-in the instance's config file, e.g. for the `dev` instance
-`${XDG_CONFIG_HOME:-~/.config}/axiotask-dev/config.json`:
+in the instance's config file, e.g. for the default `flt` instance
+`${XDG_CONFIG_HOME:-~/.config}/axiotask-flt/config.json`:
 
 ```json
 {

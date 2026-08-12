@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Build and run an ISOLATED development instance of axiotask on Linux.
 #
-# Never launches against production data: the instance prefix (default: dev)
+# Never launches against production data: the instance prefix (default: flt)
 # roots all state in
 #   ${XDG_DATA_HOME:-~/.local/share}/axiotask-<prefix>/   DB, tokens, prefs, backups
 #   ${XDG_CONFIG_HOME:-~/.config}/axiotask-<prefix>/      config.json
 # while the production app uses the unprefixed axiotask/ directories.
+#
+# The default is flt, NOT dev: the Tauri/Rust app's documented dev instance
+# already owns the axiotask-dev/ directories, and its database schema is not
+# this app's. Sharing a prefix across the two implementations corrupts the
+# instance; pick per-implementation prefixes.
 #
 # Usage: tool/dev.sh [options]
 #   --release        build the release bundle and run it standalone
@@ -20,7 +25,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-prefix=dev
+prefix=flt
 mode=run
 fresh=0
 while [ $# -gt 0 ]; do
