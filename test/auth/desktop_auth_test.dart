@@ -7,6 +7,7 @@
 // the sign-in instead of leaving an unresumable session.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:axiotask/src/auth/auth_error.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart';
@@ -24,6 +25,15 @@ http.Response _jsonReply(Object body) => http.Response(
   200,
   headers: const {'content-type': 'application/json'},
 );
+
+/// Open a loopback client, send [request] bytes, and return the raw response
+/// text the server wrote back (read until the server closes the connection).
+Future<String> _sendRequest(int port, String request) async {
+  final socket = await Socket.connect(InternetAddress.loopbackIPv4, port);
+  socket.write(request);
+  await socket.flush();
+  return utf8.decodeStream(socket);
+}
 
 void main() {
   group('parseRedirect (loopback contract)', () {
@@ -127,5 +137,92 @@ void main() {
         throwsA(isA<RefreshTokenMissing>()),
       );
     });
+  });
+
+  group('awaitLoopbackRedirect (loopback robustness, F21)', () {
+    late ServerSocket server;
+    late String redirectUri;
+
+    setUp(() async {
+      server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      redirectUri = 'http://127.0.0.1:${server.port}';
+    });
+
+    test('ignores a browser preconnect (404) and returns the code from the '
+        'real redirect that follows', () async {
+      final future = awaitLoopbackRedirect(
+        server,
+        redirectUri: redirectUri,
+        state: 'st',
+        timeout: const Duration(seconds: 5),
+      );
+
+      // A speculative preconnect / favicon probe: well-formed, but carries
+      // neither `code` nor `error`. It must not consume the flow.
+      final noiseReply = await _sendRequest(
+        server.port,
+        'GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n',
+      );
+      expect(noiseReply, contains('404 Not Found'));
+
+      // The real redirect arrives on a fresh connection.
+      final okReply = await _sendRequest(
+        server.port,
+        'GET /?code=real-code&state=st HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n',
+      );
+      expect(okReply, contains('200 OK'));
+      expect(await future, 'real-code');
+    });
+
+    test('empty request line fails with a typed AuthException, not '
+        'a raw RangeError', () async {
+      final future = awaitLoopbackRedirect(
+        server,
+        redirectUri: redirectUri,
+        state: 'st',
+        timeout: const Duration(seconds: 5),
+      );
+
+      // A connection that sends only a blank line — no method, no target.
+      await _sendRequest(server.port, '\r\n');
+
+      await expectLater(future, throwsA(isA<AuthMalformedRedirect>()));
+    });
+
+    test('times out and cancels the server when no redirect arrives', () async {
+      final future = awaitLoopbackRedirect(
+        server,
+        redirectUri: redirectUri,
+        state: 'st',
+        timeout: const Duration(milliseconds: 100),
+      );
+
+      await expectLater(future, throwsA(isA<AuthTimeout>()));
+
+      // The server was cancelled, so its ephemeral port no longer accepts.
+      await expectLater(
+        Socket.connect(InternetAddress.loopbackIPv4, server.port),
+        throwsA(isA<SocketException>()),
+      );
+    });
+
+    test(
+      'a redirect carrying error=access_denied fails as user-denied',
+      () async {
+        final future = awaitLoopbackRedirect(
+          server,
+          redirectUri: redirectUri,
+          state: 'st',
+          timeout: const Duration(seconds: 5),
+        );
+
+        final reply = await _sendRequest(
+          server.port,
+          'GET /?error=access_denied&state=st HTTP/1.1\r\n\r\n',
+        );
+        expect(reply, contains('400 Bad Request'));
+        await expectLater(future, throwsA(isA<AuthUserDenied>()));
+      },
+    );
   });
 }

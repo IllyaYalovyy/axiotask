@@ -45,3 +45,21 @@ class RefreshTokenMissing extends AuthException {
 class TokenStoreException extends AuthException {
   const TokenStoreException(super.message);
 }
+
+/// The loopback redirect server received a connection whose HTTP request line
+/// could not be parsed (empty, or missing the request-target). Raised instead
+/// of a raw `RangeError` so the caller can surface a typed sign-in failure. A
+/// well-formed but non-redirect request (a browser preconnect or favicon probe)
+/// is NOT this — those are answered `404` and the accept-loop keeps waiting.
+class AuthMalformedRedirect extends AuthException {
+  const AuthMalformedRedirect([
+    super.message = 'malformed loopback request line',
+  ]);
+}
+
+/// The sign-in gesture exceeded its time bound before Google's redirect
+/// arrived. The loopback server is cancelled so the ephemeral port is released
+/// rather than leaking a listener that waits forever.
+class AuthTimeout extends AuthException {
+  const AuthTimeout([super.message = 'sign-in timed out']);
+}
