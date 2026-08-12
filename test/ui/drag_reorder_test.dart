@@ -6,6 +6,7 @@
 // path is covered. A drop now issues a single move-to-index command (F20 #199).
 
 import 'package:axiotask/src/ui/task_list_view.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -109,6 +110,40 @@ void main() {
     await tester.pumpAndSettle();
 
     // One same-list step down → exactly one reorderTaskToIndex('A', 1).
+    expect(fake.reordered, ['A:1']);
+  });
+
+  testWidgets('a MOUSE-kind drag reorders exactly like a touch drag (#201)', (
+    tester,
+  ) async {
+    // Desktop reorder rides a real mouse, not the touch pointer the sibling test
+    // (and startGesture's default) uses. ReorderableDragStartListener is device-
+    // agnostic; this pins that a mouse press-drag on the handle still fires the
+    // single move-to-index command — so a regression that gated reorder to touch
+    // (e.g. a dragDevices/PointerDeviceKind filter) would surface here.
+    final fake = await pumpList(
+      tester,
+      initial: [
+        row('A', 'a', position: '1'),
+        row('B', 'b', position: '2'),
+      ],
+      lists: oneList,
+      platform: TargetPlatform.linux,
+    );
+    final handle = find.byKey(const Key('drag-handle-A'));
+    final rowHeight = tester.getSize(find.byKey(const ValueKey('A'))).height;
+    final gesture = await tester.startGesture(
+      tester.getCenter(handle),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveBy(Offset(0, rowHeight * 0.6));
+    await tester.pump();
+    await gesture.moveBy(Offset(0, rowHeight * 0.6));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
     expect(fake.reordered, ['A:1']);
   });
 }

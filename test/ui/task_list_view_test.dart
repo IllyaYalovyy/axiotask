@@ -8,6 +8,7 @@
 // zone cannot drain).
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/app/prefs.dart';
@@ -668,6 +669,96 @@ void main() {
           .toList();
       expect(titles, ['apple', 'banana', 'cherry']);
     });
+
+    testWidgets(
+      'sort persistence (#201): a picked sort round-trips through a prefs reload',
+      (tester) async {
+        // The live re-sort above proves nothing about DURABILITY. This pins the
+        // whole contract: pick Alphabetical over a REAL PrefsStore, confirm it
+        // landed on disk, then relaunch from the reloaded prefs and confirm the
+        // rows come up sorted with NO second pick.
+        final tmp = Directory.systemTemp.createTempSync('axiotask_sortrt');
+        addTearDown(() {
+          if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+        });
+        final store = PrefsStore(File('${tmp.path}/prefs.json'));
+
+        final seedRows = [
+          row('B', 'banana', '1'),
+          row('A', 'apple', '2'),
+          row('C', 'cherry', '3'),
+        ];
+
+        // A fresh tree seeded from [prefs], persisting through [store].
+        Future<void> pumpApp(Prefs prefs) async {
+          final fake = FakeBackend(seedRows);
+          addTearDown(fake.dispose);
+          await withClock(_clock, () async {
+            await tester.pumpWidget(
+              ProviderScope(
+                overrides: [
+                  prefsProvider.overrideWithValue(prefs),
+                  prefsStoreProvider.overrideWithValue(store),
+                  commandsProvider.overrideWithValue(fake),
+                  allTasksProvider.overrideWith((ref) => fake.tasksStream),
+                  listsProvider.overrideWith(
+                    (ref) => Stream.value([
+                      StoredTaskList(
+                        list: TaskList(
+                          id: 'L1',
+                          title: 'My Tasks',
+                          etag: 'e1',
+                          updated: 't',
+                        ),
+                        syncState: SyncState.clean,
+                        localUpdated: 't',
+                      ),
+                    ]),
+                  ),
+                ],
+                child: MaterialApp(
+                  builder: wrapWithToast,
+                  home: Scaffold(
+                    body: TaskListView(
+                      viewId: 'all',
+                      selectedTaskId: null,
+                      onOpenTask: (_) {},
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await settle(tester);
+          });
+        }
+
+        List<String> renderedTitles() => tester
+            .widgetList<TaskRow>(find.byType(TaskRow))
+            .map((r) => r.title)
+            .toList();
+
+        // Session 1 — defaults to manual order, then the user picks Alphabetical.
+        await pumpApp(const Prefs());
+        expect(renderedTitles(), ['banana', 'apple', 'cherry']);
+        await withClock(_clock, () async {
+          await tester.tap(find.byKey(const Key('sort-dropdown')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Alphabetical').last);
+          await settle(tester);
+        });
+        expect(renderedTitles(), ['apple', 'banana', 'cherry']);
+        // The pick actually reached disk.
+        expect(store.load().sortPerView['all'], 'alpha');
+
+        // Session 2 (relaunch) — seeded from the RELOADED prefs, no re-pick.
+        await pumpApp(store.load());
+        expect(renderedTitles(), [
+          'apple',
+          'banana',
+          'cherry',
+        ], reason: 'the persisted sort is applied on boot');
+      },
+    );
 
     testWidgets('a smart view with nothing to show has its own empty message', (
       tester,

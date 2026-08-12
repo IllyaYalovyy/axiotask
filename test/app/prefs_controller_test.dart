@@ -13,6 +13,7 @@ import 'dart:io';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/prefs_controller.dart';
 import 'package:axiotask/src/app/providers.dart';
+import 'package:axiotask/src/model/task_view.dart' show SortMode;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -91,6 +92,48 @@ void main() {
       final w = wire(seed: const Prefs(showCompleted: true));
       w.controller.setShowCompleted(false);
       expect(w.store.load().showCompleted, isFalse);
+    });
+  });
+
+  // Per-view sort persistence (#201). The live re-sort is proven in the widget
+  // suite; here we pin the DURABLE half — a picked sort must round-trip through
+  // `sort_per_view` on disk so the view opens the same way after a relaunch.
+  group('sort-per-view persistence', () {
+    test('setSort persists the per-view sort so it survives a relaunch', () {
+      final w = wire();
+      // Nothing saved yet → every view falls back to manual order.
+      expect(w.controller.state.sortPerView, isEmpty);
+
+      w.controller.setSort('all', SortMode.alpha);
+
+      // Live state carries it immediately…
+      expect(w.controller.state.sortPerView['all'], SortMode.alpha.id);
+      // …and it round-trips through disk (a reload IS a relaunch).
+      expect(
+        w.store.load().sortPerView['all'],
+        SortMode.alpha.id,
+        reason: 'sort_per_view must survive a reload',
+      );
+    });
+
+    test('a reloaded sort seeds a fresh controller (applied on boot)', () {
+      final first = wire();
+      first.controller.setSort('all', SortMode.alpha);
+
+      // Relaunch: a brand-new controller seeded from what the store now holds.
+      final second = wire(seed: first.store.load());
+      expect(second.controller.state.sortPerView['all'], SortMode.alpha.id);
+    });
+
+    test('setting one view\'s sort leaves the others untouched on disk', () {
+      final w = wire();
+      w.controller.setSort('all', SortMode.alpha);
+      w.controller.setSort('focus', SortMode.due);
+
+      final loaded = w.store.load();
+      expect(loaded.sortPerView['all'], SortMode.alpha.id);
+      expect(loaded.sortPerView['focus'], SortMode.due.id);
+      expect(loaded.sortPerView, hasLength(2));
     });
   });
 }
