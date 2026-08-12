@@ -48,6 +48,9 @@ and input capability, not a hard-coded platform switch.
 - Destructive actions are unmistakable and undoable where the remote semantics
   allow a reliable undo; confirmation is reserved for high-cost/non-recoverable
   actions.
+- Task and bulk-task deletion use the durable 30-second pre-dispatch Undo
+  contract. List deletion and Clear completed instead require confirmation and
+  provide no Undo.
 - Optimistic changes appear only after their local transaction commits.
 - Pending remote confirmation is globally visible without making every task row
   noisy.

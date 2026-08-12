@@ -221,8 +221,10 @@ credentials or DPoP keys and warn that task data is sensitive. Import parses and
 validates the complete file before making changes, presents a summary, and
 converts accepted changes into the same durable desired-state records used by
 normal edits. It cannot write around account isolation, synchronization state,
-or the synchronization engine. Exact format, merge behavior, and rollback
-rules receive their own specification before implementation.
+or the synchronization engine. The accepted
+[functional parity contract](FUNCTIONAL_PARITY.md#backupexport-and-restoreimport)
+defines the format boundary, existing-record-wins behavior, identity limits,
+durable import manifest, and local/remote failure semantics.
 
 ## Authentication boundary
 
@@ -321,9 +323,11 @@ documented default; sync-critical records may not.
 When synchronization is enabled, it coalesces bursts, permits only one engine
 run, and remembers triggers that arrive during a run. A local mutation gets a
 five-second trailing debounce capped at ten seconds from the burst's first
-mutation. Foreground cadence is five minutes; resume and explicit retry are
-immediate. Android has no periodic background worker. Exact phase, timeout, and
-retry behavior is normative in `SYNC_SPEC.md` and tested with injected time and
+mutation. A task deletion is durably Undoable for 30 seconds and is ineligible
+for remote dispatch until that boundary; unrelated work is not delayed.
+Foreground cadence is five minutes; resume and explicit retry are immediate.
+Android has no periodic background worker. Exact phase, timeout, and retry
+behavior is normative in `SYNC_SPEC.md` and tested with injected time and
 randomness.
 
 The cadence is not silently stretched for large accounts. Because Google offers

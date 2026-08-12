@@ -20,11 +20,12 @@ this specification.
 Every invariant and required transition maps to stable evidence IDs in the
 accepted [synchronization test matrix](SYNC_TEST_MATRIX.md).
 
-This specification deliberately does **not** decide import/export merge policy.
-
-Import/export requires its own later specification. Capability facts identified
-by the API contract remain mandatory implementation gates rather than open sync
-policy.
+Import/export is outside the synchronization run itself. Its accepted planning,
+identity, and safety contract is defined by the
+[functional parity plan](FUNCTIONAL_PARITY.md#backupexport-and-restoreimport);
+accepted imports enter this specification only through the normal transactional
+desired-state boundary. Capability facts identified by the API contract remain
+mandatory implementation gates rather than open sync policy.
 
 ## Core terms
 
@@ -229,6 +230,13 @@ restart:
   `localModifiedAt`, lifecycle state, generation, and local causal sequence;
 - attempt, uncertainty, and failure metadata;
 - creation and last-transition times from the injected clock.
+
+A task-delete generation may additionally carry a clock-derived `notBefore`
+equal to its durable Undo expiry. This is not a retry or a second operation
+state: the generation remains `pending`, prevents Good, and is simply ineligible
+for Google dispatch until its accepted grace ends. Its bounded Undo snapshot and
+cleanup contract are defined by the
+[functional parity plan](FUNCTIONAL_PARITY.md#delete-and-undo).
 
 Dependencies use local keys. A task create may therefore depend on a provisional
 list or parent without rewriting UI identity when Google later assigns IDs.
@@ -452,6 +460,13 @@ transaction commits all required local consequences:
 5. make the desired state visible to unresolved-count and health queries;
 6. commit.
 
+For task deletion, that same transaction hides the supported task/subtree,
+records the delete generation and its `notBefore`, and stores the bounded Undo
+snapshot. Undo before expiry transactionally supersedes that unclaimed delete
+and restores the same identities. Expiry strips restorable content and makes the
+delete eligible; startup and resume perform the same injected-clock cleanup.
+List deletion and Clear completed do not use this grace.
+
 Only after commit may the command return success and repository streams publish
 the projected state. If the transaction fails, the command returns a typed
 persistence failure and must not report success or publish a projection that
@@ -518,7 +533,7 @@ One account-scoped run executes these phases in order:
 | 4. Begin run | Commit a unique run ID, trigger set, start time, and two-minute monotonic deadline. This durable record is created before claiming work. |
 | 5. Enumerate Google | List every task-list page, then every required task page for each list with `showCompleted=true`, `showHidden=true`, `showDeleted=true`, and `showAssigned=false`. Validate and publish safe pages transactionally while retaining per-scope completeness evidence. |
 | 6. Reconcile and plan | Against each complete scope, compare the confirmed base, current Google state, and newest local desired generation. Apply deletion first, then structure, then whole content. Incomplete scopes produce no outbound mutation. |
-| 7. Execute operations | Claim one generation durably, then execute dependency order: authoritative list/task deletes; list creates; top-level task creates; child creates; moves/reorders; complete content writes and list renames. A deleted dependency suppresses all dependent work. Each operation is acknowledged independently before the next dependent operation. |
+| 7. Execute operations | Claim one eligible generation durably, then execute dependency order: authoritative list/task deletes whose `notBefore` has passed; list creates; top-level task creates; child creates; moves/reorders; complete content writes and list renames. A deleted dependency suppresses all dependent work. Each operation is acknowledged independently before the next dependent operation. |
 | 8. Verify uncertain/conditional outcomes | Perform the operation-specific read-backs in the reconciliation section. A 412 refetches and replans the affected task, bounded by the run deadline and request-attempt budget. |
 | 9. Finalize | Commit the typed run outcome, per-scope completeness, unresolved counts, retry episode state, and—only on complete success—the last verified-success time. |
 
@@ -563,7 +578,7 @@ Triggers are typed facts, not separate jobs:
 | Connectivity may have returned | Request immediate verification only on a transition from unavailable/unknown-failed to potentially available. It never marks Google reachable or healthy. |
 | Explicit Refresh/Retry or Resume Sync | Start immediately when no run is active. Retry/Resume clears the retry-exhaustion latch and begins a new five-minute retry episode, but cannot bypass an unexpired server `Retry-After` or missing authorization. |
 | Successful reauthorization | Clear `reauthorizationRequired` only after the adapter validates usable Tasks authorization, then request immediate verification. |
-| Local mutation | The mutation is already durable. Schedule at five seconds after the newest mutation, capped at ten seconds after the first mutation in the burst. |
+| Local mutation | The mutation is already durable. Schedule at five seconds after the newest mutation, capped at ten seconds after the first mutation in the burst. A task-delete generation remains visibly Pending but cannot be claimed before its durable 30-second Undo expiry; the coordinator schedules that eligibility boundary without delaying unrelated eligible work. |
 | Foreground cadence | Request verification five minutes after the preceding run finishes while the platform is eligible. If that deadline arrives during another run, coalesce one follow-up. A more urgent queued trigger wins. |
 
 A trigger arriving during a run sets one in-memory `followUpRequired` fact and
@@ -816,7 +831,7 @@ It produces exactly the accepted four top-level outcomes:
 |---|---|
 | **Inactive** | `syncEnabled=false`, or usable Tasks authorization is absent/terminally rejected. Reason is mandatory: `syncStopped` or `noAuthorization`. Reauthorization-required is persistent and prominent; unresolved counts remain visible. |
 | **Failed** | A failure has been detected and no retry request is executing; automatic backoff/exhaustion is waiting; a permanent/application/persistence failure exists; the two-minute run timed out; known connectivity proves no route; or last success is at least five minutes old without active verification. Reason is mandatory: `noConnection`, `remoteFailure`, `applicationFailure`, or `stale`. |
-| **Pending** | Authorization is usable and a nonfailed verification/run is active or immediately queued; a retry request is actually executing; local work is inside its 5–10 second debounce; or durable pending/in-flight/uncertain work awaits an eligible immediate run. A future backoff timer alone is not Pending. |
+| **Pending** | Authorization is usable and a nonfailed verification/run is active or immediately queued; a retry request is actually executing; local work is inside its 5–10 second debounce or task-delete Undo grace; or durable pending/in-flight/uncertain work awaits an eligible immediate run. A future backoff timer alone is not Pending. |
 | **Good** | Sync is enabled; authorization is usable; the latest forced or scheduled required run completed successfully less than five minutes ago; connectivity is not known unavailable; and there is no newer failure, required verification, active/queued work, follow-up, retry episode, or pending/in-flight/uncertain/failed desired state. |
 
 Evaluation order is Inactive, Failed, Pending, Good, with one narrow exception:
@@ -834,6 +849,7 @@ executing, in which case it is Pending.
 | Database opens, sync enabled, authorization not yet validated | Pending `checkingAuthorization`; no cached state is called current. |
 | Startup/resume trigger with usable authorization | Pending `verifying` until the run finalizes. |
 | Local mutation commits | Pending immediately; its debounce deadline is visible as queued local work. |
+| Task deletion commits during Undo grace | Pending immediately; Undo remains available until the durable expiry and no refresh may dispatch that delete early. |
 | Complete successful run, no unresolved/follow-up work | Good; persist last verified success from the injected wall clock and start a five-minute monotonic freshness deadline. |
 | Complete successful run with newer pending/follow-up work | Pending; last-success may advance, but the follow-up obligation forbids green. |
 | Transport/remote/application/persistence failure is detected | Failed immediately, even before automatic backoff is exhausted. Preserve last-success time and unresolved counts. |
