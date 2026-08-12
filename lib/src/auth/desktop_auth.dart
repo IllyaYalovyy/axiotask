@@ -10,8 +10,10 @@
 // runtime plumbing (a loopback socket + the browser) that composes them and is
 // exercised for real only on desktop.
 
+import 'dart:async';
 import 'dart:io';
 
+import 'package:async/async.dart' show RestartableTimer;
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:http/http.dart' as http;
 
@@ -144,6 +146,7 @@ Future<StoredTokens> exchangeCode({
 Future<StoredTokens> runDesktopLoopbackLogin(
   OAuthConfig config, {
   http.Client? httpClient,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   final client = httpClient ?? http.Client();
   final pkce = Pkce.generate();
@@ -166,16 +169,12 @@ Future<StoredTokens> runDesktopLoopbackLogin(
       stderr.writeln('open this URL to sign in: $url');
     }
 
-    final socket = await server.first;
-    final requestLine = await _readRequestLine(socket);
-    final path = requestLine.split(' ').elementAt(1);
-    final code = parseRedirect('$redirectUri$path', state);
-    socket.write(
-      'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n'
-      '<html><body><h1>Signed in.</h1><p>You can close this tab.</p></body></html>',
+    final code = await awaitLoopbackRedirect(
+      server,
+      redirectUri: redirectUri,
+      state: state,
+      timeout: timeout,
     );
-    await socket.flush();
-    await socket.close();
 
     return exchangeCode(
       httpClient: client,
@@ -185,8 +184,95 @@ Future<StoredTokens> runDesktopLoopbackLogin(
       codeVerifier: pkce.verifier,
     );
   } finally {
+    // awaitLoopbackRedirect already closes the server on every exit; this is a
+    // defensive double-close covering an early throw before it is reached
+    // (ServerSocket.close is idempotent).
     await server.close();
     if (httpClient == null) client.close();
+  }
+}
+
+/// Wait on the bound loopback [server] for Google's OAuth redirect and return
+/// the authorization `code`. Extracted from [runDesktopLoopbackLogin] so the
+/// tricky socket handling is unit-tested against real loopback sockets.
+///
+/// Robustness contract (F21):
+/// - **Accept-loop, not first-connection.** Browsers open speculative
+///   preconnect sockets and fetch `/favicon.ico`; a well-formed request that
+///   carries neither `code` nor `error` is answered `404` and the loop keeps
+///   waiting for the real redirect. Handlers run concurrently, so a silent
+///   preconnect that never sends a request line cannot wedge the real one.
+/// - **Typed failure on garbage.** A request line that cannot be parsed into a
+///   request-target raises [AuthMalformedRedirect] — never a raw `RangeError`.
+/// - **Bounded gesture.** If no parseable redirect arrives within [timeout] the
+///   wait fails with [AuthTimeout]. On every exit (success, timeout, or a
+///   redirect that itself denies/mismatches) the [server] is cancelled and any
+///   lingering sockets are destroyed, releasing the ephemeral port.
+Future<String> awaitLoopbackRedirect(
+  ServerSocket server, {
+  required String redirectUri,
+  required String state,
+  required Duration timeout,
+}) async {
+  final completer = Completer<String>();
+  final open = <Socket>{};
+
+  // RestartableTimer (package:async) — the repo bans a raw dart:async Timer
+  // below lib/ because it is uncontrollable under test; this one is cancellable.
+  final timer = RestartableTimer(timeout, () {
+    if (!completer.isCompleted) completer.completeError(const AuthTimeout());
+  });
+
+  final sub = server.listen((socket) async {
+    open.add(socket);
+    try {
+      final requestLine = await _readRequestLine(socket);
+      if (completer.isCompleted) return;
+      final path = _requestTarget(requestLine);
+      final query = Uri.parse('$redirectUri$path').queryParameters;
+      if (!query.containsKey('code') && !query.containsKey('error')) {
+        // Browser preconnect / favicon probe / speculative socket — not the
+        // redirect. Answer 404 and keep listening.
+        await _writeResponse(
+          socket,
+          404,
+          'Not Found',
+          '<html><body><p>Waiting for sign-in to complete...</p></body></html>',
+        );
+        return;
+      }
+      final code = parseRedirect('$redirectUri$path', state);
+      await _writeResponse(
+        socket,
+        200,
+        'OK',
+        '<html><body><h1>Signed in.</h1>'
+            '<p>You can close this tab.</p></body></html>',
+      );
+      if (!completer.isCompleted) completer.complete(code);
+    } on AuthException catch (e) {
+      await _writeResponse(
+        socket,
+        400,
+        'Bad Request',
+        '<html><body><p>Sign-in failed.</p></body></html>',
+      );
+      if (!completer.isCompleted) completer.completeError(e);
+    } finally {
+      open.remove(socket);
+      await socket.close().catchError((_) => socket);
+    }
+  });
+
+  try {
+    return await completer.future;
+  } finally {
+    timer.cancel();
+    await sub.cancel();
+    for (final socket in open) {
+      socket.destroy();
+    }
+    await server.close();
   }
 }
 
@@ -200,4 +286,36 @@ Future<String> _readRequestLine(Socket socket) async {
     if (nl >= 0) return text.substring(0, nl);
   }
   return buffer.toString();
+}
+
+/// Extract the request-target (path + query) from an HTTP request line
+/// (`GET /?code=… HTTP/1.1`). A line without a method+target is garbage —
+/// raise [AuthMalformedRedirect] rather than let `elementAt(1)` throw a raw
+/// `RangeError`.
+String _requestTarget(String requestLine) {
+  final parts = requestLine
+      .split(RegExp(r'\s+'))
+      .where((s) => s.isNotEmpty)
+      .toList();
+  if (parts.length < 2) {
+    throw const AuthMalformedRedirect();
+  }
+  return parts[1];
+}
+
+/// Write a minimal HTTP response and flush it to the loopback socket.
+Future<void> _writeResponse(
+  Socket socket,
+  int status,
+  String reason,
+  String body,
+) async {
+  socket.write(
+    'HTTP/1.1 $status $reason\r\n'
+    'Content-Type: text/html\r\n'
+    'Content-Length: ${body.length}\r\n'
+    'Connection: close\r\n'
+    '\r\n$body',
+  );
+  await socket.flush();
 }
