@@ -6,6 +6,7 @@
 // compiles but a working 401 recovery path.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:axiotask/src/app/authed_api.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart';
@@ -14,6 +15,7 @@ import 'package:axiotask/src/auth/token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 
 const _config = OAuthConfig(clientId: 'cid', clientSecret: 'secret');
 
@@ -100,4 +102,56 @@ void main() {
       );
     },
   );
+
+  // G2 / #203: the safe desktop rebuild reads the bundle back without a
+  // force-unwrap. A tokens.json that vanished or was corrupted since the session
+  // was established returns null — NOT a crashing `store.load()!` — so the
+  // composition root can flip to needs-reauth instead of throwing.
+  group('buildDesktopTasksApiFromStore (G2 / #203)', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('axiotask_g2_api'));
+    tearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+
+    test('builds a client when the persisted bundle is present', () {
+      final store = InMemoryTokenStore()
+        ..save(
+          const StoredTokens(
+            accessToken: 'a',
+            refreshToken: 'rt',
+            scope: 'tasks',
+          ),
+        );
+
+      expect(
+        buildDesktopTasksApiFromStore(store: store, config: _config),
+        isNotNull,
+      );
+    });
+
+    test('returns null (no throw) when tokens.json is gone', () {
+      // A FileTokenStore whose file was never written — load() is null.
+      final store = FileTokenStore(File(p.join(tmp.path, 'tokens.json')));
+
+      expect(
+        buildDesktopTasksApiFromStore(store: store, config: _config),
+        isNull,
+      );
+    });
+
+    test('returns null (no TokenStoreException escapes) when corrupt', () {
+      final file = File(p.join(tmp.path, 'tokens.json'))
+        ..writeAsStringSync('{ not valid json');
+      final store = FileTokenStore(file);
+      // Confirm the store itself would throw on this input, so the null is the
+      // builder swallowing it, not an empty file.
+      expect(store.load, throwsA(isA<Exception>()));
+
+      expect(
+        buildDesktopTasksApiFromStore(store: store, config: _config),
+        isNull,
+      );
+    });
+  });
 }

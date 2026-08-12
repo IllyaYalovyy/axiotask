@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 
 import '../api/http_tasks_api.dart';
 import '../api/tasks_api.dart';
+import '../auth/auth_error.dart';
 import '../auth/desktop_auth.dart';
 import '../auth/production_authed_client.dart';
 import '../auth/token_provider.dart';
@@ -39,6 +40,40 @@ TasksApi buildDesktopTasksApi({
     ),
   );
   return HttpTasksApi(client);
+}
+
+/// Rebuild the desktop Tasks client from the persisted session, reading the
+/// full bundle safely rather than force-unwrapping a fresh disk read.
+///
+/// The desktop client needs the whole [StoredTokens] bundle (the refresh token
+/// drives the 401→refresh seam), which the bare access token the composition
+/// root carries does not hold — so the bundle is read back from [store]. But a
+/// tokens.json that was DELETED or CORRUPTED between session establishment and
+/// this rebuild is not a crash: it returns null, and the composition root
+/// treats a null client as a dead session (needs-reauth) rather than letting a
+/// `TypeError` (missing file) or a [TokenStoreException] (malformed file) kill
+/// the detached startup task or strand a signed-in-without-client state (G2 /
+/// #203).
+TasksApi? buildDesktopTasksApiFromStore({
+  required TokenStore store,
+  required OAuthConfig config,
+  http.Client? apiClient,
+  http.Client? refreshClient,
+}) {
+  final StoredTokens? tokens;
+  try {
+    tokens = store.load();
+  } on TokenStoreException {
+    return null;
+  }
+  if (tokens == null) return null;
+  return buildDesktopTasksApi(
+    tokens: tokens,
+    config: config,
+    store: store,
+    apiClient: apiClient,
+    refreshClient: refreshClient,
+  );
 }
 
 /// Build the Android Tasks client for a live session. Play Services owns the

@@ -10,11 +10,16 @@
 import 'dart:io';
 
 import 'package:axiotask/src/api/fake_tasks_api.dart';
+import 'package:axiotask/src/api/tasks_api.dart' show TasksApi;
 import 'package:axiotask/src/app/auth_sync_runtime.dart';
+import 'package:axiotask/src/app/authed_api.dart';
 import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/logging.dart';
+import 'package:axiotask/src/auth/auth_controller.dart';
+import 'package:axiotask/src/auth/desktop_auth.dart' show OAuthConfig;
 import 'package:axiotask/src/auth/token_provider.dart';
+import 'package:axiotask/src/auth/token_store.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
@@ -43,6 +48,7 @@ void main() {
     required TokenProvider tokenProvider,
     bool autoSyncOnStart = true,
     bool push = false,
+    TasksApi? Function(String accessToken)? buildClient,
   }) async {
     final db = await AppDatabase.openMemory();
     addTearDown(db.close);
@@ -58,7 +64,7 @@ void main() {
       store: store,
       config: config,
       tokenProvider: tokenProvider,
-      buildClient: (accessToken) => client,
+      buildClient: buildClient ?? (accessToken) => client,
       debounce: Duration.zero,
     );
     addTearDown(runtime.dispose);
@@ -193,4 +199,123 @@ void main() {
       expect(env.client.callCount(Method.insertTasklist), 0);
     },
   );
+
+  // ── G2 / #203: the desktop client rebuild is crash-proof ──────────────────
+  //
+  // The desktop builder reads the FULL token bundle back from tokens.json at
+  // rebuild time (the bare access token the runtime carries is not enough — the
+  // refresh token drives the 401 seam). If that file is deleted or corrupted
+  // between the session being acquired and the rebuild reading it, the old code
+  // did `store.load()!` and CRASHED: a missing file threw a TypeError (killing
+  // the detached startup task) or a malformed one a TokenStoreException, and on
+  // the sign-in path it stranded isAuthenticated=true with _client=null — every
+  // later sync then threw a StateError. These pin the crash-proof behavior.
+  group('desktop client rebuild is crash-proof (G2 / #203)', () {
+    const oauth = OAuthConfig(clientId: 'cid', clientSecret: 'secret');
+
+    // A real tokens.json seeded with a valid bundle, wired to the PRODUCTION
+    // desktop builder — so the test exercises the actual disk-read rebuild path.
+    FileTokenStore seedStore() {
+      final store = FileTokenStore(File(p.join(tmp.path, 'tokens.json')));
+      store.save(
+        const StoredTokens(
+          accessToken: 'access-1',
+          refreshToken: 'rt',
+          scope: 'tasks',
+        ),
+      );
+      return store;
+    }
+
+    test(
+      'restore with tokens.json deleted between load and rebuild ends '
+      'needs-reauth, the startup future completing (never a throw)',
+      () async {
+        final tokenStore = seedStore();
+        final env = await makeEnv(
+          // The provider hands back a live token, but the tokens file is gone
+          // by the time the rebuild reads it back (the modeled race).
+          tokenProvider: _FileVanishingProvider(
+            file: tokenStore.file,
+            token: 'access-1',
+          ),
+          buildClient: (_) =>
+              buildDesktopTasksApiFromStore(store: tokenStore, config: oauth),
+        );
+
+        final snapshots = <AuthSnapshot>[];
+        final sub = env.runtime.auth.changes.listen(snapshots.add);
+        addTearDown(sub.cancel);
+
+        // The awaitable startup prefix must COMPLETE, not reject — a throw here
+        // is exactly the bug (it killed the detached startup task).
+        await env.runtime.restoreAndAutoSync();
+        // Drain the broadcast stream so the emitted transitions are observable.
+        await pumpEventQueue();
+
+        expect(
+          env.runtime.auth.needsReauth,
+          isTrue,
+          reason: 'a session that vanished before rebuild is a dead session',
+        );
+        expect(
+          env.runtime.scheduler.status.totalSyncs,
+          0,
+          reason: 'no auto-sync runs without a client',
+        );
+        expect(
+          snapshots.map((s) => s.phase),
+          contains(AuthPhase.needsReauth),
+          reason: 'the flip emits so the footer follows without polling',
+        );
+      },
+    );
+
+    test('sign-in with the store wiped mid-gesture never yields the '
+        'signed-in-without-client state ("Sync now" stays a no-op)', () async {
+      final tokenStore = seedStore();
+      final env = await makeEnv(
+        tokenProvider: _FileVanishingProvider(
+          file: tokenStore.file,
+          token: 'access-1',
+        ),
+        buildClient: (_) =>
+            buildDesktopTasksApiFromStore(store: tokenStore, config: oauth),
+      );
+
+      // The gesture completes without an unhandled throw...
+      await env.runtime.signIn();
+
+      // ...and lands in needs-reauth, NOT signed-in-with-a-null-client (the
+      // footer would show "sign in again", not a live session).
+      expect(env.runtime.auth.needsReauth, isTrue);
+      expect(env.runtime.scheduler.status.totalSyncs, 0);
+
+      // "Sync now" must be a harmless no-op, not a StateError rethrown into
+      // the button handler.
+      await env.runtime.refresh();
+      expect(env.runtime.scheduler.status.totalSyncs, 0);
+      expect(env.client.callCount(Method.listTasklists), 0);
+    });
+  });
+}
+
+/// A [TokenProvider] that hands back a live access token but deletes [file] as a
+/// side effect of authorizing — modeling the race the G2 fix defends against: a
+/// tokens.json that is gone by the time the desktop client rebuild reads it back
+/// (restore and sign-in both go through `authorize`).
+class _FileVanishingProvider implements TokenProvider {
+  _FileVanishingProvider({required this.file, required this.token});
+
+  final File file;
+  final String token;
+
+  @override
+  Future<String> authorize({required bool interactive}) async {
+    if (file.existsSync()) file.deleteSync();
+    return token;
+  }
+
+  @override
+  Future<void> signOut() async {}
 }

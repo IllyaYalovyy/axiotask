@@ -51,7 +51,7 @@ AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
   final config = ready.configController;
 
   final TokenProvider tokenProvider;
-  final TasksApi Function(String accessToken) buildClient;
+  final TasksApi? Function(String accessToken) buildClient;
 
   if (_isDesktop) {
     final oauthConfig = OAuthConfig(
@@ -66,12 +66,10 @@ AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
     );
     // The access token is refreshed from the stored refresh token by the client
     // itself, so the desktop builder reads the persisted bundle rather than the
-    // bare token string.
-    buildClient = (_) => buildDesktopTasksApi(
-      tokens: tokenStore.load()!,
-      config: oauthConfig,
-      store: tokenStore,
-    );
+    // bare token string. A tokens.json deleted or corrupted between restore and
+    // this rebuild yields null (→ needs-reauth), never a throw (G2 / #203).
+    buildClient = (_) =>
+        buildDesktopTasksApiFromStore(store: tokenStore, config: oauthConfig);
   } else {
     final provider = GoogleSignInTokenProvider(GoogleSignInAuthGateway());
     tokenProvider = provider;

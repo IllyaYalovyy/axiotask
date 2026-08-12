@@ -70,7 +70,7 @@ class AuthSyncRuntime {
   }
 
   final ConfigController _config;
-  final TasksApi Function(String accessToken) _buildClient;
+  final TasksApi? Function(String accessToken) _buildClient;
   final Commands _commands;
 
   /// The auth state machine (signed out / signed in / needs-reauth). Public so
@@ -97,7 +97,19 @@ class AuthSyncRuntime {
   void _rebuildClient() {
     final token = auth.accessToken;
     if (token == null) return;
-    _client = _buildClient(token);
+    final client = _buildClient(token);
+    if (client == null) {
+      // The persisted session vanished or corrupted between restore/sign-in and
+      // this rebuild (desktop reads the bundle back from tokens.json, which can
+      // be deleted or mangled out from under us). We cannot build a client, so
+      // flip to the dead-session state WITH an emission instead of leaving a
+      // signed-in-without-client hole that fails every later sync — never a
+      // throw off the detached startup task or the sign-in gesture (G2 / #203).
+      _client = null;
+      auth.setNeedsReauth(true);
+      return;
+    }
+    _client = client;
   }
 
   /// The provider overrides that mount this runtime into the widget tree: the
