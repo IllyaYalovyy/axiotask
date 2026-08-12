@@ -198,6 +198,20 @@ class GoogleSignInAuthGateway implements GoogleAuthGateway {
   @override
   Future<void> signOut() async {
     if (!_initialized) return;
-    await _signIn.signOut();
+    // Wrap the raw drop in the SAME platform-exception translation authorize
+    // uses (G6 / #204): a GMS crash, a method-channel PlatformException, or a
+    // missing plugin must surface as a typed [GoogleAuthUnavailable] classified
+    // by the STABLE code only — never a raw error escaping (whose message can
+    // carry account specifics that are logged verbatim upstream, #187) and
+    // never a swallowed throw that makes Sign out a silent no-op.
+    try {
+      await _signIn.signOut();
+    } on GoogleSignInException catch (e) {
+      throw GoogleAuthUnavailable(e.code.name);
+    } on MissingPluginException {
+      throw const GoogleAuthUnavailable('google_sign_in plugin unavailable');
+    } on PlatformException catch (e) {
+      throw GoogleAuthUnavailable('platform error: ${e.code}');
+    }
   }
 }

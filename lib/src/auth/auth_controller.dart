@@ -194,12 +194,23 @@ class AuthController implements AuthState {
 
   /// Sign out: drop the session and return to the offline signed-out state. The
   /// dead-session banner no longer applies.
+  ///
+  /// The local session is cleared FIRST and unconditionally, THEN the provider's
+  /// remote sign-out is attempted. Clearing after the provider call (as it once
+  /// was) meant a raw provider failure — a GMS crash on Android, an IO error on
+  /// desktop — threw before the local state changed, leaving the app wedged
+  /// "signed in": Sign out a silent no-op (G6 / #204). The local state is what
+  /// every affordance reads, so once it is cleared and emitted the user IS
+  /// signed out; a failed remote drop only leaves the grant lingering
+  /// server-side (the next sign-in refreshes it), and is logged, never rethrown
+  /// — a thrown gesture would skip the caller's own post-logout cleanup.
   Future<void> logout() async {
-    await _provider.signOut();
-    _accessToken = null;
-    _isAuthenticated = false;
-    _needsReauth = false;
-    _emit();
+    _resetToSignedOut();
+    try {
+      await _provider.signOut();
+    } catch (e) {
+      Log.warn('sign-out: provider signOut failed ($e); local session cleared');
+    }
   }
 
   /// Silently restore, then — only if a session came back AND auto-sync on

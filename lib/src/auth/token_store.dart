@@ -11,6 +11,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../app/logging.dart';
 import 'auth_error.dart';
 
 /// Tokens persisted between sessions. The access token is short-lived; the
@@ -127,49 +128,74 @@ class FileTokenStore implements TokenStore {
   @override
   void save(StoredTokens tokens) {
     file.parent.createSync(recursive: true);
-    // Create the file empty and lock it to 0600 BEFORE any token bytes land, so
-    // the refresh token is never — not even momentarily — in a world/group
-    // readable file. If the lockdown fails there is no secret on disk to leak,
-    // and the empty placeholder is removed so it cannot wedge a later load().
-    file.writeAsStringSync('', flush: true);
+    // Atomic overwrite: stage into a sibling temp file, lock it 0600, write the
+    // tokens, then RENAME it over the target. rename(2) is atomic within one
+    // directory (same filesystem), so a concurrent reader or a crash mid-write
+    // never sees a half-written or truncated tokens.json — the file is always
+    // either the previous bundle or the complete new one. The old in-place write
+    // (truncate to empty → chmod → write) meant an interruption after the
+    // truncate destroyed a live session (G6 / #204).
+    //
+    // The temp is created empty and locked to 0600 BEFORE any token bytes land,
+    // so the refresh token is never — not even momentarily — in a world/group
+    // readable file; the rename preserves that mode. If the lockdown fails there
+    // is no secret on disk to leak, the temp is removed, and the existing
+    // tokens.json is left untouched.
+    final tmp = File('${file.path}.tmp');
+    tmp.writeAsStringSync('', flush: true);
     try {
-      _restrictPermissions();
-    } on TokenStoreException {
-      try {
-        file.deleteSync();
-      } on FileSystemException {
-        // Nothing more to do — surface the original restriction failure.
-      }
+      _restrictPermissions(tmp);
+      tmp.writeAsStringSync(
+        const JsonEncoder.withIndent('  ').convert(tokens.toJson()),
+        flush: true,
+      );
+      tmp.renameSync(file.path);
+    } catch (_) {
+      _deleteQuietly(tmp);
       rethrow;
     }
-    file.writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert(tokens.toJson()),
-      flush: true,
-    );
   }
 
   @override
   void clear() {
-    // Best effort, like the reference: a missing file is already "cleared".
+    // Best effort, like the reference: a missing file is already "cleared". But
+    // a delete that FAILS while the file still exists means the refresh token is
+    // STILL on disk after logout — do not let sign-out report success in silence
+    // while a live credential lingers. Log a warning so the leak is visible
+    // (G6 / #204). (A missing file raises no exception, so this stays quiet on
+    // the normal already-gone path.)
     try {
       if (file.existsSync()) file.deleteSync();
-    } on FileSystemException {
-      // Ignore — nothing to clear if it cannot be removed (e.g. already gone).
+    } on FileSystemException catch (e) {
+      Log.warn(
+        'tokens.json could not be deleted on sign-out ($e); '
+        'a refresh token may remain on disk',
+      );
     }
   }
 
-  /// Set the tokens file to 0600 so the refresh token is not world/group
-  /// readable. POSIX only; dart:io has no chmod, so we shell out to `chmod`
-  /// (desktop is Linux, and Android never reaches this code).
+  void _deleteQuietly(File f) {
+    try {
+      if (f.existsSync()) f.deleteSync();
+    } on FileSystemException {
+      // Nothing more to do — surface the original failure being handled.
+    }
+  }
+
+  /// Set [target] to 0600 so the refresh token is not world/group readable.
+  /// POSIX only; dart:io has no chmod, so we shell out to `chmod` (desktop is
+  /// Linux, and Android never reaches this code). [target] is the temp staging
+  /// file during a [save] — locked before the tokens are written and before the
+  /// atomic rename over the real path.
   ///
   /// A failure to restrict is a save failure, not a swallowed best effort: a
   /// non-zero `chmod` exit — or a missing `chmod` binary — means the refresh
   /// token cannot be secured, so we refuse to write it in the clear.
-  void _restrictPermissions() {
+  void _restrictPermissions(File target) {
     if (Platform.isWindows) return;
     final int exitCode;
     try {
-      exitCode = _chmod(file.path);
+      exitCode = _chmod(target.path);
     } on ProcessException catch (e) {
       throw TokenStoreException(
         'could not restrict tokens.json permissions: ${e.message}',

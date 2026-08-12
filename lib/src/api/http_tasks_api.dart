@@ -197,7 +197,13 @@ class HttpTasksApi implements TasksApi {
     try {
       decoded = jsonDecode(_bodyText(resp));
     } on FormatException catch (e) {
-      throw OtherApiError('decode $label: $e');
+      // Use the FormatException MESSAGE, never its toString(): toString() appends
+      // an excerpt of the offending SOURCE — for an HTML captive-portal
+      // interstitial or any non-JSON 200, that excerpt IS the response body, and
+      // OtherApiError.message rides verbatim onto the public sync status
+      // (apiUserText → lastError). The message alone ("Unexpected character")
+      // carries no body (G6 / #204, #187). Mirrors _taskFromWire below.
+      throw OtherApiError('decode $label: ${e.message}');
     }
     return (decoded as Map?)?.cast<String, Object?>() ??
         const <String, Object?>{};

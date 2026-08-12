@@ -147,6 +147,41 @@ void main() {
     expect(env.runtime.scheduler.status.totalSyncs, 1);
   });
 
+  test('a successful manual Sync now clears needs-reauth (scheduler contract, '
+      'G6 / #204)', () async {
+    final env = await makeEnv(
+      tokenProvider: FakeTokenProvider.withToken('access-1'),
+      autoSyncOnStart: false,
+    );
+    // Signed in with a live client, nothing synced yet.
+    await env.runtime.restoreAndAutoSync();
+    expect(env.runtime.auth.isAuthenticated, isTrue, reason: 'precondition');
+
+    // Simulate the scheduler having flagged a dead session after an
+    // auth-expired background sync. The tokens (and client) are still present:
+    // needsReauth is the "sign in again" banner, distinct from signed-out.
+    env.runtime.auth.setNeedsReauth(true);
+    expect(env.runtime.auth.needsReauth, isTrue, reason: 'precondition');
+
+    // The user hits "Sync now" — an explicit re-check. Its documented contract
+    // is that a SUCCESS clears the dead-session flag. Before G6 the runtime
+    // guarded the manual path on needsReauth, so this ran nothing and the
+    // banner stayed stuck until a full re-login.
+    await env.runtime.refresh();
+
+    expect(
+      env.runtime.scheduler.status.totalSyncs,
+      1,
+      reason: 'the manual sync actually ran, not short-circuited',
+    );
+    expect(
+      env.runtime.auth.needsReauth,
+      isFalse,
+      reason: 'a successful manual sync clears needs-reauth',
+    );
+    expect(env.runtime.scheduler.status.needsReauth, isFalse);
+  });
+
   test('refresh signed out is a harmless no-op', () async {
     final env = await makeEnv(
       tokenProvider: FakeTokenProvider.needsInteraction(),

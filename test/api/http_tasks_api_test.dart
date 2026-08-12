@@ -444,6 +444,39 @@ void main() {
       );
     });
 
+    test('a captive-portal HTML 200 fails to decode WITHOUT leaking the body '
+        '(G6 / #204, #187)', () async {
+      // A hotel/airport captive portal answers 200 with an HTML login page
+      // instead of JSON. The decode fails — but the error message must NOT carry
+      // the HTML body: OtherApiError.message rides verbatim onto the public sync
+      // status (apiUserText → lastError), so a leaked body would surface a
+      // secret-bearing URL to the user. The FormatException's toString() appends
+      // an excerpt of the offending source (the body); only its message may ride.
+      const captivePortalHtml =
+          '<!DOCTYPE html><html><head><title>Wi-Fi Login</title></head>'
+          '<body>Please sign in at http://wifi.local/login?token=SECRET'
+          '</body></html>';
+      final (:auth, :api) = _build(
+        (req, i) => http.Response(
+          captivePortalHtml,
+          200,
+          headers: const {'content-type': 'text/html'},
+        ),
+      );
+
+      final err = await _caught(() => api.listTasklists());
+      expect(err, isA<OtherApiError>());
+      final message = (err! as OtherApiError).message;
+      expect(message, isNot(contains('<html')));
+      expect(message, isNot(contains('wifi.local')));
+      expect(message, isNot(contains('SECRET')));
+      expect(
+        message,
+        contains('decode'),
+        reason: 'still names the failing step for the log',
+      );
+    });
+
     test('patch_task_sends_if_match_etag', () async {
       final (:auth, :api) = _build(
         (req, i) => jsonReply({

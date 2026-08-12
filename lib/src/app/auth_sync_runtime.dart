@@ -206,7 +206,20 @@ class AuthSyncRuntime {
   }
 
   Future<void> _syncNow() async {
-    if (!auth.isAuthenticated || auth.needsReauth) return;
+    // Gate on a live client, NOT on needsReauth. A manual "Sync now" is an
+    // explicit re-check by the scheduler's documented contract: it stays
+    // available in the dead-session state, and a SUCCESS clears needsReauth (the
+    // token came alive again, or the flag was a mis-classified transient). The
+    // old `|| auth.needsReauth` guard made that success-clears-reauth path
+    // unreachable, wedging the banner until a full re-login (G6 / #204). The
+    // background loop keeps its own needsReauth skip so it does not churn the
+    // token endpoint; this path is only ever reached from an explicit gesture.
+    //
+    // The client check is what actually protects the signed-out and
+    // vanished-session cases: needsReauth flagged by a client-rebuild failure
+    // (G2 / #203) leaves `_client == null`, so a manual sync there is still a
+    // clean no-op rather than a StateError out of the scheduler.
+    if (!auth.isAuthenticated || _client == null) return;
     try {
       await scheduler.runSyncIfAuthed();
     } on SyncError catch (e) {
