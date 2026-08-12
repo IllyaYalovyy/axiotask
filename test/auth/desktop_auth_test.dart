@@ -6,11 +6,13 @@
 // client_secret + PKCE verifier; and a response missing the refresh token fails
 // the sign-in instead of leaving an unresumable session.
 
+import 'dart:async' show unawaited;
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:axiotask/src/auth/auth_error.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart';
+import 'package:axiotask/src/auth/token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -222,6 +224,62 @@ void main() {
         );
         expect(reply, contains('400 Bad Request'));
         await expectLater(future, throwsA(isA<AuthUserDenied>()));
+      },
+    );
+  });
+
+  group('runDesktopLoopbackLogin (owned-client lifecycle, #207)', () {
+    test(
+      'the owned client stays open until the token exchange completes',
+      () async {
+        // The production path passes NO httpClient, so the flow creates and —
+        // in its finally — closes its own. A `return future` inside try/finally
+        // runs the finally BEFORE the future completes, so the exchange's POST
+        // to Google died mid-connect ("Connection attempt cancelled") on every
+        // sign-in whose exchange lost the race against teardown. This test owns
+        // that ordering: the fake exchange yields, then sends a request THROUGH
+        // the flow's own client — a prematurely closed client throws here and
+        // fails the sign-in exactly like the field failure.
+        final probe = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => probe.close(force: true));
+        probe.listen((req) async {
+          req.response.write('ok');
+          await req.response.close();
+        });
+
+        final tokens = await runDesktopLoopbackLogin(
+          _config,
+          openUrl: (url) async {
+            // Play the browser: land Google's redirect on the loopback server
+            // advertised in the consent URL, echoing its CSRF state. Fired
+            // WITHOUT awaiting the reply — the flow starts listening only after
+            // openUrl returns, exactly like a real browser racing xdg-open.
+            final query = Uri.parse(url).queryParameters;
+            final redirect = Uri.parse(query['redirect_uri']!);
+            unawaited(
+              _sendRequest(
+                redirect.port,
+                'GET /?code=the-code&state=${query['state']} HTTP/1.1\r\n'
+                'Host: 127.0.0.1\r\n\r\n',
+              ),
+            );
+          },
+          exchange: (client, config, code, redirectUri, codeVerifier) async {
+            expect(code, 'the-code');
+            // Yield so a teardown scheduled too early gets its chance to run…
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+            // …then prove the flow's client is still usable.
+            await client.get(Uri.parse('http://127.0.0.1:${probe.port}/'));
+            return const StoredTokens(
+              accessToken: 'at',
+              refreshToken: 'rt',
+              accessExpiresAt: 1,
+              scope: 'tasks',
+            );
+          },
+        );
+
+        expect(tokens.refreshToken, 'rt');
       },
     );
   });

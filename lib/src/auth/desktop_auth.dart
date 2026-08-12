@@ -147,6 +147,15 @@ Future<StoredTokens> runDesktopLoopbackLogin(
   OAuthConfig config, {
   http.Client? httpClient,
   Duration timeout = const Duration(minutes: 5),
+  Future<void> Function(String url)? openUrl,
+  Future<StoredTokens> Function(
+    http.Client client,
+    OAuthConfig config,
+    String code,
+    String redirectUri,
+    String codeVerifier,
+  )?
+  exchange,
 }) async {
   final client = httpClient ?? http.Client();
   final pkce = Pkce.generate();
@@ -161,13 +170,7 @@ Future<StoredTokens> runDesktopLoopbackLogin(
       method: Pkce.method,
       state: state,
     );
-    // Best effort — a headless box without xdg-open still lets the user paste
-    // the URL from the log.
-    try {
-      await Process.run('xdg-open', [url]);
-    } on ProcessException {
-      stderr.writeln('open this URL to sign in: $url');
-    }
+    await (openUrl ?? _openInBrowser)(url);
 
     final code = await awaitLoopbackRedirect(
       server,
@@ -176,13 +179,20 @@ Future<StoredTokens> runDesktopLoopbackLogin(
       timeout: timeout,
     );
 
-    return exchangeCode(
-      httpClient: client,
-      config: config,
-      code: code,
-      redirectUri: redirectUri,
-      codeVerifier: pkce.verifier,
+    // MUST await here, not `return` the bare future: the finally below closes
+    // the owned client, and a try/finally runs its finally as soon as the
+    // return expression is evaluated — closing the client cancelled the token
+    // POST mid-connect ("Connection attempt cancelled") on every sign-in whose
+    // exchange lost that race (#207). Pinned by the owned-client-lifecycle
+    // test.
+    final tokens = await (exchange ?? _exchangeStep)(
+      client,
+      config,
+      code,
+      redirectUri,
+      pkce.verifier,
     );
+    return tokens;
   } finally {
     // awaitLoopbackRedirect already closes the server on every exit; this is a
     // defensive double-close covering an early throw before it is reached
@@ -191,6 +201,30 @@ Future<StoredTokens> runDesktopLoopbackLogin(
     if (httpClient == null) client.close();
   }
 }
+
+// Best effort — a headless box without xdg-open still lets the user paste the
+// URL from the log.
+Future<void> _openInBrowser(String url) async {
+  try {
+    await Process.run('xdg-open', [url]);
+  } on ProcessException {
+    stderr.writeln('open this URL to sign in: $url');
+  }
+}
+
+Future<StoredTokens> _exchangeStep(
+  http.Client client,
+  OAuthConfig config,
+  String code,
+  String redirectUri,
+  String codeVerifier,
+) => exchangeCode(
+  httpClient: client,
+  config: config,
+  code: code,
+  redirectUri: redirectUri,
+  codeVerifier: codeVerifier,
+);
 
 /// Wait on the bound loopback [server] for Google's OAuth redirect and return
 /// the authorization `code`. Extracted from [runDesktopLoopbackLogin] so the
