@@ -408,8 +408,9 @@ class FakeBackend implements Commands {
   }
 
   @override
-  Future<void> reorderTaskToIndex(String id, int targetIndex) async {
-    reordered.add('$id:$targetIndex');
+  Future<void> reorderTaskAfter(String id, String? previousId) async {
+    reordered.add('$id:${previousId ?? '<front>'}');
+    if (previousId == id) return;
     final cur = _tasks.firstWhere((t) => t.task.id == id);
     // The sibling store indices in position order (same parent + list).
     final sibIdx =
@@ -423,14 +424,23 @@ class FakeBackend implements Commands {
         );
     final from = sibIdx.indexWhere((i) => _tasks[i].task.id == id);
     if (from < 0) return;
-    final to = targetIndex.clamp(0, sibIdx.length - 1);
-    if (to == from) return; // no-op
+    final currentPrevious = from == 0 ? null : _tasks[sibIdx[from - 1]].task.id;
+    if (previousId == currentPrevious) return; // no-op
 
-    // Reassign position strings by slot: the moved row lands at [to] and the
-    // rows it passes shift one slot (mirrors Commands.reorderTaskToIndex).
+    // Reinsert right after the anchor (or at the front), then reassign position
+    // strings by slot (mirrors Commands.reorderTaskAfter).
+    final order = [...sibIdx]..removeAt(from);
+    final int insertAt;
+    if (previousId == null) {
+      insertAt = 0;
+    } else {
+      final anchor = order.indexWhere((i) => _tasks[i].task.id == previousId);
+      if (anchor < 0) return;
+      insertAt = anchor + 1;
+    }
+    order.insert(insertAt, sibIdx[from]);
+
     final positions = [for (final i in sibIdx) _tasks[i].task.position];
-    final order = [...sibIdx];
-    order.insert(to, order.removeAt(from));
     for (var slot = 0; slot < order.length; slot++) {
       final ti = order[slot];
       final desired = positions[slot];

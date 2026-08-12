@@ -317,21 +317,29 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     }
   }
 
-  /// Move [subId] to the slot of its nearest VISIBLE neighbor [neighborId]. The
-  /// target index is taken against the FULL ordered [children] (position order),
-  /// so a reorder stays correct across hidden completed rows when "Hide
-  /// completed" is on (#90). Issued as ONE move-to-index command (F20 #199) —
-  /// crossing hidden rows no longer emits a burst of awaited single steps.
-  Future<void> _reorderPast(
+  /// Move [subId] UP so it renders just above its visible neighbour [aboveId] —
+  /// it takes that neighbour's slot, following whatever [aboveId] itself
+  /// followed in the FULL ordered [children] (position order), so the move stays
+  /// correct across hidden completed rows when "Hide completed" is on (#90).
+  /// Issued as ONE anchored reorder (G1 #202): crossing hidden rows emits no
+  /// burst of awaited single steps and no display-order slot index.
+  Future<void> _reorderUp(
     String subId,
-    String neighborId,
+    String aboveId,
     List<StoredTask> children,
   ) async {
-    final from = children.indexWhere((c) => c.task.id == subId);
-    final to = children.indexWhere((c) => c.task.id == neighborId);
-    if (from < 0 || to < 0 || from == to) return;
-    await ref.read(commandsProvider).reorderTaskToIndex(subId, to);
+    final at = children.indexWhere((c) => c.task.id == aboveId);
+    if (at < 0) return;
+    // Follow whatever the neighbour above currently follows (null = the front).
+    final previousId = at == 0 ? null : children[at - 1].task.id;
+    await ref.read(commandsProvider).reorderTaskAfter(subId, previousId);
   }
+
+  /// Move [subId] DOWN so it renders just below its visible neighbour
+  /// [belowId] — it lands directly after that neighbour in the FULL ordered
+  /// list, crossing any hidden completed rows between them in one move (#90).
+  Future<void> _reorderDown(String subId, String belowId) =>
+      ref.read(commandsProvider).reorderTaskAfter(subId, belowId);
 
   /// Detach [subId] from its parent, promoting it to top level directly after
   /// its former parent (#promoteTask). The row keeps its id, so the panel stays
@@ -534,17 +542,16 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                     ),
                     onMoveUp: i == 0
                         ? null
-                        : () => _reorderPast(
+                        : () => _reorderUp(
                             visibleChildren[i].task.id,
                             visibleChildren[i - 1].task.id,
                             children,
                           ),
                     onMoveDown: i == visibleChildren.length - 1
                         ? null
-                        : () => _reorderPast(
+                        : () => _reorderDown(
                             visibleChildren[i].task.id,
                             visibleChildren[i + 1].task.id,
-                            children,
                           ),
                   ),
                 _AddSubtaskField(

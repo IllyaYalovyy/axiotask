@@ -917,41 +917,67 @@ class Commands {
     await _store.recordMove(id, t.listId, parentId, previousId);
   }
 
-  /// Move [id] to [targetIndex] among its siblings (same parent + list, in
-  /// position order), in a SINGLE operation: reassign the affected rows'
-  /// `position` strings so the new order renders at once, then record ONE
-  /// `pending_moves` row naming the sibling the task now follows. This is the
-  /// collapsed form of what used to be N awaited single-step [reorderTask]
-  /// swaps (F20 #199) — a drag drop, or a subtask move that crosses hidden
-  /// completed rows, is now one command and one queued move, not N round-trips.
+  /// Move [id] so it immediately FOLLOWS [previousId] among its siblings (same
+  /// parent + list, in position order), or to the FRONT when [previousId] is
+  /// null — in a SINGLE transaction: reassign the affected rows' `position`
+  /// strings so the new order renders at once, then record ONE `pending_moves`
+  /// row naming the sibling the task now follows. Collapses what used to be N
+  /// awaited single-step swaps (F20 #199) into one command and one queued move.
   ///
-  /// [targetIndex] is clamped to the sibling range; a move to the row's current
-  /// index (or a clamp landing there) is a no-op — no write, nothing queued.
-  /// The moved row lands at [targetIndex] and every row it passes shifts one
-  /// slot to fill the gap: the SET of `position` strings is preserved and simply
-  /// reassigned by slot, so the net effect is identical to N adjacent swaps.
-  /// Field-level sync state is preserved (order pushes via the move axis, not a
-  /// patch). Evolution of `commands.rs::reorder_task_inner`.
-  Future<void> reorderTaskToIndex(String id, int targetIndex) async {
+  /// The anchor is resolved against the store's OWN position ordering — the same
+  /// order the list view derived its rows from — so a drop stays unambiguous
+  /// even when HIDDEN completed rows interleave the visible ones, or a view
+  /// (Focus) lifts an overdue bucket to the front. The UI passes the id of the
+  /// visible neighbour the row was dropped after (never a slot index measured in
+  /// a different ordering), which is exactly the sibling the move must land
+  /// behind — locally and on the wire (Google's move API also targets a
+  /// `previous` sibling). This closes the G1 (#202) index-space corruption where
+  /// a display-order slot applied to the position-order list silently rewrote
+  /// "My order" while the drag rendered as a no-op.
+  ///
+  /// A drop that leaves the row following the sibling it already follows is a
+  /// no-op — no write, nothing queued. An anchor that is not a sibling (or the
+  /// row itself) resolves to no move. The moved row lands right after the anchor
+  /// and every row it passes shifts one slot to fill the gap: the SET of
+  /// `position` strings is preserved and reassigned by slot, identical in net
+  /// effect to N adjacent swaps. Field-level sync state is preserved (order
+  /// pushes via the move axis, not a patch). Evolution of
+  /// `commands.rs::reorder_task_inner`.
+  Future<void> reorderTaskAfter(String id, String? previousId) async {
+    if (previousId == id) return; // a row cannot follow itself
     final t = await _findTask(id);
     final all = await _store.listTasks(t.listId);
     final siblings = all.where((s) => s.task.parent == t.task.parent).toList();
     final from = siblings.indexWhere((s) => s.task.id == id);
     if (from < 0) return;
-    final to = targetIndex.clamp(0, siblings.length - 1);
-    if (to == from) return; // no-op: nothing moved, nothing queued
 
-    // The position strings by slot, and the rows reordered into their new slots.
+    // Already following the anchor → nothing to do.
+    final currentPrevious = from == 0 ? null : siblings[from - 1].task.id;
+    if (previousId == currentPrevious) return;
+
+    // Rebuild the order with the row lifted out, then reinsert it right after
+    // the anchor (or at the front). An anchor absent from the siblings is not a
+    // slot we can resolve, so leave the order untouched.
+    final reordered = [...siblings]..removeAt(from);
+    final int insertAt;
+    if (previousId == null) {
+      insertAt = 0;
+    } else {
+      final anchor = reordered.indexWhere((s) => s.task.id == previousId);
+      if (anchor < 0) return;
+      insertAt = anchor + 1;
+    }
+    reordered.insert(insertAt, siblings[from]);
+
+    // Reassign the position strings by slot: same set, new order.
     final positions = [for (final s in siblings) s.task.position];
-    final reordered = [...siblings];
-    reordered.insert(to, reordered.removeAt(from));
-
     final now = nowUtcString();
+    final repositioned = <StoredTask>[];
     for (var i = 0; i < reordered.length; i++) {
       final row = reordered[i];
       final desired = positions[i];
       if (row.task.position == desired) continue; // slot unaffected by the move
-      await _store.upsertTask(
+      repositioned.add(
         StoredTask(
           task: row.task.copyWith(position: desired),
           listId: row.listId,
@@ -962,9 +988,16 @@ class Commands {
       );
     }
 
-    // The sibling the moved task now follows, in the NEW order.
-    final newPrevious = to == 0 ? null : reordered[to - 1].task.id;
-    await _store.recordMove(id, t.listId, t.task.parent, newPrevious);
+    // The sibling the moved task now follows in the NEW order (== previousId,
+    // recomputed here so the front/removal cases share one path).
+    final newPrevious = insertAt == 0 ? null : reordered[insertAt - 1].task.id;
+    await _store.reorderSiblings(
+      repositioned,
+      taskId: id,
+      listId: t.listId,
+      parentId: t.task.parent,
+      previousId: newPrevious,
+    );
   }
 
   /// Move [id]'s whole subtree to [targetListId] and return the new root id.

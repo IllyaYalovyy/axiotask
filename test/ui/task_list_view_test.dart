@@ -230,7 +230,7 @@ class FakeBackend implements Commands {
   }) async => throw UnimplementedError();
 
   @override
-  Future<void> reorderTaskToIndex(String id, int targetIndex) async =>
+  Future<void> reorderTaskAfter(String id, String? previousId) async =>
       throw UnimplementedError();
 
   @override

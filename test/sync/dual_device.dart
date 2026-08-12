@@ -345,7 +345,10 @@ final List<OpWeight> _localMutationTable = [
   OpWeight(3, (r) => Op(OpKind.setDue, a: opByte(r), b: opByte(r))),
   OpWeight(3, (r) => Op(OpKind.toggle, a: opByte(r))),
   OpWeight(2, (r) => Op(OpKind.delete, a: opByte(r))),
-  OpWeight(2, (r) => Op(OpKind.reorder, a: opByte(r), flag: r.nextBool())),
+  OpWeight(
+    2,
+    (r) => Op(OpKind.reorder, a: opByte(r), b: opByte(r), flag: r.nextBool()),
+  ),
   OpWeight(2, (r) => Op(OpKind.moveAfter, a: opByte(r), b: opByte(r))),
   OpWeight(2, (r) => Op(OpKind.demote, a: opByte(r))),
   OpWeight(2, (r) => Op(OpKind.promote, a: opByte(r))),

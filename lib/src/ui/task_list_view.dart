@@ -39,32 +39,48 @@ import 'toast.dart';
 import 'url_opener.dart';
 import 'views.dart';
 
-/// The target SIBLING INDEX a drag from [oldIndex] to landing [newIndex] over
-/// the visible [rows] should move the dragged row to — an index within the moved
-/// row's OWN list's sibling ordering, counting only siblings in the SAME list
-/// (cross-list cards in the "all" view are skipped, mirroring ListView.svelte).
-/// [newIndex] is the ADJUSTED landing index (as delivered by
-/// ReorderableListView.onReorderItem — the down-shift is already applied).
-/// Returns `null` for a no-op (dropped in place, or only other-list cards were
-/// crossed). Visible rows are top-level only (invariant #1), so "same parent" is
-/// implicit. Feeds a single [Commands.reorderTaskToIndex] per drop (F20 #199).
-int? reorderTarget(List<StoredTask> rows, int oldIndex, int newIndex) {
-  if (newIndex == oldIndex) return null;
+/// The ANCHOR SIBLING a drag from [oldIndex] to landing [newIndex] over the
+/// visible [rows] should drop the dragged row after — the id of the nearest row
+/// ABOVE the drop that shares the moved row's list (`previousId` == null to drop
+/// it at the FRONT of its siblings). Only same-list rows count as siblings, so
+/// cross-list cards in the "all" view are skipped (mirroring ListView.svelte),
+/// and the anchor is a CONCRETE visible neighbour rather than a slot index — the
+/// command resolves it against the store's own position ordering, so a drop
+/// stays unambiguous even when hidden completed rows interleave or Focus lifts
+/// an overdue bucket to the front (G1 #202). [newIndex] is the ADJUSTED landing
+/// index (as delivered by ReorderableListView.onReorderItem — the down-shift for
+/// the removed row is already applied). Returns `null` for a no-op (dropped in
+/// place, or only other-list cards were crossed). Visible rows are top-level
+/// only (invariant #1), so "same parent" is implicit. Feeds a single
+/// [Commands.reorderTaskAfter] per drop.
+({String? previousId})? reorderAnchor(
+  List<StoredTask> rows,
+  int oldIndex,
+  int newIndex,
+) {
   final moving = rows[oldIndex];
-  final down = newIndex > oldIndex;
-  final lo = down ? oldIndex + 1 : newIndex;
-  final hi = down ? newIndex : oldIndex - 1;
-  var steps = 0;
-  for (var i = lo; i <= hi; i++) {
-    if (rows[i].listId == moving.listId) steps++;
+  // The reduced order the adjusted [newIndex] indexes into (moved row removed);
+  // the anchor is the nearest same-list row strictly above the drop.
+  final reduced = [...rows]..removeAt(oldIndex);
+  String? previousId;
+  for (var i = newIndex - 1; i >= 0 && i < reduced.length; i--) {
+    if (reduced[i].listId == moving.listId) {
+      previousId = reduced[i].task.id;
+      break;
+    }
   }
-  if (steps == 0) return null;
-  // The moved row's current rank among its own list's siblings.
-  var fromSibling = 0;
-  for (var i = 0; i < oldIndex; i++) {
-    if (rows[i].listId == moving.listId) fromSibling++;
+  // The sibling the row already follows in the visible order — an unchanged
+  // anchor means nothing moved (dropped in place, or only other-list cards
+  // crossed).
+  String? currentPrevious;
+  for (var i = oldIndex - 1; i >= 0; i--) {
+    if (rows[i].listId == moving.listId) {
+      currentPrevious = rows[i].task.id;
+      break;
+    }
   }
-  return down ? fromSibling + steps : fromSibling - steps;
+  if (previousId == currentPrevious) return null;
+  return (previousId: previousId);
 }
 
 /// The empty-state message for [viewId] — a per-view reassurance for a smart
@@ -881,17 +897,18 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   }
 
   /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as a
-  /// SINGLE move-to-index command (F20 #199) — one store write, one queued move,
-  /// instead of N awaited single-step swaps.
+  /// SINGLE anchored reorder — one queued move, resolved against the store's own
+  /// ordering by the visible neighbour the row was dropped after (G1 #202),
+  /// instead of a slot index measured over the display order.
   Future<void> _onReorder(
     List<StoredTask> tasks,
     int oldIndex,
     int newIndex,
   ) async {
-    final target = reorderTarget(tasks, oldIndex, newIndex);
-    if (target == null) return;
+    final anchor = reorderAnchor(tasks, oldIndex, newIndex);
+    if (anchor == null) return;
     final id = tasks[oldIndex].task.id;
-    await ref.read(commandsProvider).reorderTaskToIndex(id, target);
+    await ref.read(commandsProvider).reorderTaskAfter(id, anchor.previousId);
   }
 
   /// Confirm, then permanently clear the completed tasks in the current list.

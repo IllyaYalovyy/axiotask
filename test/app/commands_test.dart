@@ -1288,25 +1288,33 @@ void main() {
     });
   });
 
-  group('reorderTaskToIndex', () {
-    // reorder_swaps_positions: a one-slot move reassigns positions so the
-    // rendered order flips.
-    test('moving a row to an adjacent slot flips the rendered order', () async {
-      final store = await freshStore();
-      final commands = Commands(store);
-      await seedList(store, 'L1');
-      await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
-      await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
+  group('reorderTaskAfter', () {
+    // reorder_swaps_positions: dropping a row after its neighbour reassigns
+    // positions so the rendered order flips.
+    test(
+      'dropping a row after its neighbour flips the rendered order',
+      () async {
+        final store = await freshStore();
+        final commands = Commands(store);
+        await seedList(store, 'L1');
+        await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
+        await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
 
-      // Precondition: rendered T1, then T2.
-      var order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
-      expect(order, ['T1', 'T2']);
+        // Precondition: rendered T1, then T2.
+        var order = (await store.listTasks(
+          'L1',
+        )).map((t) => t.task.id).toList();
+        expect(order, ['T1', 'T2']);
 
-      await commands.reorderTaskToIndex('T1', 1); // T1 down to slot 1
+        await commands.reorderTaskAfter('T1', 'T2'); // T1 drops after T2
 
-      order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
-      expect(order, ['T2', 'T1'], reason: 'the move is visible in list order');
-    });
+        order = (await store.listTasks('L1')).map((t) => t.task.id).toList();
+        expect(order, [
+          'T2',
+          'T1',
+        ], reason: 'the move is visible in list order');
+      },
+    );
 
     // reorder_moves_freshly_created_task (#80): create_task hands each row a
     // DISTINCT position, so reassigning by slot actually changes the order on
@@ -1328,7 +1336,7 @@ void main() {
         final firstTitle = before[0].task.title;
         expect(lastTitle, isNot(firstTitle));
 
-        await commands.reorderTaskToIndex(lastId, 0); // last row up to the top
+        await commands.reorderTaskAfter(lastId, null); // last row up to the top
 
         final after = await store.listTasks('L1');
         expect(
@@ -1340,9 +1348,9 @@ void main() {
       },
     );
 
-    // reorder_moves_subtask_across_completed_sibling (#90): a move that crosses
-    // a HIDDEN completed row is now a SINGLE move-to-index, not N swaps — the
-    // panel measures the target slot against the full sibling list.
+    // reorder_moves_subtask_across_completed_sibling (#90/#202): a move that
+    // crosses a HIDDEN completed row is ONE anchored reorder — the anchor is
+    // resolved against the full sibling list, so the hidden row keeps its slot.
     test(
       'walks a subtask across a hidden completed sibling in one move',
       () async {
@@ -1376,9 +1384,9 @@ void main() {
           position: '00000000000003',
         );
 
-        // Drag "gamma" (slot 2) above "alpha" (slot 0): one move-to-index across
-        // the hidden "beta".
-        await commands.reorderTaskToIndex('s3', 0);
+        // Drag "gamma" above "alpha": alpha is the visible neighbour above and
+        // was first, so gamma drops at the FRONT, crossing the hidden "beta".
+        await commands.reorderTaskAfter('s3', null);
 
         final subs = (await store.listTasks(
           'L1',
@@ -1391,17 +1399,17 @@ void main() {
       },
     );
 
-    // A move to the row's own slot is a no-op: no position change, nothing
-    // queued. The command clamps out-of-range targets to the sibling range, so
-    // a boundary over-step lands here too.
-    test('a move to the current slot is a no-op and queues no move', () async {
+    // A drop leaving the row after the sibling it already follows is a no-op:
+    // no position change, nothing queued. An anchor that is not a sibling (or
+    // the row itself) resolves the same way.
+    test('a drop after the current predecessor is a no-op', () async {
       final store = await freshStore();
       final commands = Commands(store);
       await seedList(store, 'L1');
       await seedTask(store, 'T1', 'L1', 'first', position: '00000000000001');
       await seedTask(store, 'T2', 'L1', 'second', position: '00000000000002');
 
-      await commands.reorderTaskToIndex('T1', -1); // clamps to slot 0 = current
+      await commands.reorderTaskAfter('T1', null); // T1 is already first
 
       final order = (await store.listTasks(
         'L1',
@@ -1421,8 +1429,8 @@ void main() {
       await seedTask(store, 'T3', 'L1', 'c', position: '00000000000003');
       await seedTask(store, 'T4', 'L1', 'd', position: '00000000000004');
 
-      // T4 (slot 3) up to slot 1: crosses T3 and T2 in one command.
-      await commands.reorderTaskToIndex('T4', 1);
+      // T4 (last) drops after T1: crosses T3 and T2 in one command.
+      await commands.reorderTaskAfter('T4', 'T1');
 
       final order = (await store.listTasks(
         'L1',
@@ -1438,6 +1446,41 @@ void main() {
         moves.firstWhere((m) => m.taskId == 'T4').previousId,
         'T1',
         reason: 'T4 now follows T1',
+      );
+    });
+
+    // Kill-window (#202): the position rewrites and the pending-move record are
+    // ONE transaction. A crash between them would leave the stored order and the
+    // queued move disagreeing. Forcing recordMove to fault (standing in for the
+    // process dying right after the position writes) proves the pair rolls back
+    // together — the order is untouched and nothing is queued.
+    test('a crash recording the move rolls the position writes back', () async {
+      final store = _CrashRecordingMoveStore(await AppDatabase.openMemory());
+      addTearDown(store.db.close);
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'a', position: '00000000000001');
+      await seedTask(store, 'T2', 'L1', 'b', position: '00000000000002');
+      await seedTask(store, 'T3', 'L1', 'c', position: '00000000000003');
+
+      await expectLater(
+        commands.reorderTaskAfter('T3', 'T1'), // would land T1, T3, T2
+        throwsA(anything),
+        reason: 'the move record faults, standing in for a crash',
+      );
+
+      final order = (await store.listTasks(
+        'L1',
+      )).map((t) => t.task.id).toList();
+      expect(order, [
+        'T1',
+        'T2',
+        'T3',
+      ], reason: 'the position rewrites rolled back with the failed record');
+      expect(
+        await store.pendingMoves(),
+        isEmpty,
+        reason: 'no half-applied move survives the rollback',
       );
     });
   });
@@ -1765,4 +1808,21 @@ void main() {
       expect(afterRestart.heldCreateId, isNull);
     });
   });
+}
+
+/// A store whose [recordMove] always faults — stands in for the process dying
+/// (or a write erroring) immediately after a reorder's position rewrites,
+/// exercising the reorderSiblings transaction's rollback.
+class _CrashRecordingMoveStore extends Store {
+  _CrashRecordingMoveStore(super.db);
+
+  @override
+  Future<void> recordMove(
+    String taskId,
+    String listId,
+    String? parentId,
+    String? previousId,
+  ) async {
+    throw StateError('simulated crash after reorder position writes');
+  }
 }

@@ -735,6 +735,29 @@ class Store {
 
   // ── pending moves (structural reorder/reparent axis) ──────────────────────
 
+  /// Apply a reorder atomically: reassign the [repositioned] rows' `position`
+  /// strings AND record the pending move in ONE transaction (G1 #202,
+  /// kill-window class F6 closed). Split into separate writes, a crash between
+  /// the position rewrites and the move record would leave the stored order and
+  /// the queued move disagreeing — the local order says one thing, the pending
+  /// push another. Wrapped here, a kill rolls BOTH back and the next drag starts
+  /// clean. Writes only — the reorder decision already happened in the command,
+  /// never an API call inside the transaction (§2).
+  Future<void> reorderSiblings(
+    List<StoredTask> repositioned, {
+    required String taskId,
+    required String listId,
+    String? parentId,
+    String? previousId,
+  }) async {
+    await _db.transaction(() async {
+      for (final t in repositioned) {
+        await upsertTask(t);
+      }
+      await recordMove(taskId, listId, parentId, previousId);
+    });
+  }
+
   /// Record (or replace) a pending position/parent move for a task.
   Future<void> recordMove(
     String taskId,

@@ -1,10 +1,10 @@
 // SubtaskReorder suite — the hidden-aware reorder of a parent's subtasks from
 // the detail panel (#90). The [FakeBackend] actually reassigns sibling positions
-// on each `reorderTaskToIndex`, so these assert the USER-VISIBLE order the panel
+// on each `reorderTaskAfter`, so these assert the USER-VISIBLE order the panel
 // renders, not merely that a command fired. The move buttons are the touch path
 // (they work with a mouse too); the key non-happy case is reordering across a
 // HIDDEN completed row, which a naive visible-index step would get wrong — and
-// which is now a SINGLE move-to-index command, not a burst of swaps (F20 #199).
+// which is now a SINGLE anchored reorder, not a burst of swaps (#202).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -90,9 +90,10 @@ void main() {
       await settleDetail(tester);
       expect(subtaskOrder(tester, ['Alpha', 'Gamma']), ['Gamma', 'Alpha']);
 
-      // ONE move-to-index was emitted: Gamma to slot 0 of the FULL sibling list
-      // (Alpha's slot), crossing the hidden Beta in a single command (F20 #199).
-      expect(fake.reordered, ['s3:0']);
+      // ONE anchored reorder was emitted: Gamma to the FRONT of the sibling
+      // list (Alpha, the visible neighbour above, was itself first, so Gamma
+      // follows nothing), crossing the hidden Beta in a single command (#202).
+      expect(fake.reordered, ['s3:<front>']);
 
       // Revealing completed shows Beta kept its place after the reorder.
       await tester.tap(find.text('Hide completed'));

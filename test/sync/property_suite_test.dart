@@ -150,7 +150,7 @@ class Op {
 
   @override
   String toString() => switch (kind) {
-    OpKind.reorder => 'reorder($a, ${flag ? 'up' : 'down'})',
+    OpKind.reorder => flag ? 'reorder($a, front)' : 'reorder($a, after $b)',
     OpKind.moveAfter => 'moveAfter($a, $b)',
     OpKind.moveToList => 'moveToList($a, $b)',
     OpKind.setDue => 'setDue($a, $b)',
@@ -391,20 +391,26 @@ class Harness {
       case OpKind.reorder:
         final t = _pick(await live(), op.a);
         if (t == null) return;
-        // A single-step up/down is one move-to-index (F20 #199): find the row's
-        // current rank among its siblings (same parent + list, position order)
-        // and target the adjacent slot; the command clamps a boundary step.
-        final sibs = (await allRows())
-            .where(
-              (s) => s.listId == t.listId && s.task.parent == t.task.parent,
-            )
-            .toList();
-        final idx = sibs.indexWhere((s) => s.task.id == t.task.id);
-        if (idx < 0) return;
-        await commands.reorderTaskToIndex(
-          t.task.id,
-          op.flag ? idx - 1 : idx + 1,
-        );
+        // An anchored reorder (#202): drop t after ANOTHER sibling (same parent
+        // + list, position order) chosen by op.b — a MULTI-SLOT target, not just
+        // an adjacent step — or at the FRONT when the flag is set. Resolving the
+        // anchor id against the store's own order is exactly what the list view
+        // now feeds the command.
+        final sibs =
+            (await allRows())
+                .where(
+                  (s) => s.listId == t.listId && s.task.parent == t.task.parent,
+                )
+                .toList()
+              ..sort((a, b) => a.task.position.compareTo(b.task.position));
+        if (op.flag) {
+          await commands.reorderTaskAfter(t.task.id, null); // to the front
+        } else {
+          final others = sibs.where((s) => s.task.id != t.task.id).toList();
+          final anchor = _pick(others, op.b);
+          if (anchor == null) return;
+          await commands.reorderTaskAfter(t.task.id, anchor.task.id);
+        }
       case OpKind.moveAfter:
         final liveNow = await live();
         final t = _pick(liveNow, op.a);
@@ -955,7 +961,7 @@ final List<_W> _anyOpTable = [
   _W(3, (r) => Op(OpKind.setDue, a: _b(r), b: _b(r))),
   _W(3, (r) => Op(OpKind.toggle, a: _b(r))),
   _W(2, (r) => Op(OpKind.delete, a: _b(r))),
-  _W(2, (r) => Op(OpKind.reorder, a: _b(r), flag: r.nextBool())),
+  _W(2, (r) => Op(OpKind.reorder, a: _b(r), b: _b(r), flag: r.nextBool())),
   _W(2, (r) => Op(OpKind.moveAfter, a: _b(r), b: _b(r))),
   _W(2, (r) => Op(OpKind.demote, a: _b(r))),
   _W(2, (r) => Op(OpKind.promote, a: _b(r))),
