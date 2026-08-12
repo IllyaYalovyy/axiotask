@@ -1,10 +1,10 @@
 # Target architecture
 
-Status: **Stage 3 accepted; implementation has not started.**
+Status: **Stage 3 and Stage 4 synchronization design accepted; implementation has not started.**
 
-This document defines the boundaries needed to scaffold Axiotask. Detailed
-synchronization policy is deliberately deferred to the mandatory Stage 4
-synchronization specification.
+This document defines the boundaries needed to scaffold Axiotask. The accepted
+[Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed
+policy within these boundaries.
 
 ## Architectural goals
 
@@ -145,9 +145,9 @@ abstract interface class SyncRunner {
 }
 ```
 
-Exact operations, metadata, phase ordering, and conflict results belong to the
-Stage 4 specification. The UI observes repositories and `SyncHealth`; it never
-interprets raw HTTP or database errors.
+Exact operations, metadata, phase ordering, and conflict results are defined by
+the accepted [Stage 4 specification](SYNC_SPEC.md). The UI observes repositories
+and `SyncHealth`; it never interprets raw HTTP or database errors.
 
 ## Identity and account scoping
 
@@ -321,10 +321,17 @@ documented default; sync-critical records may not.
 When synchronization is enabled, it coalesces bursts, permits only one engine
 run, and remembers triggers that arrive during a run. A local mutation gets a
 five-second trailing debounce capped at ten seconds from the burst's first
-mutation. Foreground cadence is 60 seconds; resume and explicit retry are
+mutation. Foreground cadence is five minutes; resume and explicit retry are
 immediate. Android has no periodic background worker. Exact phase, timeout, and
 retry behavior is normative in `SYNC_SPEC.md` and tested with injected time and
 randomness.
+
+The cadence is not silently stretched for large accounts. Because Google offers
+no verified lossless change cursor, every scheduled verification traverses the
+required pages. If documented quota, account size, latency, or the run deadline
+prevents completion, health becomes Failed and no partial run is presented as
+successful. Request-cost and maximum-page fixtures make that accepted scale
+consequence visible before implementation.
 
 Connectivity state is only a hint to schedule work. A Wi-Fi or cellular signal
 does not prove internet or Google availability. Only an authenticated Google
@@ -359,9 +366,10 @@ Those facts produce exactly four top-level outcomes:
 3. **Pending** — authorization is usable and a nonfailed run/verification is
    active or immediately queued, a retry request is executing, or durable work
    awaits an eligible immediate run. Waiting for retry backoff remains Failed.
-4. **Good** — synchronization is enabled, authorization is usable, a complete
-   remote run succeeded less than five minutes ago, and there is no newer
-   failure, active/queued work, pending desired state, or uncertain outcome.
+4. **Good** — synchronization is enabled, authorization is usable, the latest
+   forced or scheduled required run succeeded less than five minutes ago, and
+   there is no newer failure, active/queued work, pending desired state, or
+   uncertain outcome.
 
 Evaluation uses that order except that an actively running retry is Pending
 rather than Failed. Connectivity is evidence for scheduling only and never
@@ -380,15 +388,21 @@ sign-in never produce Good; only completion of the full required sync run does.
 Pending work comes from durable database counts and coordinator state, never
 transient widget state.
 
-A sync may publish remote pages incrementally. Until every required phase and
-page completes, health remains Pending; if the run fails after publishing some
-pages, health becomes Failed and the last verified-success timestamp does not
-advance. Incremental publication must remain transactionally valid and
-restart-safe, but the UI is allowed to show the partial newer data with the
-non-green status.
+A sync may publish remote pages incrementally. Before a failure is detected,
+health remains Pending while required phases/pages are incomplete. Detection of
+any failure changes health to Failed immediately, even if independent safe work
+continues. The last verified-success timestamp does not advance. Incremental
+publication must remain transactionally valid and restart-safe, but the UI is
+allowed to show the partial newer data with the non-green status.
+
+Good means that the available Google synchronization procedure completed
+successfully; it does not claim an atomic server snapshot that the API does not
+provide. Presentation says “Synced” with the exact completion time rather than
+the absolute claim “Up to date.”
 
 Health is stored/projected below the UI so desktop and Android cannot disagree
-about its meaning. Stage 4 defines exact state transitions and stale timing.
+about its meaning. The accepted Stage 4 specification defines exact state
+transitions and stale timing.
 
 ## Startup and lifecycle
 

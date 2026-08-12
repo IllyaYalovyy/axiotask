@@ -28,7 +28,7 @@ Fast Dart tests cover immutable domain models and policies:
 - typed error mapping and recovery classification;
 - operation coalescing and scheduler state with a fake clock;
 - four-outcome sync state transitions, precedence, timeouts, and freshness
-  invariants after Stage 4 defines their durations.
+  invariants using the durations in the accepted Stage 4 specification.
 
 These tests use no Flutter binding, files, plugins, or network.
 

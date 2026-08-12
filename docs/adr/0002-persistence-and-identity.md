@@ -58,8 +58,8 @@ state never uses the preference plugin. Tokens use platform secure storage.
 
 Run the production connection away from the UI isolate and inject connections
 for tests. Use foreign keys and explicit transactions. Exact durability pragmas
-and the synchronization schema are gated on implementation experiments and the
-Stage 4 specification.
+remain gated on implementation experiments; the synchronization schema must
+satisfy the accepted Stage 4 specification.
 
 Do not encrypt the whole cache initially. The platform sandbox/user boundary is
 the stated cache threat model; secrets are stored separately. SQLCipher's native
@@ -87,5 +87,6 @@ settings as database domain data.
   and its failures can only reset non-critical presentation defaults.
 - Database open/corruption behavior must be explicitly tested; no empty-store
   fallback is permitted.
-- SQLite-assigned keys are installation-local by design. Stage 4 must revisit
-  this only if an operation requires independently generated transferable IDs.
+- SQLite-assigned keys are installation-local by design. Confirmed records map
+  through account-scoped Google IDs; provisional creates remain intentionally
+  installation-local until Google returns an ID.

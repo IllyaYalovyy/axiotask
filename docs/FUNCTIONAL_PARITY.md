@@ -30,13 +30,13 @@ usable milestone, **Investigate** = evidence/product behavior still required.
 | Bulk paste | bulk-add command/UI | Retain | Title/notes parsing, limits, rollback/partial-failure policy |
 | Multi-select | UI state | Retain | Keyboard, pointer, touch, and system-back tests |
 | Bulk complete/reschedule/move/delete | bulk commands | Retain | Transactional intent and per-item remote outcome |
-| Manual top-level ordering | move/reorder commands | Retain | Stage 4 defines Google position semantics and concurrent reorder behavior |
+| Manual top-level ordering | move/reorder commands | Retain | Accepted Stage 4 policy uses Google-authoritative structure and canonical positions |
 | Move between lists | cross-list move | Retain, redesign sync semantics | No automatic copying of Rust's data-loss policy |
 | One level of subtasks | detail UI/domain convention | Retain | Exact product limit; domain rejects deeper local depth and never mutates unexpected deeper API data |
 | Add/edit/complete/date/reorder subtask | task detail commands | Retain | Full domain + widget + integration coverage |
 | Detach subtask | detach command | Retain | Resulting top-level position and failure behavior specified |
 | Parent subtask progress | task row UI | Retain | Shared domain projection, not duplicated in widgets |
-| Parent completion cascade | UX decisions | Investigate | Stage 4/product rule must explicitly define Google/local behavior |
+| Parent completion cascade | UX decisions | Retain | Google-returned cascade state is authoritative; impossible child reopen intent is superseded visibly |
 | Effective parent due date | frontend policy | Retain | Pure domain policy tests |
 | Focus smart view | frontend filter | Retain | Exact window/inclusion policy documented and tested |
 | Upcoming smart view | frontend filter | Retain | Exact window/overlap documented and tested |

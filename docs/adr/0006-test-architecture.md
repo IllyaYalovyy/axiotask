@@ -29,9 +29,17 @@ A shared contract suite ties it to the HTTP adapter and recorded real-API
 assumptions.
 
 Real Google tests require dedicated ignored credentials/account, unique
-disposable data, explicit invocation, and cleanup. Android authentication needs
-a physical-device gate. UI uses unit/ViewModel/widget/integration tests, curated
+disposable data, explicit invocation, and cleanup. Before any Tasks enumeration
+or mutation, the harness must compare the authenticated Google subject with an
+explicit ignored expected-subject value and fail closed on mismatch; an operator
+confirmation alone is insufficient. Android authentication needs a
+physical-device gate. UI uses unit/ViewModel/widget/integration tests, curated
 goldens, and actual screenshot inspection with synthetic data.
+
+Process-death evidence runs the production persistence path in a killable child
+process against a real temporary SQLite database, terminates it at named durable
+boundaries, and verifies recovery from a separate process. Throwing an exception
+inside one test process does not prove crash safety.
 
 Diagnostics have separate verified compositions. Release tests assert that
 task-content and credential canaries never reach the production-safe sink.

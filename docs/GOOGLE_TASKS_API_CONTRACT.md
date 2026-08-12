@@ -4,6 +4,10 @@ Research snapshot: 2026-08-11 UTC. This document records the externally observab
 Google Tasks API behavior on which Stage 4 synchronization may depend. It is an
 evidence inventory, not a synchronization policy.
 
+The accepted policy built on this evidence is in
+[SYNC_SPEC.md](SYNC_SPEC.md); its evidence map is in
+[SYNC_TEST_MATRIX.md](SYNC_TEST_MATRIX.md).
+
 The primary machine-readable source was the official
 [Tasks API discovery document](https://www.googleapis.com/discovery/v1/apis/tasks/v1/rest),
 revision `20260804`, retrieved on 2026-08-09. Human-readable Google documentation
@@ -243,8 +247,12 @@ tests as current truth until the controlled probes below reproduce them.
 
 Every probe run must use a dedicated Google test account and a dedicated OAuth
 client authorized only for the Tasks scope. Credential and token files must be
-outside this repository. The operator must verify the account identity before
-the first write. No probe may enumerate or mutate a normal application account.
+outside this repository. Before any Tasks enumeration or mutation, the harness
+must resolve the authenticated Google subject and compare it with an explicit
+expected-subject value stored outside Git. Missing or mismatched identity stops
+the run with zero Tasks API calls. Operator confirmation is additional evidence,
+not the isolation control. No probe may enumerate or mutate a normal application
+account.
 
 Use a run prefix of `axiotask-contract-probe-<UTC date>-<random suffix>`. Create
 only disposable lists with that prefix. Record results outside Git while the run
@@ -274,13 +282,13 @@ The sanitized record committed in a future evidence update may contain:
 | P3: pagination under mutation | Create enough tasks for multiple small pages. Between pages independently insert, patch, move, and delete uniquely labeled tasks. Repeat for task lists with small pages. | Token acceptance, duplicate/omitted labels, ordering, collection ETag changes, and whether a second clean enumeration differs. | Delete scratch lists. |
 | P4: tombstones and list deletion | Create parent/child and ordinary tasks; delete child, parent, then a separate list. Query with/without `showDeleted`, direct GET/PATCH/move, and inspect retained fields. Recheck after a bounded delay, explicitly not claiming indefinite retention. | Status and sanitized field-presence matrix; descendant outcomes; list visibility; tombstone ETag/updated behavior. | Delete surviving lists. |
 | P5: uncertain create | Create a uniquely titled task/list while deliberately discarding the successful response, then repeat the identical POST once. Enumerate by unique marker. Do not simulate by merely timing out before request transmission. | Count, IDs-as-labels, and whether any request-id/idempotency facility is accepted. | Delete every created resource. |
-| P6: uncertain non-create mutations | For patch/delete/move/list rename, allow the server to receive the request while the client discards the response, then read back before any retry; separately retry an identical request. | Final resource state, ETag/updated changes, duplicate effects, and repeated-delete/move responses. | Delete scratch list. |
-| P7: move and order | Reorder first/middle/last; reparent; use stale/deleted/missing `previous`; move parent/child across lists; inspect response and both lists. | ID stability, descendant behavior, ETag/updated/position changes, exact statuses, and relative order. | Delete both lists. |
+| P6: uncertain non-create mutations | For task patch/delete/move, list rename, and list delete, allow the server to receive the request while the client discards the response, then read back before any retry; separately retry an identical request. | Final resource state, ETag/updated changes, duplicate effects, and repeated-delete/move responses. | Delete scratch list. |
+| P7: move, order, and delete race | Reorder first/middle/last; reparent; use stale/deleted/missing `previous`; move parent/child across lists; then issue task DELETE through the old source-list path and current destination in separate disposable cases. | ID stability, descendant behavior, ETag/updated/position changes, exact statuses, relative order, and whether stale-path DELETE can report success while the ID remains live in the destination. | Delete both lists. |
 | P8: parent/completion | Complete/reopen parent and child in each order; insert/move an open child under a completed parent; clear completed tasks. | Response versus refetched states, cascade direction, timestamps, ETags, hidden/deleted flags. | Delete scratch list. |
 | P9: due dates | Insert/patch offsets around UTC date boundaries, fractional/no-fraction timestamps, bare dates, invalid dates, `null`, and empty string. | Status, canonical echo, refetched value, and semantic date. | Delete scratch list. |
 | P10: recurrence/Web UI link | In the dedicated account only, manually create one ordinary and one recurring task in current Google UI. Retrieve both without changing recurrence. | Presence/shape of `webViewLink`, API field differences, and whether opening the link reaches the intended task-management UI. No claim based on hidden fields. | Delete both tasks/series in Google UI and scratch list. |
 | P11: auth failures | Against an empty disposable list, use an expired access token, revoked/invalid refresh token in the OAuth layer, insufficient scope, and malformed bearer token. | Status, stable structured error fields, and headers; redact all token material and message text that contains identifiers. | Revoke only the dedicated probe grant if required; delete list first. |
-| P12: validation and parser fixtures | Send representative oversized/invalid writable fields. Separately feed locally stored synthetic truncated JSON, wrong types, missing fields, and unknown fields to the future adapter tests; do not attribute synthetic fixtures to Google. | Endpoint statuses and unchanged/changed resource state; decoder result for synthetic fixtures. | Delete scratch list. |
+| P12: writable fields and parser fixtures | For every optional writable task field, set a non-empty value and then clear it using each representation supported by primary documentation; read back after every request. Also send representative oversized/invalid fields. Separately feed locally stored synthetic truncated JSON, wrong types, missing fields, and unknown fields to future adapter tests; do not attribute synthetic fixtures to Google. | Exact accepted clear representation, canonical response/read-back, endpoint statuses and unchanged/changed resource state; decoder result for synthetic fixtures. | Delete scratch list. |
 
 Do not intentionally exhaust the 50,000-query courtesy quota to manufacture a
 rate-limit response. If normal quota-safe probing encounters throttling, record
@@ -329,20 +337,24 @@ rate-limit response details remain Unknown.
 | P9 due | Google normalized valid instants to the corresponding UTC date at `00:00:00.000Z`. Offset boundary inputs moved to the prior/next UTC date. Bare/invalid values returned 400; empty string and JSON `null` cleared/omitted due. | Encode the product date directly as UTC midnight. Do not serialize a local-offset instant and assume its written calendar date survives. |
 | P11 malformed bearer | Malformed bearer produced 401, `WWW-Authenticate`, and JSON error fields `code`, `errors`, `message`, and `status`. | This case is unauthorized. Expired, revoked, and wrong-scope classification still needs separate safe evidence. |
 
-## Remaining unknowns and specification blockers
+## Remaining API unknowns and implementation gates
 
-| Unknown | Stage 4 effect | Blocks synchronization specification? |
+Stage 4 synchronization policy is accepted. These unknowns gate only the named
+adapter or later UX slice; none permits guessed behavior.
+
+| Unknown | Accepted policy | Implementation gate |
 |---|---|---|
-| Task-list rename race policy | List PATCH/UPDATE/DELETE ignore stale `If-Match`, so a check-then-write race cannot be closed with the public precondition behavior. | No remaining evidence blocker. `SYNC_SPEC.md` now chooses whole-title timestamp resolution and response/read-back adoption. |
-| Uncertain create recovery | P5 proves blind replay duplicates and discovery exposes no idempotency/client-ID facility. Content/time matching can itself be ambiguous. | No remaining evidence blocker. `SYNC_SPEC.md` explicitly retries, never content-matches, and accepts a possible duplicate. |
-| Concurrent pagination beyond the observed cases | P3 proves at least concurrent insertion can be omitted; it cannot establish every possible interleaving. | No. The specification must assume non-atomic pagination and may not delete from one listing absence. |
-| Tombstone retention duration | P4 establishes immediate shape and ordinary parent cascade, not how long task tombstones remain readable. | No for delete-wins convergence; do not rely on indefinite tombstone retention. |
-| Cross-list move recovery policy | P7 establishes stable IDs, subtree movement, and source 404 after replay. | No capability blocker. Specify destination-by-ID read-back before retry. |
-| Exact expired/revoked/wrong-scope auth mapping | P11 establishes malformed bearer only. Truthful sync health still needs platform-auth and token-refresh evidence for the other terminal cases. | **Yes for those auth adapter slices.** |
-| Due encoder implementation | P9 establishes the accepted UTC-midnight spelling and offset hazard. | No evidence blocker; require adapter contract tests before implementation is accepted. |
-| `webViewLink` presence and recurrence navigation | Affects the recurrence-management escape hatch, not core content synchronization. | No; P10 blocks that UX slice. |
-| Full rate-limit/transient-error matrix | One 403 `quotaExceeded` without `Retry-After` was observed; other reasons/statuses and thresholds remain unknown. | No; use reason-aware conservative backoff and retain the observed failure visibly. |
-| Unexpected/malformed success bodies | Server occurrence is unknowable; adapter behavior can be defined and tested with synthetic fixtures. | No; P12 informs strict adapter tests. |
+| Task-list rename race | List PATCH/UPDATE/DELETE ignore stale `If-Match`, so the read/write race cannot be closed. Timestamp policy applies to observed versions; the returned/read-back server result is authoritative for a later race. | Contract tests must reproduce ignored preconditions; no extra live fact is needed to implement the accepted limitation. |
+| Uncertain create recovery | P5 proves replay can duplicate and discovery exposes no idempotency/client-ID facility. Retry without content matching, bind the first durably received ID, then apply the newest desired generation; an earlier duplicate may remain. | P5 remains the live contract test for both task and list creates. |
+| Concurrent pagination beyond observed cases | P3 proves insertion can be omitted. A successful run means the required traversal completed, not that Google supplied an atomic snapshot. Server mutation results are authoritative for an unobservable race; absence alone never deletes. | P3 remains the fake/live contract boundary. |
+| Tombstone retention duration | Do not rely on indefinite retention. Confirm only from current positive evidence or a confirmed local operation. | No adapter slice depends on a retention duration. |
+| DELETE after a concurrent cross-list move | Old-source MOVE returns 404, but old-source task DELETE has not been probed. Never confirm from old-list absence or an unverified stale-path response; resolve/read back by stable ID. | The P7 extension gates delete/move race handling. |
+| Optional writable-field clearing | Generic PATCH documentation does not establish every task field's accepted clear representation. Whole-record writes may use only representations reproduced by P12. | The P12 extension gates the task-write adapter. |
+| Exact expired/revoked/wrong-scope auth mapping | Only malformed bearer is currently established. Unknown shapes do not become `noAuthorization` by guess. | P11 and platform auth tests gate the affected Linux/Android slices. |
+| Due encoder implementation | P9 establishes UTC-midnight spelling and the offset hazard. | Adapter contract tests must reproduce P9 before admission. |
+| `webViewLink` presence and recurrence navigation | This does not affect core sync. | P10 gates only the recurrence-management UX slice. |
+| Full rate-limit/transient-error matrix | Use reason-aware conservative backoff and show the observed failure immediately. Unknown shapes fail closed. | Quota-safe observation may expand the adapter later; deliberate quota exhaustion is forbidden. |
+| Unexpected/malformed success bodies | Strict decoding fails the affected scope; it never invents server behavior. | Synthetic P12 fixtures gate decoder behavior. |
 
 ## Evidence quality conclusion
 
@@ -353,9 +365,11 @@ stable-ID cross-list movement, completion cascades, UTC due normalization, one
 auth failure, and one quota response.
 
 The evidence sharply reduces capability uncertainty but does not itself invent
-policy. The synchronization specification now accepts possible duplication for
-an uncertain create and resolves list titles without an atomic precondition.
-Auth cases beyond malformed bearer and recurrence navigation remain unverified.
+policy. The accepted synchronization specification records possible duplication
+for an uncertain create, server-authoritative uncloseable races, non-atomic
+pagination semantics, and task-list delete recovery explicitly. Auth cases
+beyond malformed bearer, optional-field clearing, stale-source task DELETE, and
+recurrence navigation remain named implementation gates.
 Historical Rust claims are accepted only where the new results reproduce them,
 and the deleted-tombstone mutation claim is explicitly superseded by the
 contradictory current observation.

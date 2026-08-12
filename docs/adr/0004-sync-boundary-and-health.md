@@ -56,9 +56,15 @@ At ADR acceptance, exact synchronization phases, retries, conflicts,
 timeout/freshness durations, and operation semantics were deliberately deferred
 to Stage 4 without weakening these health invariants.
 
-Stage 4 refinement (2026-08-11): `SYNC_SPEC.md` now supplies those details.
-Retry backoff waiting is Failed so a detected failure remains immediately
-visible; only an executing retry request is Pending.
+Stage 4 accepted refinement (2026-08-11): `SYNC_SPEC.md` now supplies those
+details. Foreground cadence is five minutes; local mutation, startup, resume,
+connectivity-restored, and explicit Retry triggers remain immediate under their
+specific rules. Retry backoff waiting is Failed so a detected failure remains
+immediately visible; only an executing retry request is Pending. Good means the
+latest forced or scheduled required run completed successfully and is still
+inside its freshness window. The UI reports “Synced” with the exact completion
+time; it does not claim that Google's non-atomic pagination produced an atomic
+snapshot.
 
 ## Rationale
 

@@ -1,12 +1,12 @@
 # Synchronization specification
 
-- Status: **Draft**
+- Status: **Accepted**
 - Scope: state, authority, reconciliation, reliability, recovery, and component boundaries
 - Updated: 2026-08-11
 
 ## Purpose and scope
 
-This draft defines what local and remote state mean, automatic reconciliation,
+This specification defines what local and remote state mean, automatic reconciliation,
 and the complete reliability/recovery model. Implementation remains later work.
 
 Normative inputs are [VISION.md](../VISION.md), the accepted
@@ -15,12 +15,16 @@ Normative inputs are [VISION.md](../VISION.md), the accepted
 synchronization documents were reviewed as read-only historical evidence of
 failure modes. Their schema, push-first order, conflict-copy behavior, automatic
 hierarchy repair, timing, and unverified Google assumptions are not adopted by
-this draft.
+this specification.
 
-This draft deliberately does **not** decide import/export merge policy.
+Every invariant and required transition maps to stable evidence IDs in the
+accepted [synchronization test matrix](SYNC_TEST_MATRIX.md).
 
-Those decisions require later specification sections and, where identified by
-the API contract, controlled Google probes.
+This specification deliberately does **not** decide import/export merge policy.
+
+Import/export requires its own later specification. Capability facts identified
+by the API contract remain mandatory implementation gates rather than open sync
+policy.
 
 ## Core terms
 
@@ -81,6 +85,14 @@ page can advance the last verified-success fact. The API does not document
 snapshot isolation across pages, so “complete” currently means complete
 execution of the specified retrieval strategy—not an unproven globally atomic
 Google snapshot.
+
+This limitation does not change the health rule. A forced or scheduled run that
+completes every required phase successfully produces Good; a detected failure
+produces Failed immediately; queued or executing work produces Pending. Good
+therefore means “the last required synchronization completed successfully,”
+with its exact completion time. It is not a claim that Google supplied an atomic
+snapshot that its API does not expose, and the UI must say “Synced” rather than
+the absolute claim “Up to date.”
 
 ## Identity and account isolation
 
@@ -330,6 +342,16 @@ Google `updated` is not used for structure: the API does not contractually make
 it a modification clock for move/reorder state. Structural conflict detection
 compares the current Google parent/list/order with the stored remote base.
 
+Conflict decisions operate on the Google state actually observed before a
+mutation. Google does not provide an atomic account snapshot, and task-list
+mutations ignore `If-Match`. A remote list rename or sibling-order change can
+therefore race after enumeration. The resulting Google response and required
+read-back are authoritative for that race window. The client does not add
+repeated reads that consume quota without closing the race, and it never claims
+that an unobservable concurrent change was detected. This accepted API
+limitation can change a title or relative placement, but it cannot delete or
+rewrite another task.
+
 ### Content and structure policies
 
 | State | Preconditions | Decision and retry | Durable transition | User-visible result and convergence | Data-loss analysis | Required tests |
@@ -340,8 +362,8 @@ compares the current Google parent/list/order with the stored remote base.
 | Completion status | Same as title, plus current parent state is known. | Same whole-content rule, except Google completion cascades are authoritative. A child that Google keeps completed beneath a completed parent is accepted even when local content is newer; Axiotask never reopens the parent implicitly. | Adopt returned/refetched cascade state and mark an impossible child-reopen facet `superseded`. | Parent/child status matches Google; sync details explain an automatically rejected child reopen without prompting. | The impossible local reopen is lost by explicit policy; no other content or sibling is changed. | Parent completion cascade, parent reopen, child reopen beneath completed parent, restart, and newer competing content. |
 | Parent relationship | Local structure is dirty and the current Google parent is compared with the base. | If Google structure changed, discard the local reparent and use Google. Otherwise issue MOVE with current ETag; 412 refetches and reevaluates. | Google parent becomes base/projection; conflicting local structure becomes `superseded`, otherwise successful MOVE is `confirmed`. | Google parent is shown after a conflict. Once one host moves successfully, other pending conflicting hosts discard their moves and converge. | Only the losing relationship is discarded. Content remains governed independently. | Local-only/remote-only/concurrent reparent; content concurrent with move; 412; completed-parent result; one-level validation. |
 | List membership | Local cross-list move is dirty and current Google membership is compared with the base. | Google wins a membership conflict. With no remote structural change, use `destinationTasklist` and current ETag. On uncertain response, look for the same Google task ID in the destination before retrying. | Adopt Google membership or confirm the successful stable-ID move; clear only the losing structure facet. | Task appears once in Google's selected list. Competing clients cannot move it back on every sync. | Losing local membership is discarded; task content and stable local identity remain. | Concurrent cross-list moves; move versus content edit; uncertain landed move; source 404/destination hit; subtree movement. |
-| Manual ordering | Local sibling placement is dirty; compare target parent/list and relevant sibling order with the base. | Any Google change to that structural scope wins. Otherwise MOVE using the current valid `previous` anchor and ETag. A missing/deleted anchor triggers refetch and reevaluation, not a fabricated order. | Adopt Google order and supersede local reorder, or confirm returned canonical position. | Google order becomes stable across hosts; opaque positions are never synthesized. | Only the losing local placement is discarded. No sibling is deleted or rewritten. | First/middle/last; concurrent reorder; insertion/deletion/move of anchor; equal-looking positions; restart. |
-| List title | List exists on both sides and current/base/local titles and timestamps are available. | Whole-title last-write-wins. Google list endpoints ignore `If-Match`; a local winner is patched once and the response/read-back is adopted. A later Google rename wins on its later server timestamp. | Winning list becomes base/projection; local facet is `confirmed` or `superseded`. | One title is shown everywhere after subsequent sync; no rename conflict prompt. | Older title is intentionally discarded. Tasks in the list are untouched. | Local/remote/concurrent rename; equal timestamp; rename racing PATCH; lost response/read-back; deletion during rename. |
+| Manual ordering | Local sibling placement is dirty; compare target parent/list and relevant sibling order with the base. | Any Google change observed in that structural scope wins. Otherwise MOVE using the current valid `previous` anchor and ETag. A missing/deleted anchor triggers refetch and reevaluation, not a fabricated order. A sibling race after the observation adopts the canonical server result. | Adopt Google order and supersede local reorder, or confirm returned canonical position. | Google order becomes stable across hosts; opaque positions are never synthesized. | Only the losing local placement is discarded. An unobserved race may affect relative placement, but no sibling is deleted or rewritten. | First/middle/last; concurrent reorder; insertion/deletion/move of anchor before and after enumeration; equal-looking positions; restart. |
+| List title | List exists on both sides and current/base/local titles and timestamps are available. | Whole-title last-write-wins for versions observed before mutation. Google list endpoints ignore `If-Match`; a local winner is patched once and the response/read-back is adopted. A rename racing after the last read is resolved by Google's resulting server state, even if that overwrites the unseen title. | Resulting list becomes base/projection; local facet is `confirmed` or `superseded`. | One server-confirmed title is shown everywhere after subsequent sync; no rename conflict prompt. | The older observed title is intentionally discarded. In the uncloseable read/write race, either concurrent title may be overwritten; tasks are untouched. | Local/remote/concurrent rename; equal timestamp; remote rename before read, between read and PATCH, and after PATCH; lost response/read-back; deletion during rename. |
 
 An aggregate production-safe resolution entry such as “3 stale offline changes
 were replaced by newer Google changes” makes acknowledged loss visible without
@@ -370,9 +392,10 @@ Uncertain recovery is operation-specific:
 
 | Mutation | Preconditions | Decision and retry | Durable transition | User-visible result and convergence | Data-loss analysis | Required tests |
 |---|---|---|---|---|---|---|
-| Task/list create | An insert may have committed, its response was not durably acknowledged, and no Google ID is mapped. | Never match by content. Return the generation to `pending` and retry the insert when retry scheduling permits. Bind the local ID to the ID from the first response durably received. | Preserve every uncertain attempt. Successful acknowledgement maps one Google ID and confirms the desired generation; any earlier committed object is later ingested with a separate local ID. | The intended object confirms; a possible duplicate may later appear and remains. Hosts converge on both real Google IDs. | No task is guessed away or conflated. A duplicate is the accepted cost and is diagnosed. | Lost response before/after server commit; crash before acknowledgement; repeated uncertain retries; identical intentional remote create; task and list variants. |
+| Task/list create | An insert may have committed, its response was not durably acknowledged, and no Google ID is mapped. | Never match by content. Return the claimed create generation to `pending` and retry the insert when retry scheduling permits. Resolve that create even when a newer generation edits, moves, or deletes the provisional object; bind the local ID to the ID from the first response durably received, then apply the newest desired generation to that ID. | Preserve every uncertain attempt and every newer generation. Successful acknowledgement maps one Google ID and confirms only the claimed create generation; the newest desired generation remains pending. Any earlier committed object is later ingested with a separate local ID. | The newest desired state reaches one bound object. A possible earlier duplicate may later appear and remains, including after the bound object was deleted. | No task is guessed away or conflated. A visible duplicate or unexpected surviving object is the accepted cost and is diagnosed; content matching is forbidden. | Lost response before/after server commit; crash before acknowledgement; repeated uncertain retries; newer edit/delete/move while create is uncertain; identical intentional remote create; task and list variants. |
 | Task content/list title | A known Google ID exists and a write may have committed. | Read back. Confirm an exact landed desired snapshot; otherwise reevaluate whole-record timestamps and retry only while local still wins. | Read-back and resolution atomically update base/projection and move the generation to `confirmed`, `superseded`, or `pending`. | The normal whole-record winner appears; no duplicate or conflict prompt. | Only the older complete record is lost under the normal timestamp rule. | Landed/not-landed response loss, newer remote write before read-back, equal timestamp, list rename, restart. |
-| Delete | A known Google ID exists and DELETE may have committed. | Read back by stable ID. A tombstone confirms. An old-list 404 triggers current-list resolution; delete a live moved task with its current ETag. Absence without positive deletion evidence remains uncertain. | Confirm verified deletion, or retain uncertainty/current-ID evidence until the authoritative delete can run. | The task eventually disappears once positively deleted; no moved survivor is mistaken for success. | Remote edits/moves are intentionally lost to deletion; unrelated IDs are untouched. | Tombstone, live task, cross-list move, old-list 404, deleted list, repeated uncertainty, restart. |
+| Task delete | A known Google task ID exists and DELETE may have committed. | Read back by stable ID. A tombstone confirms. An old-list 404 triggers current-list resolution; delete a live moved task with its current ETag. Absence without positive deletion evidence remains uncertain. A success response from a possibly stale source-list path is not enough to confirm deletion without positive read-back evidence. | Confirm verified deletion, or retain uncertainty/current-ID evidence until the authoritative delete can run. | The task eventually disappears once positively deleted; no moved survivor is mistaken for success. | Remote edits/moves are intentionally lost to deletion; unrelated IDs are untouched. | Tombstone, live task, cross-list move before/during DELETE, old-list 404/success, deleted list, repeated uncertainty, restart. |
+| Task-list delete | A known Google task-list ID exists and DELETE may have committed. Lists cannot move and expose no tombstone. | Read back the list. Direct 404 for the previously confirmed account/list identity confirms deletion. If it still exists, retry DELETE when scheduling permits and read back again. A malformed/inconclusive response remains uncertain. | Confirm the list deletion and supersede its still-dependent work atomically, or retain the uncertain delete and all scoped evidence. | A confirmed deleted list and its still-dependent contents disappear; a live list remains visibly pending deletion until confirmed. | Delete remains authoritative. Tasks already positively observed under surviving lists remain; unrelated lists/accounts are untouched. | Landed/not-landed response loss, repeated 204, live read-back, direct 404, malformed read-back, dependent work, moved survivor, acknowledgement failure, and restart. |
 | Move/reorder | A known Google ID exists and MOVE may have committed. | Resolve current membership by stable ID, including a possible third list. Confirm if landed; otherwise Google wins changed structure, or retry only when base structure still holds. | Update canonical structure/base and mark the facet `confirmed`, `superseded`, or `pending` atomically. | One Google placement remains and competing clients stop replaying stale moves. | Only the losing local placement is discarded. | Landed same/cross-list move, source 404, third-list move, changed anchor, no-op retry, restart. |
 
 The create rule deliberately prefers a rare visible duplicate over content
@@ -475,6 +498,14 @@ transient-error or retry-header matrix. Status classification, timeouts,
 backoff, and exhaustion below are conservative client policy, not claims of an
 undocumented Google guarantee. Unknown cases remain explicit failures.
 
+The API documents up to 100,000 tasks and a 50,000-query courtesy limit per
+day. A five-minute complete-scan cadence cannot guarantee successful operation
+at the documented maximum scale. The approved product policy keeps the
+five-minute cadence: every run records its request cost, quota/deadline failure
+is immediately Failed, partial data never becomes Good, and the application
+does not silently truncate or weaken verification. This is an explicit scale
+consequence, not an API guarantee or an adaptive hidden cadence.
+
 ### Run phase ordering
 
 One account-scoped run executes these phases in order:
@@ -533,7 +564,7 @@ Triggers are typed facts, not separate jobs:
 | Explicit Refresh/Retry or Resume Sync | Start immediately when no run is active. Retry/Resume clears the retry-exhaustion latch and begins a new five-minute retry episode, but cannot bypass an unexpired server `Retry-After` or missing authorization. |
 | Successful reauthorization | Clear `reauthorizationRequired` only after the adapter validates usable Tasks authorization, then request immediate verification. |
 | Local mutation | The mutation is already durable. Schedule at five seconds after the newest mutation, capped at ten seconds after the first mutation in the burst. |
-| Foreground cadence | Request verification 60 seconds after the preceding run finishes while the platform is eligible. A more urgent queued trigger wins. |
+| Foreground cadence | Request verification five minutes after the preceding run finishes while the platform is eligible. If that deadline arrives during another run, coalesce one follow-up. A more urgent queued trigger wins. |
 
 A trigger arriving during a run sets one in-memory `followUpRequired` fact and
 merges its reason into the run report; it never starts an overlapping run. Local
@@ -558,9 +589,9 @@ polling loop beyond the single foreground cadence timer. A completed no-op run
 does not write task/list resources, create attempts, or schedule an immediate
 follow-up.
 
-The API exposes no verified lossless change cursor, so each cadence verification
-must consume all required task-list and task pages. Within that constraint the
-engine:
+The API exposes no verified lossless change cursor, so each five-minute cadence
+verification must consume all required task-list and task pages. Within that
+constraint the engine:
 
 - coalesces edits and triggers;
 - never polls faster than the cadence without a concrete trigger/retry;
@@ -571,6 +602,12 @@ engine:
   complete-change feed;
 - records request/page/operation counts so development tests can detect an N+1
   regression without imposing an invented server quota threshold.
+
+The coordinator does not silently stretch the approved five-minute cadence to
+avoid quota. If account size, latency, retry delay, or quota prevents a complete
+run inside the two-minute deadline, the run fails visibly and retains its
+partial-scope evidence. A later implementation may change cadence or supported
+scale only through a new reviewed product decision.
 
 ## Timeouts, cancellation, and retry
 
@@ -684,7 +721,8 @@ Retry safety is decided by operation, never by HTTP method alone:
 | Enumeration/GET | Read-only request has no intended mutation. | Retry within the request budget; discarded partial bodies/pages establish no completeness. |
 | Create | P5 produced a distinct task/list for an identical repeated insert; Google exposes no idempotency key or client-selected ID. | Never content-deduplicate. An uncertain create retries under the accepted policy and may produce a diagnosed duplicate. |
 | Task content/list rename | P6 repeated writes successfully and changed version metadata again. | Read back known ID first. Confirm, supersede, or retry from current state; never assume repetition was a no-op. |
-| Delete | P6/P4 observed repeated delete success in the tested cases. | Read back/resolve stable ID first after uncertainty, then repeat only to enforce authoritative deletion. Do not generalize one status code to every missing/moved case. |
+| Task delete | P6/P4 observed repeated delete success in the tested cases; DELETE through a stale source-list path after a concurrent move remains unprobed. | Read back/resolve the task ID first after uncertainty, then repeat only to enforce authoritative deletion. Never confirm from old-list absence or an unverified stale-path response. |
+| Task-list delete | P4 observed direct 404 after a landed list deletion and repeated DELETE success in the tested window. | Read back the non-movable list identity. Confirm on direct 404; otherwise retry and verify under the accepted task-list uncertainty rule. |
 | Move/reorder | P6 observed repeated same-list move as a no-op; P7 observed source 404 after a landed cross-list move. | Resolve current placement by stable ID before retry. Never interpret source 404 alone as deletion or failed move. |
 
 The durable attempt—not request text—is the unit of uncertainty. A timeout,
@@ -779,7 +817,7 @@ It produces exactly the accepted four top-level outcomes:
 | **Inactive** | `syncEnabled=false`, or usable Tasks authorization is absent/terminally rejected. Reason is mandatory: `syncStopped` or `noAuthorization`. Reauthorization-required is persistent and prominent; unresolved counts remain visible. |
 | **Failed** | A failure has been detected and no retry request is executing; automatic backoff/exhaustion is waiting; a permanent/application/persistence failure exists; the two-minute run timed out; known connectivity proves no route; or last success is at least five minutes old without active verification. Reason is mandatory: `noConnection`, `remoteFailure`, `applicationFailure`, or `stale`. |
 | **Pending** | Authorization is usable and a nonfailed verification/run is active or immediately queued; a retry request is actually executing; local work is inside its 5–10 second debounce; or durable pending/in-flight/uncertain work awaits an eligible immediate run. A future backoff timer alone is not Pending. |
-| **Good** | Sync is enabled; authorization is usable; a complete required run succeeded less than five minutes ago; connectivity is not known unavailable; and there is no newer failure, required verification, active/queued work, follow-up, retry episode, or pending/in-flight/uncertain/failed desired state. |
+| **Good** | Sync is enabled; authorization is usable; the latest forced or scheduled required run completed successfully less than five minutes ago; connectivity is not known unavailable; and there is no newer failure, required verification, active/queued work, follow-up, retry episode, or pending/in-flight/uncertain/failed desired state. |
 
 Evaluation order is Inactive, Failed, Pending, Good, with one narrow exception:
 an executing retry request is Pending. Merely having an active run does not hide
@@ -838,6 +876,9 @@ exists.
 Every non-Good state shows the exact last-success wall time and human-readable
 age, or “Never” when none exists. Failed stale presentation says how old the
 verified data is; it never replaces that fact with a generic connection icon.
+Good shows “Synced” and that same exact completion time. It does not use the
+absolute label “Up to date,” because successful traversal is the available
+evidence and Google does not provide atomic pagination.
 
 ## One supported subtask level
 
@@ -998,17 +1039,17 @@ this synchronization run.
 | Area | Minimum deterministic evidence |
 |---|---|
 | Debounce/coalescing | Mutations at 0/4/8 seconds run at 10 seconds; an isolated mutation runs at 5; triggers during a run produce exactly one follow-up; no overlapping engine call occurs. |
-| Cadence/lifecycle | Linux runs 60 seconds after completion while minimized; Android runs only while resumed; pause cancels safely; startup/resume/connectivity transitions behave exactly as specified. |
+| Cadence/lifecycle | Linux requests a run five minutes after completion while minimized; Android runs only while resumed; pause cancels safely; startup/resume/connectivity transitions behave exactly as specified. |
 | Deadlines | Boundaries immediately before/at/after 30 seconds and two minutes; no new request that cannot fit; mutation cancellation becomes uncertain. |
 | Backoff | Inject minimum/maximum jitter for 1/2/4 request delays and 1/2/4/8/16/32/60 run delays; longer `Retry-After` wins; waiting is Failed; execution is Pending; five-minute exhaustion survives restart and requires Retry. |
 | Authorization | One successful refresh; terminal refresh; second rejection; missing scope; cancelled and successful reauthorization; account-subject mismatch; no auth transition produces Good. |
 | Partial retrieval | Failure on every task-list/task page, malformed row, and one failed list among successful lists; valid pages persist, affected writes/absence handling stop, and last success does not advance. |
 | Partial operations | Success followed by independent/dependent failure for every operation class; acknowledged success is not replayed and dependents remain pending. |
-| Uncertainty/idempotency | Every create/content/title/delete/move uncertainty case from the reconciliation matrix, including accepted create duplication and cross-list source 404. |
+| Uncertainty/idempotency | Every create/content/title/task-delete/list-delete/move uncertainty case from the reconciliation matrix, including a newer desired generation during uncertain create, accepted duplication, and cross-list source 404. |
 | Stale/superseded responses | Late response after timeout/cancel, old desired generation, cancelled run page, late finalizer, and a newer local edit during acknowledgement. |
-| Persistence/process death | Interrupt every durable-boundary matrix row; fail before/after every transaction commit; repeat startup recovery twice; unavailable/corrupt DB never becomes an empty cache. |
+| Persistence/process death | Interrupt every durable-boundary matrix row in a killable subprocess using a real temporary SQLite database; fail before/after every transaction commit; repeat startup recovery twice; unavailable/corrupt DB never becomes an empty cache. |
 | SyncHealth/freshness | Every exact transition event and every green-forbidden predicate at one millisecond before/at/after five minutes, with exact last-success age and “Never.” |
-| Efficiency/quiescence | No-op run issues listing requests but no writes/attempts/follow-up; no trigger produces no work; request counts scale with pages/lists rather than rows plus targeted recovery reads. |
+| Efficiency/quiescence | No-op run issues listing requests but no writes/attempts/follow-up; no trigger produces no work; request counts scale with pages/lists rather than rows plus targeted recovery reads; documented maximum-page and quota-cost fixtures fail visibly rather than truncating or becoming Good. |
 
 Model tests assert all invariants after each transition rather than checking
 source strings. Integration tests use fake clocks/randomness and strict Google,
@@ -1031,13 +1072,19 @@ limited to capability evidence that a fake cannot establish.
 - Conflict-copy behavior inherited from Rust.
 - A generic or hidden HTTP retry interceptor.
 
-## Remaining Stage 4 work and evidence
+## Accepted implementation capability gates
 
-No current item below requires a product answer from the user. They are concrete
-specification or capability-research actions:
+Stage 4 has no unresolved synchronization-policy question. The following are
+explicit evidence gates for the affected adapters or later UX slices; they do
+not authorize an implementation to guess or silently fall back:
 
 1. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
    cases. The current probe establishes only malformed bearer as 401.
-2. Probe `webViewLink` presence/navigation with an ordinary and recurring task
+2. Before admitting the task-write adapter, probe the exact clear representation
+   for every optional writable content field. Before admitting delete/move race
+   handling, probe task DELETE through the old source list after a concurrent
+   cross-list move. Until then the conservative policy never confirms deletion
+   from an old-list absence or unverified stale-path response.
+3. Probe `webViewLink` presence/navigation with an ordinary and recurring task
    created in the current Google UI before implementing the recurrence escape
    hatch.
