@@ -133,8 +133,16 @@ class _MockPlatform extends GoogleSignInPlatform
     ServerAuthorizationTokensForScopesParameters params,
   ) async => throw UnimplementedError();
 
+  // A failure to inject into signOut — models a raw GMS crash / method-channel
+  // error escaping the plugin's signOut (a GoogleSignInException, a
+  // PlatformException, or a MissingPluginException — all Exceptions).
+  Exception? signOutError;
+
   @override
-  Future<void> signOut(SignOutParams params) async => signOutCalls++;
+  Future<void> signOut(SignOutParams params) async {
+    signOutCalls++;
+    if (signOutError != null) throw signOutError!;
+  }
 
   @override
   Future<void> disconnect(DisconnectParams params) async =>
@@ -478,6 +486,91 @@ void main() {
 
       await gateway.signOut();
       expect(platform.signOutCalls, 1);
+    });
+
+    // Initialize the gateway (so signOut runs past its `!_initialized` guard),
+    // then return the gateway ready to have signOut exercised.
+    Future<GoogleSignInAuthGateway> initializedGateway() async {
+      final gateway = GoogleSignInAuthGateway();
+      platform
+        ..lightweightResult = _account()
+        ..clientAuthorization = const ClientAuthorizationTokenData(
+          accessToken: 't',
+        );
+      await gateway.authorize(interactive: false);
+      return gateway;
+    }
+
+    test(
+      'a raw PlatformException from signOut translates to '
+      'GoogleAuthUnavailable, carrying only the stable code (G6 / #204)',
+      () async {
+        final gateway = await initializedGateway();
+        // A method-channel GMS failure on sign-out. Before G6 this escaped raw and
+        // aborted logout before the local session cleared — Sign out a silent
+        // no-op. Its `message` can carry account specifics (logged verbatim
+        // upstream), so only the stable `code` may survive (#187).
+        platform.signOutError = PlatformException(
+          code: 'GMS_TRANSPORT',
+          message: 'signOut blew up for user@example.com',
+        );
+
+        await expectLater(
+          gateway.signOut(),
+          throwsA(
+            isA<GoogleAuthUnavailable>()
+                .having(
+                  (e) => e.message,
+                  'stable code',
+                  contains('GMS_TRANSPORT'),
+                )
+                .having(
+                  (e) => e.message,
+                  'no raw message',
+                  isNot(contains('user@example.com')),
+                ),
+          ),
+        );
+      },
+    );
+
+    test('a GoogleSignInException from signOut translates to the classified '
+        'code, never the raw description (G6 / #187)', () async {
+      final gateway = await initializedGateway();
+      platform.signOutError = GoogleSignInException(
+        code: GoogleSignInExceptionCode.clientConfigurationError,
+        description: 'blew up for user@example.com — nonsense',
+      );
+
+      await expectLater(
+        gateway.signOut(),
+        throwsA(
+          isA<GoogleAuthUnavailable>()
+              .having(
+                (e) => e.message,
+                'classified code',
+                GoogleSignInExceptionCode.clientConfigurationError.name,
+              )
+              .having(
+                (e) => e.message,
+                'no raw description',
+                isNot(contains('user@example.com')),
+              ),
+        ),
+      );
+    });
+
+    test('a MissingPluginException from signOut translates to '
+        'GoogleAuthUnavailable, not a raw escape (G6)', () async {
+      final gateway = await initializedGateway();
+      platform.signOutError = MissingPluginException(
+        'No implementation found for method signOut',
+      );
+
+      await expectLater(
+        gateway.signOut(),
+        throwsA(isA<GoogleAuthUnavailable>()),
+      );
     });
   });
 }

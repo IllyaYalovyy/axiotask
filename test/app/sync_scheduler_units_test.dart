@@ -10,12 +10,16 @@
 // which method was called.
 
 import 'package:axiotask/src/api/api_error.dart';
+import 'package:axiotask/src/api/http_tasks_api.dart';
 import 'package:axiotask/src/app/sync_scheduler.dart';
 import 'package:axiotask/src/app/sync_status.dart';
 import 'package:axiotask/src/store/store_error.dart';
 import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+
+import '../api/support/fake_authed_client.dart';
 
 void main() {
   group('backoffPeriod', () {
@@ -127,6 +131,45 @@ void main() {
       expect(net, isNot(contains('https://')));
       expect(net, isNot(contains('SECRET')));
       expect(net.toLowerCase(), contains('log'));
+    });
+
+    test('a captive-portal HTML decode error never surfaces the body on the '
+        'sync status (G6 / #204, #187)', () async {
+      // The end-to-end status-sanitization case: a captive portal answers 200
+      // with an HTML login page, the real client fails to decode it, and the
+      // resulting OtherApiError flows through syncUserMessage into the UI-facing
+      // lastError. The rendered status must carry NONE of the HTML body — no
+      // markup, no secret-bearing login URL — only the decode label.
+      const captivePortalHtml =
+          '<!DOCTYPE html><html><head><title>Wi-Fi Login</title></head>'
+          '<body>Please sign in at http://wifi.local/login?token=SECRET'
+          '</body></html>';
+      final auth = FakeAuthedClient(
+        (req, i) => http.Response(
+          captivePortalHtml,
+          200,
+          headers: const {'content-type': 'text/html'},
+        ),
+      );
+      final api = HttpTasksApi(
+        auth,
+        baseUrl: 'https://mock.test',
+        maxRetries: 0,
+      );
+
+      OtherApiError? decodeError;
+      try {
+        await api.listTasklists();
+      } on OtherApiError catch (e) {
+        decodeError = e;
+      }
+      expect(decodeError, isNotNull, reason: 'the HTML body fails to decode');
+
+      // What the "Sync failed" toast / Properties dialog would render.
+      final shown = syncUserMessage(SyncApiError(decodeError!));
+      expect(shown, isNot(contains('<html')));
+      expect(shown, isNot(contains('wifi.local')));
+      expect(shown, isNot(contains('SECRET')));
     });
   });
 

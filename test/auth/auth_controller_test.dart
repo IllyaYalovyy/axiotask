@@ -40,6 +40,22 @@ class _ThrowingTokenProvider implements TokenProvider {
   Future<void> signOut() async {}
 }
 
+/// A live provider whose remote `signOut` fails — models a raw GMS crash on
+/// Android (or an IO error dropping the desktop token file). The grant is live
+/// until then, so the controller can sign in and only the sign-out drop breaks.
+class _SignOutFailingProvider implements TokenProvider {
+  _SignOutFailingProvider(this.token);
+  final String token;
+  bool signOutAttempted = false;
+  @override
+  Future<String> authorize({required bool interactive}) async => token;
+  @override
+  Future<void> signOut() async {
+    signOutAttempted = true;
+    throw Exception('GMS sign-out blew up');
+  }
+}
+
 void main() {
   group('five state.rs auth cases', () {
     test('sign-in gesture clears needs-reauth (interactive)', () async {
@@ -180,6 +196,50 @@ void main() {
         controller.setNeedsReauth(true); // real transition
 
         expect((await events.next).phase, AuthPhase.needsReauth);
+        await events.cancel();
+      },
+    );
+  });
+
+  group('logout is robust to a failing provider signOut (G6 / #204)', () {
+    test(
+      'a raw provider signOut failure still signs the app out (not a no-op)',
+      () async {
+        final provider = _SignOutFailingProvider('tok');
+        final controller = AuthController(provider);
+        addTearDown(controller.dispose);
+        await controller.signIn();
+        expect(controller.isAuthenticated, isTrue, reason: 'precondition');
+
+        // The remote drop throws, but Sign out must NOT be a silent no-op: the
+        // local session is cleared first and unconditionally, and the failure is
+        // swallowed (logged) rather than escaping the gesture.
+        await controller.logout();
+
+        expect(provider.signOutAttempted, isTrue, reason: 'remote drop tried');
+        expect(
+          controller.isAuthenticated,
+          isFalse,
+          reason: 'signed out anyway',
+        );
+        expect(controller.phase, AuthPhase.signedOut);
+        expect(controller.accessToken, isNull);
+      },
+    );
+
+    test(
+      'the signed-out transition is emitted even when signOut throws',
+      () async {
+        final controller = AuthController(_SignOutFailingProvider('tok'));
+        addTearDown(controller.dispose);
+        await controller.signIn();
+        final events = StreamQueue<AuthSnapshot>(controller.changes);
+
+        await controller.logout();
+
+        // The affordance follows the stream (#174): a wedged "signed in" banner
+        // would be the visible symptom of a swallowed logout.
+        expect((await events.next).phase, AuthPhase.signedOut);
         await events.cancel();
       },
     );
