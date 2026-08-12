@@ -135,6 +135,93 @@ void main() {
     },
   );
 
+  testWidgets(
+    'bulk Delete skips a row that vanished concurrently and undoes the rest '
+    '(G7 #205)',
+    (tester) async {
+      final fake = await pumpList(
+        tester,
+        initial: [
+          row('A', 'apples'),
+          row('B', 'bread'),
+          row('C', 'cheese'),
+          row('D', 'dates'),
+        ],
+        lists: oneList,
+      );
+      // Select A, B, C (D is left out to prove the op is scoped).
+      await ctrlClick(tester, 'apples');
+      await ctrlClick(tester, 'bread');
+      await ctrlClick(tester, 'cheese');
+      // B vanishes concurrently (a sync pull / another gesture deletes it) while
+      // still in the selection — deleteTask will raise CommandError on its id.
+      await fake.deleteTask('B');
+      await settleList(tester);
+
+      await tester.tap(find.byKey(const Key('bulk-delete')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      // The pre-vanished row didn't abort the op: A and C were still deleted,
+      // the unselected D survives, and the toast counts only what was deleted.
+      expect(fake.tasks.map((t) => t.task.title), ['dates']);
+      expect(find.text('2 tasks deleted'), findsOneWidget);
+
+      // One Undo restores exactly the two rows this op deleted — B stays gone
+      // (it was never part of this op's tokens).
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(fake.tasks.map((t) => t.task.title).toSet(), {
+        'apples',
+        'cheese',
+        'dates',
+      });
+      expect(fake.tasks.any((t) => t.task.id == 'B'), isFalse);
+    },
+  );
+
+  testWidgets('bulk Complete then Undo restores every prior state, keeping a '
+      'pre-completed child completed (G7 #205)', (tester) async {
+    // P has two subtasks: c1 open, c2 ALREADY completed. Q is a second
+    // top-level task. Subtasks never render as rows — assert the fake's state.
+    final fake = await pumpList(
+      tester,
+      initial: [
+        row('P', 'project', position: '1'),
+        row('c1', 'child-open', parent: 'P', position: '1'),
+        row('c2', 'child-done', parent: 'P', done: true, position: '2'),
+        row('Q', 'quest', position: '2'),
+      ],
+      lists: oneList,
+      showCompleted: true,
+    );
+    await ctrlClick(tester, 'project');
+    await ctrlClick(tester, 'quest');
+    await tester.tap(find.byKey(const Key('bulk-complete')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    TaskStatus st(String id) =>
+        fake.tasks.firstWhere((t) => t.task.id == id).task.status;
+    // Completing P cascades to its open child c1 (c2 was already done); Q too.
+    expect(st('P'), TaskStatus.completed);
+    expect(st('c1'), TaskStatus.completed);
+    expect(st('c2'), TaskStatus.completed);
+    expect(st('Q'), TaskStatus.completed);
+    expect(find.text('2 tasks completed'), findsOneWidget);
+
+    // One Undo reopens exactly what the op flipped: P, c1 and Q go back to
+    // open — but c2, completed BEFORE the op, stays completed (F11/#184).
+    await tester.tap(find.text('Undo'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(st('P'), TaskStatus.needsAction);
+    expect(st('c1'), TaskStatus.needsAction);
+    expect(st('Q'), TaskStatus.needsAction);
+    expect(st('c2'), TaskStatus.completed, reason: 'pre-completed child kept');
+  });
+
   testWidgets('bulk reschedule moves the whole selection to tomorrow', (
     tester,
   ) async {

@@ -153,7 +153,9 @@ class FakeBackend implements Commands {
   @override
   Future<CompleteToken> toggleComplete(String id) async {
     final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return CompleteToken(id: id, wasCompleting: false);
+    // Mirror Commands.toggleComplete: a missing/vanished id raises CommandError
+    // (never a silent no-op), so bulk ops must skip it exactly like production.
+    if (i < 0) throw CommandError('task $id not found');
     final completing = _tasks[i].task.status == TaskStatus.needsAction;
     _tasks[i] = _rebuild(
       _tasks[i],
@@ -215,6 +217,9 @@ class FakeBackend implements Commands {
   @override
   Future<DeleteToken> deleteTask(String id) async {
     final i = _tasks.indexWhere((t) => t.task.id == id);
+    // Mirror Commands.deleteTask: a missing/already-tombstoned id raises
+    // CommandError, so bulk delete must skip it rather than crash.
+    if (i < 0) throw CommandError('task $id not found');
     final t = _tasks[i];
     // Snapshot the subtree (BFS) so undo can rebuild the whole thing.
     final subtree = <SubtreeEntry>[];
