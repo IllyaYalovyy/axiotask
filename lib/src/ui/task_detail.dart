@@ -120,16 +120,22 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     _notesFocus.addListener(() {
       if (!_notesFocus.hasFocus) _saveNotes();
     });
-    // Register the persist-now hook for the paths that skip blur-save: the
-    // system back that closes this panel, and the app being backgrounded (#183).
+    // Register the persist-now hooks for the paths that skip blur-save (#183):
+    //   • [PendingEdit.detail] → save title/notes, run on BACKGROUNDING; and
+    //   • the detail-close funnel → save AND discard an abandoned blank subtask,
+    //     run on the system-back that closes this panel (G4), so it matches the
+    //     panel's own Back button. The two are separate so backgrounding never
+    //     deletes a task the user merely stepped away from.
     _pendingEdits = ref.read(pendingEditsProvider)
-      ..register(PendingEdit.detail, _flushEdits);
+      ..register(PendingEdit.detail, _flushEdits)
+      ..registerDetailClose(_flushAndDiscard);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _pendingEdits.unregister(PendingEdit.detail, _flushEdits);
+    _pendingEdits.unregisterDetailClose(_flushAndDiscard);
     _title.dispose();
     _notes.dispose();
     _newSubtask.dispose();
@@ -249,6 +255,14 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     _discardIfEmptySubtask();
   }
 
+  // The id already sent to discard, so running the flush-and-discard funnel
+  // twice for the same task never double-deletes it. That double happens on the
+  // panel's OWN Back button in the shell: [_close] discards directly, then its
+  // `widget.onClose` (the shell's closeDetail) runs the detail-close funnel,
+  // which discards again — and a second deleteTask on an already-gone id throws
+  // in the real command layer (G4 #183).
+  String? _discardedId;
+
   /// The #DetailWorkflow rule: an untitled, note-less, dateless SUBTASK left
   /// open (not completed) and WITHOUT children of its own is debris — remove it.
   /// A subtask with children is never touched: deleting it cascades the whole
@@ -257,7 +271,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final all =
         ref.read(allTasksProvider).asData?.value ?? const <StoredTask>[];
     final t = _current?.task;
-    if (t == null) return;
+    if (t == null || t.id == _discardedId) return;
     final empty =
         t.parent != null &&
         t.status != TaskStatus.completed &&
@@ -265,7 +279,10 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
         (t.notes ?? '').trim().isEmpty &&
         (t.due ?? '').isEmpty &&
         !all.any((c) => c.task.parent == t.id);
-    if (empty) ref.read(commandsProvider).deleteTask(t.id);
+    if (empty) {
+      _discardedId = t.id;
+      ref.read(commandsProvider).deleteTask(t.id);
+    }
   }
 
   void _close() {

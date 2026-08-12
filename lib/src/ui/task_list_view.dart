@@ -161,6 +161,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // unregister the quick-add draft flush without an unsafe `ref` lookup (#183).
   late final PendingEdits _pendingEdits;
 
+  // The shell's inline-rename back-handle (G4 #183), captured so a row can
+  // publish/retract its open editor without a `ref` lookup at call time.
+  late final RenameBackHandle _renameBack;
+
   bool get _isSmartView => SmartView.byId(widget.viewId) != null;
 
   /// The list a fresh bulk insert targets: the current list, or the first list
@@ -185,6 +189,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // mid-build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _syncBackHandle();
+    });
+    // A freshly-mounted view has no open inline-rename editor; clear any stale
+    // "rename active" a previous view left on the back handle (G4 #183) — the
+    // same reason the selection handle is reset above.
+    _renameBack = ref.read(renameBackHandleProvider.notifier);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _renameBack.set(null);
     });
     // A non-empty quick-add draft is an in-progress "create a task" edit; commit
     // it when the app is backgrounded so a swiped-away process never loses it
@@ -1024,6 +1035,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       onEditDone: () {
         if (_editId == t.id) setState(() => _editId = null);
       },
+      // So a mid-typing inline rename survives a system-back / backgrounding,
+      // like the detail panel's fields (#183/G4): the registry covers
+      // backgrounding, the back handle lets the shell intercept a system back.
+      pendingEdits: _pendingEdits,
+      onInlineEditActive: _renameBack.set,
       onOpen: () => widget.onOpenTask(t.id),
       onToggle: () => _toggle(stored),
       onRename: (v) => ref.read(commandsProvider).renameTask(t.id, v),

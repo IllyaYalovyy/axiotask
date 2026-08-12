@@ -16,13 +16,25 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// The editors that can hold typed-but-unsaved content.
-enum PendingEdit { detail, quickAdd }
+/// The editors that can hold typed-but-unsaved content: the detail panel's
+/// title/notes fields, the always-visible quick-add draft, and a row's inline
+/// rename editor (G4 #183 — a mid-typing rename that no blur will reach).
+enum PendingEdit { detail, quickAdd, rename }
 
 /// See the file header. Holds at most one live flush per [PendingEdit] (only one
-/// detail and one quick-add field are ever mounted at a time).
+/// detail, one quick-add, and one inline-rename editor are ever mounted at a
+/// time).
 class PendingEdits {
   final _flushers = <PendingEdit, VoidCallback>{};
+
+  // The detail panel's flush-AND-DISCARD funnel, kept SEPARATE from its
+  // background flush (the [PendingEdit.detail] entry above). The system-back
+  // that closes the panel must save the fields AND discard an abandoned blank
+  // subtask — exactly as the panel's own Back button does (G4 #183). But the
+  // backgrounded path ([flushAll]) must only SAVE: it must never silently delete
+  // a task the user merely stepped away from. So the close funnel lives here,
+  // invoked by [flushDetailClose] alone and never by [flushAll].
+  VoidCallback? _detailClose;
 
   /// Register [flush] as the current persist-now action for [key].
   void register(PendingEdit key, VoidCallback flush) => _flushers[key] = flush;
@@ -33,10 +45,26 @@ class PendingEdits {
     if (identical(_flushers[key], flush)) _flushers.remove(key);
   }
 
+  /// Register the detail panel's flush-and-discard funnel (the system-back
+  /// close path — see [_detailClose]).
+  void registerDetailClose(VoidCallback flush) => _detailClose = flush;
+
+  /// Retract the detail-close funnel — a no-op once a newer panel replaced it.
+  void unregisterDetailClose(VoidCallback flush) {
+    if (identical(_detailClose, flush)) _detailClose = null;
+  }
+
   /// Persist a single editor's pending edits (the detail-close path).
   void flush(PendingEdit key) => _flushers[key]?.call();
 
+  /// Run the detail panel's flush-and-discard funnel (the system-back that
+  /// closes the panel), so an abandoned blank subtask is discarded on system
+  /// back exactly as on the panel's own Back button (G4 #183).
+  void flushDetailClose() => _detailClose?.call();
+
   /// Persist every registered editor's pending edits (the backgrounded path).
+  /// Deliberately SAVE-only: it never runs the detail-close discard funnel, so
+  /// backgrounding a blank subtask keeps it rather than deleting it (G4 #183).
   void flushAll() {
     for (final f in [..._flushers.values]) {
       f();

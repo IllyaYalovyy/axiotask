@@ -191,6 +191,39 @@ final selectionBackHandleProvider = NotifierProvider<SelectionBackHandle, bool>(
   SelectionBackHandle.new,
 );
 
+/// A row's open inline-rename editor, surfaced up to the shell's back-precedence
+/// ladder (G4 #183) — the same pattern as [SelectionBackHandle], and for the
+/// same reason: a plain [PopScope] on the row sits under go_router's shell
+/// navigator and never receives the Android system back, so the row instead
+/// publishes its commit action here for the root-route back handler. Registering
+/// the rename in [PendingEdits] alone covers backgrounding/process-death
+/// (`flushAll`), but a system back at the root bubbles straight to the OS
+/// without firing any [PopScope], so the shell must actively intercept it to
+/// commit a mid-typing rename. The value is `true` while an editor is open;
+/// [commit] runs the row's own flush-and-close when the ladder reaches that rung.
+class RenameBackHandle extends Notifier<bool> {
+  VoidCallback? _commit;
+
+  @override
+  bool build() => false;
+
+  /// Publish (or, with `null`, retract) the open editor's commit action. Called
+  /// by the row when its inline-rename editor mounts / unmounts.
+  void set(VoidCallback? commit) {
+    _commit = commit;
+    state = commit != null;
+  }
+
+  /// Commit the open inline rename (persist the text and close the editor), if
+  /// any — invoked by the back ladder.
+  void commit() => _commit?.call();
+}
+
+/// See [RenameBackHandle]. Held app-wide (only one inline editor at a time).
+final renameBackHandleProvider = NotifierProvider<RenameBackHandle, bool>(
+  RenameBackHandle.new,
+);
+
 /// Runs a manual refresh — the mobile pull-to-refresh gesture (and, later, a
 /// Sync-now button). The reactive store keeps every view live, so a plain
 /// "reload" is already continuous; the default is a completed future and the

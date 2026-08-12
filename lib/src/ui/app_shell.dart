@@ -166,9 +166,11 @@ class AppShell extends ConsumerWidget {
     // The system-back close of the detail is a go_router navigation via the
     // scaffold's PopScope — it never runs the panel's own flush-on-close, and
     // unmounting the panel disposes the focused field before a blur can persist
-    // it. Flush the detail's pending edits BEFORE navigating away (#183).
+    // it. Run the panel's flush-AND-DISCARD funnel BEFORE navigating away, so a
+    // mid-typing edit is saved AND an abandoned blank subtask is discarded on
+    // system back exactly as on the panel's own Back button (#183/G4).
     void closeDetail() {
-      ref.read(pendingEditsProvider).flush(PendingEdit.detail);
+      ref.read(pendingEditsProvider).flushDetailClose();
       context.go(viewPath(sel.viewId));
     }
 
@@ -248,9 +250,17 @@ class AppShell extends ConsumerWidget {
     // cached — a cached flag would deaden back after a rotation unmounts the
     // compact scaffold mid-open (T8.2).
     final selectionActive = ref.watch(selectionBackHandleProvider);
+    // An open inline-rename editor is an app-owned back rung too (G4 #183): a
+    // system back mid-rename must commit-and-close the editor, not exit the app
+    // (and a root-route back bubbles straight to the OS unless this PopScope
+    // blocks it). It sits ABOVE the selection rung — a transient edit is
+    // dismissed before a standing selection — but still below the detail (owned
+    // by the scaffold's PopScope), so a back with a detail open closes the
+    // detail and leaves any Offstage-list rename for the next back.
+    final renameActive = ref.watch(renameBackHandleProvider);
     final detailOpen = sel.taskId != null;
     return PopScope(
-      canPop: !(showOnboarding || selectionActive),
+      canPop: !(showOnboarding || selectionActive || renameActive),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         final scaffoldState = scaffoldKey.currentState;
@@ -258,6 +268,8 @@ class AppShell extends ConsumerWidget {
           scaffoldState!.closeDrawer();
         } else if (showOnboarding) {
           dismissOnboarding();
+        } else if (!detailOpen && renameActive) {
+          ref.read(renameBackHandleProvider.notifier).commit();
         } else if (!detailOpen && selectionActive) {
           ref.read(selectionBackHandleProvider.notifier).clear();
         }

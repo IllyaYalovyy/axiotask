@@ -22,6 +22,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app/pending_edits.dart';
 import '../model/dates.dart';
 import 'date_format.dart';
 import 'url_detect.dart';
@@ -69,6 +70,8 @@ class TaskRow extends StatefulWidget {
     this.onShowActions,
     this.editRequested = false,
     this.onEditDone,
+    this.pendingEdits,
+    this.onInlineEditActive,
     super.key,
   });
 
@@ -152,6 +155,20 @@ class TaskRow extends StatefulWidget {
   final bool editRequested;
   final VoidCallback? onEditDone;
 
+  /// The app-wide pending-edits registry (#183/G4). While the inline-rename
+  /// editor is mounted the row registers a flush here, so the app backgrounding
+  /// persists a mid-typing rename that no blur will reach — exactly like the
+  /// detail panel's fields. `null` skips registration (a row mounted outside the
+  /// app, e.g. an isolated widget test).
+  final PendingEdits? pendingEdits;
+
+  /// Publish (with the commit action) or retract (with `null`) the open
+  /// inline-rename editor to the shell's back-precedence ladder (G4 #183): a
+  /// system back at the root bubbles to the OS without firing any [PopScope], so
+  /// the shell intercepts it and calls this commit to save-and-close the editor
+  /// rather than exit the app mid-rename. `null` skips it (an isolated test).
+  final void Function(VoidCallback? commit)? onInlineEditActive;
+
   @override
   State<TaskRow> createState() => _TaskRowState();
 }
@@ -160,6 +177,11 @@ class _TaskRowState extends State<TaskRow> {
   TextEditingController? _editor;
   FocusNode? _focus;
   bool _hovering = false;
+
+  // The rename flush held in a field so [PendingEdits.unregister]'s identity
+  // check matches — a bare `_flushRename` tear-off is not identical across
+  // calls, so unregistering with one would silently miss (#183/G4).
+  VoidCallback? _renameFlush;
 
   // ── T8.1 touch gestures ────────────────────────────────────────────────
   // Reference (TaskRow.svelte): a mostly-horizontal swipe ≥80px right completes
@@ -214,7 +236,9 @@ class _TaskRowState extends State<TaskRow> {
   void didUpdateWidget(TaskRow oldWidget) {
     super.didUpdateWidget(oldWidget);
     // The parent flipped editRequested on (context-menu "Edit title") — enter
-    // inline rename now.
+    // inline rename now. (The back-handle publish inside [_startEdit] is
+    // deferred to after this build, since a provider must not be mutated
+    // mid-build — see [_startEdit].)
     if (widget.editRequested && !oldWidget.editRequested && !_editing) {
       _startEdit();
     }
@@ -225,19 +249,51 @@ class _TaskRowState extends State<TaskRow> {
       _editor = TextEditingController(text: widget.title);
       _focus = FocusNode();
     });
-    // Focus after the field mounts.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _focus?.requestFocus());
+    // Register the persist-now hook for the paths that skip the blur-commit: a
+    // system-back or the app backgrounding while the editor holds a mid-typing
+    // rename (#183/G4). Held in a field so the later unregister matches.
+    final flush = _flushRename;
+    _renameFlush = flush;
+    // A plain Map mutation — safe even from didUpdateWidget's build phase.
+    widget.pendingEdits?.register(PendingEdit.rename, flush);
+    // Publish the commit action to the shell's back handle AFTER this frame so a
+    // system back at the root commits-and-closes this editor instead of exiting
+    // the app mid-rename (#183/G4). Deferred because [_startEdit] can run from
+    // didUpdateWidget (the context-menu "Edit title") and a provider must not be
+    // mutated mid-build; guarded so a rename cancelled before the callback runs
+    // leaves the handle clear. Focus is requested here too, once the field is up.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing) widget.onInlineEditActive?.call(_commit);
+      _focus?.requestFocus();
+    });
+  }
+
+  /// Persist the current inline-rename text immediately (diff-only, non-empty)
+  /// WITHOUT leaving edit mode — the registry entry for the system-back and
+  /// app-backgrounded paths, which must save a mid-typing rename that no blur
+  /// will ever reach (#183/G4). Empty/unchanged is a no-op (the caller owns
+  /// whether an empty title deletes — T2.4).
+  void _flushRename() {
+    if (!mounted) return;
+    final value = _editor?.text.trim() ?? '';
+    if (value.isNotEmpty && value != widget.title) widget.onRename(value);
   }
 
   void _commit() {
-    final value = _editor?.text.trim() ?? '';
-    // Only rename when the title actually changed and is non-empty; the caller
-    // owns whether an empty title deletes (T2.4).
-    if (value.isNotEmpty && value != widget.title) widget.onRename(value);
+    // The back ladder may hold a stale commit for a row already gone (a row
+    // filtered out mid double-tap edit before it committed) — a no-op then.
+    if (!mounted) return;
+    _flushRename();
     _stopEdit();
   }
 
   void _stopEdit() {
+    final flush = _renameFlush;
+    if (flush != null) {
+      widget.pendingEdits?.unregister(PendingEdit.rename, flush);
+      _renameFlush = null;
+      widget.onInlineEditActive?.call(null);
+    }
     _editor?.dispose();
     _focus?.dispose();
     setState(() {
@@ -393,6 +449,15 @@ class _TaskRowState extends State<TaskRow> {
 
   @override
   void dispose() {
+    // The row can be unmounted mid-edit (a view switch, a filter dropping it) —
+    // retract its background flush so a stale entry never lingers in the
+    // registry (#183/G4). The shell back-handle is deliberately NOT touched here
+    // (mutating its provider mid-teardown is unsafe); the next list mount resets
+    // it, and [_commit]'s `mounted` guard makes any stale entry a safe no-op.
+    final flush = _renameFlush;
+    if (flush != null) {
+      widget.pendingEdits?.unregister(PendingEdit.rename, flush);
+    }
     _editor?.dispose();
     _focus?.dispose();
     super.dispose();

@@ -162,6 +162,95 @@ void main() {
     );
   });
 
+  // Open a row's inline-rename editor through the touch action surface (the ⋯
+  // overflow → the bottom sheet's "Edit title"), the mobile path to rename.
+  Future<void> startInlineRename(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('row-overflow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('taskmenu-edit')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'system back mid inline-rename persists the new title (G4 #183)',
+    (tester) async {
+      final (fake, _) = await pumpShell(
+        tester,
+        initialTasks: [row('T1', 'old title')],
+        initialLists: [list('L1', 'My Tasks')],
+      );
+
+      await startInlineRename(tester);
+      // The inline editor is mounted, seeded with the current title.
+      expect(find.widgetWithText(TextField, 'old title'), findsOneWidget);
+
+      // Type a new title but do NOT blur/submit — then press the system back.
+      await tester.enterText(
+        find.widgetWithText(TextField, 'old title'),
+        'new title',
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      // The mid-typing rename survived the back that no blur would have caught.
+      expect(
+        fake.tasks.firstWhere((t) => t.task.id == 'T1').task.title,
+        'new title',
+      );
+    },
+  );
+
+  testWidgets('lifecycle-paused mid inline-rename persists it (G4 #183)', (
+    tester,
+  ) async {
+    final (fake, _) = await pumpShell(
+      tester,
+      initialTasks: [row('T1', 'old title')],
+      initialLists: [list('L1', 'My Tasks')],
+    );
+
+    await startInlineRename(tester);
+    expect(find.widgetWithText(TextField, 'old title'), findsOneWidget);
+
+    // Type into the inline editor but do NOT blur — then background the app.
+    await tester.enterText(
+      find.widgetWithText(TextField, 'old title'),
+      'renamed inline',
+    );
+    await background(tester);
+
+    expect(
+      fake.tasks.firstWhere((t) => t.task.id == 'T1').task.title,
+      'renamed inline',
+      reason: 'a mid-typing rename is not lost to a process the OS may kill',
+    );
+  });
+
+  testWidgets('system back from a blank subtask discards it (G4 #183)', (
+    tester,
+  ) async {
+    final (fake, router) = await pumpShell(
+      tester,
+      initialTasks: [
+        row('P', 'Parent'),
+        row('S', '', parent: 'P'),
+      ],
+      initialLists: [list('L1', 'My Tasks')],
+    );
+
+    // Open the blank subtask's panel, then press the system back (which never
+    // runs the panel's own flush-on-close funnel).
+    router.go(viewPath('all', taskId: 'S'));
+    await tester.pumpAndSettle();
+    final handled = await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(handled, isTrue, reason: 'back closed the detail, did not exit');
+    // The abandoned blank subtask was discarded, exactly as on the Back button.
+    expect(fake.deleted.map((t) => t.id), contains('S'));
+    expect(fake.tasks.any((t) => t.task.id == 'S'), isFalse);
+  });
+
   testWidgets(
     'a quick-add draft is committed when the app backgrounds (#183)',
     (tester) async {
