@@ -14,7 +14,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../app/commands.dart' show DeleteToken;
+import '../app/commands.dart' show CommandError, CompleteToken, DeleteToken;
 import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
@@ -418,17 +418,33 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _bulkComplete() async {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    final toasts = ref.read(toastControllerProvider);
     final byId = {for (final t in _all) t.task.id: t};
     _clearSelection();
+    // Collect each completion's undo token so ONE Undo reopens exactly what this
+    // op flipped — every toggle's cascade-exact set (a descendant already
+    // completed before the op stays completed on undo, F11/#184), just like bulk
+    // delete offers one Undo for the whole selection.
+    final tokens = <CompleteToken>[];
     for (final id in ids) {
       // Completing is idempotent-ish: only flip a still-open task (toggle would
       // otherwise re-open an already-completed one).
       final t = byId[id];
-      if (t != null && t.task.status != TaskStatus.completed) {
-        await commands.toggleComplete(id);
+      if (t != null && t.task.status == TaskStatus.completed) continue;
+      try {
+        tokens.add(await commands.toggleComplete(id));
+      } on CommandError {
+        // Row vanished between selection and op (concurrent delete/tombstone) —
+        // skip it and still complete, and undo, the rest.
       }
     }
-    if (mounted) _bulkToast(ids.length, 'completed');
+    if (!mounted || tokens.isEmpty) return;
+    final n = tokens.length;
+    toasts.showUndo('$n task${n == 1 ? '' : 's'} completed', () {
+      for (final token in tokens) {
+        commands.undoToggleComplete(token);
+      }
+    });
   }
 
   Future<void> _bulkSetDue(DateMove move) async {
@@ -456,7 +472,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // uses, replayed across the selection.
     final tokens = <DeleteToken>[];
     for (final id in ids) {
-      tokens.add(await commands.deleteTask(id));
+      try {
+        tokens.add(await commands.deleteTask(id));
+      } on CommandError {
+        // Row vanished between selection and op (a sync pull or another gesture
+        // deleted/tombstoned it): nothing left to delete or undo for this id —
+        // skip it so the rest of the selection still deletes as one Undo unit.
+      }
     }
     if (!mounted || tokens.isEmpty) return;
     final n = tokens.length;
