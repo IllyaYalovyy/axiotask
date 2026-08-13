@@ -33,6 +33,17 @@ without hiding stale generated code.
 Manual fakes are preferred to Mockito/Mocktail. Flutter's built-in golden support
 is preferred to a visual framework until a demonstrated gap appears.
 
+## Admitted in S00
+
+The scaffold admits only Flutter SDK 3.44.8, its bundled `flutter_test`, and
+`flutter_lints` 6.0.0. The SDK supplies both native runners and widget testing;
+`flutter_lints` supplies the Flutter-maintained BSD-licensed baseline that the
+project extends with strict analyzer settings. It is maintained by the Flutter
+team, has no production/native footprint, and can be removed by replacing the
+included lint baseline without changing runtime state. Linux and Android debug
+builds and the smoke test pass against the exact committed lock. No third-party
+runtime package is admitted by S00.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

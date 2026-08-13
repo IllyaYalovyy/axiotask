@@ -1,8 +1,8 @@
 # Local development and repository workflow
 
-This document defines the workflow before scaffolding. Exact Fedora packages,
-Android SDK components, Flutter constraints, build commands, and troubleshooting
-will be validated and expanded when the generated Flutter projects exist.
+This document defines the local workflow for the generated Linux and Android
+Flutter projects. The reproducible setup, build, install, launch, and
+verification commands are maintained in the repository [README](../README.md).
 
 ## Supported development targets
 
@@ -12,11 +12,24 @@ will be validated and expanded when the generated Flutter projects exist.
   checks when the required native libraries and services are available.
 - Android through a current supported SDK/emulator and at least one physical
   Google Play Services device for authentication validation.
-- Flutter stable 3.44.x / Dart 3.12.x is the researched baseline. The scaffold
-  will pin an explicit compatible SDK range and document upgrades.
+- Flutter stable `>=3.44.0 <3.45.0` and Dart `>=3.12.0 <3.13.0` are enforced by
+  `pubspec.yaml`. S00 was validated with Flutter 3.44.8 and Dart 3.12.2.
 
 No effort is allocated to Windows, macOS, iOS, web, distribution packaging,
 hosted CI, or release automation.
+
+## Locked scaffold toolchain and dependencies
+
+The S00 lock was resolved on Fedora 43 with Android SDK 36.1.0, Build-Tools
+36.1.0, JDK 21.0.8, clang 21.1.8, CMake 3.31.11, Ninja 1.13.1, GTK 3.24.52,
+and pkg-config 2.3.0. The generated Android runner pins Android Gradle Plugin
+9.0.1, Kotlin 2.3.20, and Gradle 9.1.0.
+
+Direct package dependencies are exact: Flutter and `flutter_test` come from the
+locked Flutter 3.44.8 SDK, and `flutter_lints` is 6.0.0. `pubspec.lock` records
+the complete exact transitive resolution. Supported ranges permit Flutter patch
+updates within 3.44.x and Dart patch updates within 3.12.x; any upgrade still
+requires the dependency admission review and both native build gates.
 
 ## Branch and commits
 
@@ -41,17 +54,19 @@ Broken intermediate commits and enormous cross-subsystem commits are avoided.
 
 ## Local verification
 
-The scaffold will provide one normal entry point:
+The scaffold provides one normal entry point:
 
 ```text
 ./scripts/quality.sh
 ```
 
-It will be deterministic, fail fast with useful output, and invoke formatting,
-analysis, generated-code freshness, tests, and privacy checks. Separate explicit
-commands will run application integration tests, goldens, actual screenshot
-capture, physical-device auth validation, real Google API tests, and the deep
-sync oracle.
+It is deterministic, fails fast with useful output, and invokes formatting,
+analysis, tests, privacy-check fixtures, and the repository privacy scan. There
+is no application-owned generated Dart code in S00, so a generated-code
+freshness step would be fake; it becomes mandatory when the first generator is
+admitted. Separate explicit commands will run application integration tests,
+goldens, actual screenshot capture, physical-device auth validation, real
+Google API tests, and the deep sync oracle when those capabilities exist.
 
 No command silently selects a real Google account or normal application-data
 directory.

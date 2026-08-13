@@ -214,11 +214,13 @@ evidence is insufficient.
 
 ## Local quality commands
 
-Once the Flutter scaffold exists, `scripts/quality.sh` will be the single normal
-gate and will run formatting verification, static analysis, unit/persistence/
-adapter/ViewModel/widget tests, generated-code freshness, and repository privacy
-checks. Scope-specific scripts will add integration, golden, screenshot, real
-API, and deep synchronization suites.
+`scripts/quality.sh` is the single normal gate. It currently runs formatting
+verification, strict static analysis, all available Flutter tests, behavioral
+privacy-check fixtures, and the repository privacy scan. Generated-code
+freshness joins the gate when application-owned generation is first admitted;
+S00 has no such source and does not pretend to check it. Scope-specific scripts
+will add integration, golden, screenshot, real API, and deep synchronization
+suites.
 
 There is deliberately no hosted CI. The same local gate is run before every
 commit, followed by staged-diff review; the repository privacy check is repeated

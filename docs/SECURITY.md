@@ -140,3 +140,9 @@ Before every commit:
 Before every push, repeat the repository-wide privacy scan. A false positive is
 reviewed and narrowly documented; the check is never disabled globally to make
 a commit pass.
+
+`scripts/privacy_check.sh` implements the scaffold check over tracked and
+non-ignored working-tree files. It rejects orchestration/diagnostic/output
+artifacts, credential-shaped content, absolute developer-home paths, and AI
+attribution. `test/privacy_check_test.sh` exercises a clean synthetic Git
+fixture and each rejection class without loading normal credentials or data.
