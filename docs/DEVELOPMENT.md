@@ -135,6 +135,12 @@ consuming a failed implementation attempt. The preflight reads only
 file to be ignored and mode `600`, and never prints configured values. It proves
 prerequisite availability, not the behavior that the following slice must test.
 
+Implementation is deliberately Linux-desktop-first. Shared behavior and the
+complete Fedora product are implemented, verified, and manually accepted before
+Android authorization, lifecycle, UI, device, or release work resumes. Android
+remains a supported target; it is sequenced later so unfinished mobile capability
+cannot block or dilute desktop completion.
+
 ## Documentation map
 
 - `VISION.md`: stable product intent and non-goals.

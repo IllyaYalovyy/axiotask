@@ -45,13 +45,20 @@ passed the repository preflight. This separates human-owned availability
 slice's behavioral proof and prevents a missing prerequisite from being
 misreported as an implementation failure.
 
+Execution is desktop-first. Shared domain/synchronization slices and all Fedora
+work proceed through the Linux release-readiness gate before any remaining
+Android-specific authorization, lifecycle, UI, device, or release work begins.
+During that desktop phase, platform UI/integration/visual acceptance means Linux;
+the corresponding Android evidence is deliberately deferred to S27A–S27B and
+S35A, not silently treated as complete. A HUMAN gate after S35L requires desktop
+acceptance before S03 or any later Android slice may run.
+
 ## Dependency shape and earliest useful slice
 
 ```text
 S00 scaffold
  ├─ S01 core boundaries/build modes
  ├─ S02 SQLite native-assets proof ── S10 cache repository ── S11 health shell
- ├─ S03 Android authorization proof                             │
  ├─ S04 Linux secure storage ── S05 Linux PKCE/DPoP proof       │
  └─ S06 HTTP reads ── S07 HTTP writes/errors ── S08, S09A–C fake ──┤
                                                                ▼
@@ -59,9 +66,13 @@ S00 scaffold
                                   │
                  S13A–B scheduling → S14A–S21B sync writes/recovery
                                   │
-                 S22A–S32B product workflows and recovery tools
+                 S22A–S26B, S28A–S32B Fedora workflows/tools
                                   │
-                 S33–S35 deep, live, platform, and release gates
+                 S33, S34A/C, S35L Linux verification
+                                  │
+                 HUMAN desktop acceptance
+                                  │
+                 S03 → S27A–B → S34B → S35A Android phase
 ```
 
 The capability proofs precede dependent production work because failure changes
@@ -147,6 +158,9 @@ successful synchronization.
 - **Commit / push:** `Prove native SQLite persistence`; push.
 
 ### S03 — Prove Android Google authorization on a physical device
+
+This slice is intentionally deferred until S35L passes and the user approves
+the completed Linux desktop. It is not a prerequisite for desktop/shared work.
 
 - **Capability:** A dedicated physical-device harness connects through the
   official Flutter plugin, authorizes the Tasks scope, calls `tasklists.list`,
@@ -310,13 +324,13 @@ successful synchronization.
   reachability from connectivity or emulate Google remote state here.
 - **Expected modules/files:** `test/support/{fake_auth,fake_lifecycle,
   fake_connectivity}.dart` and contract/qualification tests.
-- **Tests first:** Auth restore/refresh/terminal/cancel/mismatch, Android pause/
-  resume/no-callback, Linux focus independence, repeated hint coalescing, and
-  fake self-failure tests.
+- **Tests first:** Auth restore/refresh/terminal/cancel/mismatch, Linux focus
+  independence and process-exit behavior, repeated hint coalescing, and fake
+  self-failure tests. Android lifecycle cases are deferred to S27B.
 - **Verification / visuals:** Focused qualifications, platform authorization
   contract regressions, and quality. No visuals.
 - **Docs / acceptance / gates:** Accept when each fake emits typed facts only and
-  cannot directly set SyncHealth. Gates: S03, S05, and S09A.
+  cannot directly set SyncHealth. Gates: S05 and S09A.
 - **Commit / push:** `Add auth and lifecycle test fakes`; push.
 
 ### S09C — Add multi-host and reference-model harnesses
@@ -363,7 +377,7 @@ successful synchronization.
 
 ### S11 — Render cached tasks with truthful SyncHealth
 
-- **Capability:** Linux/Android shells render cached list/task data immediately
+- **Capability:** The Linux shell renders cached list/task data immediately
   and show exactly Inactive, Pending, Failed, or Good with reason, counts, and
   last-success time.
 - **Scope / non-goals:** Implement sync-fact storage/projection, repository and
@@ -375,7 +389,7 @@ successful synchronization.
   verification obligation, five-minute staleness, precedence, pending counts,
   and ViewModel/widget semantics for every reason/action.
 - **Verification / visuals:** Focused health/persistence/ViewModel/widget tests,
-  quality, curated Linux/phone goldens for cached Pending, stale Failed,
+  quality, curated Linux goldens for cached Pending, stale Failed,
   noAuthorization, and syncStopped; inspect actual synthetic screenshots.
 - **Docs / acceptance / gates:** Update UX only if rendering clarifies without
   changing vocabulary. Accept when green is impossible from cache, connectivity,
@@ -406,21 +420,21 @@ successful synchronization.
 - **Capability:** On launch/resume/Refresh, the app displays cached data, runs
   foreground verification, incrementally shows validated remote data, and moves
   among Pending, Good, Failed, and Inactive from durable facts.
-- **Scope / non-goals:** Wire one configured account, the read engine, platform
+- **Scope / non-goals:** Wire one configured account, the read engine, Linux
   authorization ports, minimal lifecycle/manual triggers, repositories, and the
   S11 shell in fake and production compositions. Do not add writes, automatic
-  cadence/retry, conflict policy, or Android background work.
+  cadence/retry, conflict policy, or Android composition/lifecycle work.
 - **Expected modules/files:** composition/read-run wiring, startup/resume bridge,
-  Refresh ViewModel action, and Linux/Android application integration tests.
+  Refresh ViewModel action, and Linux application integration tests.
 - **Tests first:** `RUN-005`, `HLT-005`–`HLT-008`, cold/warm launch, resume,
   manual Refresh, partial-data failure, malformed data, no authorization, and
   first successful verification.
-- **Verification / visuals:** Isolated fake application integration on Linux and
-  Android, focused engine/health regressions, quality, and actual screenshots for
+- **Verification / visuals:** Isolated fake application integration on Linux,
+  focused engine/health regressions, quality, and actual screenshots for
   cached Pending, partial Failed, first Good, stale, and noAuthorization.
 - **Docs / acceptance / gates:** This is the earliest useful slice. Accept when
   cache/auth/connectivity alone can never produce green and old valid cache
-  remains usable under an explicit non-green result. Gates: S03, S05, S09B,
+  remains usable under an explicit non-green result. Gates: S05, S09B,
   S11, and S12A. Live account smoke remains opt-in.
 - **Commit / push:** `Deliver verified Google Tasks read slice`; push.
 
@@ -446,21 +460,22 @@ successful synchronization.
 
 ### S13B — Add platform lifecycle and Stop/Resume Sync
 
-- **Capability:** Android syncs only while resumed, Linux remains eligible while
-  minimized, and Stop/Resume preserves authorization, cache, and durable work.
-- **Scope / non-goals:** Wire lifecycle/connectivity adapters, safe cancellation,
-  durable `syncEnabled`, Stop/Resume UI, and resume catch-up. Do not add Android
-  background workers or correctness that depends on an exit callback.
+- **Capability:** Linux remains sync-eligible while minimized, and Stop/Resume
+  preserves authorization, cache, and durable work.
+- **Scope / non-goals:** Wire Linux lifecycle/connectivity adapters, safe
+  cancellation, durable `syncEnabled`, Stop/Resume UI, and resume catch-up. Do
+  not add Android lifecycle behavior or correctness that depends on an exit
+  callback.
 - **Expected modules/files:** lifecycle/connectivity adapters, coordinator
   eligibility policy, settings repository, Stop/Resume ViewModel/widgets, and
   platform integration tests.
-- **Tests first:** `RUN-007`–`RUN-009`, `REL-006`, pause during read, hard exit,
+- **Tests first:** Linux-applicable `RUN-007`–`RUN-009`, `REL-006`, hard exit,
   Linux focus/minimize, stop idle/active, edit-while-stopped fixture, and resume.
-- **Verification / visuals:** Coordinator tests, Android lifecycle integration,
-  Linux minimize/unfocus check, quality, and actual Stop/Resume screenshots on
-  both form factors.
-- **Docs / acceptance / gates:** Accept when Android initiates no background
-  request and Stop never removes auth/cache/work. Gates: S13A and S09B.
+- **Verification / visuals:** Coordinator tests, Linux minimize/unfocus
+  integration, quality, and actual desktop Stop/Resume screenshots.
+- **Docs / acceptance / gates:** Accept when Linux focus state does not control
+  correctness and Stop never removes auth/cache/work. Android foreground-only
+  behavior remains required in S27B. Gates: S13A and S09B.
 - **Commit / push:** `Add foreground lifecycle sync control`; push.
 
 ## Durable mutations and reconciliation
@@ -478,7 +493,7 @@ successful synchronization.
   validation, no local-only option, and duplicate-tap prevention.
 - **Verification / visuals:** Domain/persistence/ViewModel/widget tests,
   regeneration, offline restart integration, health regression, quality, and
-  actual list create/rename states on Linux/phone.
+  actual list create/rename states on Linux.
 - **Docs / acceptance / gates:** Update `PAR-LIST-002/005`. Accept when UI
   success cannot precede durability and stopped-sync editing works. Gates:
   S10–S13B.
@@ -578,7 +593,7 @@ successful synchronization.
   grace, restart at cleanup/claim, parent subtree safety, and unrelated scope.
 - **Verification / visuals:** Domain/store/coordinator/engine/restart tests,
   integration delete→Undo and expiry→Google delete, quality, golden plus actual
-  desktop/phone Undo and destructive confirmation review.
+  desktop Undo and destructive confirmation review.
 - **Docs / acceptance / gates:** Accept when no DELETE occurs before expiry,
   Undo restores the same identities before dispatch, delete always wins after
   dispatch, and no unrelated resource is lost. Gates: S13B, S15B, S16, and
@@ -599,7 +614,7 @@ successful synchronization.
   parent rejection, child-before-parent publication, protected raw evidence,
   unrelated-scope visibility, restart, and no remote mutation.
 - **Verification / visuals:** Domain/store/adapter/engine/widget/integration tests,
-  quality, and actual desktop/phone hierarchy/error screenshots.
+  quality, and actual desktop hierarchy/error screenshots.
 - **Docs / acceptance / gates:** Accept when the domain cannot create depth 3 and
   unsupported data is never flattened, edited, moved, or deleted. Gates: S14B,
   S15A, and S12A.
@@ -619,7 +634,7 @@ successful synchronization.
   concurrent moves, deleted/missing anchors, move-plus-edit independence,
   cross-list subtree, unsupported depth, and account/list boundary rejection.
 - **Verification / visuals:** Unit/store/engine/multi-host tests, task detail and
-  reorder integration, adapter regression, quality, and actual desktop/phone
+  reorder integration, adapter regression, quality, and actual desktop
   hierarchy/reorder screenshots.
 - **Docs / acceptance / gates:** Accept when all clients converge to canonical
   Google structure without oscillation and unsupported data is never flattened,
@@ -660,9 +675,9 @@ successful synchronization.
   auth-like response, and successful reauthorization requiring a full run.
 - **Verification / visuals:** Policy/coordinator/auth/health tests, fake app
   integration, platform adapter contract regression, quality, and screenshots
-  for Reauthorize on both layouts.
+  for Reauthorize on the Linux layout.
 - **Docs / acceptance / gates:** Accept when auth failure never deletes cache or
-  intent and login alone never produces Good. Gates: S19A, S03/S05 evidence, and
+  intent and login alone never produces Good. Gates: S19A, S05 evidence, and
   S09B.
 - **Commit / push:** `Add synchronization reauthorization recovery`; push.
 
@@ -737,7 +752,7 @@ successful synchronization.
   publication, WAL/SHM preservation, open/integrity/read/write failure, repeated
   recovery, stale finalizer, and no-exit-callback cases.
 - **Verification / visuals:** Killed-process suite, full persistence/sync focused
-  matrix, quality, and actual Linux/phone recovery screens with synthetic paths
+  matrix, quality, and actual Linux recovery screens with synthetic paths
   and safe messages.
 - **Docs / acceptance / gates:** Accept when reopen is equivalent to a permitted
   durable state, no half-acknowledgement exists, and unreadable storage cannot
@@ -778,7 +793,7 @@ successful synchronization.
   date boundaries/locale, counts=visible rows, exclusion, new/deleted lists,
   effective child dates, completed filtering, sort stability, and restart.
 - **Verification / visuals:** Unit/persistence/preference/ViewModel/widget tests,
-  integration restart, quality, curated light/dark desktop/phone goldens, and
+  integration restart, quality, curated light/dark desktop goldens, and
   actual smart-view screenshots.
 - **Docs / acceptance / gates:** Accept when every membership rule has one domain
   implementation and counts exactly match visible rows. Gates: S18A and S22A.
@@ -787,17 +802,17 @@ successful synchronization.
 ### S23A — Complete task detail and subtask workflows
 
 - **Capability:** Users can inspect/edit long notes, create/manage one-level
-  subtasks, and see direct-child progress in desktop detail and mobile routes.
+  subtasks, and see direct-child progress in the Fedora desktop detail pane.
 - **Scope / non-goals:** Build detail ViewModel/layout, notes, subtask CRUD,
   progress, focus/back, and responsive presentation. Do not add date cascade,
   completion semantics, or recurrence editing.
-- **Expected modules/files:** task-detail ViewModel, desktop pane/mobile route,
+- **Expected modules/files:** task-detail ViewModel, desktop detail pane,
   notes/subtask/progress widgets, and integration tests.
 - **Tests first:** `PAR-TASK-004`, `PAR-STRUCT-003/005/007`, long/empty/Unicode
   notes, one-level validation, subtask CRUD/reorder, progress, focus/back, safe
   areas, and text scaling.
 - **Verification / visuals:** Domain/ViewModel/widget/integration/sync tests,
-  quality, long-content/light/dark goldens, and actual desktop/phone detail
+  quality, long-content/light/dark goldens, and actual desktop detail
   screenshots.
 - **Docs / acceptance / gates:** Accept when collections never duplicate child
   rows and every detail action uses shared domain commands. Gates: S18A–S18B and
@@ -836,7 +851,7 @@ successful synchronization.
   preview dismissal, invalid target, smart-view visibility, duplicate submit,
   rollback, restart, and publication.
 - **Verification / visuals:** Unit/ViewModel/widget/application integration,
-  quality, desktop/phone quick-add goldens, and actual keyboard/touch screenshots.
+  quality, desktop quick-add goldens, and actual keyboard screenshots.
 - **Docs / acceptance / gates:** Accept when target and interpreted date are
   visible before acknowledgement and creation uses normal desired state. Gates:
   S14B, S15A, S22B, and S23B.
@@ -855,7 +870,7 @@ successful synchronization.
   rules, invalid target, all-or-none rollback, restart, dependencies, remote
   per-create partial result, and duplicate submission.
 - **Verification / visuals:** Unit/store/ViewModel/widget/integration, S24A
-  regression, quality, and actual desktop/phone preview/result screenshots.
+  regression, quality, and actual desktop preview/result screenshots.
 - **Docs / acceptance / gates:** Accept when local acknowledgement is all-or-none
   and each task publishes through ordinary create handling. Gates: S24A.
 - **Commit / push:** `Add validated bulk task capture`; push.
@@ -872,7 +887,7 @@ successful synchronization.
   isolation, empty/Unicode/long queries, result updates, keyboard/touch parity,
   selection/dialog/detail/drawer/back ordering, and predictive-back state.
 - **Verification / visuals:** Repository/ViewModel/widget/integration tests,
-  quality, search/back goldens, and actual desktop/phone search screenshots.
+  quality, search/back goldens, and actual desktop search screenshots.
 - **Docs / acceptance / gates:** Accept when search never exposes protected
   unsupported rows and back never depends on ad hoc widget flags. Gates: S22B,
   S23A, and S23B.
@@ -915,11 +930,15 @@ successful synchronization.
 
 ### S27A — Add Android adaptive shell and navigation
 
+Deferred until S35L and explicit human desktop acceptance. The completed Linux
+application is a locked regression baseline for this and every later Android
+slice.
+
 - **Capability:** Android users get native list/detail navigation, drawer/FAB,
   safe areas, predictive back, rotation, and accessible responsive layout.
 - **Scope / non-goals:** Implement the Android shell/routes and layout only. Do
-  not add gestures, pull-to-refresh, lifecycle scheduling, background work, or
-  duplicate shared policy.
+  not change accepted Linux behavior or shared policy, and do not add gestures,
+  pull-to-refresh, lifecycle scheduling, or background work.
 - **Expected modules/files:** Android shell/routes/drawer/FAB widgets, navigation
   integration, phone/tablet goldens, and device tests.
 - **Tests first:** `PAR-ANDROID-001/002/005/006`, system/predictive back,
@@ -927,8 +946,9 @@ successful synchronization.
   and touch targets.
 - **Verification / visuals:** Widget/integration, emulator and physical-device
   smoke, quality, goldens, and actual phone/tablet screenshots.
-- **Docs / acceptance / gates:** Accept when native navigation is accessible at
-  every supported constraint and back order matches S25. Gates: S03, S23A–S25.
+- **Docs / acceptance / gates:** Accept when every Linux-accepted workflow is
+  reachable through native Android navigation and back order matches S25.
+  Gates: S03, S35L, and explicit desktop acceptance.
 - **Commit / push:** `Add Android adaptive task shell`; push.
 
 ### S27B — Add Android gestures, refresh, and lifecycle behavior
@@ -939,8 +959,9 @@ successful synchronization.
   and catch-up to the S27A shell. Do not add hidden gesture-only actions,
   authless mode, or background workers.
 - **Expected modules/files:** touch/refresh widgets, lifecycle integration,
-  gesture alternatives, emulator/device tests, and goldens.
-- **Tests first:** `PAR-ANDROID-003/004`, pause/resume during read/mutation,
+  Android lifecycle fakes, gesture alternatives, emulator/device tests, and
+  goldens.
+- **Tests first:** `PAR-ANDROID-003/004`, pause/resume/no-callback, pause during read/mutation,
   refresh success/failure, gesture cancel/failure, visible alternatives, and no
   background request across cadence.
 - **Verification / visuals:** Widget/integration, emulator lifecycle, physical
@@ -962,11 +983,11 @@ successful synchronization.
   transaction failure, remote partial success/dependency, exact counts, restart,
   mixed hierarchy, and selection/back behavior.
 - **Verification / visuals:** Domain/store/sync/ViewModel/widget/integration tests,
-  quality, desktop/phone bulk goldens, and actual selection/result/confirmation
+  quality, desktop bulk goldens, and actual selection/result/confirmation
   screenshots.
 - **Docs / acceptance / gates:** Accept when local acceptance is all-or-none and
   exact confirmed/pending/failed counts survive restart. Gates: S18B, S23B,
-  S26B, and S27B.
+  and S26B.
 - **Commit / push:** `Add reliable bulk task updates`; push.
 
 ### S28B — Add grouped bulk delete and Clear completed
@@ -1022,7 +1043,7 @@ successful synchronization.
   one-interaction reachability, export privacy, empty/error states, and release
   inability to navigate/construct the development view.
 - **Verification / visuals:** Security/unit/persistence/widget/integration tests,
-  quality, release/dev goldens, and actual desktop/phone diagnostics screenshots
+  quality, release/dev goldens, and actual desktop diagnostics screenshots
   with synthetic sensitive content.
 - **Docs / acceptance / gates:** Accept when release binaries cannot construct
   the sensitive sink/view and developers can inspect all allowed failure context
@@ -1042,7 +1063,7 @@ successful synchronization.
   offline acknowledged edits, hierarchy/order, deterministic bounds/version,
   file failure/cancel, and privacy canaries.
 - **Verification / visuals:** Unit/repository/widget/application integration,
-  privacy scan, quality, and actual desktop/phone export warning/result screens.
+  privacy scan, quality, and actual desktop export warning/result screens.
 - **Docs / acceptance / gates:** Publish exact v1 format and private-data warning.
   Accept when excluded data cannot enter the encoder. Gates: S23B, S28B, S29B.
 - **Commit / push:** `Add versioned task backup export`; push.
@@ -1062,7 +1083,7 @@ successful synchronization.
   stale/offline/stopped refusal, existing-wins, empty restore, restart/retry,
   local rollback, remote partial success, and privacy canaries.
 - **Verification / visuals:** Unit/store/sync/widget/application integration,
-  isolated real-Google empty-list smoke, quality, and actual desktop/phone
+  isolated real-Google empty-list smoke, quality, and actual desktop
   preview/warning/result screenshots.
 - **Docs / acceptance / gates:** Publish exact format/version documentation.
   Accept when validation mutates nothing, import is locally all-or-none, manifest
@@ -1086,7 +1107,7 @@ successful synchronization.
   request uncertainty, transaction failure, unavailable Google after reset,
   cross-account isolation, repeated reset, and corrupt DB Retry Open.
 - **Verification / visuals:** Store/sync/ViewModel/widget/application integration,
-  quality, recovery/reset goldens, and actual desktop/phone warnings and failed/
+  quality, recovery/reset goldens, and actual desktop warnings and failed/
   rebuilt outcomes.
 - **Docs / acceptance / gates:** Accept when only the selected partition is
   discarded after explicit confirmation and an empty cache cannot look Good.
@@ -1106,7 +1127,7 @@ successful synchronization.
   malformed links, launch failure, absent/invalid `webViewLink`, and distinct
   semantics/accessibility labels.
 - **Verification / visuals:** Unit/adapter/widget/integration/device, quality,
-  P10 probe, and actual desktop/phone link states.
+  P10 probe, and actual desktop link states.
 - **Docs / acceptance / gates:** Accept only after current `webViewLink`
   presence/navigation evidence; absence remains explained. Gates: S23A, S29B,
   and API P10.
@@ -1125,10 +1146,10 @@ successful synchronization.
   keyboard/touch navigation, semantics, contrast, text scaling, reduced motion,
   and narrow/wide layout.
 - **Verification / visuals:** Widget/integration/device, quality, light/dark
-  desktop/phone goldens, and actual onboarding/accessibility screenshots.
+  desktop goldens, and actual onboarding/accessibility screenshots.
 - **Docs / acceptance / gates:** Accept when onboarding makes no false sync claim
-  and all primary workflows remain accessible at supported scales. Gates: S22A,
-  S26B, S27B, S31, and S32A.
+  and all primary desktop workflows remain accessible at supported scales.
+  Gates: S22A, S26B, S31, and S32A.
 - **Commit / push:** `Complete onboarding and accessibility polish`; push.
 
 ### S33 — Add state-machine and multi-host synchronization evidence
@@ -1176,12 +1197,14 @@ successful synchronization.
 
 ### S34B — Close the physical Android authorization gate
 
+Deferred until the accepted Linux desktop, S03, and S27A–S27B are complete.
+
 - **Capability:** The final Android composition passes connect, Tasks scope,
   API call, restore, refresh/reauthorization, cancellation, and Stop/Resume on a
   physical device.
 - **Scope / non-goals:** Turn the S03 probe into the final isolated regression
-  suite against the shipped adapter/composition. Do not add a private plugin,
-  background sync, or non-Play-Services support.
+  suite against the shipped adapter/composition. Do not change accepted Linux
+  behavior or add a private plugin, background sync, or non-Play-Services support.
 - **Expected modules/files:** Android platform/auth integration tests, probe
   script updates, ignored evidence output, and setup docs.
 - **Tests first:** Subject mismatch, cancel, restart, expired/terminal auth,
@@ -1212,9 +1235,9 @@ successful synchronization.
   S26B, and dedicated account/GNOME session.
 - **Commit / push:** `Validate Linux Google authorization`; push.
 
-### S35 — Pass the supported-product release-readiness gate
+### S35L — Pass the Linux desktop release-readiness gate
 
-- **Capability:** A clean Fedora and Android checkout can build, run, and prove
+- **Capability:** A clean Fedora checkout can build, run, and prove
   every retained/redesigned parity capability with truthful health and verified
   release/development privacy separation.
 - **Scope / non-goals:** Close cross-feature regressions, curated goldens, actual
@@ -1227,14 +1250,44 @@ successful synchronization.
   edits/reconnect, auth expiry, Stop/Resume, task/list/subtask/bulk/search/import/
   reset/links, restart with pending/uncertain state, adaptive navigation, and
   release privacy composition.
-- **Verification / visuals:** Quality, deep sync, Linux/Android integration,
-  goldens, explicit live/platform suites, clean source-only rebuild, and manual
-  inspection of every named desktop/phone screenshot with synthetic data.
+- **Verification / visuals:** Quality, deep sync, Linux integration, goldens,
+  explicit live/Linux suites, clean source-only rebuild, and manual inspection
+  of every named desktop screenshot with synthetic data.
 - **Docs / acceptance / gates:** Mark parity rows verified only from linked
-  evidence; document exact build/run/test commands and residual known API limits.
-  Accept when all supported gates pass, no blocking TODO remains, and the branch
-  is clean. Gates: every prior slice through S34C.
-- **Commit / push:** `Complete supported product verification`; push.
+  Linux evidence; document exact Fedora build/run/test commands and residual
+  known API limits. Accept when all desktop gates pass, no desktop-blocking TODO
+  remains, Android parity remains explicitly unverified, and the branch is
+  clean. Gates: every shared/desktop slice through S34C, excluding deferred S03,
+  S27A–S27B, and S34B.
+- **Commit / push:** `Complete Linux desktop verification`; push.
+
+After S35L, a HUMAN gate requires the user to exercise and explicitly accept the
+Linux desktop as rock solid. Android work may not start before that approval.
+
+### S35A — Pass the Android release-readiness gate
+
+- **Capability:** A clean Android checkout builds, installs, runs, and proves
+  every retained/redesigned capability while the accepted Linux desktop remains
+  unchanged.
+- **Scope / non-goals:** Close Android-only regressions, device goldens/actual
+  screenshots, physical integration, documentation, and parity status. Do not
+  redesign accepted desktop behavior, add features, CI, packaging, stores,
+  unsupported platforms, or migration.
+- **Expected modules/files:** Android application integration suites, curated
+  phone/tablet goldens, ignored screenshot runner/output, final local
+  verification scripts, README/setup docs, and parity evidence links.
+- **Tests first:** Android cold/warm start, all four health states, offline edits/
+  reconnect, auth expiry, foreground Stop/Resume, every shared workflow, restart
+  with pending/uncertain state, adaptive navigation, and release privacy.
+- **Verification / visuals:** Full quality/deep-sync/Linux regression, Android
+  emulator and physical-device suites, clean source-only rebuild/install, and
+  manual inspection of every named phone/tablet screenshot with synthetic data.
+- **Docs / acceptance / gates:** Mark Android parity verified only from linked
+  evidence and complete exact Android dependency/build/install/run/isolated-test
+  instructions. Accept when all Android commands pass from a clean checkout,
+  Linux remains green, no blocking TODO remains, and the branch is clean. Gates:
+  accepted S35L, explicit human desktop approval, S03, S27A–S27B, and S34B.
+- **Commit / push:** `Complete Android product verification`; push.
 
 ## Stage 6 acceptance
 
