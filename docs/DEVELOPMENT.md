@@ -6,7 +6,10 @@ will be validated and expanded when the generated Flutter projects exist.
 
 ## Supported development targets
 
-- Fedora Linux 44+ with GNOME.
+- Fedora Linux 43+ with GNOME while the selected Fedora release remains
+  supported. Release-readiness testing must also cover the then-current stable
+  Fedora release; the application must not depend on Fedora-version string
+  checks when the required native libraries and services are available.
 - Android through a current supported SDK/emulator and at least one physical
   Google Play Services device for authentication validation.
 - Flutter stable 3.44.x / Dart 3.12.x is the researched baseline. The scaffold

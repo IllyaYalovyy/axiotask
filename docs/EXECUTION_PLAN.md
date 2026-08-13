@@ -1,6 +1,6 @@
 # Vertical-slice execution plan
 
-- Status: **Draft — Stage 6 approval required**
+- Status: **Accepted**
 - Scope: Flutter implementation on Fedora GNOME and Android
 - Updated: 2026-08-12
 
@@ -1230,10 +1230,9 @@ successful synchronization.
   is clean. Gates: every prior slice through S34C.
 - **Commit / push:** `Complete supported product verification`; push.
 
-## Stage 6 approval gate
+## Stage 6 acceptance
 
-Approval of this document authorizes converting one slice at a time into local
-`ktask` tasks. It does not authorize combining slices, implementing code during
-planning, bypassing a failed capability proof, or pre-generating the full task
-runtime state. Any dependency discovery that makes a slice too broad must split
-that slice in this document before implementation continues.
+This document was approved and converted into the local Stage 7 `ktask` queue.
+Approval does not authorize combining slices or bypassing a failed capability
+proof. Any dependency discovery that makes a slice too broad must split that
+slice in this document before implementation continues.
