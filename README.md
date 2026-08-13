@@ -1,10 +1,10 @@
 # Axiotask Flutter
 
 Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
-Android. The current foundation provides a minimal launchable shell plus
-constructor-injected core, authorization, diagnostics, and isolated composition
-boundaries. Google authorization adapters, persistence, synchronization, and
-task workflows arrive only in their approved later slices.
+Android. The current foundation provides a minimal launchable shell,
+constructor-injected core/authorization/diagnostic boundaries, and the
+versioned Drift/SQLite persistence foundation. Google authorization adapters,
+synchronization, and task workflows arrive only in their approved later slices.
 
 ## Supported development environment
 
@@ -45,7 +45,8 @@ flutter pub get
 ```
 
 `pubspec.lock` is committed. Do not run a dependency upgrade as part of normal
-setup.
+setup. SQLite is supplied as a native asset by the locked `sqlite3` package; do
+not install `sqlite3_flutter_libs` or a system SQLite development package.
 
 ## Linux build, local launch, and development run
 
@@ -96,14 +97,14 @@ access attempt. A mismatched authenticated subject also fails before a Tasks
 read or mutation. S01 does not yet include a Google adapter, so these entry
 points do not access Google.
 
-Each composition injects distinct database filename, preferences namespace,
+Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
 namespace. Synthetic instance names additionally partition parallel runs. The
-adapters that consume these boundaries land in their own gated slices; until
-then all diagnostic history is in memory and no database, preferences, or
-secure-storage records are created. Cleanup for S01 is therefore exact: stop
-the process. Later storage slices must document namespace-scoped deletion and
-must never delete the normal instance while cleaning an isolated instance.
+production database factory resolves only its injected filename in the native
+application-support directory. The current shell does not open it until a later
+composition slice wires repositories; diagnostic history remains in memory and
+preferences/secure storage are not created. Development and synthetic database
+names never equal the normal `axiotask.sqlite` name.
 
 Sensitive development diagnostics may retain synthetic or dedicated-account
 task/API/storage context locally. Production diagnostics discard private fields.
@@ -149,7 +150,8 @@ The normal fail-fast local gate is:
 ```
 
 It verifies formatting, strict analysis, all Flutter tests, the privacy
-checker's rejection fixtures, and the repository privacy scan. Useful focused
+checker's rejection fixtures, generated Drift freshness, and the repository
+privacy scan. Useful focused
 commands are:
 
 ```bash
@@ -161,9 +163,45 @@ flutter test test/core/clock_randomness_test.dart
 flutter test test/core/diagnostics_test.dart
 flutter test test/app/composition/composition_test.dart
 flutter test test/app/composition/isolation_test.dart
+flutter test test/data/database/app_database_test.dart
+flutter test test/data/database/file_database_test.dart
+flutter test test/data/database/native_database_probe_test.dart
+./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```
+
+## Native SQLite capability probe
+
+The native probe uses the same background-isolate file connection and
+application-support path resolver as production. It creates a filename prefixed
+`axiotask-native-database-probe-`, writes one fixed synthetic subject, verifies
+stream/transaction/checkpoint/close/reopen behavior, records no path or subject,
+and removes only its exact database plus WAL/SHM companions.
+
+Run it on Fedora:
+
+```bash
+flutter test integration_test/database_native_probe_test.dart -d linux
+```
+
+Run it on the dedicated emulator. Then build the Android APK and verify that the
+same locked SQLite native asset is packaged for the supported Android ABIs,
+including physical-device ARM64. Physical Google Play Services behavior is
+validated separately by the authorization slices where hardware matters.
+
+```bash
+flutter emulators --launch Axiotask_Test_API_36_1
+flutter devices
+flutter test integration_test/database_native_probe_test.dart -d emulator-5554
+flutter build apk --debug
+./scripts/check_android_native_assets.sh
+```
+
+Expected facts on both supported platforms are schema version 1, one synthetic
+account, SQLite 3.53.4, foreign keys enabled, WAL, synchronous FULL, a 5000 ms
+busy timeout, and a 1000-page automatic checkpoint. A failure does not fall
+back to an empty database. No screenshots or Google credentials are involved.
 
 There is no hosted CI, packaging workflow, or support for web, Windows, macOS,
 or iOS.

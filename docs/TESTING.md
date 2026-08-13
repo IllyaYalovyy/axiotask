@@ -215,12 +215,26 @@ evidence is insufficient.
 ## Local quality commands
 
 `scripts/quality.sh` is the single normal gate. It currently runs formatting
-verification, strict static analysis, all available Flutter tests, behavioral
-privacy-check fixtures, and the repository privacy scan. Generated-code
-freshness joins the gate when application-owned generation is first admitted;
-S00 has no such source and does not pretend to check it. Scope-specific scripts
-will add integration, golden, screenshot, real API, and deep synchronization
-suites.
+verification, Drift generated-code freshness, strict static analysis, all
+normal Flutter tests, behavioral privacy-check fixtures, and the repository
+privacy scan. The S02 native database integration probe remains explicit so it
+can name a real runner:
+
+```text
+flutter test integration_test/database_native_probe_test.dart -d linux
+flutter test integration_test/database_native_probe_test.dart -d <android-device-id>
+```
+
+S02 acceptance requires the Android command on an emulator plus a debug APK
+build followed by `./scripts/check_android_native_assets.sh`. The probe resolves
+a distinct application-support filename, uses only a fixed synthetic account
+subject, exercises transaction/stream/checkpoint/close/reopen behavior, emits
+only SQLite version, schema, counts, and pragma facts, then removes only that
+exact probe database and its WAL/SHM companions. The APK check proves SQLite is
+packaged for ARM64, ARMv7, and x86_64 without pretending packaging proves
+runtime behavior. Physical-device execution remains mandatory for Android
+authorization and final device gates. Scope-specific scripts will add golden,
+screenshot, real API, and deep synchronization suites.
 
 There is deliberately no hosted CI. The same local gate is run before every
 commit, followed by staged-diff review; the repository privacy check is repeated

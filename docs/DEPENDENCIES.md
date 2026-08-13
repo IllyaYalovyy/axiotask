@@ -9,7 +9,7 @@ added merely because it appears in this design.
 | Dependency | Problem it earns its place by solving | Decision and constraints |
 |---|---|---|
 | `provider` | Explicit composition/lifetime and narrow widget subscriptions without a service locator | Use for dependency injection and ViewModel exposure only. Flutter's architecture guide recommends it for DI. Do not move domain state into provider objects. |
-| `drift`, `drift_flutter`, `sqlite3` | Typed transactional SQLite, reactive queries, schema verification, native Android/Linux support, and testable connection injection | Accepted. Drift code generation is justified by persistence/sync correctness. Use sqlite3 3.x native assets; do not add obsolete `sqlite3_flutter_libs`. |
+| `drift`, `sqlite3` | Typed transactional SQLite, reactive queries, schema verification, native Android/Linux support, and testable connection injection | Accepted. Drift code generation is justified by persistence/sync correctness. Use sqlite3 3.x native assets; do not add obsolete `sqlite3_flutter_libs`. `drift_flutter` was evaluated but not admitted because its 0.3.1 resolution still pulls the EOL `sqlite3_flutter_libs` and `sqlcipher_flutter_libs`; the small native/path setup is owned at the database boundary instead. |
 | `http` | Small composable HTTP client used by a strict Google Tasks REST adapter | Accepted. Prefer the Dart-team package over `dio`; retries/auth/error parsing remain explicit policy outside the transport. |
 | `google_sign_in` | Maintained Flutter/Android Google authentication and authorization API | Android only, provisional on the mandatory physical-device capability gate. Do not write a replacement Google SDK integration if it fails. |
 | `oauth2` | Standards-level Authorization Code + PKCE and refresh mechanics | Linux only. Used behind a DPoP-aware HTTP client; browser callback, secure persistence, state/nonce validation, and errors remain application responsibilities. |
@@ -43,6 +43,34 @@ team, has no production/native footprint, and can be removed by replacing the
 included lint baseline without changing runtime state. Linux and Android debug
 builds and the smoke test pass against the exact committed lock. No third-party
 runtime package is admitted by S00.
+
+## Admitted in S02
+
+The persistence proof locks `drift` 2.34.3, `sqlite3` 3.5.1,
+`path_provider` 2.1.6, `drift_dev` 2.34.5, and `build_runner` 2.15.1.
+Flutter's bundled `integration_test` drives the same probe on native runners.
+The hosted packages are actively maintained by the Drift author, Flutter team,
+or Dart team and use MIT or BSD-3-Clause licenses. The resolved lock contains no
+`sqlite3_flutter_libs`, `sqlcipher_flutter_libs`, or separate SQLite plugin.
+
+`sqlite3` 3.5.1 supplies SQLite 3.53.4 through Dart native-asset build hooks.
+The Linux debug bundle and Android debug APK each contain `libsqlite3.so`; no
+system SQLite package or Android Java database adapter is used. Drift and raw
+SQLite access remain confined to `lib/src/data/database/`, while tests inject
+in-memory or temporary-file stores and the native probe uses an isolated,
+synthetic database name. Removing Drift would require replacing generated row,
+transaction, stream, and schema verification behavior against the same SQLite
+contract; removing `path_provider` would require an equally supported native
+application-support resolver without changing filenames or silently relocating
+state.
+
+`drift_flutter` 0.3.1 was deliberately rejected at admission time despite its
+convenient opener because it resolved both EOL native-library packages. Direct
+`sqlite3` native assets avoid that obsolete native footprint and passed the
+Linux and Android-emulator compile/probe gates. The built APK is also inspected
+for the locked SQLite library in `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
+Physical-device behavior remains gated where it is materially different:
+Google Play Services authorization, lifecycle, and final device integration.
 
 ## Deliberately not selected
 

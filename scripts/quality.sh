@@ -5,7 +5,10 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
 printf 'Checking Dart formatting...\n'
-dart format --output=none --set-exit-if-changed lib test
+dart format --output=none --set-exit-if-changed lib test integration_test
+
+printf 'Checking generated Dart code...\n'
+./scripts/check_generated.sh
 
 printf 'Running static analysis...\n'
 flutter analyze --fatal-infos --fatal-warnings

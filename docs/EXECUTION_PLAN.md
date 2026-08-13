@@ -132,8 +132,8 @@ successful synchronization.
   close/reopen, concurrent-read, rollback, malformed-schema, and unavailable
   path tests; native probe records only synthetic non-secret values.
 - **Verification / visuals:** Focused persistence tests, regeneration-no-diff,
-  quality, Linux native probe, Android emulator probe, and one physical Android
-  probe. No screenshots.
+  quality, Linux native probe, Android emulator probe, and Android APK native-
+  asset inspection for ARM64, ARMv7, and x86_64. No screenshots.
 - **Docs / acceptance / gates:** Record locked package/native versions and
   measured pragma behavior. Accept only if both platforms use the same schema
   contract and unreadable state never becomes an empty database. Gates: S00 and

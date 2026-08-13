@@ -31,6 +31,21 @@ the complete exact transitive resolution. Supported ranges permit Flutter patch
 updates within 3.44.x and Dart patch updates within 3.12.x; any upgrade still
 requires the dependency admission review and both native build gates.
 
+S02 additionally locks `drift` 2.34.3, `sqlite3` 3.5.1 with bundled SQLite
+3.53.4 native assets, `path_provider` 2.1.6, `drift_dev` 2.34.5, and
+`build_runner` 2.15.1. The generated Drift output is committed. The normal
+quality gate regenerates it and fails if any generated Dart file changes.
+
+The version-1 database contains only account identity. File-backed connections
+run on a Drift background isolate and measured `foreign_keys=ON`,
+`journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`, and
+`wal_autocheckpoint=1000` on Fedora and the API 36 Android emulator. Explicit
+`wal_checkpoint(TRUNCATE)` is supported and tested. In-memory tests retain
+SQLite's required `journal_mode=memory` while using the other selected
+settings. Existing files are checked read-only for schema version, exact schema,
+integrity, and foreign-key violations before Drift can migrate or create
+anything. Unknown, malformed, and corrupt files are closed and preserved.
+
 ## Branch and commits
 
 Development occurs on the independent orphan branch `flutter2` in the same
@@ -61,12 +76,11 @@ The scaffold provides one normal entry point:
 ```
 
 It is deterministic, fails fast with useful output, and invokes formatting,
-analysis, tests, privacy-check fixtures, and the repository privacy scan. There
-is no application-owned generated Dart code in S00, so a generated-code
-freshness step would be fake; it becomes mandatory when the first generator is
-admitted. Separate explicit commands will run application integration tests,
-goldens, actual screenshot capture, physical-device auth validation, real
-Google API tests, and the deep sync oracle when those capabilities exist.
+generated-code freshness, analysis, tests, privacy-check fixtures, and the
+repository privacy scan. Separate explicit commands run application
+integration tests, goldens, actual screenshot capture, physical-device auth
+validation, real Google API tests, and the deep sync oracle when those
+capabilities exist.
 
 No command silently selects a real Google account or normal application-data
 directory.
