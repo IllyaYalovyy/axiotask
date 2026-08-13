@@ -73,18 +73,29 @@ directory.
 
 ## Development versus release diagnostics
 
-The scaffold must provide a clearly named debug development entry point that
-composes the sensitive local diagnostic sink and its in-app viewer. It records
+S01 provides a clearly named debug development entry point that composes the
+sensitive local diagnostic sink. The full in-app viewer remains a later UI
+slice. The sink records
 all application failures and the boundary/state-transition evidence needed to
 reproduce them, including test-account task content and detailed API/database
-context, without sampling or suppressing errors. The viewer is one interaction
-from sync details and supports live search, copy, explicit export, and clear.
-Rotating log files and exports remain inside ignored development storage.
+context, without sampling or suppressing errors. When the later viewer slice is
+implemented, it is one interaction from sync details and supports live search,
+copy, explicit export, and clear. Its rotating log files and exports remain
+inside ignored development storage.
 
-The normal release entry point cannot construct that sink or viewer. It exposes
-only production-safe local summaries. Tests must prove the separation; it is
-not a convention and cannot be changed with a runtime flag. Credential and
-authorization material is redacted before either logging path in every build.
+The normal release entry point constructs only the production-safe sink and has
+no runtime diagnostic-mode flag. Behavioral composition tests prove the
+separation. Credential and authorization material is redacted before either
+logging path in every build.
+
+`lib/main.dart`, `lib/main_development.dart`, and `lib/main_test.dart` are the
+production-safe, sensitive-development, and synthetic-test roots respectively.
+Their injected database filename, preferences namespace, secure-storage
+namespace, OAuth configuration identity, diagnostics namespace, authorization,
+clock, and randomness are distinct. Development Google access additionally
+requires an exact dedicated-account subject; absence or mismatch fails closed.
+The reproducible launch, isolation, and current cleanup commands are maintained
+in the repository README.
 
 ## `ktask`
 

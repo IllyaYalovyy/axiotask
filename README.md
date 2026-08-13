@@ -1,9 +1,10 @@
 # Axiotask Flutter
 
 Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
-Android. The current S00 scaffold is intentionally a minimal launchable shell;
-Google authorization, persistence, synchronization, and task workflows arrive
-only in their approved later slices.
+Android. The current foundation provides a minimal launchable shell plus
+constructor-injected core, authorization, diagnostics, and isolated composition
+boundaries. Google authorization adapters, persistence, synchronization, and
+task workflows arrive only in their approved later slices.
 
 ## Supported development environment
 
@@ -55,13 +56,60 @@ flutter build linux --debug
 ./build/linux/x64/debug/bundle/axiotask
 ```
 
-For a development session with hot reload:
+For a normal production-safe development session with hot reload:
 
 ```bash
-flutter run -d linux --debug
+flutter run -d linux --debug -t lib/main.dart
 ```
 
 System-wide packaging or installation is deliberately out of scope.
+
+## Compile-time application compositions
+
+Composition is selected only by the Dart entry point. The release root has no
+runtime option that can construct sensitive diagnostics:
+
+| Composition | Entry point | Google access | Diagnostic boundary |
+|---|---|---|---|
+| Production-safe | `lib/main.dart` | Platform adapter added by later gated slices | Safe structured fields only |
+| Sensitive development | `lib/main_development.dart` | Must match an explicit dedicated-account subject before any Google read or mutation | Local private context retained; credentials always redacted |
+| Synthetic test | `lib/main_test.dart` | Disabled; injected synthetic authorization only | Safe in-memory history |
+
+Run the synthetic composition with a unique lowercase instance name:
+
+```bash
+flutter run -d linux --debug -t lib/main_test.dart \
+  --dart-define=AXIOTASK_TEST_INSTANCE=manual-synthetic
+```
+
+Run sensitive development only with a dedicated Google account. Obtain that
+account's stable Google subject through the later opt-in authorization probe;
+do not use an email address and do not guess it. Supply it at compilation:
+
+```bash
+flutter run -d linux --debug -t lib/main_development.dart \
+  --dart-define=AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT=<dedicated-subject>
+```
+
+Omitting the subject is safe: the dedicated-account guard rejects every Google
+access attempt. A mismatched authenticated subject also fails before a Tasks
+read or mutation. S01 does not yet include a Google adapter, so these entry
+points do not access Google.
+
+Each composition injects distinct database filename, preferences namespace,
+secure-storage namespace, OAuth-configuration identity, and diagnostic
+namespace. Synthetic instance names additionally partition parallel runs. The
+adapters that consume these boundaries land in their own gated slices; until
+then all diagnostic history is in memory and no database, preferences, or
+secure-storage records are created. Cleanup for S01 is therefore exact: stop
+the process. Later storage slices must document namespace-scoped deletion and
+must never delete the normal instance while cleaning an isolated instance.
+
+Sensitive development diagnostics may retain synthetic or dedicated-account
+task/API/storage context locally. Production diagnostics discard private fields.
+Both paths redact credential fields and recognizable authorization material,
+including bearer/refresh tokens and OAuth callback URLs, before storage. There
+is no telemetry, automatic upload, or committed diagnostic output.
 
 ## Android build, local installation, and development run
 
@@ -108,6 +156,11 @@ commands are:
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze --fatal-infos --fatal-warnings
 flutter test test/app_smoke_test.dart
+flutter test test/core/failure_outcome_test.dart
+flutter test test/core/clock_randomness_test.dart
+flutter test test/core/diagnostics_test.dart
+flutter test test/app/composition/composition_test.dart
+flutter test test/app/composition/isolation_test.dart
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```

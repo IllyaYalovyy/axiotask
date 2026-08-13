@@ -1,30 +1,11 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
-void main() => runApp(const AxiotaskApp());
+import 'src/app/axiotask_app.dart';
+import 'src/app/composition/release_composition.dart';
 
-class AxiotaskApp extends StatelessWidget {
-  const AxiotaskApp({super.key});
+export 'src/app/axiotask_app.dart';
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Axiotask',
-      theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
-      home: const Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Axiotask', style: TextStyle(fontSize: 32)),
-                SizedBox(height: 8),
-                Text('Google Tasks for Linux and Android'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+void main() {
+  final composition = ReleaseComposition.create();
+  runApp(AxiotaskApp(composition: composition));
 }
