@@ -16,6 +16,9 @@ flutter analyze --fatal-infos --fatal-warnings
 printf 'Running Flutter tests...\n'
 flutter test
 
+printf 'Testing interactive capability gates...\n'
+./test/preflight_capability_gate_test.sh
+
 printf 'Testing the privacy checker...\n'
 ./test/privacy_check_test.sh
 

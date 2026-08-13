@@ -190,6 +190,20 @@ The suite validates only high-value assumptions that a fake cannot prove:
 
 It is never part of the normal fast quality command.
 
+The interactive authorization slices have fail-closed prerequisite checks:
+
+```text
+./scripts/preflight_capability_gate.sh android-auth
+./scripts/preflight_capability_gate.sh linux-auth
+```
+
+The Android check requires exactly one authorized physical device with Google
+Play Services plus ignored dedicated-account configuration. The Linux check
+requires a live user D-Bus session, GNOME Secret Service, a system-browser
+launcher, and ignored dedicated-account configuration. A passing preflight only
+allows the implementation task to start; it is not evidence that authorization,
+refresh, DPoP, persistence, or a Google Tasks call works.
+
 ### 12. Physical Android authentication gate
 
 Before Android-dependent feature work, a small real-device test must prove the

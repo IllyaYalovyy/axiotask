@@ -141,6 +141,37 @@ This scaffold does not read credentials, application storage, or Google Tasks.
 Future real-service tests must use the dedicated isolated configuration defined
 by the accepted testing and security documents.
 
+## Interactive authorization capability gates
+
+Real authorization work is opt-in and uses an ignored, private configuration
+file. Create `.ktask/gates/stage7.env`, set its permissions to `600`, and add
+only the values required by the platform being proved:
+
+```text
+AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT=<dedicated-account-subject>
+AXIOTASK_ANDROID_AUTH_CLIENT_ID=<android-oauth-client-id>
+AXIOTASK_LINUX_AUTH_CLIENT_ID=<linux-oauth-client-id>
+AXIOTASK_LINUX_AUTH_CLIENT_SECRET=<linux-oauth-client-secret>
+```
+
+Never use a normal personal account, put these values on a command line, or
+commit this file. Before the Android authorization slice, connect, unlock, and
+authorize exactly one physical Google Play Services device, then run:
+
+```bash
+./scripts/preflight_capability_gate.sh android-auth
+```
+
+Before the Linux browser authorization slice, run the app from a GNOME user
+session with Secret Service available, then run:
+
+```bash
+./scripts/preflight_capability_gate.sh linux-auth
+```
+
+These checks disclose no configured value and only prove that required inputs
+are present. The following opt-in probes must still establish actual behavior.
+
 ## Verification
 
 The normal fail-fast local gate is:

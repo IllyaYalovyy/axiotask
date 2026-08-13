@@ -127,6 +127,14 @@ Machine-specific executor paths, prompts, transcripts, and agent state must not
 be committed. Human-useful decisions discovered during a task are moved into
 the product documentation or ADRs.
 
+Interactive capability proofs are preceded by HUMAN queue gates. A gate may be
+acknowledged only after its checked preflight command succeeds; missing hardware,
+credentials, or desktop services therefore pause orchestration instead of
+consuming a failed implementation attempt. The preflight reads only
+`.ktask/gates/stage7.env` (or the explicitly named equivalent), requires the
+file to be ignored and mode `600`, and never prints configured values. It proves
+prerequisite availability, not the behavior that the following slice must test.
+
 ## Documentation map
 
 - `VISION.md`: stable product intent and non-goals.

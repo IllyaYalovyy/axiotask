@@ -39,6 +39,12 @@ mismatched isolation configuration. No slice adds CI, packaging, unsupported
 platforms, legacy migration, local-only lists, Android background sync, or
 AI-only committed artifacts.
 
+An interactive slice is not dispatched until its HUMAN capability gate has
+passed the repository preflight. This separates human-owned availability
+(physical devices, ignored OAuth configuration, and desktop services) from the
+slice's behavioral proof and prevents a missing prerequisite from being
+misreported as an implementation failure.
+
 ## Dependency shape and earliest useful slice
 
 ```text
