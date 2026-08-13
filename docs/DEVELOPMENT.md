@@ -46,6 +46,13 @@ settings. Existing files are checked read-only for schema version, exact schema,
 integrity, and foreign-key violations before Drift can migrate or create
 anything. Unknown, malformed, and corrupt files are closed and preserved.
 
+S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
+3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;
+runtime access requires an active Secret Service, normally `gnome-keyring` in a
+GNOME user D-Bus session. The opt-in probe command and exact isolation behavior
+are maintained in the README. Normal tests fake the secure-value boundary and
+never open Secret Service.
+
 ## Branch and commits
 
 Development occurs on the independent orphan branch `flutter2` in the same

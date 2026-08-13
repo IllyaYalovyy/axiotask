@@ -3,8 +3,10 @@
 Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
 Android. The current foundation provides a minimal launchable shell,
 constructor-injected core/authorization/diagnostic boundaries, and the
-versioned Drift/SQLite persistence foundation. Google authorization adapters,
-synchronization, and task workflows arrive only in their approved later slices.
+versioned Drift/SQLite persistence foundation. Linux additionally has a
+capability-proven GNOME Secret Service credential boundary; OAuth, Google
+authorization adapters, synchronization, and task workflows arrive only in
+their approved later slices.
 
 ## Supported development environment
 
@@ -19,7 +21,8 @@ Install the Fedora build prerequisites:
 
 ```bash
 sudo dnf install clang cmake ninja-build pkgconf-pkg-config gtk3-devel \
-  libstdc++-devel java-21-openjdk-devel
+  libsecret libsecret-devel gnome-keyring libstdc++-devel \
+  java-21-openjdk-devel
 ```
 
 Install Flutter `3.44.8` from the official Flutter archive, add its `bin`
@@ -47,6 +50,8 @@ flutter pub get
 `pubspec.lock` is committed. Do not run a dependency upgrade as part of normal
 setup. SQLite is supplied as a native asset by the locked `sqlite3` package; do
 not install `sqlite3_flutter_libs` or a system SQLite development package.
+Linux secure storage requires an active Secret Service in the user session;
+GNOME normally supplies it through `gnome-keyring`.
 
 ## Linux build, local launch, and development run
 
@@ -111,6 +116,35 @@ task/API/storage context locally. Production diagnostics discard private fields.
 Both paths redact credential fields and recognizable authorization material,
 including bearer/refresh tokens and OAuth callback URLs, before storage. There
 is no telemetry, automatic upload, or committed diagnostic output.
+
+## Linux secure credential storage
+
+`flutter_secure_storage` 10.3.1 is locked with its resolved Linux implementation
+3.0.2. The adapter stores the refresh token and DPoP private key together as one
+versioned JSON value in GNOME Secret Service. The application namespace is part
+of the one key, and no token or key is written to SQLite, preferences, a file,
+or a fallback store.
+
+An absent value means no saved authorization. A locked login keyring asks the
+user to unlock and retry; unavailable Secret Service or denied access produces
+an actionable configuration failure. A malformed or unsupported bundle is
+preserved and requires reauthorization rather than being silently deleted. A
+later successful complete replacement repairs that state. Replacement and
+deletion are read back before success; an operation that throws after committing
+is accepted only when the exact resulting state can be verified.
+
+The native capability probe requires an unlocked GNOME session and is
+deliberately opt-in. It writes only fixed synthetic canaries beneath a dedicated
+probe namespace, verifies store/read/replace/delete, and removes only that key
+in a `finally` cleanup. It never reads normal application credentials:
+
+```bash
+AXIOTASK_RUN_LINUX_SECURE_STORAGE_PROBE=1 \
+  ./scripts/probe_linux_secure_storage.sh
+```
+
+The probe presents no expected user dialog. If Secret Service unexpectedly
+presents one, stop and review it rather than accepting the run unattended.
 
 ## Android build, local installation, and development run
 
@@ -197,6 +231,7 @@ flutter test test/app/composition/isolation_test.dart
 flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
+flutter test test/data/auth/linux/secure_credentials_test.dart
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

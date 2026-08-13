@@ -43,6 +43,21 @@ read/write/delete outcomes. There is no plaintext fallback. Android authorizatio
 state is owned by `google_sign_in`; Axiotask does not copy an Android refresh
 token into its own storage.
 
+On Linux the refresh token and DPoP private key are encoded together as one
+strict, versioned bundle beneath one validated application namespace. Initial
+storage and replacement therefore cannot expose a usable half-bundle.
+Replacement and deletion are verified by exact read-back, including after a
+plugin error that may have followed a commit. An absent value is reported as no
+saved authorization. Locked, unavailable, denied, malformed, and unverified
+states are distinct failures; no exception detail or secure-store value reaches
+diagnostics.
+
+Malformed storage is not silently reset. It remains an actionable
+reauthorization failure until a later complete replacement repairs it. Probe
+cleanup and any future reviewed credential lifecycle delete only the exact
+namespaced bundle key; global secure-store deletion is prohibited because it
+could affect another composition or application use.
+
 Stopping synchronization changes only the durable account-scoped sync-enabled
 flag. It does not delete or revoke credentials, delete cached task data, or
 discard pending changes. While stopped, no new Google request is started and the

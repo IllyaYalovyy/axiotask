@@ -72,6 +72,27 @@ for the locked SQLite library in `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
 Physical-device behavior remains gated where it is materially different:
 Google Play Services authorization, lifecycle, and final device integration.
 
+## Admitted in S04
+
+The Linux secure-storage proof locks `flutter_secure_storage` 10.3.1 and its
+resolved `flutter_secure_storage_linux` 3.0.2 implementation. The maintained
+federated plugin is published by steenbakker.dev under BSD-3-Clause and uses
+libsecret on Linux. Fedora requires the `libsecret` runtime,
+`libsecret-devel` build headers, and an active Secret Service such as
+`gnome-keyring` in the user D-Bus session.
+
+The dependency is confined behind `SecureValueStore` and the namespaced
+`CredentialStore`; normal contract tests use a deterministic fake. The adapter
+uses only one versioned value for the refresh-token/DPoP-key bundle and never
+calls global deletion. Write and delete results are verified by read-back so a
+commit-then-error outcome cannot be mistaken for failure or success. Locked,
+unavailable, denied, malformed, and unverified outcomes remain typed and
+actionable. There is no plaintext fallback and no automatic destructive reset.
+
+Removing the plugin requires another Fedora GNOME adapter that passes the same
+real Secret Service probe and failure contract without relocating credentials
+to SQLite, preferences, application files, or another plaintext store.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

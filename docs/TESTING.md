@@ -154,6 +154,13 @@ isolated database and stateful fake. Core workflows run on Fedora and Android:
 Plugin-specific tests run separately where a real platform implementation is
 required.
 
+The Linux secure-storage contract suite injects a fake key/value boundary for
+absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
+namespace, and credential-redaction behavior. The explicit GNOME probe uses the
+real plugin and Secret Service with fixed synthetic values under one dedicated
+namespace. It verifies initial write/read, complete replacement/read, deletion,
+and cleanup, and it never calls global deletion or searches normal credentials.
+
 ### 10. Actual screenshot review
 
 A dedicated test entry point builds the real app with synthetic repositories,
@@ -249,6 +256,17 @@ packaged for ARM64, ARMv7, and x86_64 without pretending packaging proves
 runtime behavior. Physical-device execution remains mandatory for Android
 authorization and final device gates. Scope-specific scripts will add golden,
 screenshot, real API, and deep synchronization suites.
+
+Run the isolated Linux secure-storage capability proof only from an unlocked
+GNOME user session:
+
+```text
+AXIOTASK_RUN_LINUX_SECURE_STORAGE_PROBE=1 \
+  ./scripts/probe_linux_secure_storage.sh
+```
+
+The script fails closed when its explicit opt-in, `libsecret-devel`, user D-Bus,
+GNOME desktop, or Secret Service prerequisite is absent.
 
 There is deliberately no hosted CI. The same local gate is run before every
 commit, followed by staged-diff review; the repository privacy check is repeated
