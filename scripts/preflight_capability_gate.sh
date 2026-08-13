@@ -99,8 +99,11 @@ check_android_auth() {
 
 check_linux_auth() {
   require_command gdbus
+  require_command pkg-config
   require_command secret-tool
   require_command xdg-open
+  pkg-config --exists libsecret-1 ||
+    fail 'libsecret-devel is required; install it outside ktask before continuing'
   load_private_config
   require_value AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT
   require_google_client_id AXIOTASK_LINUX_AUTH_CLIENT_ID

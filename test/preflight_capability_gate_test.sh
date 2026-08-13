@@ -60,6 +60,7 @@ printf '%s\n' \
   "printf '[{\"id\":\"physical-fixture\"}]\\n'" \
   >"$fixture_root/bin/flutter"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/gdbus"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/pkg-config"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/secret-tool"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/xdg-open"
 chmod +x "$fixture_root/bin/"*

@@ -196,8 +196,9 @@ authorize exactly one physical Google Play Services device, then run:
 ./scripts/preflight_capability_gate.sh android-auth
 ```
 
-Before the Linux browser authorization slice, run the app from a GNOME user
-session with Secret Service available, then run:
+Before the Linux browser authorization slice, confirm `pkg-config --exists
+libsecret-1` succeeds and run the app from a GNOME user session with Secret
+Service available, then run:
 
 ```bash
 ./scripts/preflight_capability_gate.sh linux-auth

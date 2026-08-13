@@ -206,10 +206,11 @@ The interactive authorization slices have fail-closed prerequisite checks:
 
 The Android check requires exactly one authorized physical device with Google
 Play Services plus ignored dedicated-account configuration. The Linux check
-requires a live user D-Bus session, GNOME Secret Service, a system-browser
-launcher, and ignored dedicated-account configuration. A passing preflight only
-allows the implementation task to start; it is not evidence that authorization,
-refresh, DPoP, persistence, or a Google Tasks call works.
+requires installed `libsecret-devel` metadata, a live user D-Bus session, GNOME
+Secret Service, a system-browser launcher, and ignored dedicated-account
+configuration. A passing preflight only allows the implementation task to
+start; it is not evidence that authorization, refresh, DPoP, persistence, or a
+Google Tasks call works.
 
 ### 12. Physical Android authentication gate
 
