@@ -249,6 +249,80 @@ class AccountPreferenceRows extends Table {
   ];
 }
 
+class SyncFactRows extends Table {
+  @override
+  String get tableName => 'sync_facts';
+
+  IntColumn get accountId => integer()();
+
+  DateTimeColumn get lastSuccessfulSyncAt => dateTime().nullable()();
+
+  TextColumn get latestFailureReason => text().nullable().check(
+    latestFailureReason.isNull() |
+        latestFailureReason.isIn(const <String>[
+          'no_connection',
+          'remote_failure',
+          'application_failure',
+          'stale',
+        ]),
+  )();
+
+  DateTimeColumn get latestFailureAt => dateTime().nullable()();
+
+  TextColumn get latestFailureDiagnosticCode => text().nullable()();
+
+  TextColumn get latestFailureAction => text().nullable().check(
+    latestFailureAction.isNull() |
+        latestFailureAction.isIn(const <String>['none', 'retry']),
+  )();
+
+  IntColumn get pendingCount => integer()
+      .withDefault(const Constant(0))
+      .check(pendingCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get inFlightCount => integer()
+      .withDefault(const Constant(0))
+      .check(inFlightCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get uncertainCount => integer()
+      .withDefault(const Constant(0))
+      .check(uncertainCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get failedCount => integer()
+      .withDefault(const Constant(0))
+      .check(failedCount.isBiggerOrEqualValue(0))();
+
+  BoolColumn get reauthorizationRequired =>
+      boolean().withDefault(const Constant(false))();
+
+  BoolColumn get retryWaiting => boolean().withDefault(const Constant(false))();
+
+  BoolColumn get automaticRetryExhausted =>
+      boolean().withDefault(const Constant(false))();
+
+  BoolColumn get requiredScopeIncomplete =>
+      boolean().withDefault(const Constant(false))();
+
+  BoolColumn get followUpRequired =>
+      boolean().withDefault(const Constant(false))();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{accountId};
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'CHECK ((latest_failure_reason IS NULL '
+        'AND latest_failure_at IS NULL '
+        'AND latest_failure_diagnostic_code IS NULL '
+        'AND latest_failure_action IS NULL) OR '
+        '(latest_failure_reason IS NOT NULL '
+        'AND latest_failure_at IS NOT NULL '
+        'AND length(latest_failure_diagnostic_code) > 0 '
+        'AND latest_failure_action IS NOT NULL))',
+  ];
+}
+
 class TaskListPreferenceRows extends Table {
   @override
   String get tableName => 'task_list_preferences';

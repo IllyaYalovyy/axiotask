@@ -3754,6 +3754,1000 @@ class AccountPreferenceRowsCompanion
   }
 }
 
+class $SyncFactRowsTable extends SyncFactRows
+    with TableInfo<$SyncFactRowsTable, SyncFactRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncFactRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastSuccessfulSyncAtMeta =
+      const VerificationMeta('lastSuccessfulSyncAt');
+  @override
+  late final GeneratedColumn<DateTime> lastSuccessfulSyncAt =
+      GeneratedColumn<DateTime>(
+        'last_successful_sync_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _latestFailureReasonMeta =
+      const VerificationMeta('latestFailureReason');
+  @override
+  late final GeneratedColumn<String> latestFailureReason =
+      GeneratedColumn<String>(
+        'latest_failure_reason',
+        aliasedName,
+        true,
+        check: () =>
+            latestFailureReason.isNull() |
+            latestFailureReason.isIn(const <String>[
+              'no_connection',
+              'remote_failure',
+              'application_failure',
+              'stale',
+            ]),
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _latestFailureAtMeta = const VerificationMeta(
+    'latestFailureAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> latestFailureAt =
+      GeneratedColumn<DateTime>(
+        'latest_failure_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _latestFailureDiagnosticCodeMeta =
+      const VerificationMeta('latestFailureDiagnosticCode');
+  @override
+  late final GeneratedColumn<String> latestFailureDiagnosticCode =
+      GeneratedColumn<String>(
+        'latest_failure_diagnostic_code',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _latestFailureActionMeta =
+      const VerificationMeta('latestFailureAction');
+  @override
+  late final GeneratedColumn<String> latestFailureAction =
+      GeneratedColumn<String>(
+        'latest_failure_action',
+        aliasedName,
+        true,
+        check: () =>
+            latestFailureAction.isNull() |
+            latestFailureAction.isIn(const <String>['none', 'retry']),
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _pendingCountMeta = const VerificationMeta(
+    'pendingCount',
+  );
+  @override
+  late final GeneratedColumn<int> pendingCount = GeneratedColumn<int>(
+    'pending_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(pendingCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _inFlightCountMeta = const VerificationMeta(
+    'inFlightCount',
+  );
+  @override
+  late final GeneratedColumn<int> inFlightCount = GeneratedColumn<int>(
+    'in_flight_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(inFlightCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _uncertainCountMeta = const VerificationMeta(
+    'uncertainCount',
+  );
+  @override
+  late final GeneratedColumn<int> uncertainCount = GeneratedColumn<int>(
+    'uncertain_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(uncertainCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _failedCountMeta = const VerificationMeta(
+    'failedCount',
+  );
+  @override
+  late final GeneratedColumn<int> failedCount = GeneratedColumn<int>(
+    'failed_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(failedCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _reauthorizationRequiredMeta =
+      const VerificationMeta('reauthorizationRequired');
+  @override
+  late final GeneratedColumn<bool> reauthorizationRequired =
+      GeneratedColumn<bool>(
+        'reauthorization_required',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("reauthorization_required" IN (0, 1))',
+        ),
+        defaultValue: const Constant(false),
+      );
+  static const VerificationMeta _retryWaitingMeta = const VerificationMeta(
+    'retryWaiting',
+  );
+  @override
+  late final GeneratedColumn<bool> retryWaiting = GeneratedColumn<bool>(
+    'retry_waiting',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("retry_waiting" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _automaticRetryExhaustedMeta =
+      const VerificationMeta('automaticRetryExhausted');
+  @override
+  late final GeneratedColumn<bool> automaticRetryExhausted =
+      GeneratedColumn<bool>(
+        'automatic_retry_exhausted',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("automatic_retry_exhausted" IN (0, 1))',
+        ),
+        defaultValue: const Constant(false),
+      );
+  static const VerificationMeta _requiredScopeIncompleteMeta =
+      const VerificationMeta('requiredScopeIncomplete');
+  @override
+  late final GeneratedColumn<bool> requiredScopeIncomplete =
+      GeneratedColumn<bool>(
+        'required_scope_incomplete',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("required_scope_incomplete" IN (0, 1))',
+        ),
+        defaultValue: const Constant(false),
+      );
+  static const VerificationMeta _followUpRequiredMeta = const VerificationMeta(
+    'followUpRequired',
+  );
+  @override
+  late final GeneratedColumn<bool> followUpRequired = GeneratedColumn<bool>(
+    'follow_up_required',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("follow_up_required" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountId,
+    lastSuccessfulSyncAt,
+    latestFailureReason,
+    latestFailureAt,
+    latestFailureDiagnosticCode,
+    latestFailureAction,
+    pendingCount,
+    inFlightCount,
+    uncertainCount,
+    failedCount,
+    reauthorizationRequired,
+    retryWaiting,
+    automaticRetryExhausted,
+    requiredScopeIncomplete,
+    followUpRequired,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_facts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SyncFactRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    }
+    if (data.containsKey('last_successful_sync_at')) {
+      context.handle(
+        _lastSuccessfulSyncAtMeta,
+        lastSuccessfulSyncAt.isAcceptableOrUnknown(
+          data['last_successful_sync_at']!,
+          _lastSuccessfulSyncAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('latest_failure_reason')) {
+      context.handle(
+        _latestFailureReasonMeta,
+        latestFailureReason.isAcceptableOrUnknown(
+          data['latest_failure_reason']!,
+          _latestFailureReasonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('latest_failure_at')) {
+      context.handle(
+        _latestFailureAtMeta,
+        latestFailureAt.isAcceptableOrUnknown(
+          data['latest_failure_at']!,
+          _latestFailureAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('latest_failure_diagnostic_code')) {
+      context.handle(
+        _latestFailureDiagnosticCodeMeta,
+        latestFailureDiagnosticCode.isAcceptableOrUnknown(
+          data['latest_failure_diagnostic_code']!,
+          _latestFailureDiagnosticCodeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('latest_failure_action')) {
+      context.handle(
+        _latestFailureActionMeta,
+        latestFailureAction.isAcceptableOrUnknown(
+          data['latest_failure_action']!,
+          _latestFailureActionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('pending_count')) {
+      context.handle(
+        _pendingCountMeta,
+        pendingCount.isAcceptableOrUnknown(
+          data['pending_count']!,
+          _pendingCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('in_flight_count')) {
+      context.handle(
+        _inFlightCountMeta,
+        inFlightCount.isAcceptableOrUnknown(
+          data['in_flight_count']!,
+          _inFlightCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('uncertain_count')) {
+      context.handle(
+        _uncertainCountMeta,
+        uncertainCount.isAcceptableOrUnknown(
+          data['uncertain_count']!,
+          _uncertainCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('failed_count')) {
+      context.handle(
+        _failedCountMeta,
+        failedCount.isAcceptableOrUnknown(
+          data['failed_count']!,
+          _failedCountMeta,
+        ),
+      );
+    }
+    if (data.containsKey('reauthorization_required')) {
+      context.handle(
+        _reauthorizationRequiredMeta,
+        reauthorizationRequired.isAcceptableOrUnknown(
+          data['reauthorization_required']!,
+          _reauthorizationRequiredMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_waiting')) {
+      context.handle(
+        _retryWaitingMeta,
+        retryWaiting.isAcceptableOrUnknown(
+          data['retry_waiting']!,
+          _retryWaitingMeta,
+        ),
+      );
+    }
+    if (data.containsKey('automatic_retry_exhausted')) {
+      context.handle(
+        _automaticRetryExhaustedMeta,
+        automaticRetryExhausted.isAcceptableOrUnknown(
+          data['automatic_retry_exhausted']!,
+          _automaticRetryExhaustedMeta,
+        ),
+      );
+    }
+    if (data.containsKey('required_scope_incomplete')) {
+      context.handle(
+        _requiredScopeIncompleteMeta,
+        requiredScopeIncomplete.isAcceptableOrUnknown(
+          data['required_scope_incomplete']!,
+          _requiredScopeIncompleteMeta,
+        ),
+      );
+    }
+    if (data.containsKey('follow_up_required')) {
+      context.handle(
+        _followUpRequiredMeta,
+        followUpRequired.isAcceptableOrUnknown(
+          data['follow_up_required']!,
+          _followUpRequiredMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountId};
+  @override
+  SyncFactRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncFactRow(
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      lastSuccessfulSyncAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_successful_sync_at'],
+      ),
+      latestFailureReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}latest_failure_reason'],
+      ),
+      latestFailureAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}latest_failure_at'],
+      ),
+      latestFailureDiagnosticCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}latest_failure_diagnostic_code'],
+      ),
+      latestFailureAction: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}latest_failure_action'],
+      ),
+      pendingCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}pending_count'],
+      )!,
+      inFlightCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}in_flight_count'],
+      )!,
+      uncertainCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}uncertain_count'],
+      )!,
+      failedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}failed_count'],
+      )!,
+      reauthorizationRequired: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}reauthorization_required'],
+      )!,
+      retryWaiting: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}retry_waiting'],
+      )!,
+      automaticRetryExhausted: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}automatic_retry_exhausted'],
+      )!,
+      requiredScopeIncomplete: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}required_scope_incomplete'],
+      )!,
+      followUpRequired: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}follow_up_required'],
+      )!,
+    );
+  }
+
+  @override
+  $SyncFactRowsTable createAlias(String alias) {
+    return $SyncFactRowsTable(attachedDatabase, alias);
+  }
+}
+
+class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
+  final int accountId;
+  final DateTime? lastSuccessfulSyncAt;
+  final String? latestFailureReason;
+  final DateTime? latestFailureAt;
+  final String? latestFailureDiagnosticCode;
+  final String? latestFailureAction;
+  final int pendingCount;
+  final int inFlightCount;
+  final int uncertainCount;
+  final int failedCount;
+  final bool reauthorizationRequired;
+  final bool retryWaiting;
+  final bool automaticRetryExhausted;
+  final bool requiredScopeIncomplete;
+  final bool followUpRequired;
+  const SyncFactRow({
+    required this.accountId,
+    this.lastSuccessfulSyncAt,
+    this.latestFailureReason,
+    this.latestFailureAt,
+    this.latestFailureDiagnosticCode,
+    this.latestFailureAction,
+    required this.pendingCount,
+    required this.inFlightCount,
+    required this.uncertainCount,
+    required this.failedCount,
+    required this.reauthorizationRequired,
+    required this.retryWaiting,
+    required this.automaticRetryExhausted,
+    required this.requiredScopeIncomplete,
+    required this.followUpRequired,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_id'] = Variable<int>(accountId);
+    if (!nullToAbsent || lastSuccessfulSyncAt != null) {
+      map['last_successful_sync_at'] = Variable<DateTime>(lastSuccessfulSyncAt);
+    }
+    if (!nullToAbsent || latestFailureReason != null) {
+      map['latest_failure_reason'] = Variable<String>(latestFailureReason);
+    }
+    if (!nullToAbsent || latestFailureAt != null) {
+      map['latest_failure_at'] = Variable<DateTime>(latestFailureAt);
+    }
+    if (!nullToAbsent || latestFailureDiagnosticCode != null) {
+      map['latest_failure_diagnostic_code'] = Variable<String>(
+        latestFailureDiagnosticCode,
+      );
+    }
+    if (!nullToAbsent || latestFailureAction != null) {
+      map['latest_failure_action'] = Variable<String>(latestFailureAction);
+    }
+    map['pending_count'] = Variable<int>(pendingCount);
+    map['in_flight_count'] = Variable<int>(inFlightCount);
+    map['uncertain_count'] = Variable<int>(uncertainCount);
+    map['failed_count'] = Variable<int>(failedCount);
+    map['reauthorization_required'] = Variable<bool>(reauthorizationRequired);
+    map['retry_waiting'] = Variable<bool>(retryWaiting);
+    map['automatic_retry_exhausted'] = Variable<bool>(automaticRetryExhausted);
+    map['required_scope_incomplete'] = Variable<bool>(requiredScopeIncomplete);
+    map['follow_up_required'] = Variable<bool>(followUpRequired);
+    return map;
+  }
+
+  SyncFactRowsCompanion toCompanion(bool nullToAbsent) {
+    return SyncFactRowsCompanion(
+      accountId: Value(accountId),
+      lastSuccessfulSyncAt: lastSuccessfulSyncAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSuccessfulSyncAt),
+      latestFailureReason: latestFailureReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(latestFailureReason),
+      latestFailureAt: latestFailureAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(latestFailureAt),
+      latestFailureDiagnosticCode:
+          latestFailureDiagnosticCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(latestFailureDiagnosticCode),
+      latestFailureAction: latestFailureAction == null && nullToAbsent
+          ? const Value.absent()
+          : Value(latestFailureAction),
+      pendingCount: Value(pendingCount),
+      inFlightCount: Value(inFlightCount),
+      uncertainCount: Value(uncertainCount),
+      failedCount: Value(failedCount),
+      reauthorizationRequired: Value(reauthorizationRequired),
+      retryWaiting: Value(retryWaiting),
+      automaticRetryExhausted: Value(automaticRetryExhausted),
+      requiredScopeIncomplete: Value(requiredScopeIncomplete),
+      followUpRequired: Value(followUpRequired),
+    );
+  }
+
+  factory SyncFactRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncFactRow(
+      accountId: serializer.fromJson<int>(json['accountId']),
+      lastSuccessfulSyncAt: serializer.fromJson<DateTime?>(
+        json['lastSuccessfulSyncAt'],
+      ),
+      latestFailureReason: serializer.fromJson<String?>(
+        json['latestFailureReason'],
+      ),
+      latestFailureAt: serializer.fromJson<DateTime?>(json['latestFailureAt']),
+      latestFailureDiagnosticCode: serializer.fromJson<String?>(
+        json['latestFailureDiagnosticCode'],
+      ),
+      latestFailureAction: serializer.fromJson<String?>(
+        json['latestFailureAction'],
+      ),
+      pendingCount: serializer.fromJson<int>(json['pendingCount']),
+      inFlightCount: serializer.fromJson<int>(json['inFlightCount']),
+      uncertainCount: serializer.fromJson<int>(json['uncertainCount']),
+      failedCount: serializer.fromJson<int>(json['failedCount']),
+      reauthorizationRequired: serializer.fromJson<bool>(
+        json['reauthorizationRequired'],
+      ),
+      retryWaiting: serializer.fromJson<bool>(json['retryWaiting']),
+      automaticRetryExhausted: serializer.fromJson<bool>(
+        json['automaticRetryExhausted'],
+      ),
+      requiredScopeIncomplete: serializer.fromJson<bool>(
+        json['requiredScopeIncomplete'],
+      ),
+      followUpRequired: serializer.fromJson<bool>(json['followUpRequired']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountId': serializer.toJson<int>(accountId),
+      'lastSuccessfulSyncAt': serializer.toJson<DateTime?>(
+        lastSuccessfulSyncAt,
+      ),
+      'latestFailureReason': serializer.toJson<String?>(latestFailureReason),
+      'latestFailureAt': serializer.toJson<DateTime?>(latestFailureAt),
+      'latestFailureDiagnosticCode': serializer.toJson<String?>(
+        latestFailureDiagnosticCode,
+      ),
+      'latestFailureAction': serializer.toJson<String?>(latestFailureAction),
+      'pendingCount': serializer.toJson<int>(pendingCount),
+      'inFlightCount': serializer.toJson<int>(inFlightCount),
+      'uncertainCount': serializer.toJson<int>(uncertainCount),
+      'failedCount': serializer.toJson<int>(failedCount),
+      'reauthorizationRequired': serializer.toJson<bool>(
+        reauthorizationRequired,
+      ),
+      'retryWaiting': serializer.toJson<bool>(retryWaiting),
+      'automaticRetryExhausted': serializer.toJson<bool>(
+        automaticRetryExhausted,
+      ),
+      'requiredScopeIncomplete': serializer.toJson<bool>(
+        requiredScopeIncomplete,
+      ),
+      'followUpRequired': serializer.toJson<bool>(followUpRequired),
+    };
+  }
+
+  SyncFactRow copyWith({
+    int? accountId,
+    Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+    Value<String?> latestFailureReason = const Value.absent(),
+    Value<DateTime?> latestFailureAt = const Value.absent(),
+    Value<String?> latestFailureDiagnosticCode = const Value.absent(),
+    Value<String?> latestFailureAction = const Value.absent(),
+    int? pendingCount,
+    int? inFlightCount,
+    int? uncertainCount,
+    int? failedCount,
+    bool? reauthorizationRequired,
+    bool? retryWaiting,
+    bool? automaticRetryExhausted,
+    bool? requiredScopeIncomplete,
+    bool? followUpRequired,
+  }) => SyncFactRow(
+    accountId: accountId ?? this.accountId,
+    lastSuccessfulSyncAt: lastSuccessfulSyncAt.present
+        ? lastSuccessfulSyncAt.value
+        : this.lastSuccessfulSyncAt,
+    latestFailureReason: latestFailureReason.present
+        ? latestFailureReason.value
+        : this.latestFailureReason,
+    latestFailureAt: latestFailureAt.present
+        ? latestFailureAt.value
+        : this.latestFailureAt,
+    latestFailureDiagnosticCode: latestFailureDiagnosticCode.present
+        ? latestFailureDiagnosticCode.value
+        : this.latestFailureDiagnosticCode,
+    latestFailureAction: latestFailureAction.present
+        ? latestFailureAction.value
+        : this.latestFailureAction,
+    pendingCount: pendingCount ?? this.pendingCount,
+    inFlightCount: inFlightCount ?? this.inFlightCount,
+    uncertainCount: uncertainCount ?? this.uncertainCount,
+    failedCount: failedCount ?? this.failedCount,
+    reauthorizationRequired:
+        reauthorizationRequired ?? this.reauthorizationRequired,
+    retryWaiting: retryWaiting ?? this.retryWaiting,
+    automaticRetryExhausted:
+        automaticRetryExhausted ?? this.automaticRetryExhausted,
+    requiredScopeIncomplete:
+        requiredScopeIncomplete ?? this.requiredScopeIncomplete,
+    followUpRequired: followUpRequired ?? this.followUpRequired,
+  );
+  SyncFactRow copyWithCompanion(SyncFactRowsCompanion data) {
+    return SyncFactRow(
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      lastSuccessfulSyncAt: data.lastSuccessfulSyncAt.present
+          ? data.lastSuccessfulSyncAt.value
+          : this.lastSuccessfulSyncAt,
+      latestFailureReason: data.latestFailureReason.present
+          ? data.latestFailureReason.value
+          : this.latestFailureReason,
+      latestFailureAt: data.latestFailureAt.present
+          ? data.latestFailureAt.value
+          : this.latestFailureAt,
+      latestFailureDiagnosticCode: data.latestFailureDiagnosticCode.present
+          ? data.latestFailureDiagnosticCode.value
+          : this.latestFailureDiagnosticCode,
+      latestFailureAction: data.latestFailureAction.present
+          ? data.latestFailureAction.value
+          : this.latestFailureAction,
+      pendingCount: data.pendingCount.present
+          ? data.pendingCount.value
+          : this.pendingCount,
+      inFlightCount: data.inFlightCount.present
+          ? data.inFlightCount.value
+          : this.inFlightCount,
+      uncertainCount: data.uncertainCount.present
+          ? data.uncertainCount.value
+          : this.uncertainCount,
+      failedCount: data.failedCount.present
+          ? data.failedCount.value
+          : this.failedCount,
+      reauthorizationRequired: data.reauthorizationRequired.present
+          ? data.reauthorizationRequired.value
+          : this.reauthorizationRequired,
+      retryWaiting: data.retryWaiting.present
+          ? data.retryWaiting.value
+          : this.retryWaiting,
+      automaticRetryExhausted: data.automaticRetryExhausted.present
+          ? data.automaticRetryExhausted.value
+          : this.automaticRetryExhausted,
+      requiredScopeIncomplete: data.requiredScopeIncomplete.present
+          ? data.requiredScopeIncomplete.value
+          : this.requiredScopeIncomplete,
+      followUpRequired: data.followUpRequired.present
+          ? data.followUpRequired.value
+          : this.followUpRequired,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncFactRow(')
+          ..write('accountId: $accountId, ')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt, ')
+          ..write('latestFailureReason: $latestFailureReason, ')
+          ..write('latestFailureAt: $latestFailureAt, ')
+          ..write('latestFailureDiagnosticCode: $latestFailureDiagnosticCode, ')
+          ..write('latestFailureAction: $latestFailureAction, ')
+          ..write('pendingCount: $pendingCount, ')
+          ..write('inFlightCount: $inFlightCount, ')
+          ..write('uncertainCount: $uncertainCount, ')
+          ..write('failedCount: $failedCount, ')
+          ..write('reauthorizationRequired: $reauthorizationRequired, ')
+          ..write('retryWaiting: $retryWaiting, ')
+          ..write('automaticRetryExhausted: $automaticRetryExhausted, ')
+          ..write('requiredScopeIncomplete: $requiredScopeIncomplete, ')
+          ..write('followUpRequired: $followUpRequired')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    accountId,
+    lastSuccessfulSyncAt,
+    latestFailureReason,
+    latestFailureAt,
+    latestFailureDiagnosticCode,
+    latestFailureAction,
+    pendingCount,
+    inFlightCount,
+    uncertainCount,
+    failedCount,
+    reauthorizationRequired,
+    retryWaiting,
+    automaticRetryExhausted,
+    requiredScopeIncomplete,
+    followUpRequired,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncFactRow &&
+          other.accountId == this.accountId &&
+          other.lastSuccessfulSyncAt == this.lastSuccessfulSyncAt &&
+          other.latestFailureReason == this.latestFailureReason &&
+          other.latestFailureAt == this.latestFailureAt &&
+          other.latestFailureDiagnosticCode ==
+              this.latestFailureDiagnosticCode &&
+          other.latestFailureAction == this.latestFailureAction &&
+          other.pendingCount == this.pendingCount &&
+          other.inFlightCount == this.inFlightCount &&
+          other.uncertainCount == this.uncertainCount &&
+          other.failedCount == this.failedCount &&
+          other.reauthorizationRequired == this.reauthorizationRequired &&
+          other.retryWaiting == this.retryWaiting &&
+          other.automaticRetryExhausted == this.automaticRetryExhausted &&
+          other.requiredScopeIncomplete == this.requiredScopeIncomplete &&
+          other.followUpRequired == this.followUpRequired);
+}
+
+class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
+  final Value<int> accountId;
+  final Value<DateTime?> lastSuccessfulSyncAt;
+  final Value<String?> latestFailureReason;
+  final Value<DateTime?> latestFailureAt;
+  final Value<String?> latestFailureDiagnosticCode;
+  final Value<String?> latestFailureAction;
+  final Value<int> pendingCount;
+  final Value<int> inFlightCount;
+  final Value<int> uncertainCount;
+  final Value<int> failedCount;
+  final Value<bool> reauthorizationRequired;
+  final Value<bool> retryWaiting;
+  final Value<bool> automaticRetryExhausted;
+  final Value<bool> requiredScopeIncomplete;
+  final Value<bool> followUpRequired;
+  const SyncFactRowsCompanion({
+    this.accountId = const Value.absent(),
+    this.lastSuccessfulSyncAt = const Value.absent(),
+    this.latestFailureReason = const Value.absent(),
+    this.latestFailureAt = const Value.absent(),
+    this.latestFailureDiagnosticCode = const Value.absent(),
+    this.latestFailureAction = const Value.absent(),
+    this.pendingCount = const Value.absent(),
+    this.inFlightCount = const Value.absent(),
+    this.uncertainCount = const Value.absent(),
+    this.failedCount = const Value.absent(),
+    this.reauthorizationRequired = const Value.absent(),
+    this.retryWaiting = const Value.absent(),
+    this.automaticRetryExhausted = const Value.absent(),
+    this.requiredScopeIncomplete = const Value.absent(),
+    this.followUpRequired = const Value.absent(),
+  });
+  SyncFactRowsCompanion.insert({
+    this.accountId = const Value.absent(),
+    this.lastSuccessfulSyncAt = const Value.absent(),
+    this.latestFailureReason = const Value.absent(),
+    this.latestFailureAt = const Value.absent(),
+    this.latestFailureDiagnosticCode = const Value.absent(),
+    this.latestFailureAction = const Value.absent(),
+    this.pendingCount = const Value.absent(),
+    this.inFlightCount = const Value.absent(),
+    this.uncertainCount = const Value.absent(),
+    this.failedCount = const Value.absent(),
+    this.reauthorizationRequired = const Value.absent(),
+    this.retryWaiting = const Value.absent(),
+    this.automaticRetryExhausted = const Value.absent(),
+    this.requiredScopeIncomplete = const Value.absent(),
+    this.followUpRequired = const Value.absent(),
+  });
+  static Insertable<SyncFactRow> custom({
+    Expression<int>? accountId,
+    Expression<DateTime>? lastSuccessfulSyncAt,
+    Expression<String>? latestFailureReason,
+    Expression<DateTime>? latestFailureAt,
+    Expression<String>? latestFailureDiagnosticCode,
+    Expression<String>? latestFailureAction,
+    Expression<int>? pendingCount,
+    Expression<int>? inFlightCount,
+    Expression<int>? uncertainCount,
+    Expression<int>? failedCount,
+    Expression<bool>? reauthorizationRequired,
+    Expression<bool>? retryWaiting,
+    Expression<bool>? automaticRetryExhausted,
+    Expression<bool>? requiredScopeIncomplete,
+    Expression<bool>? followUpRequired,
+  }) {
+    return RawValuesInsertable({
+      if (accountId != null) 'account_id': accountId,
+      if (lastSuccessfulSyncAt != null)
+        'last_successful_sync_at': lastSuccessfulSyncAt,
+      if (latestFailureReason != null)
+        'latest_failure_reason': latestFailureReason,
+      if (latestFailureAt != null) 'latest_failure_at': latestFailureAt,
+      if (latestFailureDiagnosticCode != null)
+        'latest_failure_diagnostic_code': latestFailureDiagnosticCode,
+      if (latestFailureAction != null)
+        'latest_failure_action': latestFailureAction,
+      if (pendingCount != null) 'pending_count': pendingCount,
+      if (inFlightCount != null) 'in_flight_count': inFlightCount,
+      if (uncertainCount != null) 'uncertain_count': uncertainCount,
+      if (failedCount != null) 'failed_count': failedCount,
+      if (reauthorizationRequired != null)
+        'reauthorization_required': reauthorizationRequired,
+      if (retryWaiting != null) 'retry_waiting': retryWaiting,
+      if (automaticRetryExhausted != null)
+        'automatic_retry_exhausted': automaticRetryExhausted,
+      if (requiredScopeIncomplete != null)
+        'required_scope_incomplete': requiredScopeIncomplete,
+      if (followUpRequired != null) 'follow_up_required': followUpRequired,
+    });
+  }
+
+  SyncFactRowsCompanion copyWith({
+    Value<int>? accountId,
+    Value<DateTime?>? lastSuccessfulSyncAt,
+    Value<String?>? latestFailureReason,
+    Value<DateTime?>? latestFailureAt,
+    Value<String?>? latestFailureDiagnosticCode,
+    Value<String?>? latestFailureAction,
+    Value<int>? pendingCount,
+    Value<int>? inFlightCount,
+    Value<int>? uncertainCount,
+    Value<int>? failedCount,
+    Value<bool>? reauthorizationRequired,
+    Value<bool>? retryWaiting,
+    Value<bool>? automaticRetryExhausted,
+    Value<bool>? requiredScopeIncomplete,
+    Value<bool>? followUpRequired,
+  }) {
+    return SyncFactRowsCompanion(
+      accountId: accountId ?? this.accountId,
+      lastSuccessfulSyncAt: lastSuccessfulSyncAt ?? this.lastSuccessfulSyncAt,
+      latestFailureReason: latestFailureReason ?? this.latestFailureReason,
+      latestFailureAt: latestFailureAt ?? this.latestFailureAt,
+      latestFailureDiagnosticCode:
+          latestFailureDiagnosticCode ?? this.latestFailureDiagnosticCode,
+      latestFailureAction: latestFailureAction ?? this.latestFailureAction,
+      pendingCount: pendingCount ?? this.pendingCount,
+      inFlightCount: inFlightCount ?? this.inFlightCount,
+      uncertainCount: uncertainCount ?? this.uncertainCount,
+      failedCount: failedCount ?? this.failedCount,
+      reauthorizationRequired:
+          reauthorizationRequired ?? this.reauthorizationRequired,
+      retryWaiting: retryWaiting ?? this.retryWaiting,
+      automaticRetryExhausted:
+          automaticRetryExhausted ?? this.automaticRetryExhausted,
+      requiredScopeIncomplete:
+          requiredScopeIncomplete ?? this.requiredScopeIncomplete,
+      followUpRequired: followUpRequired ?? this.followUpRequired,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (lastSuccessfulSyncAt.present) {
+      map['last_successful_sync_at'] = Variable<DateTime>(
+        lastSuccessfulSyncAt.value,
+      );
+    }
+    if (latestFailureReason.present) {
+      map['latest_failure_reason'] = Variable<String>(
+        latestFailureReason.value,
+      );
+    }
+    if (latestFailureAt.present) {
+      map['latest_failure_at'] = Variable<DateTime>(latestFailureAt.value);
+    }
+    if (latestFailureDiagnosticCode.present) {
+      map['latest_failure_diagnostic_code'] = Variable<String>(
+        latestFailureDiagnosticCode.value,
+      );
+    }
+    if (latestFailureAction.present) {
+      map['latest_failure_action'] = Variable<String>(
+        latestFailureAction.value,
+      );
+    }
+    if (pendingCount.present) {
+      map['pending_count'] = Variable<int>(pendingCount.value);
+    }
+    if (inFlightCount.present) {
+      map['in_flight_count'] = Variable<int>(inFlightCount.value);
+    }
+    if (uncertainCount.present) {
+      map['uncertain_count'] = Variable<int>(uncertainCount.value);
+    }
+    if (failedCount.present) {
+      map['failed_count'] = Variable<int>(failedCount.value);
+    }
+    if (reauthorizationRequired.present) {
+      map['reauthorization_required'] = Variable<bool>(
+        reauthorizationRequired.value,
+      );
+    }
+    if (retryWaiting.present) {
+      map['retry_waiting'] = Variable<bool>(retryWaiting.value);
+    }
+    if (automaticRetryExhausted.present) {
+      map['automatic_retry_exhausted'] = Variable<bool>(
+        automaticRetryExhausted.value,
+      );
+    }
+    if (requiredScopeIncomplete.present) {
+      map['required_scope_incomplete'] = Variable<bool>(
+        requiredScopeIncomplete.value,
+      );
+    }
+    if (followUpRequired.present) {
+      map['follow_up_required'] = Variable<bool>(followUpRequired.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncFactRowsCompanion(')
+          ..write('accountId: $accountId, ')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt, ')
+          ..write('latestFailureReason: $latestFailureReason, ')
+          ..write('latestFailureAt: $latestFailureAt, ')
+          ..write('latestFailureDiagnosticCode: $latestFailureDiagnosticCode, ')
+          ..write('latestFailureAction: $latestFailureAction, ')
+          ..write('pendingCount: $pendingCount, ')
+          ..write('inFlightCount: $inFlightCount, ')
+          ..write('uncertainCount: $uncertainCount, ')
+          ..write('failedCount: $failedCount, ')
+          ..write('reauthorizationRequired: $reauthorizationRequired, ')
+          ..write('retryWaiting: $retryWaiting, ')
+          ..write('automaticRetryExhausted: $automaticRetryExhausted, ')
+          ..write('requiredScopeIncomplete: $requiredScopeIncomplete, ')
+          ..write('followUpRequired: $followUpRequired')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $TaskListPreferenceRowsTable extends TaskListPreferenceRows
     with TableInfo<$TaskListPreferenceRowsTable, TaskListPreferenceRow> {
   @override
@@ -4456,6 +5450,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $ScopeCompletenessRowsTable(this);
   late final $AccountPreferenceRowsTable accountPreferenceRows =
       $AccountPreferenceRowsTable(this);
+  late final $SyncFactRowsTable syncFactRows = $SyncFactRowsTable(this);
   late final $TaskListPreferenceRowsTable taskListPreferenceRows =
       $TaskListPreferenceRowsTable(this);
   late final $ViewPreferenceRowsTable viewPreferenceRows =
@@ -4472,6 +5467,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     taskRemoteBases,
     scopeCompletenessRows,
     accountPreferenceRows,
+    syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
   ];
@@ -6369,6 +7365,420 @@ typedef $$AccountPreferenceRowsTableProcessedTableManager =
       AccountPreferenceRow,
       PrefetchHooks Function()
     >;
+typedef $$SyncFactRowsTableCreateCompanionBuilder =
+    SyncFactRowsCompanion Function({
+      Value<int> accountId,
+      Value<DateTime?> lastSuccessfulSyncAt,
+      Value<String?> latestFailureReason,
+      Value<DateTime?> latestFailureAt,
+      Value<String?> latestFailureDiagnosticCode,
+      Value<String?> latestFailureAction,
+      Value<int> pendingCount,
+      Value<int> inFlightCount,
+      Value<int> uncertainCount,
+      Value<int> failedCount,
+      Value<bool> reauthorizationRequired,
+      Value<bool> retryWaiting,
+      Value<bool> automaticRetryExhausted,
+      Value<bool> requiredScopeIncomplete,
+      Value<bool> followUpRequired,
+    });
+typedef $$SyncFactRowsTableUpdateCompanionBuilder =
+    SyncFactRowsCompanion Function({
+      Value<int> accountId,
+      Value<DateTime?> lastSuccessfulSyncAt,
+      Value<String?> latestFailureReason,
+      Value<DateTime?> latestFailureAt,
+      Value<String?> latestFailureDiagnosticCode,
+      Value<String?> latestFailureAction,
+      Value<int> pendingCount,
+      Value<int> inFlightCount,
+      Value<int> uncertainCount,
+      Value<int> failedCount,
+      Value<bool> reauthorizationRequired,
+      Value<bool> retryWaiting,
+      Value<bool> automaticRetryExhausted,
+      Value<bool> requiredScopeIncomplete,
+      Value<bool> followUpRequired,
+    });
+
+class $$SyncFactRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $SyncFactRowsTable> {
+  $$SyncFactRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get latestFailureReason => $composableBuilder(
+    column: $table.latestFailureReason,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get latestFailureAt => $composableBuilder(
+    column: $table.latestFailureAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get latestFailureDiagnosticCode => $composableBuilder(
+    column: $table.latestFailureDiagnosticCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get latestFailureAction => $composableBuilder(
+    column: $table.latestFailureAction,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get pendingCount => $composableBuilder(
+    column: $table.pendingCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get inFlightCount => $composableBuilder(
+    column: $table.inFlightCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get uncertainCount => $composableBuilder(
+    column: $table.uncertainCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get failedCount => $composableBuilder(
+    column: $table.failedCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get reauthorizationRequired => $composableBuilder(
+    column: $table.reauthorizationRequired,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get retryWaiting => $composableBuilder(
+    column: $table.retryWaiting,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get automaticRetryExhausted => $composableBuilder(
+    column: $table.automaticRetryExhausted,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get requiredScopeIncomplete => $composableBuilder(
+    column: $table.requiredScopeIncomplete,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get followUpRequired => $composableBuilder(
+    column: $table.followUpRequired,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$SyncFactRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $SyncFactRowsTable> {
+  $$SyncFactRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get latestFailureReason => $composableBuilder(
+    column: $table.latestFailureReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get latestFailureAt => $composableBuilder(
+    column: $table.latestFailureAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get latestFailureDiagnosticCode => $composableBuilder(
+    column: $table.latestFailureDiagnosticCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get latestFailureAction => $composableBuilder(
+    column: $table.latestFailureAction,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get pendingCount => $composableBuilder(
+    column: $table.pendingCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get inFlightCount => $composableBuilder(
+    column: $table.inFlightCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get uncertainCount => $composableBuilder(
+    column: $table.uncertainCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get failedCount => $composableBuilder(
+    column: $table.failedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get reauthorizationRequired => $composableBuilder(
+    column: $table.reauthorizationRequired,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get retryWaiting => $composableBuilder(
+    column: $table.retryWaiting,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get automaticRetryExhausted => $composableBuilder(
+    column: $table.automaticRetryExhausted,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get requiredScopeIncomplete => $composableBuilder(
+    column: $table.requiredScopeIncomplete,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get followUpRequired => $composableBuilder(
+    column: $table.followUpRequired,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$SyncFactRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SyncFactRowsTable> {
+  $$SyncFactRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get latestFailureReason => $composableBuilder(
+    column: $table.latestFailureReason,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get latestFailureAt => $composableBuilder(
+    column: $table.latestFailureAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get latestFailureDiagnosticCode => $composableBuilder(
+    column: $table.latestFailureDiagnosticCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get latestFailureAction => $composableBuilder(
+    column: $table.latestFailureAction,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get pendingCount => $composableBuilder(
+    column: $table.pendingCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get inFlightCount => $composableBuilder(
+    column: $table.inFlightCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get uncertainCount => $composableBuilder(
+    column: $table.uncertainCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get failedCount => $composableBuilder(
+    column: $table.failedCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get reauthorizationRequired => $composableBuilder(
+    column: $table.reauthorizationRequired,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get retryWaiting => $composableBuilder(
+    column: $table.retryWaiting,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get automaticRetryExhausted => $composableBuilder(
+    column: $table.automaticRetryExhausted,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get requiredScopeIncomplete => $composableBuilder(
+    column: $table.requiredScopeIncomplete,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get followUpRequired => $composableBuilder(
+    column: $table.followUpRequired,
+    builder: (column) => column,
+  );
+}
+
+class $$SyncFactRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $SyncFactRowsTable,
+          SyncFactRow,
+          $$SyncFactRowsTableFilterComposer,
+          $$SyncFactRowsTableOrderingComposer,
+          $$SyncFactRowsTableAnnotationComposer,
+          $$SyncFactRowsTableCreateCompanionBuilder,
+          $$SyncFactRowsTableUpdateCompanionBuilder,
+          (
+            SyncFactRow,
+            BaseReferences<_$AppDatabase, $SyncFactRowsTable, SyncFactRow>,
+          ),
+          SyncFactRow,
+          PrefetchHooks Function()
+        > {
+  $$SyncFactRowsTableTableManager(_$AppDatabase db, $SyncFactRowsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncFactRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncFactRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncFactRowsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> accountId = const Value.absent(),
+                Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+                Value<String?> latestFailureReason = const Value.absent(),
+                Value<DateTime?> latestFailureAt = const Value.absent(),
+                Value<String?> latestFailureDiagnosticCode =
+                    const Value.absent(),
+                Value<String?> latestFailureAction = const Value.absent(),
+                Value<int> pendingCount = const Value.absent(),
+                Value<int> inFlightCount = const Value.absent(),
+                Value<int> uncertainCount = const Value.absent(),
+                Value<int> failedCount = const Value.absent(),
+                Value<bool> reauthorizationRequired = const Value.absent(),
+                Value<bool> retryWaiting = const Value.absent(),
+                Value<bool> automaticRetryExhausted = const Value.absent(),
+                Value<bool> requiredScopeIncomplete = const Value.absent(),
+                Value<bool> followUpRequired = const Value.absent(),
+              }) => SyncFactRowsCompanion(
+                accountId: accountId,
+                lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+                latestFailureReason: latestFailureReason,
+                latestFailureAt: latestFailureAt,
+                latestFailureDiagnosticCode: latestFailureDiagnosticCode,
+                latestFailureAction: latestFailureAction,
+                pendingCount: pendingCount,
+                inFlightCount: inFlightCount,
+                uncertainCount: uncertainCount,
+                failedCount: failedCount,
+                reauthorizationRequired: reauthorizationRequired,
+                retryWaiting: retryWaiting,
+                automaticRetryExhausted: automaticRetryExhausted,
+                requiredScopeIncomplete: requiredScopeIncomplete,
+                followUpRequired: followUpRequired,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> accountId = const Value.absent(),
+                Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+                Value<String?> latestFailureReason = const Value.absent(),
+                Value<DateTime?> latestFailureAt = const Value.absent(),
+                Value<String?> latestFailureDiagnosticCode =
+                    const Value.absent(),
+                Value<String?> latestFailureAction = const Value.absent(),
+                Value<int> pendingCount = const Value.absent(),
+                Value<int> inFlightCount = const Value.absent(),
+                Value<int> uncertainCount = const Value.absent(),
+                Value<int> failedCount = const Value.absent(),
+                Value<bool> reauthorizationRequired = const Value.absent(),
+                Value<bool> retryWaiting = const Value.absent(),
+                Value<bool> automaticRetryExhausted = const Value.absent(),
+                Value<bool> requiredScopeIncomplete = const Value.absent(),
+                Value<bool> followUpRequired = const Value.absent(),
+              }) => SyncFactRowsCompanion.insert(
+                accountId: accountId,
+                lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+                latestFailureReason: latestFailureReason,
+                latestFailureAt: latestFailureAt,
+                latestFailureDiagnosticCode: latestFailureDiagnosticCode,
+                latestFailureAction: latestFailureAction,
+                pendingCount: pendingCount,
+                inFlightCount: inFlightCount,
+                uncertainCount: uncertainCount,
+                failedCount: failedCount,
+                reauthorizationRequired: reauthorizationRequired,
+                retryWaiting: retryWaiting,
+                automaticRetryExhausted: automaticRetryExhausted,
+                requiredScopeIncomplete: requiredScopeIncomplete,
+                followUpRequired: followUpRequired,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$SyncFactRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $SyncFactRowsTable,
+      SyncFactRow,
+      $$SyncFactRowsTableFilterComposer,
+      $$SyncFactRowsTableOrderingComposer,
+      $$SyncFactRowsTableAnnotationComposer,
+      $$SyncFactRowsTableCreateCompanionBuilder,
+      $$SyncFactRowsTableUpdateCompanionBuilder,
+      (
+        SyncFactRow,
+        BaseReferences<_$AppDatabase, $SyncFactRowsTable, SyncFactRow>,
+      ),
+      SyncFactRow,
+      PrefetchHooks Function()
+    >;
 typedef $$TaskListPreferenceRowsTableCreateCompanionBuilder =
     TaskListPreferenceRowsCompanion Function({
       required int accountId,
@@ -6789,6 +8199,8 @@ class $AppDatabaseManager {
       $$ScopeCompletenessRowsTableTableManager(_db, _db.scopeCompletenessRows);
   $$AccountPreferenceRowsTableTableManager get accountPreferenceRows =>
       $$AccountPreferenceRowsTableTableManager(_db, _db.accountPreferenceRows);
+  $$SyncFactRowsTableTableManager get syncFactRows =>
+      $$SyncFactRowsTableTableManager(_db, _db.syncFactRows);
   $$TaskListPreferenceRowsTableTableManager get taskListPreferenceRows =>
       $$TaskListPreferenceRowsTableTableManager(
         _db,

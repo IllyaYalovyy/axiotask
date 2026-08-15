@@ -17,6 +17,7 @@ part 'app_database.g.dart';
     TaskRemoteBases,
     ScopeCompletenessRows,
     AccountPreferenceRows,
+    SyncFactRows,
     TaskListPreferenceRows,
     ViewPreferenceRows,
   ],

@@ -1,21 +1,25 @@
 # Axiotask Flutter
 
 Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
-Android. The current foundation provides a minimal launchable shell,
-constructor-injected core/authorization/diagnostic boundaries, and the
-versioned, account-scoped Drift/SQLite Google cache and read repository. Linux
-additionally has a capability-proven GNOME Secret Service credential boundary
-and a Linux system-browser authorization adapter. A strict, injected Google
-Tasks HTTP boundary can read validated list/task pages and issue strict typed
-mutations; synchronization orchestration and task workflows arrive only in
-their approved later slices.
+Android. The current Linux shell opens the versioned, account-scoped
+Drift/SQLite store, renders cached Google lists/tasks immediately, and presents
+truthful Inactive, Pending, Failed, or Good synchronization health with exact
+reason, unresolved counts, and last-success time. It also provides a read-only
+task-detail surface. Constructor-injected core/authorization/diagnostic
+boundaries, the strict Google Tasks HTTP read/write adapter, Linux GNOME Secret
+Service credential storage, and the Linux browser authorization adapter remain
+behind their accepted boundaries. The shell does not run synchronization or
+mutate tasks yet.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
 completeness. Every repository query requires an account partition. Cached rows
 are always labeled unverified; even a complete recorded page walk is not a
-freshness or healthy-sync claim. Desired mutations and sync attempts are not yet
-implemented. The exact schema-v1 contract is documented in
+freshness or healthy-sync claim. Durable account-scoped health facts retain the
+last verified success, newest failure, unresolved counts, and scheduler latches;
+runtime authorization/connectivity/activity facts are projected separately.
+Desired mutations and sync attempts are not yet implemented. The exact
+schema-v1 contract is documented in
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
 ## Supported development environment
@@ -87,7 +91,7 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | No Google service is composed in the current shell | Safe structured fields only |
+| Production-safe | `lib/main.dart` | Cached data only; no Google service/sync runner is composed in the current shell | Safe structured fields only |
 | Sensitive development | `lib/main_development.dart` | Must match an explicit dedicated-account subject before any Google read or mutation | Local private context retained; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Disabled; injected synthetic authorization only | Safe in-memory history |
 
@@ -133,11 +137,11 @@ uncertain results for later synchronization work.
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
 namespace. Synthetic instance names additionally partition parallel runs. The
-production database factory resolves only its injected filename in the native
-application-support directory. The current shell does not open it until a later
-composition slice wires repositories; diagnostic history remains in memory and
-preferences/secure storage are not created. Development and synthetic database
-names never equal the normal `axiotask.sqlite` name.
+production database factory resolves and opens only its injected filename in
+the native application-support directory. Development and synthetic entry
+points open only their distinct database names and never the normal
+`axiotask.sqlite` store. Diagnostic history remains in memory and
+preferences/secure storage are not created by this shell.
 
 Sensitive development diagnostics may retain synthetic or dedicated-account
 task/API/storage context locally. Production diagnostics discard private fields.
@@ -255,7 +259,8 @@ flutter install --debug -d <device-id>
 flutter run --debug -d <device-id>
 ```
 
-This scaffold does not read credentials, application storage, or Google Tasks.
+The Android shell may open its own selected composition database but does not
+read credentials or Google Tasks and does not run background synchronization.
 Future real-service tests must use the dedicated isolated configuration defined
 by the accepted testing and security documents.
 
@@ -322,6 +327,11 @@ flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
 flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
+flutter test test/data/database/sync_health_repository_test.dart
+flutter test test/sync/health/sync_health_test.dart
+flutter test test/features/tasks/tasks_view_model_test.dart
+flutter test test/features/tasks/adaptive_shell_test.dart
+flutter test test/features/tasks/adaptive_shell_golden_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
 flutter test test/support/fake_lifecycle_test.dart
@@ -335,6 +345,13 @@ flutter test test/data/google_tasks/mutation_http_service_test.dart
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
+```
+
+Capture the four isolated synthetic Linux health states into the ignored
+`screenshots/actual/` directory, then inspect each PNG:
+
+```bash
+./scripts/capture_linux_health_screenshots.sh
 ```
 
 ## Native SQLite capability probe

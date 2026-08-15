@@ -37,8 +37,9 @@ S02 additionally locks `drift` 2.34.3, `sqlite3` 3.5.1 with bundled SQLite
 quality gate regenerates it and fails if any generated Dart file changes.
 
 The version-1 database contains the account-scoped Google list/task cache,
-separate remote bases, page-scope completeness, and relational preference
-foundation documented in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md). File-backed
+separate remote bases, page-scope completeness, relational preference
+foundation, and durable truthful-health facts documented in
+[DATABASE_SCHEMA.md](DATABASE_SCHEMA.md). File-backed
 connections run on a Drift background isolate and measured `foreign_keys=ON`,
 `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`, and
 `wal_autocheckpoint=1000` on Fedora and the API 36 Android emulator. Explicit
@@ -108,6 +109,15 @@ capabilities exist.
 
 No command silently selects a real Google account or normal application-data
 directory.
+
+S11 provides curated Linux health goldens and a separate native synthetic
+screenshot entry point. The screenshot runner opens no database or Google
+adapter and writes only beneath the ignored `screenshots/actual/` directory:
+
+```text
+flutter test test/features/tasks/adaptive_shell_golden_test.dart
+./scripts/capture_linux_health_screenshots.sh
+```
 
 ## Development versus release diagnostics
 

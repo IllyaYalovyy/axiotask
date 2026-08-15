@@ -19,6 +19,7 @@ replaced with an empty cache.
 | `task_remote_bases` | Last confirmed supported task content, structure, lifecycle, links, Google identity/version metadata, and the publication that observed it. |
 | `scope_completeness` | Account list-enumeration or per-list task-enumeration page-chain state, including the opaque next-page token while incomplete. |
 | `account_preferences` | Relational account settings, initially the sync-enabled control and an optional account-owned default list reference. |
+| `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -60,10 +61,15 @@ application adapter and device-only preferences remain the S22A slice.
   Every `CachedTasksSnapshot` is explicitly `unverifiedCache`; it supplies no
   last-success, authorization, connectivity, pending-work, or freshness fact
   and therefore can never establish healthy synchronization.
+- `sync_facts.last_successful_sync_at` is written only for a completed required
+  synchronization. Failure reason/time/diagnostic/action are one nullable unit;
+  unresolved counts are non-negative. Missing rows mean no success, failure, or
+  unresolved work, never implicit freshness. `account_preferences.sync_enabled`
+  is joined into the same account-scoped projection.
 - SQLite foreign keys remain enabled and multi-row writes use explicit
   transactions. Failed transactions may re-emit an unchanged Drift snapshot,
   but cannot expose or retain partially written state.
 
-OAuth tokens, DPoP keys, authorization headers, sync attempts, desired
-mutations, diagnostics, and device-only preferences are not part of these cache
-tables.
+OAuth tokens, DPoP keys, authorization headers, sync attempts, desired mutation
+payloads, diagnostics, and device-only preferences are not part of these
+cache/health tables.
