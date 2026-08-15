@@ -119,6 +119,65 @@ void main() {
     });
   });
 
+  // G9 (#208): the breakpoint ACCOUNTS FOR THE DETAIL PANE. A mid-width window
+  // (600–839dp) is expanded with no detail, but an OPEN detail there collapses
+  // to the full-screen compact layout instead of squeezing three panes.
+  group('detail-aware collapse (G9 #208)', () {
+    testWidgets(
+      'a mid-width window with NO detail is expanded (sidebar + list)',
+      (tester) async {
+        await pumpScaffold(tester, width: 800);
+        // 800 ≥ 600 and no detail → expanded: sidebar shown, no bottom nav.
+        expect(find.text('SIDEBAR-PANE'), findsOneWidget);
+        expect(find.byType(NavigationBar), findsNothing);
+        expect(find.text('LIST-PANE'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'the SAME mid-width window COLLAPSES to full-screen detail once one opens',
+      (tester) async {
+        await pumpScaffold(
+          tester,
+          width: 800,
+          detail: const Text('DETAIL-PANE'),
+        );
+        // 800 < 840 (detailBreakpoint) → compact: the detail owns the screen,
+        // the list is covered, and the expanded three-pane row never renders.
+        expect(find.text('DETAIL-PANE'), findsOneWidget);
+        expect(find.text('LIST-PANE'), findsNothing);
+        expect(find.text('SIDEBAR-PANE'), findsNothing);
+      },
+    );
+
+    testWidgets('just below detailBreakpoint the detail collapses', (
+      tester,
+    ) async {
+      await pumpScaffold(
+        tester,
+        width: ListDetailScaffold.detailBreakpoint - 1,
+        detail: const Text('DETAIL-PANE'),
+      );
+      expect(find.text('DETAIL-PANE'), findsOneWidget);
+      expect(find.text('LIST-PANE'), findsNothing);
+    });
+
+    testWidgets('at detailBreakpoint the list + detail sit side by side', (
+      tester,
+    ) async {
+      await pumpScaffold(
+        tester,
+        width: ListDetailScaffold.detailBreakpoint,
+        detail: const Text('DETAIL-PANE'),
+      );
+      // 840 ≥ 840 → expanded three-pane: both panes visible at once.
+      expect(find.text('LIST-PANE'), findsOneWidget);
+      expect(find.text('DETAIL-PANE'), findsOneWidget);
+      expect(find.text('SIDEBAR-PANE'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+  });
+
   testWidgets('tapping a destination reports its index', (tester) async {
     int? selected;
     await pumpScaffold(tester, width: 400, onSelect: (i) => selected = i);

@@ -726,7 +726,16 @@ class _TaskRowState extends State<TaskRow> {
                 color: theme.colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Text(widget.listTag!, style: muted),
+              // A long list name ellipsizes rather than pushing the tag past the
+              // (narrow) meta column and overflowing it (G9 #208). Each Wrap
+              // child is constrained to the column width, so an un-capped tag is
+              // the one meta item that can exceed it.
+              child: Text(
+                widget.listTag!,
+                style: muted,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
         ],
       ),
@@ -755,13 +764,20 @@ class _TaskRowState extends State<TaskRow> {
         children: [
           Icon(Icons.event, size: 13, color: color),
           const SizedBox(width: 3),
-          Text(
-            formatDue(own),
-            style: muted?.copyWith(
-              color: color,
-              fontWeight: urgency == DueUrgency.overdue
-                  ? FontWeight.w600
-                  : null,
+          // The date label is the flexible element: it ellipsizes before the
+          // due chip can overflow the (narrow) meta column; the icon is fixed
+          // (G9 #208).
+          Flexible(
+            child: Text(
+              formatDue(own),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: muted?.copyWith(
+                color: color,
+                fontWeight: urgency == DueUrgency.overdue
+                    ? FontWeight.w600
+                    : null,
+              ),
             ),
           ),
         ],
@@ -770,10 +786,17 @@ class _TaskRowState extends State<TaskRow> {
       // Borrowed from a subtask: read-only marker, dimmer + italic.
       child = Text(
         '↳ ${formatDue(inherited)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: muted?.copyWith(fontStyle: FontStyle.italic),
       );
     } else {
-      child = Text('no date', style: muted);
+      child = Text(
+        'no date',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: muted,
+      );
     }
 
     if (widget.onPickDate == null) return child;
@@ -1039,10 +1062,16 @@ class _SubtaskProgress extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            '$done/$total',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          // The count ellipsizes so the bar+count never overflows a narrow meta
+          // column (G9 #208); the bar keeps its fixed width.
+          Flexible(
+            child: Text(
+              '$done/$total',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],

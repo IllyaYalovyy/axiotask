@@ -885,8 +885,14 @@ class _SubtaskRow extends StatelessWidget {
             onTap: onOpen,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
+              // The title is the flexible element of the row (it sits in the
+              // Expanded above): a long subtask title ellipsizes on one line so
+              // the fixed reorder arrows + due button never get pushed off the
+              // edge and overflow a narrow detail pane (G9 #208).
               child: Text(
                 task.title.isEmpty ? 'Untitled' : task.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   decoration: done ? TextDecoration.lineThrough : null,
                   color: done ? theme.disabledColor : null,

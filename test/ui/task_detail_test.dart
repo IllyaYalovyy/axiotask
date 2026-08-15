@@ -521,4 +521,52 @@ void main() {
       expect(opened, ['https://example.com/x']);
     });
   });
+
+  // G9 (#208): in a narrow detail pane the subtask title is the flexible,
+  // ellipsizing element — it stays on ONE line so the fixed reorder arrows and
+  // due button are never pushed off the edge (a wrapping title would balloon the
+  // row height and, at the extreme, overflow).
+  group('narrow detail: subtask title ellipsizes (G9 #208)', () {
+    testWidgets('a long subtask title stays on a single line', (tester) async {
+      const longTitle =
+          'A very long subtask title that would wrap onto several lines in a '
+          'narrow detail pane unless it is capped to a single ellipsized line';
+      // A genuinely narrow detail column, tall enough to lay the row out.
+      tester.view.physicalSize = const Size(300, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final fake = FakeBackend([
+        row('P', 'parent'),
+        row('C', longTitle, parent: 'P'),
+      ]);
+      addTearDown(fake.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            commandsProvider.overrideWithValue(fake),
+            allTasksProvider.overrideWith((ref) => fake.tasksStream),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: TaskDetail(taskId: 'P', onClose: () {}, onOpenTask: (_) {}),
+            ),
+          ),
+        ),
+      );
+      await settleDetail(tester);
+
+      // The full title is still present (ellipsis clips paint, not the string).
+      final title = find.text(longTitle);
+      expect(title, findsOneWidget);
+      // One line: a wrapping title in this ~90dp column would be many lines tall;
+      // capped to one line it stays short.
+      expect(
+        tester.getSize(title).height,
+        lessThan(30),
+        reason: 'the subtask title must ellipsize to one line, not wrap',
+      );
+    });
+  });
 }

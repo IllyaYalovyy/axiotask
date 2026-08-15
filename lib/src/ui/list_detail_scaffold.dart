@@ -11,6 +11,17 @@
 //                              Navigator, so it renders identically headless at
 //                              both sizes.
 //
+// The breakpoint ACCOUNTS FOR THE DETAIL PANE (G9 #208): three side-by-side
+// panes (sidebar + list + detail) only earn their keep on an expanded window, so
+// when a detail is open the expand threshold rises to [detailBreakpoint]. Below
+// it — a mid-width desktop window, a split-screen tablet — the detail takes the
+// FULL screen via the exact same compact layout, rather than crushing the list
+// into a sliver beside it. Closing the detail drops the threshold back to
+// [breakpoint], so the two-pane sidebar+list view returns at the same width.
+// This is the "detail open → collapse two panes to one" rule; the per-row meta
+// and subtask titles ellipsize (task_row / task_detail) so nothing in the
+// narrow band that stays side-by-side (≥ [detailBreakpoint]) overflows.
+//
 // Back handling: an open drawer is dismissed by the framework's own Drawer
 // back-handling; a [PopScope] turns a back with an open detail into
 // [onCloseDetail] instead of popping the whole app. The full back-precedence
@@ -61,8 +72,15 @@ class ListDetailScaffold extends StatelessWidget {
     super.key,
   });
 
-  /// The single width breakpoint (logical pixels) between compact and expanded.
+  /// The width breakpoint (logical pixels) between compact and expanded when NO
+  /// detail is open (sidebar + list).
   static const double breakpoint = 600;
+
+  /// The wider breakpoint used WHILE A DETAIL IS OPEN (G9 #208). Side-by-side
+  /// list + detail needs an expanded window; below this the detail goes
+  /// full-screen through the compact layout instead of squeezing three panes
+  /// into a mid-width window. Mirrors the Material "expanded window" floor.
+  static const double detailBreakpoint = 840;
 
   /// The full navigation sidebar (smart views + lists + footer). The left panel
   /// in the expanded layout; the slide-in [Drawer] content when compact.
@@ -102,7 +120,11 @@ class ListDetailScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final expanded = MediaQuery.sizeOf(context).width >= breakpoint;
+    // The detail pane is accounted for: an open detail raises the expand
+    // threshold so a mid-width window collapses to the full-screen compact
+    // detail rather than a crushed three-pane row (G9 #208).
+    final effectiveBreakpoint = _showingDetail ? detailBreakpoint : breakpoint;
+    final expanded = MediaQuery.sizeOf(context).width >= effectiveBreakpoint;
     // One PopScope for both layouts: a back gesture with a detail open turns
     // into [onCloseDetail] rather than popping the whole app. An OPEN DRAWER is
     // handled by the framework's own Drawer back-dismissal (which unmounts with
