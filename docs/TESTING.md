@@ -67,6 +67,12 @@ DPoP keys, and other credential canaries remain absent.
 
 These are protocol tests, not synchronization tests.
 
+The S06 suite is `test/data/google_tasks/decoder_test.dart` plus
+`test/data/google_tasks/http_service_test.dart`. It uses completer-controlled
+server responses and an injected timeout signal rather than elapsed-time sleeps.
+The server sees only synthetic identifiers/content and an in-memory synthetic
+authorization header; no test reads platform authorization or normal storage.
+
 ### 4. Stateful fake Google service
 
 `FakeGoogleTasksService` implements the same narrow port as the HTTP adapter and

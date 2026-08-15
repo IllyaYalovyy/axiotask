@@ -53,6 +53,14 @@ GNOME user D-Bus session. The opt-in probe command and exact isolation behavior
 are maintained in the README. Normal tests fake the secure-value boundary and
 never open Secret Service.
 
+S05 locks `oauth2` 2.0.5, `http` 1.6.0, `crypto` 3.0.7, `jose` 0.3.5+2, and
+`url_launcher` 6.3.2 for Linux authorization. S06 reuses `http` without a
+dependency change for the page-oriented Google Tasks read adapter. Its normal
+verification uses only synthetic JSON and a loopback scripted server; it never
+loads OAuth configuration or reaches Google. The optional real-account read
+probe remains outside this slice and may run only through the already isolated
+S05 harness.
+
 ## Branch and commits
 
 Development occurs on the independent orphan branch `flutter2` in the same

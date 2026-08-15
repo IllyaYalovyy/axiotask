@@ -135,9 +135,15 @@ abstract interface class TasksRepository {
 }
 
 abstract interface class GoogleTasksService {
-  Future<RemotePage<RemoteTaskList>> listTaskLists(PageToken? page);
-  Future<RemotePage<RemoteTask>> listTasks(RemoteListId list, PageToken? page);
-  Future<RemoteTask> execute(RemoteTaskOperation operation);
+  Future<Outcome<RemotePage<RemoteTaskList>>> listTaskLists({
+    PageToken? pageToken,
+    GoogleTasksReadCancellation? cancellation,
+  });
+  Future<Outcome<RemotePage<RemoteTask>>> listTasks(
+    RemoteTaskListId list, {
+    PageToken? pageToken,
+    GoogleTasksReadCancellation? cancellation,
+  });
 }
 
 abstract interface class SyncRunner {
@@ -148,6 +154,16 @@ abstract interface class SyncRunner {
 Exact operations, metadata, phase ordering, and conflict results are defined by
 the accepted [Stage 4 specification](SYNC_SPEC.md). The UI observes repositories
 and `SyncHealth`; it never interprets raw HTTP or database errors.
+
+The S06 HTTP implementation deliberately exposes one validated page per call;
+the synchronization engine owns traversal and scope completeness so pages can
+be published incrementally. The request boundary uses exact explicit listing
+flags, a 30-second cancellable attempt, no redirects or retries, and bounded
+JSON collection decoding. Known fields are type-checked; future unknown optional
+fields are deliberately ignored. Live resources require the fields needed for a
+remote base, while a positive `deleted=true` task is represented separately and
+may retain only the fields actually present. Assigned resources and malformed
+rows fail the containing scope. Mutation methods join this port only in S07.
 
 ## Identity and account scoping
 

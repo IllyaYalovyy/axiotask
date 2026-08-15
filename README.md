@@ -5,8 +5,9 @@ Android. The current foundation provides a minimal launchable shell,
 constructor-injected core/authorization/diagnostic boundaries, and the
 versioned Drift/SQLite persistence foundation. Linux additionally has a
 capability-proven GNOME Secret Service credential boundary and a Linux system-
-browser authorization adapter. Synchronization and task workflows arrive only
-in their approved later slices.
+browser authorization adapter. A strict, injected Google Tasks HTTP boundary
+can read validated list/task pages; synchronization orchestration, writes, and
+task workflows arrive only in their approved later slices.
 
 ## Supported development environment
 
@@ -77,7 +78,7 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Platform adapter added by later gated slices | Safe structured fields only |
+| Production-safe | `lib/main.dart` | No Google service is composed in the current shell | Safe structured fields only |
 | Sensitive development | `lib/main_development.dart` | Must match an explicit dedicated-account subject before any Google read or mutation | Local private context retained; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Disabled; injected synthetic authorization only | Safe in-memory history |
 
@@ -99,8 +100,18 @@ flutter run -d linux --debug -t lib/main_development.dart \
 
 Omitting the subject is safe: the dedicated-account guard rejects every Google
 access attempt. A mismatched authenticated subject also fails before a Tasks
-read or mutation. S01 does not yet include a Google adapter, so these entry
-points do not access Google.
+read or mutation. The current application entry points do not yet compose the
+strict HTTP service, so launching these shells does not enumerate Google data.
+
+The read service itself is page-oriented so later synchronization can publish
+validated pages incrementally. Task-list requests use the documented maximum
+page size. Task requests use `maxResults=100`, explicitly include completed,
+hidden, and deleted tasks, and keep assigned tasks excluded. Responses must be
+JSON within the eight-MiB safety bound; supported fields, etags, tombstones,
+timestamps, and UTC-midnight due dates are decoded strictly. A malformed row
+fails its scope rather than being skipped. Each attempt has a 30-second timeout,
+supports transport cancellation, does not follow redirects, and never retries
+inside the adapter.
 
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
@@ -270,6 +281,8 @@ flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
+flutter test test/data/google_tasks/decoder_test.dart
+flutter test test/data/google_tasks/http_service_test.dart
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

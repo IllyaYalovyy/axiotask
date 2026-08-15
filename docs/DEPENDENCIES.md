@@ -111,6 +111,20 @@ controlled Google capability probe remains the admission gate for Google's
 endpoint behavior; a local standards test cannot replace that external
 evidence.
 
+## Applied to the S06 Google Tasks read adapter
+
+S06 reuses the already locked `http` 1.6.0 package and adds no dependency. Its
+`AbortableRequest` contract supplies per-request cancellation through both the
+IO send and response-stream phases. A page is accumulated only up to eight MiB,
+which is well above documented title/note limits at the requested maximum page
+sizes while providing a fixed untrusted-response bound. Task-list and task row
+counts are additionally bounded by their requested documented maxima.
+
+The adapter is handwritten so request flags, redirect behavior, HTTP status,
+`Retry-After`, collection/resource etags, tombstones, and strict decode failures
+remain visible to application policy. It contains no retry interceptor and does
+not use the generated `googleapis` client.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

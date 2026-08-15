@@ -15,6 +15,10 @@ void main() {
         action: FailureAction.connect,
         safeSummary: 'Tasks authorization is unavailable.',
         sensitiveContext: 'synthetic adapter detail',
+        remoteContext: RemoteFailureContext(
+          statusCode: 429,
+          retryAfter: RetryAfterDelay(Duration(seconds: 30)),
+        ),
       );
       const same = Failure(
         code: 'auth.scope_missing',
@@ -25,6 +29,10 @@ void main() {
         action: FailureAction.connect,
         safeSummary: 'Tasks authorization is unavailable.',
         sensitiveContext: 'synthetic adapter detail',
+        remoteContext: RemoteFailureContext(
+          statusCode: 429,
+          retryAfter: RetryAfterDelay(Duration(seconds: 30)),
+        ),
       );
       const changedRetry = Failure(
         code: 'auth.scope_missing',
@@ -35,6 +43,10 @@ void main() {
         action: FailureAction.connect,
         safeSummary: 'Tasks authorization is unavailable.',
         sensitiveContext: 'synthetic adapter detail',
+        remoteContext: RemoteFailureContext(
+          statusCode: 429,
+          retryAfter: RetryAfterDelay(Duration(seconds: 30)),
+        ),
       );
 
       expect(first, same);
