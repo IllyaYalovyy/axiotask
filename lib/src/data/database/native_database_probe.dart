@@ -5,6 +5,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'app_database.dart';
 import 'connection.dart';
+import 'production_database.dart';
 import 'schema_verifier.dart';
 
 const String nativeDatabaseProbeSubject = 'synthetic-probe-subject';

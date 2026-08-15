@@ -8,8 +8,10 @@ reason, unresolved counts, and last-success time. It also provides a read-only
 task-detail surface. Constructor-injected core/authorization/diagnostic
 boundaries, the strict Google Tasks HTTP read/write adapter, Linux GNOME Secret
 Service credential storage, and the Linux browser authorization adapter remain
-behind their accepted boundaries. The shell does not run synchronization or
-mutate tasks yet.
+behind their accepted boundaries. A headless read-only engine can recover an
+unfinished walk, verify eligibility and account subject, enumerate every
+required page, publish validated pages transactionally, and finalize durable
+success or failure. The shell does not compose that engine or mutate tasks yet.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -18,8 +20,10 @@ are always labeled unverified; even a complete recorded page walk is not a
 freshness or healthy-sync claim. Durable account-scoped health facts retain the
 last verified success, newest failure, unresolved counts, and scheduler latches;
 runtime authorization/connectivity/activity facts are projected separately.
-Desired mutations and sync attempts are not yet implemented. The exact
-schema-v1 contract is documented in
+Read walks use the existing publication/completeness rows as their durable walk
+identity and update last success only during complete finalization. Desired
+mutations and mutation attempts are not yet implemented. The exact schema-v1
+contract is documented in
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
 ## Supported development environment
@@ -329,6 +333,8 @@ flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
+flutter test test/sync/read_sync_engine_test.dart
+flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart

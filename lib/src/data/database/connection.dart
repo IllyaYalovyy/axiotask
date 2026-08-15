@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/common.dart' show CommonDatabase;
 
 const Duration databaseBusyTimeout = Duration(seconds: 5);
@@ -57,21 +56,6 @@ void configureSqliteConnection(CommonDatabase database) {
     ..execute('PRAGMA busy_timeout = ${databaseBusyTimeout.inMilliseconds}')
     ..execute('PRAGMA wal_autocheckpoint = $databaseWalAutoCheckpointPages');
 }
-
-Future<File> resolveProductionDatabaseFile(String databaseName) async {
-  if (!_validDatabaseName.hasMatch(databaseName)) {
-    throw ArgumentError.value(
-      databaseName,
-      'databaseName',
-      'must be a simple .sqlite filename',
-    );
-  }
-
-  final supportDirectory = await getApplicationSupportDirectory();
-  return File('${supportDirectory.path}${Platform.pathSeparator}$databaseName');
-}
-
-final RegExp _validDatabaseName = RegExp(r'^[a-z0-9][a-z0-9.-]*\.sqlite$');
 
 SqliteSynchronous sqliteSynchronousFromPragma(int value) {
   return switch (value) {

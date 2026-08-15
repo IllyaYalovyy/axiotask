@@ -40,9 +40,24 @@ final class DatabaseTasksRepository implements TasksRepository {
           ) THEN 1
           WHEN EXISTS (
             SELECT 1 FROM task_lists required_list
+            LEFT JOIN task_list_remote_bases selected_list
+              ON selected_list.account_id = required_list.account_id
+             AND selected_list.task_list_id = required_list.id
             WHERE required_list.account_id = a.id
               AND required_list.projection = 'supported'
               AND required_list.remote_id IS NOT NULL
+              AND (
+                selected_list.task_list_id IS NULL OR (
+                  selected_list.deleted = 0
+                  AND selected_list.observed_publication_id = (
+                    SELECT list_scope.publication_id
+                    FROM scope_completeness list_scope
+                    WHERE list_scope.account_id = a.id
+                      AND list_scope.scope_kind = 'task_lists'
+                    LIMIT 1
+                  )
+                )
+              )
               AND (?2 = 0 OR required_list.id = ?2)
               AND NOT EXISTS (
                 SELECT 1 FROM scope_completeness task_scope

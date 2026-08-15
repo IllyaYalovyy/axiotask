@@ -46,11 +46,6 @@ class AppDatabase extends _$AppDatabase {
     }
   }
 
-  static Future<AppDatabase> openProduction(String databaseName) async {
-    final file = await resolveProductionDatabaseFile(databaseName);
-    return openFile(file);
-  }
-
   @override
   int get schemaVersion => currentDatabaseSchemaVersion;
 

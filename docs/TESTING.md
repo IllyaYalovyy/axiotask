@@ -161,10 +161,12 @@ remain owned by later slices.
 
 ### 5. Synchronization subsystem tests
 
-After Stage 4, the sync engine is run without Flutter against real temporary
-SQLite plus the stateful fake. Tests cover the full synchronization matrix,
-including deterministic operation-sequence/property testing and restart at
-explicit failure points.
+The S12A read-only sync engine runs without widgets against real SQLite plus the
+stateful fake or a scripted read port. Its focused suite covers ordered phases,
+cold and warm multi-page walks, exact page/list request scaling, terminal empty
+pages, child-before-parent deferral, unsupported depth, malformed/page failures,
+no-op second runs, account eligibility, and durable success/failure facts.
+Later slices extend the same boundary with reconciliation and outbound work.
 
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
@@ -173,6 +175,13 @@ supported checkpoint or safely re-fetches without duplicating state.
 
 Concurrency is controlled with barriers/completers exposed by fakes, never
 wall-clock sleeps. Fixed seeds are printed on failure and are replayable.
+
+`test/sync/read_sync_process_death_test.dart` launches a pure-Dart child against
+an isolated temporary production SQLite file, waits for an explicit committed
+page signal, kills the process, and reopens the file independently. It proves a
+committed page survives while completeness and last success remain false. The
+production application-support path resolver stays in its Flutter composition
+adapter so the headless child cannot discover normal application storage.
 
 ### 6. ViewModel tests
 

@@ -66,10 +66,17 @@ application adapter and device-only preferences remain the S22A slice.
   unresolved counts are non-negative. Missing rows mean no success, failure, or
   unresolved work, never implicit freshness. `account_preferences.sync_enabled`
   is joined into the same account-scoped projection.
+- An S12A read run uses its opaque publication ID as the durable page-walk
+  identity. Begin marks the required scope incomplete, every page transaction
+  replaces only that scope's token/completeness evidence, and finalization
+  advances `sync_facts.last_successful_sync_at` only after the list scope and
+  every list selected by that publication have terminal task scopes. An
+  interrupted or failed publication remains incomplete and retains the prior
+  success time and previously valid cache rows.
 - SQLite foreign keys remain enabled and multi-row writes use explicit
   transactions. Failed transactions may re-emit an unchanged Drift snapshot,
   but cannot expose or retain partially written state.
 
-OAuth tokens, DPoP keys, authorization headers, sync attempts, desired mutation
-payloads, diagnostics, and device-only preferences are not part of these
-cache/health tables.
+OAuth tokens, DPoP keys, authorization headers, mutation attempts, desired
+mutation payloads, diagnostics, and device-only preferences are not part of
+these cache/health tables.

@@ -1,4 +1,5 @@
 import '../data/database/app_database.dart';
+import '../data/database/production_database.dart';
 import '../data/database/sync_health_dao.dart';
 import '../data/database/sync_health_repository.dart';
 import '../data/database/tasks_repository.dart';
@@ -16,7 +17,7 @@ final class TasksFeatureRuntime {
   final AppDatabase database;
 
   static Future<TasksFeatureRuntime> open(AppComposition composition) async {
-    final database = await AppDatabase.openProduction(
+    final database = await openProductionDatabase(
       composition.boundary.storage.databaseName,
     );
     final accounts = await database.allAccounts();
