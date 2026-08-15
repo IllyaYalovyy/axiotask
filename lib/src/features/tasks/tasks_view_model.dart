@@ -10,6 +10,7 @@ import '../../sync/health/sync_health_repository.dart';
 final class TasksViewState {
   const TasksViewState({
     required this.isLoading,
+    required this.isRefreshing,
     required this.taskLists,
     required this.tasks,
     required this.health,
@@ -19,6 +20,7 @@ final class TasksViewState {
   });
 
   final bool isLoading;
+  final bool isRefreshing;
   final List<CachedTaskList> taskLists;
   final List<CachedTask> tasks;
   final SyncHealth health;
@@ -46,6 +48,7 @@ final class TasksViewState {
 
   TasksViewState copyWith({
     bool? isLoading,
+    bool? isRefreshing,
     List<CachedTaskList>? taskLists,
     List<CachedTask>? tasks,
     SyncHealth? health,
@@ -54,6 +57,7 @@ final class TasksViewState {
     Object? failureMessage = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
+    isRefreshing: isRefreshing ?? this.isRefreshing,
     taskLists: taskLists ?? this.taskLists,
     tasks: tasks ?? this.tasks,
     health: health ?? this.health,
@@ -74,8 +78,10 @@ final class TasksViewModel extends ChangeNotifier {
     required this.accountId,
     required this.tasksRepository,
     required this.syncHealthRepository,
+    this.refreshRequested,
   }) : _state = TasksViewState(
          isLoading: true,
+         isRefreshing: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          health: SyncHealth(
@@ -90,10 +96,12 @@ final class TasksViewModel extends ChangeNotifier {
   final AccountId accountId;
   final TasksRepository tasksRepository;
   final SyncHealthRepository syncHealthRepository;
+  final Future<void> Function()? refreshRequested;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
   bool _started = false;
+  Future<void>? _refreshInFlight;
 
   TasksViewState get state => _state;
 
@@ -128,6 +136,26 @@ final class TasksViewModel extends ChangeNotifier {
 
   void clearTaskSelection() {
     _replaceState(_state.copyWith(selectedTaskId: null));
+  }
+
+  Future<void> refresh() {
+    final existing = _refreshInFlight;
+    if (existing != null) return existing;
+    final action = refreshRequested;
+    if (action == null) return Future<void>.value();
+    final operation = _performRefresh(action);
+    _refreshInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _performRefresh(Future<void> Function() action) async {
+    _replaceState(_state.copyWith(isRefreshing: true));
+    try {
+      await action();
+    } finally {
+      _refreshInFlight = null;
+      _replaceState(_state.copyWith(isRefreshing: false));
+    }
   }
 
   void _acceptTasks(CachedTasksSnapshot snapshot) {

@@ -5,13 +5,12 @@ Android. The current Linux shell opens the versioned, account-scoped
 Drift/SQLite store, renders cached Google lists/tasks immediately, and presents
 truthful Inactive, Pending, Failed, or Good synchronization health with exact
 reason, unresolved counts, and last-success time. It also provides a read-only
-task-detail surface. Constructor-injected core/authorization/diagnostic
-boundaries, the strict Google Tasks HTTP read/write adapter, Linux GNOME Secret
-Service credential storage, and the Linux browser authorization adapter remain
-behind their accepted boundaries. A headless read-only engine can recover an
-unfinished walk, verify eligibility and account subject, enumerate every
-required page, publish validated pages transactionally, and finalize durable
-success or failure. The shell does not compose that engine or mutate tasks yet.
+task-detail surface and an explicit Refresh action. Startup, Linux resume, and
+Refresh run one serialized foreground verification for the configured account.
+Validated pages appear incrementally; only complete durable finalization can
+show Synced. Partial, malformed, unavailable, or unauthorized results preserve
+usable cache under an explicit non-green status. Writes, automatic cadence and
+retry, Android lifecycle wiring, and account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -95,9 +94,9 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Cached data only; no Google service/sync runner is composed in the current shell | Safe structured fields only |
-| Sensitive development | `lib/main_development.dart` | Must match an explicit dedicated-account subject before any Google read or mutation | Local private context retained; credentials always redacted |
-| Synthetic test | `lib/main_test.dart` | Disabled; injected synthetic authorization only | Safe in-memory history |
+| Production-safe | `lib/main.dart` | Restores Linux authorization and performs read-only verification for an existing configured account; missing configuration/authorization fails closed | Safe structured fields only |
+| Sensitive development | `lib/main_development.dart` | Read-only verification must match the explicit dedicated-account subject before any Google request | Local private context retained; credentials always redacted |
+| Synthetic test | `lib/main_test.dart` | Creates only its isolated synthetic account and verifies against an in-process synthetic read service | Safe in-memory history |
 
 Run the synthetic composition with a unique lowercase instance name:
 
@@ -106,19 +105,36 @@ flutter run -d linux --debug -t lib/main_test.dart \
   --dart-define=AXIOTASK_TEST_INSTANCE=manual-synthetic
 ```
 
+The first run creates only `axiotask-test-manual-synthetic.sqlite`, displays
+Pending while its synthetic walk executes, then displays the validated
+synthetic list/task as Synced. A subsequent launch displays that cache
+immediately and verifies it again. This composition never loads OAuth
+configuration, secure storage, normal preferences, normal diagnostics, or
+Google Tasks.
+
 Run sensitive development only with a dedicated Google account. Obtain that
-account's stable Google subject through the later opt-in authorization probe;
-do not use an email address and do not guess it. Supply it at compilation:
+account's stable Google subject through the opt-in authorization probe; do not
+use an email address and do not guess it. Add the subject to the ignored,
+mode-`600` `.ktask/gates/stage7.env` beside the OAuth values:
+
+```text
+AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT=<dedicated-subject>
+```
+
+Supply that file at compilation without putting credential values directly on
+the command line:
 
 ```bash
 flutter run -d linux --debug -t lib/main_development.dart \
-  --dart-define=AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT=<dedicated-subject>
+  --dart-define-from-file=.ktask/gates/stage7.env
 ```
 
-Omitting the subject is safe: the dedicated-account guard rejects every Google
-access attempt. A mismatched authenticated subject also fails before a Tasks
-read or mutation. The current application entry points do not yet compose the
-strict HTTP service, so launching these shells does not enumerate Google data.
+Omitting the subject or OAuth configuration is safe: the composition fails
+closed as No authorization. A mismatched authenticated subject also fails
+before a Tasks read. This slice restores existing Linux credentials; it does
+not add interactive Connect/Reauthorize UI. The optional live smoke therefore
+requires the configured dedicated account and its already provisioned,
+composition-specific credential namespace.
 
 The read service itself is page-oriented so later synchronization can publish
 validated pages incrementally. Task-list requests use the documented maximum
@@ -144,8 +160,9 @@ namespace. Synthetic instance names additionally partition parallel runs. The
 production database factory resolves and opens only its injected filename in
 the native application-support directory. Development and synthetic entry
 points open only their distinct database names and never the normal
-`axiotask.sqlite` store. Diagnostic history remains in memory and
-preferences/secure storage are not created by this shell.
+`axiotask.sqlite` store. Diagnostic history remains in memory, and the
+synthetic shell never creates preferences or secure storage. Production and
+development read transport use only their declared secure-storage namespace.
 
 Sensitive development diagnostics may retain synthetic or dedicated-account
 task/API/storage context locally. Production diagnostics discard private fields.
@@ -335,6 +352,7 @@ flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
+flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
@@ -348,12 +366,13 @@ flutter test test/support/replay_seed_test.dart
 flutter test test/data/google_tasks/decoder_test.dart
 flutter test test/data/google_tasks/http_service_test.dart
 flutter test test/data/google_tasks/mutation_http_service_test.dart
+flutter test integration_test/read_slice_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```
 
-Capture the four isolated synthetic Linux health states into the ignored
+Capture the isolated synthetic Linux health states into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

@@ -105,16 +105,37 @@ void main() {
     expect(find.text('Cached child'), findsOneWidget);
     expect(find.text('Add task'), findsNothing);
   });
+
+  testWidgets('Refresh button invokes the ViewModel foreground action', (
+    tester,
+  ) async {
+    var refreshes = 0;
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.good),
+      refreshRequested: () async {
+        refreshes += 1;
+      },
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Refresh'));
+    await tester.pump();
+
+    expect(refreshes, 1);
+  });
 }
 
 final class _ShellFixture {
-  _ShellFixture(SyncHealth health)
+  _ShellFixture(SyncHealth health, {Future<void> Function()? refreshRequested})
     : tasks = _TasksRepository(),
       healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
       accountId: const AccountId(1),
       tasksRepository: tasks,
       syncHealthRepository: healthRepository,
+      refreshRequested: refreshRequested,
     );
     tasks.snapshot = _snapshot;
     healthRepository.health = health;

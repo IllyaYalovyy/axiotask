@@ -252,6 +252,30 @@ final class LinuxAuthorizedSession {
   String toString() => 'LinuxAuthorizedSession(<redacted>)';
 }
 
+/// Presents the currently restored Linux OAuth session to the Tasks adapter
+/// without exposing credentials or letting that adapter own the session.
+final class LinuxAuthorizedHttpClient extends http.BaseClient {
+  LinuxAuthorizedHttpClient(this._authorization);
+
+  final LinuxAuthorization _authorization;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    final session = _authorization._session;
+    if (session == null) {
+      return Future<http.StreamedResponse>.error(
+        http.ClientException('Google Tasks authorization is unavailable.'),
+      );
+    }
+    return session.authenticatedClient.send(request);
+  }
+
+  @override
+  void close() {
+    // LinuxAuthorization owns and closes the authenticated OAuth client.
+  }
+}
+
 final class LinuxAuthorization implements AuthorizationPort {
   factory LinuxAuthorization({
     required LinuxAuthorizationConfig config,

@@ -1,8 +1,12 @@
 import 'package:axiotask/src/app/composition/development_composition.dart';
+import 'package:axiotask/src/app/composition/linux_read_transport.dart';
 import 'package:axiotask/src/app/composition/release_composition.dart';
 import 'package:axiotask/src/app/composition/test_composition.dart';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
+import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
+import 'package:axiotask/src/data/auth/linux/linux_authorization.dart';
+import 'package:axiotask/src/data/google_tasks/http_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -67,6 +71,42 @@ void main() {
       final output = development.diagnosticHistory.records.single.renderedText;
       expect(output, contains(taskCanary));
       expect(output, isNot(contains('credential-canary')));
+    },
+  );
+
+  test(
+    'production read transport wires Linux auth and strict Tasks HTTP ports',
+    () async {
+      final composition = ReleaseComposition.create(
+        linuxReadConfiguration: const LinuxReadConfiguration(
+          clientId: 'synthetic.apps.googleusercontent.com',
+          clientSecret: 'synthetic-installed-client-value',
+        ),
+      );
+
+      final transport = await composition.createReadTransport(
+        const AccountSubject('configured-synthetic-subject'),
+      );
+      addTearDown(transport.close);
+
+      expect(transport.authorization, isA<LinuxAuthorization>());
+      expect(transport.googleTasks, isA<HttpGoogleTasksService>());
+      expect(transport.authorization.currentState, isA<NoTasksAuthorization>());
+    },
+  );
+
+  test(
+    'missing production OAuth configuration fails closed without Google access',
+    () async {
+      final composition = ReleaseComposition.create();
+      final transport = await composition.createReadTransport(
+        const AccountSubject('configured-synthetic-subject'),
+      );
+      addTearDown(transport.close);
+
+      expect(transport.authorization, isA<UnavailableAuthorization>());
+      final restore = await transport.authorization.restoreTasksAuthorization();
+      expect(restore, isA<Failed<AccountSubject>>());
     },
   );
 }

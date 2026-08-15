@@ -1,8 +1,10 @@
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
+import '../../core/outcome.dart';
 import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
 import 'app_composition.dart';
+import 'synthetic_read_transport.dart';
 
 final class TestComposition implements AppComposition {
   TestComposition._({
@@ -64,6 +66,20 @@ final class TestComposition implements AppComposition {
 
   @override
   final DedicatedAccountGuard accountGuard;
+
+  @override
+  AccountSubject get configuredAccountSubject => authorization.subject;
+
+  @override
+  Future<ReadSliceTransport> createReadTransport(AccountSubject subject) async {
+    final access = accountGuard.verify(subject);
+    if (access is! Success<void>) {
+      throw StateError(
+        'Synthetic account guard rejected its configured subject.',
+      );
+    }
+    return createSyntheticReadTransport(subject);
+  }
 
   @override
   final CompositionBoundary boundary;

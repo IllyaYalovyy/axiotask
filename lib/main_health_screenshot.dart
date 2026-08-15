@@ -147,6 +147,22 @@ final List<({String name, SyncHealth health})> _scenarios =
         ),
       ),
       (
+        name: 'health-partial-failed',
+        health: _health(
+          SyncHealthOutcome.failed,
+          failureReason: SyncFailureReason.remoteFailure,
+          action: SyncHealthAction.retry,
+          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 11, 58),
+        ),
+      ),
+      (
+        name: 'health-first-good',
+        health: _health(
+          SyncHealthOutcome.good,
+          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 12),
+        ),
+      ),
+      (
         name: 'health-stale-failed',
         health: _health(
           SyncHealthOutcome.failed,

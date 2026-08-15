@@ -45,6 +45,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                 _ApplicationHeader(
                   health: state.health,
                   onHealthAction: widget.onHealthAction,
+                  isRefreshing: state.isRefreshing,
+                  onRefresh: widget.viewModel.refresh,
                 ),
                 Expanded(
                   child: LayoutBuilder(
@@ -65,10 +67,17 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 }
 
 final class _ApplicationHeader extends StatelessWidget {
-  const _ApplicationHeader({required this.health, this.onHealthAction});
+  const _ApplicationHeader({
+    required this.health,
+    required this.isRefreshing,
+    required this.onRefresh,
+    this.onHealthAction,
+  });
 
   final SyncHealth health;
   final ValueChanged<SyncHealthAction>? onHealthAction;
+  final bool isRefreshing;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +106,17 @@ final class _ApplicationHeader extends StatelessWidget {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               ),
               const Spacer(),
+              FilledButton.icon(
+                onPressed: isRefreshing ? null : onRefresh,
+                icon: isRefreshing
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+                label: const Text('Refresh'),
+              ),
+              const SizedBox(width: 16),
               Text(
                 'Google Tasks cache',
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(

@@ -57,6 +57,36 @@ void main() {
       expect(viewModel.state.selectedTaskChildren.single.title, 'Cached child');
     },
   );
+
+  test(
+    'Refresh delegates once while the foreground verification is active',
+    () async {
+      final tasks = _TasksRepository();
+      final health = _HealthRepository();
+      final refresh = Completer<void>();
+      var calls = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: health,
+        refreshRequested: () {
+          calls += 1;
+          return refresh.future;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      final first = viewModel.refresh();
+      final duplicate = viewModel.refresh();
+      expect(viewModel.state.isRefreshing, isTrue);
+      expect(calls, 1);
+      refresh.complete();
+      await Future.wait(<Future<void>>[first, duplicate]);
+
+      expect(viewModel.state.isRefreshing, isFalse);
+      expect(calls, 1);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {

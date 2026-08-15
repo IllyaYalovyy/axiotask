@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
+import '../../data/google_tasks/service.dart';
 
 enum CompositionProfile { release, development, syntheticTest }
 
@@ -102,4 +105,27 @@ abstract interface class AppComposition {
   AccountGuard get accountGuard;
 
   CompositionBoundary get boundary;
+
+  /// A synthetic/development subject may bootstrap its isolated partition.
+  /// Production discovers only an already configured account from SQLite.
+  AccountSubject? get configuredAccountSubject;
+
+  Future<ReadSliceTransport> createReadTransport(AccountSubject subject);
+}
+
+final class ReadSliceTransport {
+  const ReadSliceTransport({
+    required this.authorization,
+    required this.googleTasks,
+    this.closeTransport,
+  });
+
+  final AuthorizationPort authorization;
+  final GoogleTasksService googleTasks;
+  final FutureOr<void> Function()? closeTransport;
+
+  Future<void> close() async {
+    googleTasks.close();
+    await closeTransport?.call();
+  }
 }

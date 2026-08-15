@@ -1,8 +1,8 @@
 # Target architecture
 
-Status: **Stage 3 and Stage 4 synchronization design accepted; read-only run
-foundation implemented through S12A. Scheduling and outbound reconciliation
-remain later slices.**
+Status: **Stage 3 and Stage 4 synchronization design accepted; the first
+foreground read/verify vertical slice is implemented through S12B. Automatic
+cadence/retry and outbound reconciliation remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed

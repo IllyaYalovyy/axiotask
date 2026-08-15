@@ -235,6 +235,14 @@ isolated database and stateful fake. Core workflows run on Fedora and Android:
 Plugin-specific tests run separately where a real platform implementation is
 required.
 
+S12B adds the Linux-only
+`integration_test/read_slice_linux_test.dart` application slice. It opens a
+temporary production SQLite connection, renders a warm cache before remote
+verification, exercises startup/Refresh/Linux resume, observes first Good only
+after full finalization, and verifies partial-page failure, malformed data, and
+absent authorization without Google access. All content and identities are
+synthetic; Android composition/lifecycle remains outside this slice.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the

@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/widgets.dart';
 
 import 'src/app/axiotask_app.dart';
 import 'src/app/composition/test_composition.dart';
+import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
 
 const String _instanceId = String.fromEnvironment(
@@ -12,6 +16,13 @@ const String _instanceId = String.fromEnvironment(
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final composition = TestComposition.create(instanceId: _instanceId);
-  final runtime = await TasksFeatureRuntime.open(composition);
+  final lifecycle = Platform.isLinux ? LinuxLifecycleBridge() : null;
+  final runtime = await TasksFeatureRuntime.open(
+    composition,
+    lifecycle: lifecycle,
+  );
   runApp(AxiotaskApp(viewModel: runtime.viewModel));
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(runtime.start());
+  });
 }
