@@ -4,9 +4,9 @@ Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
 Android. The current foundation provides a minimal launchable shell,
 constructor-injected core/authorization/diagnostic boundaries, and the
 versioned Drift/SQLite persistence foundation. Linux additionally has a
-capability-proven GNOME Secret Service credential boundary; OAuth, Google
-authorization adapters, synchronization, and task workflows arrive only in
-their approved later slices.
+capability-proven GNOME Secret Service credential boundary and a Linux system-
+browser authorization adapter. Synchronization and task workflows arrive only
+in their approved later slices.
 
 ## Supported development environment
 
@@ -145,6 +145,39 @@ AXIOTASK_RUN_LINUX_SECURE_STORAGE_PROBE=1 \
 
 The probe presents no expected user dialog. If Secret Service unexpectedly
 presents one, stop and review it rather than accepting the run unattended.
+
+## Isolated Linux Google authorization probe
+
+The S05 development probe uses the system browser, an ephemeral
+`127.0.0.1` callback, PKCE S256, state and OpenID nonce validation, DPoP, and a
+dedicated Secret Service namespace. It reads at most one task-list summary and
+does not create, update, or delete Google Tasks data. The authenticated Google
+subject is pinned in ignored private development state before the first Tasks
+request; a different account fails closed.
+
+Put the dedicated development OAuth client's ID and secret in the ignored file
+`.ktask/gates/stage7.env` with mode `600`:
+
+```text
+AXIOTASK_LINUX_AUTH_CLIENT_ID=<desktop-client-id>
+AXIOTASK_LINUX_AUTH_CLIENT_SECRET=<desktop-client-secret>
+```
+
+Run the preflight and the explicitly opted-in probe from an unlocked GNOME
+session:
+
+```bash
+./scripts/preflight_capability_gate.sh linux-auth
+AXIOTASK_RUN_LINUX_AUTH_PROBE=1 ./scripts/probe_linux_auth.sh
+```
+
+The probe displays pending, success, or a selectable failure report in its own
+window. Development failures include safe phase/classification diagnostics and
+a stack trace in the launching terminal; OAuth codes, tokens, client secrets,
+PKCE verifiers, DPoP private keys, and callback URLs remain redacted. The probe
+verifies restart/refresh behavior and deletes only its isolated credential
+bundle afterward. It never reads or changes normal Axiotask credentials or
+local data.
 
 ## Android build, local installation, and development run
 

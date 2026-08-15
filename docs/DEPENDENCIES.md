@@ -93,6 +93,24 @@ Removing the plugin requires another Fedora GNOME adapter that passes the same
 real Secret Service probe and failure contract without relocating credentials
 to SQLite, preferences, application files, or another plaintext store.
 
+## Admitted for the S05 Linux authorization adapter
+
+The Linux adapter locks `oauth2` 2.0.5, `http` 1.6.0, `crypto` 3.0.7, `jose`
+0.3.5+2, and `url_launcher` 6.3.2. The adapter uses `oauth2` for the standard
+authorization-code/PKCE exchange and refresh credential model, `http` for the
+injectable transport, `crypto` for specified SHA-256 values, `jose` for
+ES256/JWK operations and Google ID-token verification, and `url_launcher` for
+the Flutter-supported external-browser handoff.
+
+All protocol behavior outside those narrow library responsibilities remains
+owned and tested by Axiotask: loopback listener lifetime, exact state/nonce
+validation, DPoP proof construction and nonce retry, Google subject validation,
+typed failures, and atomic credential persistence. A stateful in-process OAuth
+endpoint and a real loopback HTTP callback cover the complete local flow. The
+controlled Google capability probe remains the admission gate for Google's
+endpoint behavior; a local standards test cannot replace that external
+evidence.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

@@ -191,13 +191,22 @@ Official recurrence source:
 
 Sources: [Tasks quotas and limits](https://developers.google.com/workspace/tasks/limits),
 [Tasks authorization](https://developers.google.com/workspace/tasks/auth), and
-[Google OAuth 2.0](https://developers.google.com/identity/protocols/oauth2).
+[Google OAuth 2.0 for installed apps](https://developers.google.com/identity/protocols/oauth2/native-app).
+
+The installed-app OAuth details below were fact-checked against the official
+Google documentation on 2026-08-15. They define the Linux adapter contract but
+do not count as a successful controlled Google probe.
 
 | Behavior | Contract evidence | Label | Open consequence |
 |---|---|---|---|
 | OAuth scope | Read/write requires `https://www.googleapis.com/auth/tasks`; read-only access can use `tasks.readonly`. | **Officially documented** | Synchronization mutations require the write scope. |
 | Access-token expiry | Access tokens have limited lifetimes and may be refreshed. | **Officially documented** | Expiry is normal and must not be represented as healthy synchronization. |
 | Refresh-token failure | Google documents several invalidation/expiry causes and `invalid_grant` during refresh, including revoked grants and some session policies. | **Officially documented** | The auth layer can receive a terminal reauthorization condition. Exact Tasks request payloads remain separate. |
+| Desktop redirect | Installed desktop apps may use a loopback redirect on `127.0.0.1`; Google recommends choosing an available random port. | **Officially documented** | Linux binds IPv4 loopback on an ephemeral port and validates the exact callback path and state. |
+| PKCE | Google's installed-app flow documents PKCE with `S256`, a code verifier, and a SHA-256 code challenge. | **Officially documented** | The verifier is generated per attempt, retained only in memory, and sent only to the token endpoint. |
+| DPoP | Google's installed-app documentation describes DPoP for sender-constraining refresh tokens: ES256 with a P-256 public JWK, an authorization-code-derived `jti`, unique refresh `jti` values, and server nonce handling. It also states that the resulting access token remains a bearer token. | **Officially documented** | Linux persists the DPoP private key atomically with its refresh token and never substitutes another key silently. Live endpoint behavior remains gated by `API-006`. |
+| Token request authentication | Google's token-exchange examples send `client_id` and the desktop client application's `client_secret` as form fields; an installed-app secret is not confidential proof of the installed binary. | **Officially documented** | The Dart OAuth client is configured with HTTP Basic authentication disabled so the documented form request is used. |
+| Stable account identity | Google OpenID Connect documents `sub` as the unique, stable account identifier and requires validation of ID-token signature, issuer, audience, and expiry. | **Officially documented** | Initial authorization validates the ID token and nonce; restart refresh resolves `sub` through authenticated UserInfo and compares it with the pinned subject before a Tasks request. |
 | Tasks authentication response | P11 sent a malformed bearer token to task-list listing and received 401 with `WWW-Authenticate`; the JSON error contained `code`, `errors`, `message`, and `status`. Expired, revoked, and wrong-scope cases were not probed. | **Observed by a controlled probe; otherwise unknown** | The adapter may classify this observed malformed-token shape as unauthorized but must not generalize it to unprobed auth failures. |
 | Daily quota | Courtesy limit is 50,000 queries/day; Google warns that projects may have different quotas visible in Cloud Console. | **Officially documented** | The public number is not a complete per-project runtime limit. |
 | Per-minute/user limits | No Tasks-specific public contract was found for per-minute, per-user, or burst limits. | **Unknown** | Runtime status and headers must be captured in a controlled quota-safe probe if possible. |
