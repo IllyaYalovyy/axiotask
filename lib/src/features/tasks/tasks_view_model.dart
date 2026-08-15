@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../core/outcome.dart';
+import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/repository/task_lists_repository.dart';
@@ -19,11 +20,13 @@ final class TasksViewState {
     required this.health,
     this.isSyncControlPending = false,
     this.isListCommandPending = false,
+    this.isTaskCommandPending = false,
     this.selectedTaskListId,
     this.selectedTaskId,
     this.failureMessage,
     this.syncControlFailureMessage,
     this.listCommandFailureMessage,
+    this.taskCommandFailureMessage,
   });
 
   final bool isLoading;
@@ -33,11 +36,13 @@ final class TasksViewState {
   final SyncHealth health;
   final bool isSyncControlPending;
   final bool isListCommandPending;
+  final bool isTaskCommandPending;
   final TaskListId? selectedTaskListId;
   final TaskId? selectedTaskId;
   final String? failureMessage;
   final String? syncControlFailureMessage;
   final String? listCommandFailureMessage;
+  final String? taskCommandFailureMessage;
 
   CachedTaskList? get selectedTaskList =>
       _firstWhereOrNull(taskLists, (value) => value.id == selectedTaskListId);
@@ -65,11 +70,13 @@ final class TasksViewState {
     SyncHealth? health,
     bool? isSyncControlPending,
     bool? isListCommandPending,
+    bool? isTaskCommandPending,
     Object? selectedTaskListId = _notProvided,
     Object? selectedTaskId = _notProvided,
     Object? failureMessage = _notProvided,
     Object? syncControlFailureMessage = _notProvided,
     Object? listCommandFailureMessage = _notProvided,
+    Object? taskCommandFailureMessage = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -78,6 +85,7 @@ final class TasksViewState {
     health: health ?? this.health,
     isSyncControlPending: isSyncControlPending ?? this.isSyncControlPending,
     isListCommandPending: isListCommandPending ?? this.isListCommandPending,
+    isTaskCommandPending: isTaskCommandPending ?? this.isTaskCommandPending,
     selectedTaskListId: identical(selectedTaskListId, _notProvided)
         ? this.selectedTaskListId
         : selectedTaskListId as TaskListId?,
@@ -95,6 +103,10 @@ final class TasksViewState {
         identical(listCommandFailureMessage, _notProvided)
         ? this.listCommandFailureMessage
         : listCommandFailureMessage as String?,
+    taskCommandFailureMessage:
+        identical(taskCommandFailureMessage, _notProvided)
+        ? this.taskCommandFailureMessage
+        : taskCommandFailureMessage as String?,
   );
 }
 
@@ -113,6 +125,7 @@ final class TasksViewModel extends ChangeNotifier {
          isRefreshing: false,
          isSyncControlPending: false,
          isListCommandPending: false,
+         isTaskCommandPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          health: SyncHealth(
@@ -139,6 +152,7 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void>? _refreshInFlight;
   Future<void>? _syncControlInFlight;
   Future<void>? _listCommandInFlight;
+  Future<void>? _taskCommandInFlight;
 
   TasksViewState get state => _state;
 
@@ -221,6 +235,94 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       ),
     );
+  }
+
+  Future<void> createTask({
+    required TaskListId taskListId,
+    required String title,
+    TaskId? parentTaskId,
+    String? notes,
+    TaskDate? due,
+  }) => _performTaskCommand(
+    () => tasksRepository.createTask(
+      CreateTaskCommand(
+        accountId: accountId,
+        taskListId: taskListId,
+        parentTaskId: parentTaskId,
+        title: title,
+        notes: notes,
+        due: due,
+      ),
+    ),
+  );
+
+  Future<void> updateTaskContent({
+    required TaskId taskId,
+    required String title,
+    required String? notes,
+    required TaskStatus status,
+    required TaskDate? due,
+  }) => _performTaskCommand(
+    () => tasksRepository.apply(
+      UpdateTaskContentCommand(
+        accountId: accountId,
+        taskId: taskId,
+        title: title,
+        notes: notes,
+        status: status,
+        due: due,
+      ),
+    ),
+  );
+
+  Future<void> setTaskCompletion(TaskId taskId, TaskStatus status) =>
+      _performTaskCommand(
+        () => tasksRepository.apply(
+          SetTaskCompletionCommand(
+            accountId: accountId,
+            taskId: taskId,
+            status: status,
+          ),
+        ),
+      );
+
+  Future<void> _performTaskCommand<T>(Future<Outcome<T>> Function() action) {
+    final existing = _taskCommandInFlight;
+    if (existing != null) return existing;
+    final operation = _runTaskCommand(action);
+    _taskCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runTaskCommand<T>(Future<Outcome<T>> Function() action) async {
+    _replaceState(
+      _state.copyWith(
+        isTaskCommandPending: true,
+        taskCommandFailureMessage: null,
+      ),
+    );
+    try {
+      final result = await action();
+      switch (result) {
+        case Success<T>():
+          await localEditCommitted?.call();
+        case Failed<T>(:final failure):
+          _replaceState(
+            _state.copyWith(
+              taskCommandFailureMessage: switch (failure.code) {
+                'task.title_too_long' =>
+                  'Task titles can contain at most 1024 characters.',
+                'task.notes_too_long' =>
+                  'Task notes can contain at most 8192 characters.',
+                _ => 'The task could not be saved safely.',
+              },
+            ),
+          );
+      }
+    } finally {
+      _taskCommandInFlight = null;
+      _replaceState(_state.copyWith(isTaskCommandPending: false));
+    }
   }
 
   Future<void> _performListCommand<T>(Future<Outcome<T>> Function() action) {

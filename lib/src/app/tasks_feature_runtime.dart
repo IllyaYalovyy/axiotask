@@ -1,3 +1,5 @@
+import '../core/failure.dart';
+import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
 import '../data/connectivity/connectivity.dart';
 import '../data/database/app_database.dart';
@@ -8,6 +10,7 @@ import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
 import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
+import '../domain/commands/task_commands.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/tasks/tasks_view_model.dart';
@@ -98,7 +101,10 @@ final class TasksFeatureRuntime {
     return TasksFeatureRuntime._(
       viewModel: TasksViewModel(
         accountId: accountId,
-        tasksRepository: DatabaseTasksRepository(database),
+        tasksRepository: DatabaseTasksRepository(
+          database,
+          clock: composition.clock,
+        ),
         taskListsRepository: DatabaseTaskListsRepository(
           database: database,
           clock: composition.clock,
@@ -137,7 +143,24 @@ final class _EmptyTasksRepository implements TasksRepository {
       completeness: CacheCompleteness.unobserved,
     ),
   );
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      Future.value(const Outcome<TaskId>.failure(_noTaskAccountFailure));
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      Future.value(const Outcome<void>.failure(_noTaskAccountFailure));
 }
+
+const Failure _noTaskAccountFailure = Failure(
+  code: 'task.account_not_found',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task was not saved.',
+  safeSummary: 'No configured account partition is available.',
+);
 
 final class _NoAuthorizationHealthRepository implements SyncHealthRepository {
   const _NoAuthorizationHealthRepository(this._now);

@@ -157,7 +157,7 @@ final class CachedTask {
   final AccountId accountId;
   final TaskListId taskListId;
   final TaskId? parentTaskId;
-  final TaskRemoteId remoteId;
+  final TaskRemoteId? remoteId;
   final String title;
   final String? notes;
   final TaskStatus status;

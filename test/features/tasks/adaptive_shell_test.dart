@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
 import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
@@ -238,6 +239,104 @@ void main() {
     expect(lists.renamed.single.taskListId, const TaskListId(7));
     expect(lists.renamed.single.title, 'Stopped rename');
   });
+
+  testWidgets(
+    'task create waits for durable success and blocks duplicate taps',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final durable = Completer<Outcome<TaskId>>();
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      fixture.tasks.createResult = durable.future;
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Create task'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '離線 🌍');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pump();
+      final submit = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(FilledButton),
+      );
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+      await tester.tap(submit, warnIfMissed: false);
+      expect(fixture.tasks.created, hasLength(1));
+      expect(fixture.tasks.created.single.taskListId, const TaskListId(7));
+
+      durable.complete(const Outcome<TaskId>.success(TaskId(91)));
+      await tester.pumpAndSettle();
+      expect(find.text('Create task'), findsNothing);
+    },
+  );
+
+  testWidgets('task content editor keeps text inert until one valid save', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+    await tester.tap(find.text('Cached parent'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Edit task content'));
+    await tester.pumpAndSettle();
+
+    final titleField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Task title',
+    );
+    final notesField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Notes',
+    );
+    final dueField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Due date (YYYY-MM-DD)',
+    );
+    await tester.enterText(titleField, 'Edited title');
+    await tester.enterText(notesField, '空 🌍\nsecond line');
+    await tester.enterText(dueField, '2026-02-30');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(fixture.tasks.applied, isEmpty, reason: 'editor text is transient');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pump();
+    expect(find.text('Use a valid YYYY-MM-DD date.'), findsOneWidget);
+    expect(fixture.tasks.applied, isEmpty);
+
+    await tester.enterText(dueField, '2026-08-20');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    final command = fixture.tasks.applied.single as UpdateTaskContentCommand;
+    expect(command.taskId, const TaskId(11));
+    expect(command.title, 'Edited title');
+    expect(command.notes, '空 🌍\nsecond line');
+    expect(command.due, TaskDate(2026, 8, 20));
+  });
+
+  testWidgets('completion control sends one status command', (tester) async {
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Complete task'));
+    await tester.pump();
+
+    final command = fixture.tasks.applied.single as SetTaskCompletionCommand;
+    expect(command.taskId, const TaskId(11));
+    expect(command.status, TaskStatus.completed);
+  });
 }
 
 final class _ShellFixture {
@@ -296,6 +395,26 @@ final class _TaskListsRepository implements TaskListsRepository {
 
 final class _TasksRepository implements TasksRepository {
   late CachedTasksSnapshot snapshot;
+  Future<Outcome<TaskId>> createResult = Future.value(
+    const Outcome<TaskId>.success(TaskId(90)),
+  );
+  Future<Outcome<void>> applyResult = Future.value(
+    const Outcome<void>.success(null),
+  );
+  final List<CreateTaskCommand> created = <CreateTaskCommand>[];
+  final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
+    created.add(command);
+    return createResult;
+  }
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) {
+    applied.add(command);
+    return applyResult;
+  }
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>

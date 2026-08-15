@@ -57,6 +57,13 @@ temporary database and synthetic account, and the screenshot runner uses the
 existing isolated screenshot composition; neither can discover normal
 credentials, storage, or Google Tasks data.
 
+S14B also adds no dependency. Task create and whole-content title, notes,
+date-only due, and completion edits use the same transaction boundary, stable
+local identity, dependency rows, and unresolved health facts. Focused Linux
+integration closes and reopens a temporary database immediately after an edit;
+the synthetic screenshot composition covers provisional and stopped-sync task
+states without loading Google or normal application storage.
+
 S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
 3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;
 runtime access requires an active Secret Service, normally `gnome-keyring` in a

@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 
 import 'src/app/adaptive_shell.dart';
 import 'src/core/outcome.dart';
+import 'src/domain/commands/task_commands.dart';
 import 'src/domain/commands/task_list_commands.dart';
 import 'src/domain/model/tasks.dart';
 import 'src/domain/repository/task_lists_repository.dart';
@@ -117,6 +118,14 @@ final class _ScreenshotTasksRepository implements TasksRepository {
   const _ScreenshotTasksRepository(this.snapshot);
 
   final CachedTasksSnapshot snapshot;
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      Future.value(const Outcome<TaskId>.success(TaskId(900)));
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      Future.value(const Outcome<void>.success(null));
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
@@ -260,6 +269,73 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
           notes: 'No personal data is used in this screenshot.',
           status: TaskStatus.needsAction,
           due: null,
+        ),
+      ],
+      completeness: CacheCompleteness.complete,
+    ),
+    health: _health(
+      SyncHealthOutcome.inactive,
+      inactiveReason: SyncInactiveReason.syncStopped,
+      action: SyncHealthAction.resume,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'task-create-pending',
+    snapshot: CachedTasksSnapshot(
+      accountId: const AccountId(1),
+      taskLists: const <CachedTaskList>[
+        CachedTaskList(
+          id: TaskListId(7),
+          accountId: AccountId(1),
+          remoteId: TaskListRemoteId('synthetic-list'),
+          title: 'Synthetic inbox',
+        ),
+      ],
+      tasks: const <CachedTask>[
+        CachedTask(
+          id: TaskId(11),
+          accountId: AccountId(1),
+          taskListId: TaskListId(7),
+          parentTaskId: null,
+          remoteId: null,
+          title: 'Created while offline 🌍',
+          notes: null,
+          status: TaskStatus.needsAction,
+          due: null,
+        ),
+      ],
+      completeness: CacheCompleteness.complete,
+    ),
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'task-content-sync-stopped',
+    snapshot: CachedTasksSnapshot(
+      accountId: const AccountId(1),
+      taskLists: const <CachedTaskList>[
+        CachedTaskList(
+          id: TaskListId(7),
+          accountId: AccountId(1),
+          remoteId: TaskListRemoteId('synthetic-list'),
+          title: 'Synthetic inbox',
+        ),
+      ],
+      tasks: <CachedTask>[
+        CachedTask(
+          id: const TaskId(11),
+          accountId: const AccountId(1),
+          taskListId: const TaskListId(7),
+          parentTaskId: null,
+          remoteId: const TaskRemoteId('synthetic-task'),
+          title: 'Edited durably',
+          notes: 'Unicode notes: 離線 🌍\nSecond line remains plain text.',
+          status: TaskStatus.completed,
+          due: TaskDate(2026, 8, 20),
         ),
       ],
       completeness: CacheCompleteness.complete,

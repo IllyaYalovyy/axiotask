@@ -67,6 +67,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     content: Text(message),
                     actions: const <Widget>[SizedBox.shrink()],
                   ),
+                if (state.taskCommandFailureMessage case final message?)
+                  MaterialBanner(
+                    content: Text(message),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) => _ShellBody(
@@ -282,6 +287,19 @@ final class _TaskCollection extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Create task',
+                    onPressed:
+                        state.isTaskCommandPending ||
+                            state.selectedTaskList == null
+                        ? null
+                        : () => _showCreateTaskDialog(
+                            context,
+                            viewModel,
+                            state.selectedTaskList!.id,
+                          ),
+                    icon: const Icon(Icons.add_task),
+                  ),
+                  IconButton(
                     tooltip: 'Create Google task list',
                     onPressed:
                         state.isListCommandPending ||
@@ -336,10 +354,25 @@ final class _TaskCollection extends StatelessWidget {
                         horizontal: 24,
                         vertical: 6,
                       ),
-                      leading: Icon(
-                        task.status == TaskStatus.completed
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
+                      leading: IconButton(
+                        tooltip: task.status == TaskStatus.completed
+                            ? 'Reopen task'
+                            : 'Complete task',
+                        onPressed: state.isTaskCommandPending
+                            ? null
+                            : () => unawaited(
+                                viewModel.setTaskCompletion(
+                                  task.id,
+                                  task.status == TaskStatus.completed
+                                      ? TaskStatus.needsAction
+                                      : TaskStatus.completed,
+                                ),
+                              ),
+                        icon: Icon(
+                          task.status == TaskStatus.completed
+                              ? Icons.check_circle
+                              : Icons.radio_button_unchecked,
+                        ),
                       ),
                       title: Text(task.title),
                       subtitle: Text(
@@ -387,6 +420,16 @@ Future<void> _showRenameTaskListDialog(
     initialTitle: taskList.title,
     submit: (title) => viewModel.renameTaskList(taskList.id, title),
   ),
+);
+
+Future<void> _showCreateTaskDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  TaskListId taskListId,
+) => showDialog<void>(
+  context: context,
+  builder: (_) =>
+      _CreateTaskDialog(viewModel: viewModel, taskListId: taskListId),
 );
 
 final class _TaskListEditDialog extends StatefulWidget {
@@ -508,6 +551,13 @@ final class _TaskDetails extends StatelessWidget {
               ),
             ),
             IconButton(
+              tooltip: 'Edit task content',
+              onPressed: state.isTaskCommandPending
+                  ? null
+                  : () => _showTaskContentDialog(context, viewModel, task),
+              icon: const Icon(Icons.edit_outlined),
+            ),
+            IconButton(
               tooltip: 'Close details',
               onPressed: viewModel.clearTaskSelection,
               icon: const Icon(Icons.close),
@@ -539,6 +589,213 @@ final class _TaskDetails extends StatelessWidget {
         ],
       ],
     );
+  }
+}
+
+Future<void> _showTaskContentDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  CachedTask task,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _TaskContentDialog(viewModel: viewModel, task: task),
+);
+
+final class _CreateTaskDialog extends StatefulWidget {
+  const _CreateTaskDialog({required this.viewModel, required this.taskListId});
+
+  final TasksViewModel viewModel;
+  final TaskListId taskListId;
+
+  @override
+  State<_CreateTaskDialog> createState() => _CreateTaskDialogState();
+}
+
+final class _CreateTaskDialogState extends State<_CreateTaskDialog> {
+  final TextEditingController _title = TextEditingController();
+
+  @override
+  void dispose() {
+    _title.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    await widget.viewModel.createTask(
+      taskListId: widget.taskListId,
+      title: _title.text,
+    );
+    if (mounted && widget.viewModel.state.taskCommandFailureMessage == null) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.viewModel,
+    builder: (context, _) => AlertDialog(
+      title: const Text('Create task'),
+      content: TextField(
+        controller: _title,
+        autofocus: true,
+        maxLength: 1024,
+        decoration: const InputDecoration(labelText: 'Task title'),
+        onSubmitted: widget.viewModel.state.isTaskCommandPending
+            ? null
+            : (_) => _submit(),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: widget.viewModel.state.isTaskCommandPending
+              ? null
+              : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: widget.viewModel.state.isTaskCommandPending
+              ? null
+              : _submit,
+          child: widget.viewModel.state.isTaskCommandPending
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Create'),
+        ),
+      ],
+    ),
+  );
+}
+
+final class _TaskContentDialog extends StatefulWidget {
+  const _TaskContentDialog({required this.viewModel, required this.task});
+
+  final TasksViewModel viewModel;
+  final CachedTask task;
+
+  @override
+  State<_TaskContentDialog> createState() => _TaskContentDialogState();
+}
+
+final class _TaskContentDialogState extends State<_TaskContentDialog> {
+  late final TextEditingController _title = TextEditingController(
+    text: widget.task.title,
+  );
+  late final TextEditingController _notes = TextEditingController(
+    text: widget.task.notes ?? '',
+  );
+  late final TextEditingController _due = TextEditingController(
+    text: widget.task.due?.toString() ?? '',
+  );
+  late bool _clearNotes = widget.task.notes == null;
+  String? _dateError;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _notes.dispose();
+    _due.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final due = _parseTaskDate(_due.text);
+    if (_due.text.trim().isNotEmpty && due == null) {
+      setState(() => _dateError = 'Use a valid YYYY-MM-DD date.');
+      return;
+    }
+    setState(() => _dateError = null);
+    await widget.viewModel.updateTaskContent(
+      taskId: widget.task.id,
+      title: _title.text,
+      notes: _clearNotes ? null : _notes.text,
+      status: widget.task.status,
+      due: due,
+    );
+    if (mounted && widget.viewModel.state.taskCommandFailureMessage == null) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.viewModel,
+    builder: (context, _) => AlertDialog(
+      title: const Text('Edit task content'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              TextField(
+                controller: _title,
+                maxLength: 1024,
+                decoration: const InputDecoration(labelText: 'Task title'),
+              ),
+              TextField(
+                controller: _notes,
+                enabled: !_clearNotes,
+                maxLength: 8192,
+                maxLines: 5,
+                decoration: const InputDecoration(labelText: 'Notes'),
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Clear notes'),
+                value: _clearNotes,
+                onChanged: widget.viewModel.state.isTaskCommandPending
+                    ? null
+                    : (value) => setState(() => _clearNotes = value ?? false),
+              ),
+              TextField(
+                controller: _due,
+                decoration: InputDecoration(
+                  labelText: 'Due date (YYYY-MM-DD)',
+                  errorText: _dateError,
+                  helperText: 'Leave blank to clear the due date.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: widget.viewModel.state.isTaskCommandPending
+              ? null
+              : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: widget.viewModel.state.isTaskCommandPending
+              ? null
+              : _submit,
+          child: widget.viewModel.state.isTaskCommandPending
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
+        ),
+      ],
+    ),
+  );
+}
+
+TaskDate? _parseTaskDate(String input) {
+  final value = input.trim();
+  if (value.isEmpty) return null;
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value);
+  if (match == null) return null;
+  try {
+    return TaskDate(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+      int.parse(match.group(3)!),
+    );
+  } on ArgumentError {
+    return null;
   }
 }
 

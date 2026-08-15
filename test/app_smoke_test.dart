@@ -1,4 +1,6 @@
 import 'package:axiotask/main.dart';
+import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
@@ -30,6 +32,14 @@ void main() {
 
 final class _EmptyTasksRepository implements TasksRepository {
   const _EmptyTasksRepository();
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      Future.value(const Outcome<TaskId>.success(TaskId(2)));
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      Future.value(const Outcome<void>.success(null));
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => Stream.value(

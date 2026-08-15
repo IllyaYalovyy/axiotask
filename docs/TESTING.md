@@ -196,6 +196,16 @@ notification before persistence succeeds. The Linux integration reopens an
 isolated temporary database while synchronization is stopped and edits the
 same durable provisional list after restart without Google access.
 
+S14B applies the same boundary suite to task create and whole-content edits.
+Repository tests cover rollback, coalescing, read-base advancement without
+projection loss, task attempt lifecycle/acknowledgement/compaction, stable
+provisional identity, account and one-level hierarchy rejection, and exact
+empty/Unicode/multiline/date/completion values. ViewModel/widget tests cover
+durable progress, duplicate taps, inert editor text, invalid dates, one-save
+content acknowledgement, and completion. The Linux integration reopens a
+temporary stopped-sync database and renders the acknowledged task without any
+Google or normal-storage access.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

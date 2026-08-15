@@ -233,12 +233,35 @@ final class DatabaseReadSyncStore implements ReadSyncStore {
               writes += 1;
             } else {
               localId = TaskId(existing.id);
-              if (!_sameLiveProjection(
-                existing,
-                taskList.localId,
-                parentId,
-                item,
-              )) {
+              final hasUnresolvedLocalContent =
+                  await (_database.select(_database.desiredStateRows)..where(
+                        (row) =>
+                            row.accountId.equals(accountId.value) &
+                            row.resourceType.equals('task') &
+                            row.targetTaskId.equals(existing.id) &
+                            row.desiredLifecycle.equals('present') &
+                            row.contentDirty.equals(true) &
+                            row.state.isIn(const <String>[
+                              'pending',
+                              'in_flight',
+                              'uncertain',
+                              'failed',
+                            ]),
+                      ))
+                      .getSingleOrNull() !=
+                  null;
+              final structureChanged =
+                  existing.taskListId != taskList.localId.value ||
+                  existing.parentTaskId != parentId?.value ||
+                  existing.position != item.position ||
+                  existing.projection != CacheProjection.supported.name;
+              final contentChanged =
+                  !hasUnresolvedLocalContent &&
+                  (existing.title != item.title ||
+                      existing.notes != item.notes ||
+                      existing.status != _statusValue(status) ||
+                      existing.dueEpochDay != _epochDay(due));
+              if (structureChanged || contentChanged) {
                 await (_database.update(_database.taskCacheRows)..where(
                       (row) =>
                           row.accountId.equals(accountId.value) &
@@ -248,10 +271,18 @@ final class DatabaseReadSyncStore implements ReadSyncStore {
                       TaskCacheRowsCompanion(
                         taskListId: Value<int>(taskList.localId.value),
                         parentTaskId: Value<int?>(parentId?.value),
-                        title: Value<String>(item.title),
-                        notes: Value<String?>(item.notes),
-                        status: Value<String>(_statusValue(status)),
-                        dueEpochDay: Value<int?>(_epochDay(due)),
+                        title: hasUnresolvedLocalContent
+                            ? const Value<String>.absent()
+                            : Value<String>(item.title),
+                        notes: hasUnresolvedLocalContent
+                            ? const Value<String?>.absent()
+                            : Value<String?>(item.notes),
+                        status: hasUnresolvedLocalContent
+                            ? const Value<String>.absent()
+                            : Value<String>(_statusValue(status)),
+                        dueEpochDay: hasUnresolvedLocalContent
+                            ? const Value<int?>.absent()
+                            : Value<int?>(_epochDay(due)),
                         position: Value<String>(item.position),
                         projection: Value<String>(
                           CacheProjection.supported.name,
@@ -552,18 +583,3 @@ List<TaskRemoteLinkRecord> _links(List<RemoteTaskLink> values) => values
       ),
     )
     .toList(growable: false);
-
-bool _sameLiveProjection(
-  TaskCacheRow existing,
-  TaskListId taskListId,
-  TaskId? parentId,
-  RemoteLiveTask item,
-) =>
-    existing.taskListId == taskListId.value &&
-    existing.parentTaskId == parentId?.value &&
-    existing.title == item.title &&
-    existing.notes == item.notes &&
-    existing.status == _statusValue(_taskStatus(item.status)) &&
-    existing.dueEpochDay == _epochDay(_taskDate(item.due)) &&
-    existing.position == item.position &&
-    existing.projection == CacheProjection.supported.name;

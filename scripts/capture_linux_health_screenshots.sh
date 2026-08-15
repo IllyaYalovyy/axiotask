@@ -13,6 +13,8 @@ scenarios=(
   health-sync-stopped
   list-create-pending
   list-rename-sync-stopped
+  task-create-pending
+  task-content-sync-stopped
 )
 
 for scenario in "${scenarios[@]}"; do

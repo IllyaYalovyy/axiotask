@@ -20,8 +20,8 @@ replaced with an empty cache.
 | `scope_completeness` | Account list-enumeration or per-list task-enumeration page-chain state, including the opaque next-page token while incomplete. |
 | `account_preferences` | Relational account settings: sync-enabled control, optional account-owned default list reference, and the next account-scoped causal sequence for durable desired state. |
 | `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
-| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content only; the task fields support their later owning slice. |
-| `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. List edits currently need no edge. |
+| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content. |
+| `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. Provisional task creates record their list and optional parent references; list edits need no edge. |
 | `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure evidence for retry and uncertainty recovery. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
@@ -40,8 +40,8 @@ application adapter and device-only preferences remain the S22A slice.
   separate external values, unique by account and resource type. Binding a
   Google ID does not replace the local ID.
 - Google IDs are nullable because a durable create needs a provisional local
-  identity. A supported list without a Google ID enters a repository snapshot
-  only while the same account/local key has unresolved present-list desired
+  identity. A supported list or task without a Google ID enters a repository
+  snapshot only while the same account/local key has unresolved present desired
   state. An orphan provisional row stays hidden and cannot behave as a
   local-only resource.
 - A task parent must be in the same account and list. Cache writes reject a
@@ -54,9 +54,9 @@ application adapter and device-only preferences remain the S22A slice.
 - Live task bases require title, status, and position; tombstone bases may
   retain only fields Google supplied. Date-only due values are integer UTC
   epoch days, and task-link JSON and absolute URIs are strictly decoded.
-- Unsupported/deleted/provisional projection rows are preserved but excluded
-  from ordinary snapshots. A read never flattens, repairs, deletes, or exposes
-  them as supported tasks.
+- Unsupported, deleted, and orphan provisional projection rows are preserved
+  but excluded from ordinary snapshots. A read never flattens, repairs, deletes,
+  or exposes unsupported data as supported tasks.
 - Page-chain completeness is account-scoped and keyed uniquely even for the
   account-wide list scope. It becomes complete only when its next-page token is
   absent. Aggregate cache completeness requires the list scope and every
@@ -78,6 +78,14 @@ application adapter and device-only preferences remain the S22A slice.
   local identity while incrementing the desired generation and replacing only
   the requested title. Remote read publication may advance the confirmed base,
   but cannot overwrite a pending projected title.
+- Task create/title/notes/due/completion commands commit projection, complete
+  desired content, causal generation, dependency rows, and unresolved counts in
+  one transaction. Empty, cleared, Unicode, multiline, and date-only values are
+  preserved; repeated edits retain the original confirmed base and local key.
+- A supported provisional task is projected only while an unresolved present
+  task intent exists. Its non-Google `local-pending` position is local ordering
+  scaffolding until a later create acknowledgement stores Google's canonical
+  position; it is never interpreted or sent as a Google position.
 - Claiming an outbound generation records its immutable request snapshot before
   network work. Legal lifecycle transitions are explicit, and completing an
   older attempt cannot clear a newer coalesced generation. Atomic create

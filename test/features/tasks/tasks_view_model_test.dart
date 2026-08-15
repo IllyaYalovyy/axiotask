@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
@@ -190,10 +191,98 @@ void main() {
       expect(notifications, 0);
     },
   );
+
+  test(
+    'task create waits for durable success and suppresses duplicate taps',
+    () async {
+      final tasks = _TasksRepository();
+      final durable = Completer<Outcome<TaskId>>();
+      tasks.createResult = durable.future;
+      var notifications = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: () async {
+          notifications += 1;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      final first = viewModel.createTask(
+        taskListId: const TaskListId(7),
+        title: 'Offline task',
+      );
+      final duplicate = viewModel.createTask(
+        taskListId: const TaskListId(7),
+        title: 'Duplicate tap',
+      );
+      expect(viewModel.state.isTaskCommandPending, isTrue);
+      expect(tasks.createCalls, 1);
+      expect(notifications, 0);
+      durable.complete(const Outcome<TaskId>.success(TaskId(21)));
+      await Future.wait(<Future<void>>[first, duplicate]);
+
+      expect(viewModel.state.isTaskCommandPending, isFalse);
+      expect(viewModel.state.taskCommandFailureMessage, isNull);
+      expect(tasks.created.single.title, 'Offline task');
+      expect(notifications, 1);
+    },
+  );
+
+  test(
+    'task persistence failure is visible and never schedules sync',
+    () async {
+      final tasks = _TasksRepository()
+        ..applyResult = Future.value(
+          const Outcome<void>.failure(_taskPersistenceFailure),
+        );
+      var notifications = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: () async {
+          notifications += 1;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.setTaskCompletion(const TaskId(11), TaskStatus.completed);
+
+      expect(
+        viewModel.state.taskCommandFailureMessage,
+        'The task could not be saved safely.',
+      );
+      expect(notifications, 0);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {
   final controller = StreamController<CachedTasksSnapshot>.broadcast();
+  Future<Outcome<TaskId>> createResult = Future.value(
+    const Outcome<TaskId>.success(TaskId(99)),
+  );
+  Future<Outcome<void>> applyResult = Future.value(
+    const Outcome<void>.success(null),
+  );
+  final List<CreateTaskCommand> created = <CreateTaskCommand>[];
+  final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
+  var createCalls = 0;
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
+    createCalls += 1;
+    created.add(command);
+    return createResult;
+  }
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) {
+    applied.add(command);
+    return applyResult;
+  }
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => controller.stream;
@@ -238,6 +327,15 @@ const _listPersistenceFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'The task list was not saved.',
   safeSummary: 'The list transaction failed.',
+);
+
+const _taskPersistenceFailure = Failure(
+  code: 'task.persistence_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The task was not saved.',
+  safeSummary: 'The task transaction failed.',
 );
 
 final _snapshot = CachedTasksSnapshot(

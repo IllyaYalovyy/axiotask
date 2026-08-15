@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
+import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
@@ -121,6 +123,14 @@ Future<void> _loadFlutterRoboto() async {
 
 final class _GoldenTasksRepository implements TasksRepository {
   const _GoldenTasksRepository();
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      Future.value(const Outcome<TaskId>.success(TaskId(900)));
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      Future.value(const Outcome<void>.success(null));
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => Stream.value(
