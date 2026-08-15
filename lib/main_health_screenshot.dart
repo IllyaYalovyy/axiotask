@@ -41,8 +41,10 @@ final class _HealthScreenshotSequenceState
       final output = Directory('screenshots/actual');
       await output.create(recursive: true);
       for (var index = 0; index < _scenarios.length; index += 1) {
+        WidgetsBinding.instance.scheduleFrame();
         await WidgetsBinding.instance.endOfFrame;
         _viewModel.selectTask(const TaskId(11));
+        WidgetsBinding.instance.scheduleFrame();
         await WidgetsBinding.instance.endOfFrame;
         final boundary =
             _boundaryKey.currentContext!.findRenderObject()!
@@ -61,6 +63,7 @@ final class _HealthScreenshotSequenceState
             _index = index + 1;
             _viewModel = _createViewModel(_scenarios[_index].health);
           });
+          WidgetsBinding.instance.scheduleFrame();
           await WidgetsBinding.instance.endOfFrame;
           previous.dispose();
         }
@@ -82,7 +85,11 @@ final class _HealthScreenshotSequenceState
           colorSchemeSeed: const Color(0xff315da8),
           useMaterial3: true,
         ),
-        home: AdaptiveShell(viewModel: _viewModel, onHealthAction: (_) {}),
+        home: AdaptiveShell(
+          key: ValueKey<String>(_scenarios[_index].name),
+          viewModel: _viewModel,
+          onHealthAction: (_) {},
+        ),
       ),
     );
   }

@@ -135,6 +135,27 @@ never installs a retry interceptor. The isolated live harness reuses the S05
 Linux authorization boundary with a separate secure-storage namespace,
 pinned-subject guard, disposable Google list prefix, and verified cleanup.
 
+## Admitted for S13B Linux lifecycle and connectivity
+
+S13B locks `connectivity_plus` 7.3.1. It is published by the Flutter Community
+under BSD-3-Clause, supports the locked Flutter/Dart ranges and Linux, and fixes
+a Linux client-lifetime leak present before 7.3.1. Its Linux implementation uses
+the maintained Dart `nm`/`dbus` packages to observe NetworkManager; it does not
+read task data, credentials, application storage, interface names, or network
+identifiers into Axiotask diagnostics.
+
+The plugin is confined behind `ConnectivityPort`. No-interface is a
+`provenNoRoute` scheduling fact; the first later interface is only
+`mayHaveReturned`. Any available interface at startup remains `unknown`, because
+the package explicitly does not prove internet or Google reachability. The
+strict fake and Linux adapter tests cover distinct transitions and repeat
+coalescing, and the native Linux application integration verifies that focus
+and minimization do not control correctness. Android receives no lifecycle or
+background behavior in this slice; its production policy remains gated on
+S27B. Removing the plugin requires another supported platform adapter that
+passes the same hint-only contract; synchronization remains correct when the
+hint is unknown.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

@@ -1,9 +1,11 @@
 import '../data/auth/authorization.dart';
+import '../data/connectivity/connectivity.dart';
 import '../data/database/app_database.dart';
 import '../data/database/production_database.dart';
 import '../data/database/read_sync_store.dart';
 import '../data/database/sync_health_dao.dart';
 import '../data/database/sync_health_repository.dart';
+import '../data/database/sync_settings_repository.dart';
 import '../data/database/tasks_repository.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/tasks_repository.dart';
@@ -33,6 +35,7 @@ final class TasksFeatureRuntime {
     AppComposition composition, {
     AppDatabase? injectedDatabase,
     LifecyclePort? lifecycle,
+    ConnectivityPort? connectivity,
   }) async {
     final database =
         injectedDatabase ??
@@ -66,7 +69,9 @@ final class TasksFeatureRuntime {
       authorization: transport.authorization,
       clock: composition.clock,
       scheduler: composition.scheduler,
+      settings: DatabaseSyncSettingsRepository(database),
       lifecycle: lifecycle,
+      connectivity: connectivity,
       run: (request) =>
           SyncEngine(
             store: DatabaseReadSyncStore(database),
@@ -95,6 +100,8 @@ final class TasksFeatureRuntime {
         tasksRepository: DatabaseTasksRepository(database),
         syncHealthRepository: healthRepository,
         refreshRequested: coordinator.refresh,
+        stopSyncRequested: coordinator.stop,
+        resumeSyncRequested: coordinator.resume,
       ),
       database: database,
       coordinator: coordinator,

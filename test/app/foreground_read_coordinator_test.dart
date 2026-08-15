@@ -8,6 +8,7 @@ import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/read_sync_store.dart';
 import 'package:axiotask/src/data/database/sync_health_dao.dart';
 import 'package:axiotask/src/data/database/sync_health_repository.dart';
+import 'package:axiotask/src/data/database/sync_settings_repository.dart';
 import 'package:axiotask/src/data/google_tasks/dto.dart';
 import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
@@ -39,6 +40,7 @@ void main() {
       addTearDown(harness.close);
 
       final run = harness.coordinator.start();
+      await pumpEventQueue();
 
       expect(
         harness.coordinator.currentFacts.authorization,
@@ -169,6 +171,32 @@ void main() {
   );
 
   test(
+    'RUN-009 Stop aborts an active read and persists Inactive without cache loss',
+    () async {
+      final remote = _ScriptedReadService(blockFirstList: true);
+      final harness = await _Harness.create(
+        authorization: const SyntheticAuthorization(subject),
+        now: now,
+        remote: remote,
+      );
+      addTearDown(harness.close);
+
+      unawaited(harness.coordinator.start());
+      await remote.firstListRequested;
+      final stop = harness.coordinator.stop();
+      await remote.cancellationObserved;
+      await stop;
+
+      final facts = await SyncHealthDao(
+        harness.database,
+      ).watchFacts(harness.accountId).first;
+      expect(facts.syncEnabled, isFalse);
+      expect((await harness.health()).outcome, SyncHealthOutcome.inactive);
+      expect(remote.listCalls, 1);
+    },
+  );
+
+  test(
     'malformed remote data becomes application Failed and never Good',
     () async {
       final harness = await _Harness.create(
@@ -258,6 +286,7 @@ final class _Harness {
       authorization: authorization,
       clock: clock,
       scheduler: clock,
+      settings: DatabaseSyncSettingsRepository(database),
       lifecycle: lifecycle,
       run: (request) =>
           SyncEngine(
@@ -361,9 +390,12 @@ final class _ScriptedReadService implements GoogleTasksService {
   final bool malformedTask;
   final Completer<void> _firstListRequested = Completer<void>();
   final Completer<void> _releaseList = Completer<void>();
+  final Completer<void> _cancellationObserved = Completer<void>();
   var listCalls = 0;
 
   Future<void> get firstListRequested => _firstListRequested.future;
+
+  Future<void> get cancellationObserved => _cancellationObserved.future;
 
   void releaseFirstList() {
     if (!_releaseList.isCompleted) _releaseList.complete();
@@ -377,7 +409,28 @@ final class _ScriptedReadService implements GoogleTasksService {
     listCalls += 1;
     if (listCalls == 1 && blockFirstList) {
       _firstListRequested.complete();
-      await _releaseList.future;
+      final completedNormally = await Future.any(<Future<bool>>[
+        _releaseList.future.then((_) => true),
+        if (cancellation != null)
+          cancellation.whenCancelled.then((_) {
+            if (!_cancellationObserved.isCompleted) {
+              _cancellationObserved.complete();
+            }
+            return false;
+          }),
+      ]);
+      if (!completedNormally) {
+        return const Outcome.failure(
+          Failure(
+            code: 'google_tasks.read_cancelled',
+            category: FailureCategory.network,
+            operation: FailureOperation.read,
+            retry: RetryClassification.unknown,
+            impact: 'The synthetic read was cancelled safely.',
+            safeSummary: 'The synthetic read was cancelled.',
+          ),
+        );
+      }
     }
     return Outcome.success(
       RemotePage<RemoteTaskList>(

@@ -87,6 +87,41 @@ void main() {
       expect(calls, 1);
     },
   );
+
+  test(
+    'Stop and Resume delegate once and expose deterministic progress',
+    () async {
+      final tasks = _TasksRepository();
+      final health = _HealthRepository();
+      final stop = Completer<void>();
+      var stopCalls = 0;
+      var resumeCalls = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: health,
+        stopSyncRequested: () {
+          stopCalls += 1;
+          return stop.future;
+        },
+        resumeSyncRequested: () async {
+          resumeCalls += 1;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      final first = viewModel.stopSync();
+      final duplicate = viewModel.stopSync();
+      expect(viewModel.state.isSyncControlPending, isTrue);
+      expect(stopCalls, 1);
+      stop.complete();
+      await Future.wait(<Future<void>>[first, duplicate]);
+      expect(viewModel.state.isSyncControlPending, isFalse);
+
+      await viewModel.handleSyncHealthAction(SyncHealthAction.resume);
+      expect(resumeCalls, 1);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {

@@ -14,9 +14,11 @@ final class TasksViewState {
     required this.taskLists,
     required this.tasks,
     required this.health,
+    this.isSyncControlPending = false,
     this.selectedTaskListId,
     this.selectedTaskId,
     this.failureMessage,
+    this.syncControlFailureMessage,
   });
 
   final bool isLoading;
@@ -24,9 +26,11 @@ final class TasksViewState {
   final List<CachedTaskList> taskLists;
   final List<CachedTask> tasks;
   final SyncHealth health;
+  final bool isSyncControlPending;
   final TaskListId? selectedTaskListId;
   final TaskId? selectedTaskId;
   final String? failureMessage;
+  final String? syncControlFailureMessage;
 
   CachedTaskList? get selectedTaskList =>
       _firstWhereOrNull(taskLists, (value) => value.id == selectedTaskListId);
@@ -52,15 +56,18 @@ final class TasksViewState {
     List<CachedTaskList>? taskLists,
     List<CachedTask>? tasks,
     SyncHealth? health,
+    bool? isSyncControlPending,
     Object? selectedTaskListId = _notProvided,
     Object? selectedTaskId = _notProvided,
     Object? failureMessage = _notProvided,
+    Object? syncControlFailureMessage = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
     taskLists: taskLists ?? this.taskLists,
     tasks: tasks ?? this.tasks,
     health: health ?? this.health,
+    isSyncControlPending: isSyncControlPending ?? this.isSyncControlPending,
     selectedTaskListId: identical(selectedTaskListId, _notProvided)
         ? this.selectedTaskListId
         : selectedTaskListId as TaskListId?,
@@ -70,6 +77,10 @@ final class TasksViewState {
     failureMessage: identical(failureMessage, _notProvided)
         ? this.failureMessage
         : failureMessage as String?,
+    syncControlFailureMessage:
+        identical(syncControlFailureMessage, _notProvided)
+        ? this.syncControlFailureMessage
+        : syncControlFailureMessage as String?,
   );
 }
 
@@ -79,9 +90,12 @@ final class TasksViewModel extends ChangeNotifier {
     required this.tasksRepository,
     required this.syncHealthRepository,
     this.refreshRequested,
+    this.stopSyncRequested,
+    this.resumeSyncRequested,
   }) : _state = TasksViewState(
          isLoading: true,
          isRefreshing: false,
+         isSyncControlPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          health: SyncHealth(
@@ -97,11 +111,14 @@ final class TasksViewModel extends ChangeNotifier {
   final TasksRepository tasksRepository;
   final SyncHealthRepository syncHealthRepository;
   final Future<void> Function()? refreshRequested;
+  final Future<void> Function()? stopSyncRequested;
+  final Future<void> Function()? resumeSyncRequested;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
   bool _started = false;
   Future<void>? _refreshInFlight;
+  Future<void>? _syncControlInFlight;
 
   TasksViewState get state => _state;
 
@@ -155,6 +172,50 @@ final class TasksViewModel extends ChangeNotifier {
     } finally {
       _refreshInFlight = null;
       _replaceState(_state.copyWith(isRefreshing: false));
+    }
+  }
+
+  Future<void> stopSync() => _performSyncControl(stopSyncRequested);
+
+  Future<void> resumeSync() => _performSyncControl(resumeSyncRequested);
+
+  Future<void> handleSyncHealthAction(SyncHealthAction action) =>
+      switch (action) {
+        SyncHealthAction.resume => resumeSync(),
+        SyncHealthAction.retry => refresh(),
+        SyncHealthAction.none ||
+        SyncHealthAction.connect ||
+        SyncHealthAction.reauthorize => Future<void>.value(),
+      };
+
+  Future<void> _performSyncControl(Future<void> Function()? action) {
+    final existing = _syncControlInFlight;
+    if (existing != null) return existing;
+    if (action == null) return Future<void>.value();
+    final operation = _runSyncControl(action);
+    _syncControlInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runSyncControl(Future<void> Function() action) async {
+    _replaceState(
+      _state.copyWith(
+        isSyncControlPending: true,
+        syncControlFailureMessage: null,
+      ),
+    );
+    try {
+      await action();
+    } on Object {
+      _replaceState(
+        _state.copyWith(
+          syncControlFailureMessage:
+              'The synchronization setting could not be saved safely.',
+        ),
+      );
+    } finally {
+      _syncControlInFlight = null;
+      _replaceState(_state.copyWith(isSyncControlPending: false));
     }
   }
 

@@ -7,6 +7,7 @@ import '../../core/outcome.dart';
 import '../../data/auth/authorization.dart';
 import '../../data/connectivity/connectivity.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/repository/sync_settings_repository.dart';
 import '../health/sync_health.dart';
 import '../health/sync_health_repository.dart';
 import '../run.dart';
@@ -21,6 +22,7 @@ enum SyncTrigger {
   foregroundResume,
   connectivityRestored,
   refresh,
+  resumeSync,
   localEdit,
   cadence,
 }
@@ -31,17 +33,26 @@ extension SyncTriggerValue on SyncTrigger {
     SyncTrigger.foregroundResume => 'resume',
     SyncTrigger.connectivityRestored => 'connectivity_restored',
     SyncTrigger.refresh => 'refresh',
+    SyncTrigger.resumeSync => 'resume_sync',
     SyncTrigger.localEdit => 'local_edit',
     SyncTrigger.cadence => 'cadence',
   };
 }
 
 final class SyncCoordinatorRunControl
-    implements SyncRunControl, SyncRunInterruptionFailure {
+    implements
+        SyncRunControl,
+        SyncRunInterruptionFailure,
+        SyncRunCancellationSignal {
   var _cancellationRequested = false;
+  final Completer<void> _cancellation = Completer<void>();
   Failure? _interruptionFailure;
 
+  @override
   bool get isCancellationRequested => _cancellationRequested;
+
+  @override
+  Future<void> get whenCancellationRequested => _cancellation.future;
 
   @override
   Failure? get interruptionFailure => _interruptionFailure;
@@ -50,6 +61,7 @@ final class SyncCoordinatorRunControl
     if (_cancellationRequested) return false;
     _cancellationRequested = true;
     _interruptionFailure = failure;
+    _cancellation.complete();
     return true;
   }
 
@@ -86,6 +98,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     required this.authorization,
     required this.clock,
     required this.scheduler,
+    required this.settings,
     required this.run,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
@@ -101,11 +114,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _authorizationSubscription = authorization.states.listen(
       _acceptAuthorizationState,
     );
-    _lifecycleSubscription = lifecycle?.facts.listen((fact) {
-      if (fact is LifecycleForegrounded) {
-        unawaited(_requestImmediate(SyncTrigger.foregroundResume));
-      }
-    });
+    _lifecycleSubscription = lifecycle?.facts.listen(_acceptLifecycleFact);
     _connectivitySubscription = connectivity?.hints.listen(
       _acceptConnectivityHint,
     );
@@ -115,6 +124,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   final AuthorizationPort authorization;
   final Clock clock;
   final MonotonicScheduler scheduler;
+  final SyncSettingsRepository settings;
   final CoordinatedSyncRun run;
   final ConnectivityPort? _connectivity;
   final StreamController<SyncRuntimeFacts> _facts =
@@ -132,6 +142,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   SyncCoordinatorRunControl? _activeControl;
   var _activeGeneration = 0;
   var _activeTimedOut = false;
+  bool? _syncEnabled;
+  bool _stopRequested = false;
+  bool _shutdownRequested = false;
+  Future<void>? _settingsOperation;
   bool _started = false;
   bool _closed = false;
 
@@ -145,16 +159,40 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   /// debounce timers deliberately do not keep this future pending.
   Future<void> get whenIdle => _drain ?? Future<void>.value();
 
-  Future<void> start() {
+  Future<void> start() async {
     if (_started) return whenIdle;
     _started = true;
-    return _requestImmediate(SyncTrigger.startup);
+    try {
+      _syncEnabled = await settings.readSyncEnabled(accountId);
+    } on Object {
+      _emit(
+        _with(
+          activity: SyncActivity.idle,
+          verificationRequired: false,
+          detectedFailureReason: SyncFailureReason.applicationFailure,
+          diagnosticCode: 'sync.settings_read_failed',
+        ),
+      );
+      rethrow;
+    }
+    if (_syncEnabled != true) {
+      _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+      return;
+    }
+    await _requestImmediate(SyncTrigger.startup);
   }
 
   Future<void> refresh() => _requestImmediate(SyncTrigger.refresh);
 
+  Future<void> stop() => _changeSyncEnabled(false);
+
+  Future<void> resume() => _changeSyncEnabled(true);
+
   Future<void> localEditCommitted() {
     _requireOpen();
+    if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+      return whenIdle;
+    }
     if (_activeControl != null) {
       _followUpTriggers.add(SyncTrigger.localEdit);
       _emit(
@@ -184,6 +222,9 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   Future<void> _requestImmediate(SyncTrigger trigger) {
     _requireOpen();
+    if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+      return whenIdle;
+    }
     if (_activeControl != null) {
       _followUpTriggers.add(trigger);
       _emit(
@@ -206,6 +247,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
             ? SyncActivity.checkingAuthorization
             : SyncActivity.verifying,
         verificationRequired: true,
+        clearFailure: trigger == SyncTrigger.resumeSync,
       ),
     );
     return _ensureDrain();
@@ -223,6 +265,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   Future<void> _drainRuns(Completer<void> completer) async {
     try {
       while (_pendingTriggers.isNotEmpty && !_closed) {
+        if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+          _pendingTriggers.clear();
+          break;
+        }
         if (_connectivity?.currentHint == ConnectivityHint.provenNoRoute) {
           break;
         }
@@ -309,6 +355,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   void _scheduleCadence() {
     _cadenceTimer?.cancel();
+    if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+      _cadenceTimer = null;
+      return;
+    }
     _cadenceTimer = scheduler.schedule(syncForegroundCadence, () {
       _cadenceTimer = null;
       unawaited(_requestImmediate(SyncTrigger.cadence));
@@ -440,6 +490,92 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     if (hint == ConnectivityHint.mayHaveReturned) {
       unawaited(_requestImmediate(SyncTrigger.connectivityRestored));
     }
+  }
+
+  void _acceptLifecycleFact(LifecycleFact fact) {
+    if (_closed) return;
+    switch (fact) {
+      case LifecycleForegrounded():
+        unawaited(_requestImmediate(SyncTrigger.foregroundResume));
+      case ProcessExitRequested():
+        _shutdownRequested = true;
+        _activeGeneration += 1;
+        _pendingTriggers.clear();
+        _followUpTriggers.clear();
+        _localEditTimer?.cancel();
+        _localEditTimer = null;
+        _localEditBurstStartedAt = null;
+        _cadenceTimer?.cancel();
+        _cadenceTimer = null;
+        _activeControl?.requestCancellation();
+      case LifecycleBackgrounded() || WindowFocusChanged():
+        // Android background eligibility is deliberately owned by S27B.
+        // Linux window visibility and focus never suspend synchronization.
+        break;
+    }
+  }
+
+  Future<void> _changeSyncEnabled(bool enabled) {
+    _requireOpen();
+    final existing = _settingsOperation;
+    if (existing != null) return existing;
+    final operation = enabled
+        ? _resumeSynchronization()
+        : _stopSynchronization();
+    _settingsOperation = operation;
+    void clearOperation() {
+      if (identical(_settingsOperation, operation)) {
+        _settingsOperation = null;
+      }
+    }
+
+    unawaited(
+      operation.then<void>(
+        (_) => clearOperation(),
+        onError: (Object _, StackTrace _) => clearOperation(),
+      ),
+    );
+    return operation;
+  }
+
+  Future<void> _stopSynchronization() async {
+    _stopRequested = true;
+    _activeGeneration += 1;
+    _pendingTriggers.clear();
+    _followUpTriggers.clear();
+    _localEditTimer?.cancel();
+    _localEditTimer = null;
+    _localEditBurstStartedAt = null;
+    _cadenceTimer?.cancel();
+    _cadenceTimer = null;
+    _activeControl?.requestCancellation();
+    try {
+      await settings.setSyncEnabled(accountId, false);
+      _syncEnabled = false;
+      final activeDrain = _drain;
+      if (activeDrain != null) await activeDrain;
+      _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+    } on Object {
+      _stopRequested = false;
+      _shutdownRequested = true;
+      _emit(
+        _with(
+          activity: SyncActivity.idle,
+          verificationRequired: false,
+          detectedFailureReason: SyncFailureReason.applicationFailure,
+          diagnosticCode: 'sync.settings_write_failed',
+        ),
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _resumeSynchronization() async {
+    await settings.setSyncEnabled(accountId, true);
+    _syncEnabled = true;
+    _stopRequested = false;
+    _shutdownRequested = false;
+    await _requestImmediate(SyncTrigger.resumeSync);
   }
 
   SyncRuntimeFacts _inactiveAuthorization() => SyncRuntimeFacts(

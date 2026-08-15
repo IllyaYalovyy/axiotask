@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:axiotask/src/core/failure.dart';
+import 'package:axiotask/src/core/lifecycle.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/connectivity/connectivity.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/sync_settings_repository.dart';
 import 'package:axiotask/src/sync/coordinator/sync_coordinator.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/run.dart';
@@ -291,6 +293,137 @@ void main() {
       await harness.coordinator.whenIdle;
     },
   );
+
+  test(
+    'RUN-008 Linux focus and minimize facts never suspend cadence',
+    () async {
+      final lifecycle = FakeLifecycle();
+      final harness = _Harness(
+        startedAt: startedAt,
+        lifecycle: lifecycle,
+        autoComplete: true,
+      );
+      addTearDown(harness.close);
+      addTearDown(lifecycle.close);
+
+      await harness.coordinator.start();
+      harness.runner.clearCompleted();
+      lifecycle.setWindowFocused(false);
+      expect(lifecycle.currentEligibility, LifecycleEligibility.foreground);
+
+      harness.clock.advance(syncForegroundCadence);
+      await harness.coordinator.whenIdle;
+
+      expect(harness.runner.invocations, hasLength(1));
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.cadence,
+      });
+    },
+  );
+
+  test(
+    'RUN-009 Stop blocks idle triggers and Resume requests catch-up',
+    () async {
+      final settings = _MemorySyncSettingsRepository();
+      final harness = _Harness(
+        startedAt: startedAt,
+        settings: settings,
+        autoComplete: true,
+      );
+      addTearDown(harness.close);
+
+      await harness.coordinator.start();
+      harness.runner.clearCompleted();
+      await harness.coordinator.stop();
+
+      expect(settings.syncEnabled, isFalse);
+      await harness.coordinator.refresh();
+      await harness.coordinator.localEditCommitted();
+      harness.clock.advance(syncForegroundCadence);
+      await _flushMicrotasks();
+      expect(harness.runner.invocations, isEmpty);
+
+      await harness.coordinator.resume();
+      expect(settings.syncEnabled, isTrue);
+      expect(harness.runner.invocations, hasLength(1));
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.resumeSync,
+      });
+    },
+  );
+
+  test(
+    'RUN-009 and REL-006 Stop cancels an active run at its safe boundary',
+    () async {
+      final settings = _MemorySyncSettingsRepository();
+      final harness = _Harness(startedAt: startedAt, settings: settings);
+      addTearDown(harness.close);
+
+      unawaited(harness.coordinator.start());
+      await harness.runner.waitForRuns(1);
+      final active = harness.runner.invocations.single;
+
+      final stop = harness.coordinator.stop();
+      await _flushMicrotasks();
+      expect(settings.syncEnabled, isFalse);
+      expect(active.control.isCancellationRequested, isTrue);
+      harness.runner.interrupt(0);
+      await stop;
+
+      expect(harness.clock.pendingTimerCount, 0);
+      expect(harness.runner.maximumActiveRuns, 1);
+    },
+  );
+
+  test(
+    'Stop persistence failure preserves enabled state and fails closed',
+    () async {
+      final settings = _MemorySyncSettingsRepository(failWrites: true);
+      final harness = _Harness(
+        startedAt: startedAt,
+        settings: settings,
+        autoComplete: true,
+      );
+      addTearDown(harness.close);
+      await harness.coordinator.start();
+      harness.runner.clearCompleted();
+
+      await expectLater(harness.coordinator.stop(), throwsStateError);
+
+      expect(settings.syncEnabled, isTrue);
+      expect(
+        harness.coordinator.currentFacts.detectedFailureReason,
+        SyncFailureReason.applicationFailure,
+      );
+      await harness.coordinator.refresh();
+      expect(harness.runner.invocations, isEmpty);
+    },
+  );
+
+  test(
+    'REL-006 exit is best effort and missing exit callback is harmless',
+    () async {
+      final lifecycle = FakeLifecycle();
+      final harness = _Harness(startedAt: startedAt, lifecycle: lifecycle);
+      addTearDown(harness.close);
+      addTearDown(lifecycle.close);
+
+      unawaited(harness.coordinator.start());
+      await harness.runner.waitForRuns(1);
+      lifecycle.requestProcessExit();
+      expect(
+        harness.runner.invocations.single.control.isCancellationRequested,
+        isTrue,
+      );
+      harness.runner.interrupt(0);
+      lifecycle.acknowledgeCancellation();
+      await harness.coordinator.whenIdle;
+
+      final abrupt = FakeLifecycle();
+      abrupt.terminateWithoutExitFact();
+      expect(abrupt.exitRequested, isFalse);
+    },
+  );
 }
 
 SyncHealth _health(SyncCoordinator coordinator, DateTime now) =>
@@ -313,6 +446,7 @@ final class _Harness {
     AuthorizationPort? authorization,
     FakeLifecycle? lifecycle,
     FakeConnectivity? connectivity,
+    SyncSettingsRepository? settings,
     bool autoComplete = false,
   }) : clock = FakeClock(startedAt),
        runner = _ControlledRunner(autoComplete: autoComplete) {
@@ -323,6 +457,7 @@ final class _Harness {
       scheduler: clock,
       lifecycle: lifecycle,
       connectivity: connectivity,
+      settings: settings ?? _MemorySyncSettingsRepository(),
       run: runner.call,
     );
   }
@@ -374,10 +509,43 @@ final class _ControlledRunner {
     report.complete(_successReport(index));
   }
 
+  void interrupt(int index) {
+    final report = _reports[index];
+    if (report.isCompleted) return;
+    report.complete(
+      SyncRunReport(
+        outcome: SyncRunOutcome.interrupted,
+        runId: SyncRunId('synthetic-run-$index'),
+        complete: false,
+        taskListPages: 0,
+        taskPages: 0,
+        remoteTaskLists: 0,
+        remoteTasks: 0,
+        resourceProjectionWrites: 0,
+      ),
+    );
+  }
+
   void clearCompleted() {
     if (activeRuns != 0) throw StateError('Cannot clear an active run.');
     invocations.clear();
     _reports.clear();
+  }
+}
+
+final class _MemorySyncSettingsRepository implements SyncSettingsRepository {
+  _MemorySyncSettingsRepository({this.failWrites = false});
+
+  final bool failWrites;
+  bool syncEnabled = true;
+
+  @override
+  Future<bool> readSyncEnabled(AccountId accountId) async => syncEnabled;
+
+  @override
+  Future<void> setSyncEnabled(AccountId accountId, bool enabled) async {
+    if (failWrites) throw StateError('Synthetic settings write failed.');
+    syncEnabled = enabled;
   }
 }
 

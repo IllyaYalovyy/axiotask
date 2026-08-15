@@ -197,6 +197,16 @@ abstract interface class SyncRunInterruptionFailure {
   Failure? get interruptionFailure;
 }
 
+/// Optional active-request cancellation signal implemented by coordinators.
+///
+/// Boundary checks remain authoritative for stopping the engine. This signal
+/// additionally lets a transport abort a read that is already awaiting bytes.
+abstract interface class SyncRunCancellationSignal {
+  bool get isCancellationRequested;
+
+  Future<void> get whenCancellationRequested;
+}
+
 final class NoopSyncRunControl implements SyncRunControl {
   const NoopSyncRunControl();
 

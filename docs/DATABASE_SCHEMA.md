@@ -66,6 +66,9 @@ application adapter and device-only preferences remain the S22A slice.
   unresolved counts are non-negative. Missing rows mean no success, failure, or
   unresolved work, never implicit freshness. `account_preferences.sync_enabled`
   is joined into the same account-scoped projection.
+- S13B Stop/Resume updates only `account_preferences.sync_enabled` in one
+  account-scoped transaction. It does not delete or rewrite cache rows, remote
+  bases, health evidence, unresolved counts, account identity, or credentials.
 - An S12A read run uses its opaque publication ID as the durable page-walk
   identity. Begin marks the required scope incomplete, every page transaction
   replaces only that scope's token/completeness evidence, and finalization

@@ -1,8 +1,9 @@
 # Target architecture
 
 Status: **Stage 3 and Stage 4 synchronization design accepted; deterministic
-foreground coordination is implemented through S13A. Retry, platform lifecycle
-control, and outbound reconciliation remain later slices.**
+foreground coordination plus Linux lifecycle/Stop/Resume control is implemented
+through S13B. Retry, Android lifecycle control, and outbound reconciliation
+remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed
@@ -461,6 +462,15 @@ task list.
 `AppLifecycleListener` provides resume/hide/exit signals. Exit may request a
 bounded flush, but correctness never depends on receiving an exit callback;
 every acknowledged mutation is already durable.
+
+The Linux adapter keeps coordinator eligibility tied to the running process,
+not window focus, visibility, or minimization. View-focus facts remain
+observable for presentation tests only. A best-effort exit notification cancels
+an active read through the transport and prevents new requests, while hard exit
+uses the same durable restart model without requiring that notification.
+`connectivity_plus` is mapped only to `provenNoRoute` and
+`mayHaveReturned` hints: an available interface never establishes reachability
+or healthy synchronization.
 
 ## Navigation and adaptive presentation
 

@@ -176,6 +176,16 @@ rejection, and quiescence without wall-clock sleeps. The production composition
 uses the same scheduler boundary; platform connectivity and Stop/Resume wiring
 remain in their owning lifecycle slice.
 
+S13B adds the production Linux lifecycle and connectivity adapters, durable
+account-scoped `syncEnabled`, active-read cancellation, and Stop/Resume through
+the ViewModel. Coordinator tests cover focus/minimize independence, idle and
+active Stop, best-effort exit plus missing-exit-callback behavior, stopped local
+work notification, and immediate Resume catch-up. The Linux application
+integration reopens a real temporary SQLite file while stopped and proves cache,
+authorization state, unresolved counts, and later catch-up remain intact. The
+outbound-mutation uncertainty half of `RUN-007`/`REL-006` remains gated on the
+later mutation engine rather than being simulated by the read-only S13B engine.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

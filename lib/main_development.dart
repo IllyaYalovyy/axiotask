@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'src/app/axiotask_app.dart';
 import 'src/app/composition/development_composition.dart';
 import 'src/app/composition/linux_read_transport.dart';
+import 'src/app/connectivity.dart';
 import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
 import 'src/data/auth/authorization.dart';
@@ -26,9 +27,13 @@ Future<void> main() async {
     ),
   );
   final lifecycle = Platform.isLinux ? LinuxLifecycleBridge() : null;
+  final connectivity = Platform.isLinux
+      ? await LinuxConnectivityBridge.open()
+      : null;
   final runtime = await TasksFeatureRuntime.open(
     composition,
     lifecycle: lifecycle,
+    connectivity: connectivity,
   );
   runApp(AxiotaskApp(viewModel: runtime.viewModel));
   WidgetsBinding.instance.addPostFrameCallback((_) {

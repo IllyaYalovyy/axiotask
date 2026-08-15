@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../domain/model/tasks.dart';
@@ -44,10 +46,22 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
               children: <Widget>[
                 _ApplicationHeader(
                   health: state.health,
-                  onHealthAction: widget.onHealthAction,
+                  onHealthAction: state.isSyncControlPending
+                      ? null
+                      : widget.onHealthAction ??
+                            (action) => unawaited(
+                              widget.viewModel.handleSyncHealthAction(action),
+                            ),
                   isRefreshing: state.isRefreshing,
+                  isSyncControlPending: state.isSyncControlPending,
                   onRefresh: widget.viewModel.refresh,
+                  onStopSync: widget.viewModel.stopSync,
                 ),
+                if (state.syncControlFailureMessage case final message?)
+                  MaterialBanner(
+                    content: Text(message),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) => _ShellBody(
@@ -70,14 +84,18 @@ final class _ApplicationHeader extends StatelessWidget {
   const _ApplicationHeader({
     required this.health,
     required this.isRefreshing,
+    required this.isSyncControlPending,
     required this.onRefresh,
+    required this.onStopSync,
     this.onHealthAction,
   });
 
   final SyncHealth health;
   final ValueChanged<SyncHealthAction>? onHealthAction;
   final bool isRefreshing;
+  final bool isSyncControlPending;
   final Future<void> Function() onRefresh;
+  final Future<void> Function() onStopSync;
 
   @override
   Widget build(BuildContext context) {
@@ -107,7 +125,12 @@ final class _ApplicationHeader extends StatelessWidget {
               ),
               const Spacer(),
               FilledButton.icon(
-                onPressed: isRefreshing ? null : onRefresh,
+                onPressed:
+                    isRefreshing ||
+                        isSyncControlPending ||
+                        health.inactiveReason == SyncInactiveReason.syncStopped
+                    ? null
+                    : onRefresh,
                 icon: isRefreshing
                     ? const SizedBox.square(
                         dimension: 16,
@@ -116,13 +139,19 @@ final class _ApplicationHeader extends StatelessWidget {
                     : const Icon(Icons.refresh),
                 label: const Text('Refresh'),
               ),
-              const SizedBox(width: 16),
-              Text(
-                'Google Tasks cache',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+              if (health.outcome != SyncHealthOutcome.inactive) ...<Widget>[
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: isSyncControlPending ? null : onStopSync,
+                  icon: isSyncControlPending
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.pause_circle_outline),
+                  label: const Text('Stop sync'),
                 ),
-              ),
+              ],
             ],
           ),
         ),

@@ -71,6 +71,14 @@ may use Google; it requires the already pinned dedicated subject, uses a unique
 disposable prefix and separate credential namespace, and verifies both Google
 resource cleanup and credential cleanup.
 
+S13B locks `connectivity_plus` 7.3.1 for Linux NetworkManager interface-change
+hints. The adapter deliberately maps an available interface to unknown or
+may-have-returned rather than internet reachability. Production, development,
+and synthetic Linux entry points use the same adapter, while deterministic
+tests inject `ConnectivityPort` and never query the host network. Stop/Resume is
+stored in the existing account-scoped SQLite preference row, so no new database,
+preferences namespace, credential store, or OAuth configuration is introduced.
+
 ## Branch and commits
 
 Development occurs on the independent orphan branch `flutter2` in the same
@@ -118,6 +126,11 @@ adapter and writes only beneath the ignored `screenshots/actual/` directory:
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
 ./scripts/capture_linux_health_screenshots.sh
 ```
+
+S13B extends the native Linux read-slice command above with hidden/unfocused
+process-lifetime cadence, file-backed Stop restart, preserved cache/auth/work
+facts, and Resume catch-up. Screenshot capture includes the active Stop control
+and stopped Resume state using ignored synthetic output.
 
 ## Development versus release diagnostics
 

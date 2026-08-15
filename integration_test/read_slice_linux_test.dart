@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:axiotask/src/app/axiotask_app.dart';
 import 'package:axiotask/src/app/composition/app_composition.dart';
 import 'package:axiotask/src/app/composition/test_composition.dart';
+import 'package:axiotask/src/app/lifecycle.dart';
 import 'package:axiotask/src/app/tasks_feature_runtime.dart';
 import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
@@ -11,10 +13,12 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
+import 'package:axiotask/src/data/database/sync_health_dao.dart';
 import 'package:axiotask/src/data/google_tasks/dto.dart';
 import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
+import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -160,6 +164,103 @@ void main() {
       expect(find.text('No authorization'), findsOneWidget);
       expect(find.text('Synced'), findsNothing);
       expect(unavailableComposition.service.listCalls, 0);
+    },
+  );
+
+  testWidgets('Linux minimize and unfocus remain cadence eligible', (
+    tester,
+  ) async {
+    final composition = _IntegrationComposition.success('linux-focus');
+    final lifecycle = LinuxLifecycleBridge();
+    final runtime = await TasksFeatureRuntime.open(
+      composition,
+      injectedDatabase: AppDatabase.inMemory(),
+      lifecycle: lifecycle,
+    );
+    addTearDown(runtime.close);
+    addTearDown(lifecycle.close);
+
+    await tester.pumpWidget(AxiotaskApp(viewModel: runtime.viewModel));
+    await runtime.start();
+    expect(composition.service.listCalls, 1);
+
+    lifecycle.didChangeViewFocus(
+      ViewFocusEvent(
+        viewId: tester.view.viewId,
+        state: ViewFocusState.unfocused,
+        direction: ViewFocusDirection.undefined,
+      ),
+    );
+    lifecycle.didChangeAppLifecycleState(AppLifecycleState.hidden);
+    composition.clock.advance(const Duration(minutes: 5));
+    await runtime.coordinator!.whenIdle;
+
+    expect(lifecycle.currentEligibility, LifecycleEligibility.foreground);
+    expect(lifecycle.isWindowFocused, isFalse);
+    expect(composition.service.listCalls, 2);
+  });
+
+  testWidgets(
+    'Stop survives restart and preserves auth, cache, and stopped-work fixture',
+    (tester) async {
+      final databaseFile = File('${temporaryRoot.path}/stop-resume.sqlite');
+      final firstComposition = _IntegrationComposition.success('stop-resume');
+      final first = await TasksFeatureRuntime.open(
+        firstComposition,
+        injectedDatabase: await AppDatabase.openFile(databaseFile),
+      );
+      await tester.pumpWidget(AxiotaskApp(viewModel: first.viewModel));
+      await first.start();
+      await tester.pumpAndSettle();
+      expect(find.text('Validated remote task'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Stop sync'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sync stopped'), findsOneWidget);
+      expect(
+        firstComposition.authorization.currentState,
+        isA<TasksAuthorized>(),
+      );
+      final accountId = first.viewModel.accountId;
+      final prior = await SyncHealthDao(
+        first.database,
+      ).watchFacts(accountId).first;
+      await SyncHealthDao(first.database).writeFacts(
+        accountId,
+        PersistedSyncFacts(
+          syncEnabled: false,
+          lastSuccessfulSyncAt: prior.lastSuccessfulSyncAt,
+          counts: const SyncWorkCounts(pending: 2),
+        ),
+      );
+      await first.coordinator!.localEditCommitted();
+      firstComposition.clock.advance(const Duration(minutes: 10));
+      await first.coordinator!.refresh();
+      expect(firstComposition.service.listCalls, 1);
+      await first.close();
+
+      final secondComposition = _IntegrationComposition.success('stop-resume');
+      final second = await TasksFeatureRuntime.open(
+        secondComposition,
+        injectedDatabase: await AppDatabase.openFile(databaseFile),
+      );
+      addTearDown(second.close);
+      await tester.pumpWidget(AxiotaskApp(viewModel: second.viewModel));
+      await tester.pumpAndSettle();
+      await second.start();
+      await tester.pumpAndSettle();
+
+      expect(secondComposition.service.listCalls, 0);
+      expect(find.text('Validated remote task'), findsOneWidget);
+      expect(find.text('Sync stopped'), findsOneWidget);
+      expect(find.text('2 unresolved'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Resume'));
+      await second.coordinator!.whenIdle;
+      await tester.pumpAndSettle();
+      expect(secondComposition.service.listCalls, 1);
+      expect(find.text('Pending'), findsWidgets);
+      expect(find.text('2 unresolved'), findsOneWidget);
     },
   );
 }

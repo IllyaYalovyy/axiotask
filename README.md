@@ -5,16 +5,20 @@ Android. The current Linux shell opens the versioned, account-scoped
 Drift/SQLite store, renders cached Google lists/tasks immediately, and presents
 truthful Inactive, Pending, Failed, or Good synchronization health with exact
 reason, unresolved counts, and last-success time. It also provides a read-only
-task-detail surface and an explicit Refresh action. One deterministic
-coordinator serializes startup, Linux resume, Refresh, connectivity-restored,
-five-minute foreground cadence, and future durable-edit notifications. Trigger
+task-detail surface plus explicit Refresh and Stop/Resume actions. Stop is a
+durable account-scoped scheduler control: it cancels an active read, prevents
+new Google requests, and preserves authorization, cache, and unresolved work;
+Resume immediately verifies and catches up. One deterministic coordinator
+serializes startup, Linux resume, Refresh, production connectivity-restored
+hints, five-minute foreground cadence, and future durable-edit notifications.
+Linux remains eligible while its window is minimized or unfocused. Trigger
 bursts merge into at most one follow-up; edits use a five-second trailing
 debounce capped at ten seconds, and every run has a two-minute monotonic
 deadline. Validated pages appear incrementally; only complete durable
 finalization can show Synced. Partial, malformed, unavailable, unauthorized, or
 timed-out results preserve usable cache under an explicit non-green status.
-Writes, retry, production connectivity wiring, Android lifecycle wiring, and
-account connection UI remain later slices.
+Writes, retry, Android lifecycle wiring, and account connection UI remain later
+slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -71,6 +75,9 @@ flutter pub get
 `pubspec.lock` is committed. Do not run a dependency upgrade as part of normal
 setup. SQLite is supplied as a native asset by the locked `sqlite3` package; do
 not install `sqlite3_flutter_libs` or a system SQLite development package.
+`connectivity_plus` 7.3.1 observes Linux NetworkManager only for no-route and
+may-have-returned scheduling hints; an available interface never proves Google
+reachability or healthy sync.
 Linux secure storage requires an active Secret Service in the user session;
 GNOME normally supplies it through `gnome-keyring`.
 
@@ -353,11 +360,13 @@ flutter test test/data/database/native_database_probe_test.dart
 flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
+flutter test test/data/database/sync_settings_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
+flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
@@ -377,8 +386,9 @@ flutter test integration_test/read_slice_linux_test.dart -d linux
 ./scripts/privacy_check.sh
 ```
 
-Capture the isolated synthetic Linux health states into the ignored
-`screenshots/actual/` directory, then inspect each PNG:
+Capture the isolated synthetic Linux health states, including active Stop and
+stopped Resume controls, into the ignored `screenshots/actual/` directory, then
+inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh

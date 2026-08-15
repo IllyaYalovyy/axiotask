@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import '../core/clock.dart';
 import '../core/failure.dart';
 import '../core/outcome.dart';
 import '../core/randomness.dart';
 import '../data/auth/authorization.dart';
 import '../data/google_tasks/dto.dart';
+import '../data/google_tasks/request.dart';
 import '../data/google_tasks/service.dart';
 import 'phase.dart';
 import 'read_plan.dart';
@@ -29,6 +32,7 @@ final class SyncEngine {
   final SyncRunControl control;
 
   Future<SyncRunReport> run(SyncRunRequest request) async {
+    final readCancellation = _readCancellation();
     final runId = _newRunId();
     var taskListPages = 0;
     var taskPages = 0;
@@ -146,7 +150,10 @@ final class SyncEngine {
     PageToken? listToken;
     var listPageIndex = 0;
     do {
-      final result = await googleTasks.listTaskLists(pageToken: listToken);
+      final result = await googleTasks.listTaskLists(
+        pageToken: listToken,
+        cancellation: readCancellation,
+      );
       switch (result) {
         case Failed<RemotePage<RemoteTaskList>>(:final failure):
           firstFailure ??= failure;
@@ -204,6 +211,7 @@ final class SyncEngine {
           final result = await googleTasks.listTasks(
             taskList.remoteId,
             pageToken: taskToken,
+            cancellation: readCancellation,
           );
           switch (result) {
             case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -340,6 +348,27 @@ final class SyncEngine {
 
   Future<bool> _interrupted(SyncRunBoundary boundary) async =>
       await control.reach(boundary) == SyncRunControlDecision.interrupt;
+
+  GoogleTasksReadCancellation? _readCancellation() {
+    final SyncRunCancellationSignal currentControl;
+    switch (control) {
+      case final SyncRunCancellationSignal signal:
+        currentControl = signal;
+      default:
+        return null;
+    }
+    final cancellation = GoogleTasksReadCancellation();
+    if (currentControl.isCancellationRequested) {
+      cancellation.cancel();
+    } else {
+      unawaited(
+        currentControl.whenCancellationRequested.then((_) {
+          cancellation.cancel();
+        }),
+      );
+    }
+    return cancellation;
+  }
 
   SyncRunId _newRunId() {
     final bytes = random.nextBytes(16);

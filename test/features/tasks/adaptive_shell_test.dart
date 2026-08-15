@@ -125,17 +125,60 @@ void main() {
 
     expect(refreshes, 1);
   });
+
+  testWidgets('active sync exposes Stop and stopped sync exposes Resume', (
+    tester,
+  ) async {
+    var stops = 0;
+    var resumes = 0;
+    var fixture = _ShellFixture(
+      _health(SyncHealthOutcome.good),
+      stopSyncRequested: () async {
+        stops += 1;
+      },
+    );
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Stop sync'));
+    await tester.pump();
+    expect(stops, 1);
+    fixture.dispose();
+
+    fixture = _ShellFixture(
+      _health(
+        SyncHealthOutcome.inactive,
+        inactiveReason: SyncInactiveReason.syncStopped,
+        action: SyncHealthAction.resume,
+      ),
+      resumeSyncRequested: () async {
+        resumes += 1;
+      },
+    );
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+    expect(find.widgetWithText(OutlinedButton, 'Stop sync'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Resume'));
+    await tester.pump();
+    expect(resumes, 1);
+    fixture.dispose();
+  });
 }
 
 final class _ShellFixture {
-  _ShellFixture(SyncHealth health, {Future<void> Function()? refreshRequested})
-    : tasks = _TasksRepository(),
-      healthRepository = _HealthRepository() {
+  _ShellFixture(
+    SyncHealth health, {
+    Future<void> Function()? refreshRequested,
+    Future<void> Function()? stopSyncRequested,
+    Future<void> Function()? resumeSyncRequested,
+  }) : tasks = _TasksRepository(),
+       healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
       accountId: const AccountId(1),
       tasksRepository: tasks,
       syncHealthRepository: healthRepository,
       refreshRequested: refreshRequested,
+      stopSyncRequested: stopSyncRequested,
+      resumeSyncRequested: resumeSyncRequested,
     );
     tasks.snapshot = _snapshot;
     healthRepository.health = health;
@@ -145,9 +188,7 @@ final class _ShellFixture {
   final _HealthRepository healthRepository;
   late final TasksViewModel viewModel;
 
-  Widget get widget => MaterialApp(
-    home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
-  );
+  Widget get widget => MaterialApp(home: AdaptiveShell(viewModel: viewModel));
 
   void dispose() => viewModel.dispose();
 }
