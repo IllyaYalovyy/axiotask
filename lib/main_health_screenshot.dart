@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'src/app/adaptive_shell.dart';
+import 'src/core/outcome.dart';
+import 'src/domain/commands/task_list_commands.dart';
 import 'src/domain/model/tasks.dart';
+import 'src/domain/repository/task_lists_repository.dart';
 import 'src/domain/repository/tasks_repository.dart';
 import 'src/features/tasks/tasks_view_model.dart';
 import 'src/sync/health/sync_health.dart';
@@ -28,7 +31,7 @@ final class _HealthScreenshotSequenceState
     extends State<_HealthScreenshotSequence> {
   final GlobalKey _boundaryKey = GlobalKey();
   var _index = 0;
-  late TasksViewModel _viewModel = _createViewModel(_scenarios.first.health);
+  late TasksViewModel _viewModel = _createViewModel(_captureScenarios.first);
 
   @override
   void initState() {
@@ -40,12 +43,10 @@ final class _HealthScreenshotSequenceState
     try {
       final output = Directory('screenshots/actual');
       await output.create(recursive: true);
-      for (var index = 0; index < _scenarios.length; index += 1) {
-        WidgetsBinding.instance.scheduleFrame();
-        await WidgetsBinding.instance.endOfFrame;
+      for (var index = 0; index < _captureScenarios.length; index += 1) {
+        await _settleFrames();
         _viewModel.selectTask(const TaskId(11));
-        WidgetsBinding.instance.scheduleFrame();
-        await WidgetsBinding.instance.endOfFrame;
+        await _settleFrames();
         final boundary =
             _boundaryKey.currentContext!.findRenderObject()!
                 as RenderRepaintBoundary;
@@ -53,18 +54,19 @@ final class _HealthScreenshotSequenceState
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         image.dispose();
         if (bytes == null) throw StateError('PNG encoding failed.');
-        await File('${output.path}/${_scenarios[index].name}.png').writeAsBytes(
+        await File(
+          '${output.path}/${_captureScenarios[index].name}.png',
+        ).writeAsBytes(
           bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
           flush: true,
         );
-        if (index + 1 < _scenarios.length) {
+        if (index + 1 < _captureScenarios.length) {
           final previous = _viewModel;
           setState(() {
             _index = index + 1;
-            _viewModel = _createViewModel(_scenarios[_index].health);
+            _viewModel = _createViewModel(_captureScenarios[_index]);
           });
-          WidgetsBinding.instance.scheduleFrame();
-          await WidgetsBinding.instance.endOfFrame;
+          await _settleFrames();
           previous.dispose();
         }
       }
@@ -75,18 +77,27 @@ final class _HealthScreenshotSequenceState
     }
   }
 
+  Future<void> _settleFrames() async {
+    await Future<void>.delayed(Duration.zero);
+    for (var count = 0; count < 3; count += 1) {
+      WidgetsBinding.instance.scheduleFrame();
+      await WidgetsBinding.instance.endOfFrame;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      key: _boundaryKey,
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorSchemeSeed: const Color(0xff315da8),
-          useMaterial3: true,
-        ),
-        home: AdaptiveShell(
-          key: ValueKey<String>(_scenarios[_index].name),
+    return MaterialApp(
+      key: ValueKey<String>('app-${_captureScenarios[_index].name}'),
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorSchemeSeed: const Color(0xff315da8),
+        useMaterial3: true,
+      ),
+      home: RepaintBoundary(
+        key: _boundaryKey,
+        child: AdaptiveShell(
+          key: ValueKey<String>(_captureScenarios[_index].name),
           viewModel: _viewModel,
           onHealthAction: (_) {},
         ),
@@ -95,25 +106,147 @@ final class _HealthScreenshotSequenceState
   }
 }
 
-TasksViewModel _createViewModel(SyncHealth health) => TasksViewModel(
+TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   accountId: const AccountId(1),
-  tasksRepository: const _ScreenshotTasksRepository(),
-  syncHealthRepository: _ScreenshotHealthRepository(health),
+  tasksRepository: _ScreenshotTasksRepository(scenario.snapshot),
+  taskListsRepository: const _ScreenshotTaskListsRepository(),
+  syncHealthRepository: _ScreenshotHealthRepository(scenario.health),
 );
 
 final class _ScreenshotTasksRepository implements TasksRepository {
-  const _ScreenshotTasksRepository();
+  const _ScreenshotTasksRepository(this.snapshot);
+
+  final CachedTasksSnapshot snapshot;
 
   @override
-  Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => Stream.value(
-    CachedTasksSnapshot(
-      accountId: query.accountId,
+  Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
+      Stream.value(snapshot);
+}
+
+final class _ScreenshotTaskListsRepository implements TaskListsRepository {
+  const _ScreenshotTaskListsRepository();
+
+  @override
+  Future<Outcome<TaskListId>> createTaskList(
+    CreateTaskListCommand command,
+  ) async => const Outcome<TaskListId>.success(TaskListId(90));
+
+  @override
+  Future<Outcome<void>> renameTaskList(RenameTaskListCommand command) async =>
+      const Outcome<void>.success(null);
+}
+
+final class _ScreenshotHealthRepository implements SyncHealthRepository {
+  const _ScreenshotHealthRepository(this.health);
+
+  final SyncHealth health;
+
+  @override
+  Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(health);
+}
+
+typedef _ScreenshotScenario = ({
+  String name,
+  SyncHealth health,
+  CachedTasksSnapshot snapshot,
+});
+
+final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'health-cached-pending',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'health-partial-failed',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.remoteFailure,
+      action: SyncHealthAction.retry,
+      lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 11, 58),
+    ),
+  ),
+  (
+    name: 'health-first-good',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.good,
+      lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 12),
+    ),
+  ),
+  (
+    name: 'health-stale-failed',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.stale,
+      action: SyncHealthAction.retry,
+      lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 11, 45),
+      counts: const SyncWorkCounts(uncertain: 1),
+    ),
+  ),
+  (
+    name: 'health-no-authorization',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.inactive,
+      inactiveReason: SyncInactiveReason.noAuthorization,
+      action: SyncHealthAction.reauthorize,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'health-sync-stopped',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.inactive,
+      inactiveReason: SyncInactiveReason.syncStopped,
+      action: SyncHealthAction.resume,
+      counts: const SyncWorkCounts(pending: 3, uncertain: 1),
+    ),
+  ),
+  (
+    name: 'list-create-pending',
+    snapshot: CachedTasksSnapshot(
+      accountId: const AccountId(1),
       taskLists: const <CachedTaskList>[
+        CachedTaskList(
+          id: TaskListId(21),
+          accountId: AccountId(1),
+          remoteId: null,
+          title: 'Offline project',
+        ),
         CachedTaskList(
           id: TaskListId(7),
           accountId: AccountId(1),
           remoteId: TaskListRemoteId('synthetic-list'),
           title: 'Synthetic inbox',
+        ),
+      ],
+      tasks: const <CachedTask>[],
+      completeness: CacheCompleteness.complete,
+    ),
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'list-rename-sync-stopped',
+    snapshot: CachedTasksSnapshot(
+      accountId: const AccountId(1),
+      taskLists: const <CachedTaskList>[
+        CachedTaskList(
+          id: TaskListId(7),
+          accountId: AccountId(1),
+          remoteId: TaskListRemoteId('synthetic-list'),
+          title: 'Renamed offline',
         ),
       ],
       tasks: const <CachedTask>[
@@ -131,73 +264,52 @@ final class _ScreenshotTasksRepository implements TasksRepository {
       ],
       completeness: CacheCompleteness.complete,
     ),
-  );
-}
+    health: _health(
+      SyncHealthOutcome.inactive,
+      inactiveReason: SyncInactiveReason.syncStopped,
+      action: SyncHealthAction.resume,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+];
 
-final class _ScreenshotHealthRepository implements SyncHealthRepository {
-  const _ScreenshotHealthRepository(this.health);
+const _requestedScenario = String.fromEnvironment(
+  'AXIOTASK_SCREENSHOT_SCENARIO',
+);
 
-  final SyncHealth health;
+final List<_ScreenshotScenario> _captureScenarios = _requestedScenario.isEmpty
+    ? _scenarios
+    : <_ScreenshotScenario>[
+        _scenarios.singleWhere(
+          (scenario) => scenario.name == _requestedScenario,
+        ),
+      ];
 
-  @override
-  Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(health);
-}
-
-final List<({String name, SyncHealth health})> _scenarios =
-    <({String name, SyncHealth health})>[
-      (
-        name: 'health-cached-pending',
-        health: _health(
-          SyncHealthOutcome.pending,
-          pendingReason: SyncPendingReason.verifying,
-          counts: const SyncWorkCounts(pending: 2),
-        ),
-      ),
-      (
-        name: 'health-partial-failed',
-        health: _health(
-          SyncHealthOutcome.failed,
-          failureReason: SyncFailureReason.remoteFailure,
-          action: SyncHealthAction.retry,
-          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 11, 58),
-        ),
-      ),
-      (
-        name: 'health-first-good',
-        health: _health(
-          SyncHealthOutcome.good,
-          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 12),
-        ),
-      ),
-      (
-        name: 'health-stale-failed',
-        health: _health(
-          SyncHealthOutcome.failed,
-          failureReason: SyncFailureReason.stale,
-          action: SyncHealthAction.retry,
-          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 11, 45),
-          counts: const SyncWorkCounts(uncertain: 1),
-        ),
-      ),
-      (
-        name: 'health-no-authorization',
-        health: _health(
-          SyncHealthOutcome.inactive,
-          inactiveReason: SyncInactiveReason.noAuthorization,
-          action: SyncHealthAction.reauthorize,
-          counts: const SyncWorkCounts(pending: 2),
-        ),
-      ),
-      (
-        name: 'health-sync-stopped',
-        health: _health(
-          SyncHealthOutcome.inactive,
-          inactiveReason: SyncInactiveReason.syncStopped,
-          action: SyncHealthAction.resume,
-          counts: const SyncWorkCounts(pending: 3, uncertain: 1),
-        ),
-      ),
-    ];
+final _baseSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-list'),
+      title: 'Synthetic inbox',
+    ),
+  ],
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(11),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-task'),
+      title: 'Cached synthetic task',
+      notes: 'No personal data is used in this screenshot.',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
 
 SyncHealth _health(
   SyncHealthOutcome outcome, {

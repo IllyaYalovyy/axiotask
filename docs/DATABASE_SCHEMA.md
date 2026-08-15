@@ -18,8 +18,11 @@ replaced with an empty cache.
 | `task_list_remote_bases` | Last confirmed list content, Google identity/version metadata, and the publication that observed it. |
 | `task_remote_bases` | Last confirmed supported task content, structure, lifecycle, links, Google identity/version metadata, and the publication that observed it. |
 | `scope_completeness` | Account list-enumeration or per-list task-enumeration page-chain state, including the opaque next-page token while incomplete. |
-| `account_preferences` | Relational account settings, initially the sync-enabled control and an optional account-owned default list reference. |
+| `account_preferences` | Relational account settings: sync-enabled control, optional account-owned default list reference, and the next account-scoped causal sequence for durable desired state. |
 | `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
+| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content only; the task fields support their later owning slice. |
+| `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. List edits currently need no edge. |
+| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure evidence for retry and uncertainty recovery. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -36,10 +39,11 @@ application adapter and device-only preferences remain the S22A slice.
 - Local list/task IDs are SQLite-assigned 64-bit identities. Google IDs are
   separate external values, unique by account and resource type. Binding a
   Google ID does not replace the local ID.
-- Google IDs are nullable in the schema because later durable-create intent
-  needs a provisional identity. S10 exposes no create command or desired-state
-  table, so a row without a Google ID is retained but cannot enter a repository
-  snapshot and cannot behave as a local-only resource.
+- Google IDs are nullable because a durable create needs a provisional local
+  identity. A supported list without a Google ID enters a repository snapshot
+  only while the same account/local key has unresolved present-list desired
+  state. An orphan provisional row stays hidden and cannot behave as a
+  local-only resource.
 - A task parent must be in the same account and list. Cache writes reject a
   parent that is already a child, so the supported projection has only a top
   level and one subtask level.
@@ -66,6 +70,19 @@ application adapter and device-only preferences remain the S22A slice.
   unresolved counts are non-negative. Missing rows mean no success, failure, or
   unresolved work, never implicit freshness. `account_preferences.sync_enabled`
   is joined into the same account-scoped projection.
+- List create and rename acknowledge success only after one SQLite transaction
+  commits the materialized projection, coalesced `desired_states` row, causal
+  sequence, and recomputed unresolved count. A failure at any boundary rolls
+  the entire edit back, so UI success cannot precede durability.
+- Repeated list renames preserve the first confirmed base snapshot and stable
+  local identity while incrementing the desired generation and replacing only
+  the requested title. Remote read publication may advance the confirmed base,
+  but cannot overwrite a pending projected title.
+- Claiming an outbound generation records its immutable request snapshot before
+  network work. Legal lifecycle transitions are explicit, and completing an
+  older attempt cannot clear a newer coalesced generation. Atomic create
+  acknowledgement binds the Google ID and canonical base/projection while
+  resolving only the matching generation.
 - S13B Stop/Resume updates only `account_preferences.sync_enabled` in one
   account-scoped transaction. It does not delete or rewrite cache rows, remote
   bases, health evidence, unresolved counts, account identity, or credentials.
@@ -80,6 +97,6 @@ application adapter and device-only preferences remain the S22A slice.
   transactions. Failed transactions may re-emit an unchanged Drift snapshot,
   but cannot expose or retain partially written state.
 
-OAuth tokens, DPoP keys, authorization headers, mutation attempts, desired
-mutation payloads, diagnostics, and device-only preferences are not part of
-these cache/health tables.
+OAuth tokens, DPoP keys, authorization headers, release diagnostics, and
+device-only preferences are not part of these cache/health/desired-state
+tables.

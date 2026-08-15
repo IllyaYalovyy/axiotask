@@ -4,6 +4,8 @@ import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/sync_health_dao.dart';
 import 'package:axiotask/src/data/database/sync_health_repository.dart';
+import 'package:axiotask/src/data/database/task_lists_repository.dart';
+import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
@@ -111,4 +113,44 @@ void main() {
       expect(health.pendingReason, SyncPendingReason.verifying);
     },
   );
+
+  test('a durable local list edit prevents Good immediately', () async {
+    final database = AppDatabase.inMemory();
+    addTearDown(database.close);
+    final account = AccountId(
+      await database.createAccount('synthetic-local-health'),
+    );
+    final now = DateTime.utc(2026, 8, 15, 12);
+    final clock = ManualClock(now);
+    final dao = SyncHealthDao(database);
+    await dao.writeFacts(
+      account,
+      PersistedSyncFacts(
+        lastSuccessfulSyncAt: now.subtract(const Duration(minutes: 1)),
+      ),
+    );
+    final repository = DatabaseSyncHealthRepository(
+      dao: dao,
+      clock: clock,
+      runtime: const StaticSyncRuntimeFactsSource(
+        SyncRuntimeFacts(authorization: SyncAuthorization.usable),
+      ),
+    );
+    expect(
+      (await repository.watchHealth(account).first).outcome,
+      SyncHealthOutcome.good,
+    );
+
+    await DatabaseTaskListsRepository(
+      database: database,
+      clock: clock,
+    ).createTaskList(
+      CreateTaskListCommand(accountId: account, title: 'Pending locally'),
+    );
+    final health = await repository.watchHealth(account).first;
+
+    expect(health.outcome, SyncHealthOutcome.pending);
+    expect(health.pendingReason, SyncPendingReason.localChanges);
+    expect(health.counts.pending, 1);
+  });
 }

@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/outcome.dart';
+import '../../domain/commands/task_list_commands.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/repository/task_lists_repository.dart';
 import '../../domain/repository/tasks_repository.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/health/sync_health_repository.dart';
@@ -15,10 +18,12 @@ final class TasksViewState {
     required this.tasks,
     required this.health,
     this.isSyncControlPending = false,
+    this.isListCommandPending = false,
     this.selectedTaskListId,
     this.selectedTaskId,
     this.failureMessage,
     this.syncControlFailureMessage,
+    this.listCommandFailureMessage,
   });
 
   final bool isLoading;
@@ -27,10 +32,12 @@ final class TasksViewState {
   final List<CachedTask> tasks;
   final SyncHealth health;
   final bool isSyncControlPending;
+  final bool isListCommandPending;
   final TaskListId? selectedTaskListId;
   final TaskId? selectedTaskId;
   final String? failureMessage;
   final String? syncControlFailureMessage;
+  final String? listCommandFailureMessage;
 
   CachedTaskList? get selectedTaskList =>
       _firstWhereOrNull(taskLists, (value) => value.id == selectedTaskListId);
@@ -57,10 +64,12 @@ final class TasksViewState {
     List<CachedTask>? tasks,
     SyncHealth? health,
     bool? isSyncControlPending,
+    bool? isListCommandPending,
     Object? selectedTaskListId = _notProvided,
     Object? selectedTaskId = _notProvided,
     Object? failureMessage = _notProvided,
     Object? syncControlFailureMessage = _notProvided,
+    Object? listCommandFailureMessage = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -68,6 +77,7 @@ final class TasksViewState {
     tasks: tasks ?? this.tasks,
     health: health ?? this.health,
     isSyncControlPending: isSyncControlPending ?? this.isSyncControlPending,
+    isListCommandPending: isListCommandPending ?? this.isListCommandPending,
     selectedTaskListId: identical(selectedTaskListId, _notProvided)
         ? this.selectedTaskListId
         : selectedTaskListId as TaskListId?,
@@ -81,6 +91,10 @@ final class TasksViewState {
         identical(syncControlFailureMessage, _notProvided)
         ? this.syncControlFailureMessage
         : syncControlFailureMessage as String?,
+    listCommandFailureMessage:
+        identical(listCommandFailureMessage, _notProvided)
+        ? this.listCommandFailureMessage
+        : listCommandFailureMessage as String?,
   );
 }
 
@@ -89,6 +103,8 @@ final class TasksViewModel extends ChangeNotifier {
     required this.accountId,
     required this.tasksRepository,
     required this.syncHealthRepository,
+    this.taskListsRepository,
+    this.localEditCommitted,
     this.refreshRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
@@ -96,6 +112,7 @@ final class TasksViewModel extends ChangeNotifier {
          isLoading: true,
          isRefreshing: false,
          isSyncControlPending: false,
+         isListCommandPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          health: SyncHealth(
@@ -110,6 +127,8 @@ final class TasksViewModel extends ChangeNotifier {
   final AccountId accountId;
   final TasksRepository tasksRepository;
   final SyncHealthRepository syncHealthRepository;
+  final TaskListsRepository? taskListsRepository;
+  final Future<void> Function()? localEditCommitted;
   final Future<void> Function()? refreshRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
@@ -119,6 +138,7 @@ final class TasksViewModel extends ChangeNotifier {
   bool _started = false;
   Future<void>? _refreshInFlight;
   Future<void>? _syncControlInFlight;
+  Future<void>? _listCommandInFlight;
 
   TasksViewState get state => _state;
 
@@ -178,6 +198,66 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> stopSync() => _performSyncControl(stopSyncRequested);
 
   Future<void> resumeSync() => _performSyncControl(resumeSyncRequested);
+
+  Future<void> createTaskList(String title) {
+    final repository = taskListsRepository;
+    if (repository == null) return Future<void>.value();
+    return _performListCommand(
+      () => repository.createTaskList(
+        CreateTaskListCommand(accountId: accountId, title: title),
+      ),
+    );
+  }
+
+  Future<void> renameTaskList(TaskListId taskListId, String title) {
+    final repository = taskListsRepository;
+    if (repository == null) return Future<void>.value();
+    return _performListCommand(
+      () => repository.renameTaskList(
+        RenameTaskListCommand(
+          accountId: accountId,
+          taskListId: taskListId,
+          title: title,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _performListCommand<T>(Future<Outcome<T>> Function() action) {
+    final existing = _listCommandInFlight;
+    if (existing != null) return existing;
+    final operation = _runListCommand(action);
+    _listCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runListCommand<T>(Future<Outcome<T>> Function() action) async {
+    _replaceState(
+      _state.copyWith(
+        isListCommandPending: true,
+        listCommandFailureMessage: null,
+      ),
+    );
+    try {
+      final result = await action();
+      switch (result) {
+        case Success<T>():
+          await localEditCommitted?.call();
+        case Failed<T>(:final failure):
+          _replaceState(
+            _state.copyWith(
+              listCommandFailureMessage:
+                  failure.code == 'task_list.title_too_long'
+                  ? 'Task list titles can contain at most 1024 characters.'
+                  : 'The task list could not be saved safely.',
+            ),
+          );
+      }
+    } finally {
+      _listCommandInFlight = null;
+      _replaceState(_state.copyWith(isListCommandPending: false));
+    }
+  }
 
   Future<void> handleSyncHealthAction(SyncHealthAction action) =>
       switch (action) {

@@ -14,12 +14,19 @@ final class SyncHealthDao {
     return _database.transaction(() async {
       await _database
           .into(_database.accountPreferenceRows)
-          .insertOnConflictUpdate(
+          .insert(
             AccountPreferenceRowsCompanion.insert(
               accountId: Value(accountId.value),
-              syncEnabled: Value(facts.syncEnabled),
             ),
+            mode: InsertMode.insertOrIgnore,
           );
+      await (_database.update(
+        _database.accountPreferenceRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        AccountPreferenceRowsCompanion(
+          syncEnabled: Value<bool>(facts.syncEnabled),
+        ),
+      );
       await _database
           .into(_database.syncFactRows)
           .insertOnConflictUpdate(

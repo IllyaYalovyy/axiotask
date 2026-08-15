@@ -118,7 +118,7 @@ final class CachedTaskList {
 
   final TaskListId id;
   final AccountId accountId;
-  final TaskListRemoteId remoteId;
+  final TaskListRemoteId? remoteId;
   final String title;
 
   CachedTaskList copyWith({String? title}) => CachedTaskList(

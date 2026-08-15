@@ -38,7 +38,8 @@ quality gate regenerates it and fails if any generated Dart file changes.
 
 The version-1 database contains the account-scoped Google list/task cache,
 separate remote bases, page-scope completeness, relational preference
-foundation, and durable truthful-health facts documented in
+foundation, durable truthful-health facts, coalesced desired state and
+dependencies, and immutable outbound-attempt snapshots documented in
 [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md). File-backed
 connections run on a Drift background isolate and measured `foreign_keys=ON`,
 `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`, and
@@ -48,6 +49,13 @@ SQLite's required `journal_mode=memory` while using the other selected
 settings. Existing files are checked read-only for schema version, exact schema,
 integrity, and foreign-key violations before Drift can migrate or create
 anything. Unknown, malformed, and corrupt files are closed and preserved.
+
+S14A adds no dependency. Offline list create/rename uses the existing Drift
+connection: projection, desired list content, causal generation, and unresolved
+health count commit in one transaction. Its Linux integration test uses a
+temporary database and synthetic account, and the screenshot runner uses the
+existing isolated screenshot composition; neither can discover normal
+credentials, storage, or Google Tasks data.
 
 S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
 3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;

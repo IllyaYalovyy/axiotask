@@ -1,6 +1,10 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/failure.dart';
+import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
@@ -122,6 +126,70 @@ void main() {
       expect(resumeCalls, 1);
     },
   );
+
+  test(
+    'list create waits for durable repository success and suppresses duplicate taps',
+    () async {
+      final tasks = _TasksRepository();
+      final health = _HealthRepository();
+      final lists = _TaskListsRepository();
+      final durable = Completer<Outcome<TaskListId>>();
+      lists.createResult = durable.future;
+      var committedNotifications = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        taskListsRepository: lists,
+        syncHealthRepository: health,
+        localEditCommitted: () async {
+          committedNotifications += 1;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      final first = viewModel.createTaskList('Offline list');
+      final duplicate = viewModel.createTaskList('Duplicate tap');
+      expect(viewModel.state.isListCommandPending, isTrue);
+      expect(lists.createCalls, 1);
+      expect(committedNotifications, 0);
+      durable.complete(const Outcome<TaskListId>.success(TaskListId(19)));
+      await Future.wait(<Future<void>>[first, duplicate]);
+
+      expect(viewModel.state.isListCommandPending, isFalse);
+      expect(viewModel.state.listCommandFailureMessage, isNull);
+      expect(committedNotifications, 1);
+      expect(lists.created.single.title, 'Offline list');
+    },
+  );
+
+  test(
+    'list persistence failure is visible and never schedules sync',
+    () async {
+      final lists = _TaskListsRepository()
+        ..createResult = Future.value(
+          const Outcome<TaskListId>.failure(_listPersistenceFailure),
+        );
+      var notifications = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: _TasksRepository(),
+        taskListsRepository: lists,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: () async {
+          notifications += 1;
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.createTaskList('Unsafe result');
+
+      expect(
+        viewModel.state.listCommandFailureMessage,
+        'The task list could not be saved safely.',
+      );
+      expect(notifications, 0);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {
@@ -137,6 +205,40 @@ final class _HealthRepository implements SyncHealthRepository {
   @override
   Stream<SyncHealth> watchHealth(AccountId accountId) => controller.stream;
 }
+
+final class _TaskListsRepository implements TaskListsRepository {
+  Future<Outcome<TaskListId>> createResult = Future.value(
+    const Outcome<TaskListId>.success(TaskListId(99)),
+  );
+  Future<Outcome<void>> renameResult = Future.value(
+    const Outcome<void>.success(null),
+  );
+  final List<CreateTaskListCommand> created = <CreateTaskListCommand>[];
+  final List<RenameTaskListCommand> renamed = <RenameTaskListCommand>[];
+  var createCalls = 0;
+
+  @override
+  Future<Outcome<TaskListId>> createTaskList(CreateTaskListCommand command) {
+    createCalls += 1;
+    created.add(command);
+    return createResult;
+  }
+
+  @override
+  Future<Outcome<void>> renameTaskList(RenameTaskListCommand command) {
+    renamed.add(command);
+    return renameResult;
+  }
+}
+
+const _listPersistenceFailure = Failure(
+  code: 'list.persistence_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The task list was not saved.',
+  safeSummary: 'The list transaction failed.',
+);
 
 final _snapshot = CachedTasksSnapshot(
   accountId: const AccountId(1),

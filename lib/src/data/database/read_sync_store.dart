@@ -120,18 +120,45 @@ final class DatabaseReadSyncStore implements ReadSyncStore {
           writes += 1;
         } else {
           localId = TaskListId(existing.id);
-          if (existing.title != item.title ||
-              existing.projection != CacheProjection.supported.name) {
+          final hasUnresolvedLocalTitle =
+              await (_database.select(_database.desiredStateRows)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.resourceType.equals('task_list') &
+                        row.targetTaskListId.equals(existing.id) &
+                        row.desiredLifecycle.equals('present') &
+                        row.state.isIn(const <String>[
+                          'pending',
+                          'in_flight',
+                          'uncertain',
+                          'failed',
+                        ]),
+                  ))
+                  .getSingleOrNull() !=
+              null;
+          final projectionChanged =
+              existing.projection != CacheProjection.supported.name;
+          final titleChanged =
+              !hasUnresolvedLocalTitle && existing.title != item.title;
+          if (titleChanged || projectionChanged) {
             await (_database.update(_database.taskListCacheRows)..where(
                   (row) =>
                       row.accountId.equals(accountId.value) &
                       row.id.equals(existing.id),
                 ))
                 .write(
-                  TaskListCacheRowsCompanion(
-                    title: Value<String>(item.title),
-                    projection: Value<String>(CacheProjection.supported.name),
-                  ),
+                  titleChanged
+                      ? TaskListCacheRowsCompanion(
+                          title: Value<String>(item.title),
+                          projection: Value<String>(
+                            CacheProjection.supported.name,
+                          ),
+                        )
+                      : TaskListCacheRowsCompanion(
+                          projection: Value<String>(
+                            CacheProjection.supported.name,
+                          ),
+                        ),
                 );
             writes += 1;
           }

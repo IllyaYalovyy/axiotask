@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
+import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
@@ -162,6 +165,79 @@ void main() {
     expect(resumes, 1);
     fixture.dispose();
   });
+
+  testWidgets(
+    'create dialog has no local-only mode and disables duplicate submit',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final durable = Completer<Outcome<TaskListId>>();
+      final lists = _TaskListsRepository()..createResult = durable.future;
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        taskListsRepository: lists,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Create Google task list'));
+      await tester.pumpAndSettle();
+      expect(find.text('Create task list'), findsOneWidget);
+      expect(find.textContaining('local-only'), findsNothing);
+      await tester.enterText(find.byType(TextField), 'Offline project');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pump();
+      final dialogSubmit = find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(FilledButton),
+      );
+      expect(tester.widget<FilledButton>(dialogSubmit).onPressed, isNull);
+      await tester.tap(dialogSubmit, warnIfMissed: false);
+      expect(lists.createCalls, 1);
+      expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+      durable.complete(const Outcome<TaskListId>.success(TaskListId(31)));
+      await tester.pumpAndSettle();
+      expect(find.text('Create task list'), findsNothing);
+    },
+  );
+
+  testWidgets('rename dialog submits the selected stable list identity', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final lists = _TaskListsRepository();
+    final fixture = _ShellFixture(
+      _health(
+        SyncHealthOutcome.inactive,
+        inactiveReason: SyncInactiveReason.syncStopped,
+        action: SyncHealthAction.resume,
+      ),
+      taskListsRepository: lists,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Rename selected task list'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename task list'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Stopped rename');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    expect(lists.renamed, isEmpty, reason: 'uncommitted editor text is inert');
+    await tester.tap(find.widgetWithText(FilledButton, 'Rename'));
+    await tester.pumpAndSettle();
+
+    expect(lists.renamed.single.taskListId, const TaskListId(7));
+    expect(lists.renamed.single.title, 'Stopped rename');
+  });
 }
 
 final class _ShellFixture {
@@ -170,11 +246,13 @@ final class _ShellFixture {
     Future<void> Function()? refreshRequested,
     Future<void> Function()? stopSyncRequested,
     Future<void> Function()? resumeSyncRequested,
+    TaskListsRepository? taskListsRepository,
   }) : tasks = _TasksRepository(),
        healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
       accountId: const AccountId(1),
       tasksRepository: tasks,
+      taskListsRepository: taskListsRepository,
       syncHealthRepository: healthRepository,
       refreshRequested: refreshRequested,
       stopSyncRequested: stopSyncRequested,
@@ -191,6 +269,29 @@ final class _ShellFixture {
   Widget get widget => MaterialApp(home: AdaptiveShell(viewModel: viewModel));
 
   void dispose() => viewModel.dispose();
+}
+
+final class _TaskListsRepository implements TaskListsRepository {
+  Future<Outcome<TaskListId>> createResult = Future.value(
+    const Outcome<TaskListId>.success(TaskListId(99)),
+  );
+  Future<Outcome<void>> renameResult = Future.value(
+    const Outcome<void>.success(null),
+  );
+  final List<RenameTaskListCommand> renamed = <RenameTaskListCommand>[];
+  var createCalls = 0;
+
+  @override
+  Future<Outcome<TaskListId>> createTaskList(CreateTaskListCommand command) {
+    createCalls += 1;
+    return createResult;
+  }
+
+  @override
+  Future<Outcome<void>> renameTaskList(RenameTaskListCommand command) {
+    renamed.add(command);
+    return renameResult;
+  }
 }
 
 final class _TasksRepository implements TasksRepository {

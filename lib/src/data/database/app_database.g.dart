@@ -3521,11 +3521,26 @@ class $AccountPreferenceRowsTable extends AccountPreferenceRows
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _nextLocalCausalSequenceMeta =
+      const VerificationMeta('nextLocalCausalSequence');
+  @override
+  late final GeneratedColumn<int> nextLocalCausalSequence =
+      GeneratedColumn<int>(
+        'next_local_causal_sequence',
+        aliasedName,
+        false,
+        check: () =>
+            ComparableExpr(nextLocalCausalSequence).isBiggerThanValue(0),
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+        defaultValue: const Constant(1),
+      );
   @override
   List<GeneratedColumn> get $columns => [
     accountId,
     syncEnabled,
     defaultTaskListId,
+    nextLocalCausalSequence,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3563,6 +3578,15 @@ class $AccountPreferenceRowsTable extends AccountPreferenceRows
         ),
       );
     }
+    if (data.containsKey('next_local_causal_sequence')) {
+      context.handle(
+        _nextLocalCausalSequenceMeta,
+        nextLocalCausalSequence.isAcceptableOrUnknown(
+          data['next_local_causal_sequence']!,
+          _nextLocalCausalSequenceMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -3584,6 +3608,10 @@ class $AccountPreferenceRowsTable extends AccountPreferenceRows
         DriftSqlType.int,
         data['${effectivePrefix}default_task_list_id'],
       ),
+      nextLocalCausalSequence: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}next_local_causal_sequence'],
+      )!,
     );
   }
 
@@ -3598,10 +3626,12 @@ class AccountPreferenceRow extends DataClass
   final int accountId;
   final bool syncEnabled;
   final int? defaultTaskListId;
+  final int nextLocalCausalSequence;
   const AccountPreferenceRow({
     required this.accountId,
     required this.syncEnabled,
     this.defaultTaskListId,
+    required this.nextLocalCausalSequence,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3611,6 +3641,7 @@ class AccountPreferenceRow extends DataClass
     if (!nullToAbsent || defaultTaskListId != null) {
       map['default_task_list_id'] = Variable<int>(defaultTaskListId);
     }
+    map['next_local_causal_sequence'] = Variable<int>(nextLocalCausalSequence);
     return map;
   }
 
@@ -3621,6 +3652,7 @@ class AccountPreferenceRow extends DataClass
       defaultTaskListId: defaultTaskListId == null && nullToAbsent
           ? const Value.absent()
           : Value(defaultTaskListId),
+      nextLocalCausalSequence: Value(nextLocalCausalSequence),
     );
   }
 
@@ -3633,6 +3665,9 @@ class AccountPreferenceRow extends DataClass
       accountId: serializer.fromJson<int>(json['accountId']),
       syncEnabled: serializer.fromJson<bool>(json['syncEnabled']),
       defaultTaskListId: serializer.fromJson<int?>(json['defaultTaskListId']),
+      nextLocalCausalSequence: serializer.fromJson<int>(
+        json['nextLocalCausalSequence'],
+      ),
     );
   }
   @override
@@ -3642,6 +3677,9 @@ class AccountPreferenceRow extends DataClass
       'accountId': serializer.toJson<int>(accountId),
       'syncEnabled': serializer.toJson<bool>(syncEnabled),
       'defaultTaskListId': serializer.toJson<int?>(defaultTaskListId),
+      'nextLocalCausalSequence': serializer.toJson<int>(
+        nextLocalCausalSequence,
+      ),
     };
   }
 
@@ -3649,12 +3687,15 @@ class AccountPreferenceRow extends DataClass
     int? accountId,
     bool? syncEnabled,
     Value<int?> defaultTaskListId = const Value.absent(),
+    int? nextLocalCausalSequence,
   }) => AccountPreferenceRow(
     accountId: accountId ?? this.accountId,
     syncEnabled: syncEnabled ?? this.syncEnabled,
     defaultTaskListId: defaultTaskListId.present
         ? defaultTaskListId.value
         : this.defaultTaskListId,
+    nextLocalCausalSequence:
+        nextLocalCausalSequence ?? this.nextLocalCausalSequence,
   );
   AccountPreferenceRow copyWithCompanion(AccountPreferenceRowsCompanion data) {
     return AccountPreferenceRow(
@@ -3665,6 +3706,9 @@ class AccountPreferenceRow extends DataClass
       defaultTaskListId: data.defaultTaskListId.present
           ? data.defaultTaskListId.value
           : this.defaultTaskListId,
+      nextLocalCausalSequence: data.nextLocalCausalSequence.present
+          ? data.nextLocalCausalSequence.value
+          : this.nextLocalCausalSequence,
     );
   }
 
@@ -3673,20 +3717,27 @@ class AccountPreferenceRow extends DataClass
     return (StringBuffer('AccountPreferenceRow(')
           ..write('accountId: $accountId, ')
           ..write('syncEnabled: $syncEnabled, ')
-          ..write('defaultTaskListId: $defaultTaskListId')
+          ..write('defaultTaskListId: $defaultTaskListId, ')
+          ..write('nextLocalCausalSequence: $nextLocalCausalSequence')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(accountId, syncEnabled, defaultTaskListId);
+  int get hashCode => Object.hash(
+    accountId,
+    syncEnabled,
+    defaultTaskListId,
+    nextLocalCausalSequence,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is AccountPreferenceRow &&
           other.accountId == this.accountId &&
           other.syncEnabled == this.syncEnabled &&
-          other.defaultTaskListId == this.defaultTaskListId);
+          other.defaultTaskListId == this.defaultTaskListId &&
+          other.nextLocalCausalSequence == this.nextLocalCausalSequence);
 }
 
 class AccountPreferenceRowsCompanion
@@ -3694,25 +3745,31 @@ class AccountPreferenceRowsCompanion
   final Value<int> accountId;
   final Value<bool> syncEnabled;
   final Value<int?> defaultTaskListId;
+  final Value<int> nextLocalCausalSequence;
   const AccountPreferenceRowsCompanion({
     this.accountId = const Value.absent(),
     this.syncEnabled = const Value.absent(),
     this.defaultTaskListId = const Value.absent(),
+    this.nextLocalCausalSequence = const Value.absent(),
   });
   AccountPreferenceRowsCompanion.insert({
     this.accountId = const Value.absent(),
     this.syncEnabled = const Value.absent(),
     this.defaultTaskListId = const Value.absent(),
+    this.nextLocalCausalSequence = const Value.absent(),
   });
   static Insertable<AccountPreferenceRow> custom({
     Expression<int>? accountId,
     Expression<bool>? syncEnabled,
     Expression<int>? defaultTaskListId,
+    Expression<int>? nextLocalCausalSequence,
   }) {
     return RawValuesInsertable({
       if (accountId != null) 'account_id': accountId,
       if (syncEnabled != null) 'sync_enabled': syncEnabled,
       if (defaultTaskListId != null) 'default_task_list_id': defaultTaskListId,
+      if (nextLocalCausalSequence != null)
+        'next_local_causal_sequence': nextLocalCausalSequence,
     });
   }
 
@@ -3720,11 +3777,14 @@ class AccountPreferenceRowsCompanion
     Value<int>? accountId,
     Value<bool>? syncEnabled,
     Value<int?>? defaultTaskListId,
+    Value<int>? nextLocalCausalSequence,
   }) {
     return AccountPreferenceRowsCompanion(
       accountId: accountId ?? this.accountId,
       syncEnabled: syncEnabled ?? this.syncEnabled,
       defaultTaskListId: defaultTaskListId ?? this.defaultTaskListId,
+      nextLocalCausalSequence:
+          nextLocalCausalSequence ?? this.nextLocalCausalSequence,
     );
   }
 
@@ -3740,6 +3800,11 @@ class AccountPreferenceRowsCompanion
     if (defaultTaskListId.present) {
       map['default_task_list_id'] = Variable<int>(defaultTaskListId.value);
     }
+    if (nextLocalCausalSequence.present) {
+      map['next_local_causal_sequence'] = Variable<int>(
+        nextLocalCausalSequence.value,
+      );
+    }
     return map;
   }
 
@@ -3748,7 +3813,3395 @@ class AccountPreferenceRowsCompanion
     return (StringBuffer('AccountPreferenceRowsCompanion(')
           ..write('accountId: $accountId, ')
           ..write('syncEnabled: $syncEnabled, ')
-          ..write('defaultTaskListId: $defaultTaskListId')
+          ..write('defaultTaskListId: $defaultTaskListId, ')
+          ..write('nextLocalCausalSequence: $nextLocalCausalSequence')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesiredStateRowsTable extends DesiredStateRows
+    with TableInfo<$DesiredStateRowsTable, DesiredStateRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesiredStateRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetKeyMeta = const VerificationMeta(
+    'targetKey',
+  );
+  @override
+  late final GeneratedColumn<String> targetKey = GeneratedColumn<String>(
+    'target_key',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(targetKey.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _resourceTypeMeta = const VerificationMeta(
+    'resourceType',
+  );
+  @override
+  late final GeneratedColumn<String> resourceType = GeneratedColumn<String>(
+    'resource_type',
+    aliasedName,
+    false,
+    check: () => resourceType.isIn(const <String>['task_list', 'task']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetTaskListIdMeta = const VerificationMeta(
+    'targetTaskListId',
+  );
+  @override
+  late final GeneratedColumn<int> targetTaskListId = GeneratedColumn<int>(
+    'target_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _targetTaskIdMeta = const VerificationMeta(
+    'targetTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> targetTaskId = GeneratedColumn<int>(
+    'target_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredLifecycleMeta = const VerificationMeta(
+    'desiredLifecycle',
+  );
+  @override
+  late final GeneratedColumn<String> desiredLifecycle = GeneratedColumn<String>(
+    'desired_lifecycle',
+    aliasedName,
+    false,
+    check: () => desiredLifecycle.isIn(const <String>['present', 'deleted']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+    'title',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _notesMeta = const VerificationMeta('notes');
+  @override
+  late final GeneratedColumn<String> notes = GeneratedColumn<String>(
+    'notes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    true,
+    check: () =>
+        status.isNull() |
+        status.isIn(const <String>['needs_action', 'completed']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _dueEpochDayMeta = const VerificationMeta(
+    'dueEpochDay',
+  );
+  @override
+  late final GeneratedColumn<int> dueEpochDay = GeneratedColumn<int>(
+    'due_epoch_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredTaskListIdMeta = const VerificationMeta(
+    'desiredTaskListId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredTaskListId = GeneratedColumn<int>(
+    'desired_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredParentTaskIdMeta =
+      const VerificationMeta('desiredParentTaskId');
+  @override
+  late final GeneratedColumn<int> desiredParentTaskId = GeneratedColumn<int>(
+    'desired_parent_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredPreviousTaskIdMeta =
+      const VerificationMeta('desiredPreviousTaskId');
+  @override
+  late final GeneratedColumn<int> desiredPreviousTaskId = GeneratedColumn<int>(
+    'desired_previous_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _contentDirtyMeta = const VerificationMeta(
+    'contentDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> contentDirty = GeneratedColumn<bool>(
+    'content_dirty',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("content_dirty" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _structureDirtyMeta = const VerificationMeta(
+    'structureDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> structureDirty = GeneratedColumn<bool>(
+    'structure_dirty',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("structure_dirty" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _lifecycleDirtyMeta = const VerificationMeta(
+    'lifecycleDirty',
+  );
+  @override
+  late final GeneratedColumn<bool> lifecycleDirty = GeneratedColumn<bool>(
+    'lifecycle_dirty',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("lifecycle_dirty" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _localModifiedAtMeta = const VerificationMeta(
+    'localModifiedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> localModifiedAt =
+      GeneratedColumn<DateTime>(
+        'local_modified_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _generationMeta = const VerificationMeta(
+    'generation',
+  );
+  @override
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(generation).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _localCausalSequenceMeta =
+      const VerificationMeta('localCausalSequence');
+  @override
+  late final GeneratedColumn<int> localCausalSequence = GeneratedColumn<int>(
+    'local_causal_sequence',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(localCausalSequence).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    check: () => state.isIn(const <String>[
+      'pending',
+      'in_flight',
+      'uncertain',
+      'failed',
+      'confirmed',
+      'superseded',
+    ]),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _baseRemoteIdMeta = const VerificationMeta(
+    'baseRemoteId',
+  );
+  @override
+  late final GeneratedColumn<String> baseRemoteId = GeneratedColumn<String>(
+    'base_remote_id',
+    aliasedName,
+    true,
+    check: () =>
+        baseRemoteId.isNull() |
+        ComparableExpr(baseRemoteId.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseEtagMeta = const VerificationMeta(
+    'baseEtag',
+  );
+  @override
+  late final GeneratedColumn<String> baseEtag = GeneratedColumn<String>(
+    'base_etag',
+    aliasedName,
+    true,
+    check: () =>
+        baseEtag.isNull() |
+        ComparableExpr(baseEtag.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseRemoteUpdatedAtMeta =
+      const VerificationMeta('baseRemoteUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> baseRemoteUpdatedAt =
+      GeneratedColumn<DateTime>(
+        'base_remote_updated_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _baseObservedPublicationIdMeta =
+      const VerificationMeta('baseObservedPublicationId');
+  @override
+  late final GeneratedColumn<String> baseObservedPublicationId =
+      GeneratedColumn<String>(
+        'base_observed_publication_id',
+        aliasedName,
+        true,
+        check: () =>
+            baseObservedPublicationId.isNull() |
+            ComparableExpr(
+              baseObservedPublicationId.length,
+            ).isBiggerThanValue(0),
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _baseTitleMeta = const VerificationMeta(
+    'baseTitle',
+  );
+  @override
+  late final GeneratedColumn<String> baseTitle = GeneratedColumn<String>(
+    'base_title',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failureCodeMeta = const VerificationMeta(
+    'failureCode',
+  );
+  @override
+  late final GeneratedColumn<String> failureCode = GeneratedColumn<String>(
+    'failure_code',
+    aliasedName,
+    true,
+    check: () =>
+        failureCode.isNull() |
+        ComparableExpr(failureCode.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastTransitionAtMeta = const VerificationMeta(
+    'lastTransitionAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastTransitionAt =
+      GeneratedColumn<DateTime>(
+        'last_transition_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    targetKey,
+    resourceType,
+    targetTaskListId,
+    targetTaskId,
+    desiredLifecycle,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    desiredTaskListId,
+    desiredParentTaskId,
+    desiredPreviousTaskId,
+    contentDirty,
+    structureDirty,
+    lifecycleDirty,
+    localModifiedAt,
+    generation,
+    localCausalSequence,
+    state,
+    baseRemoteId,
+    baseEtag,
+    baseRemoteUpdatedAt,
+    baseObservedPublicationId,
+    baseTitle,
+    failureCode,
+    createdAt,
+    lastTransitionAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desired_states';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesiredStateRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('target_key')) {
+      context.handle(
+        _targetKeyMeta,
+        targetKey.isAcceptableOrUnknown(data['target_key']!, _targetKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_targetKeyMeta);
+    }
+    if (data.containsKey('resource_type')) {
+      context.handle(
+        _resourceTypeMeta,
+        resourceType.isAcceptableOrUnknown(
+          data['resource_type']!,
+          _resourceTypeMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_resourceTypeMeta);
+    }
+    if (data.containsKey('target_task_list_id')) {
+      context.handle(
+        _targetTaskListIdMeta,
+        targetTaskListId.isAcceptableOrUnknown(
+          data['target_task_list_id']!,
+          _targetTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('target_task_id')) {
+      context.handle(
+        _targetTaskIdMeta,
+        targetTaskId.isAcceptableOrUnknown(
+          data['target_task_id']!,
+          _targetTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_lifecycle')) {
+      context.handle(
+        _desiredLifecycleMeta,
+        desiredLifecycle.isAcceptableOrUnknown(
+          data['desired_lifecycle']!,
+          _desiredLifecycleMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredLifecycleMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
+    }
+    if (data.containsKey('notes')) {
+      context.handle(
+        _notesMeta,
+        notes.isAcceptableOrUnknown(data['notes']!, _notesMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('due_epoch_day')) {
+      context.handle(
+        _dueEpochDayMeta,
+        dueEpochDay.isAcceptableOrUnknown(
+          data['due_epoch_day']!,
+          _dueEpochDayMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_task_list_id')) {
+      context.handle(
+        _desiredTaskListIdMeta,
+        desiredTaskListId.isAcceptableOrUnknown(
+          data['desired_task_list_id']!,
+          _desiredTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_parent_task_id')) {
+      context.handle(
+        _desiredParentTaskIdMeta,
+        desiredParentTaskId.isAcceptableOrUnknown(
+          data['desired_parent_task_id']!,
+          _desiredParentTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_previous_task_id')) {
+      context.handle(
+        _desiredPreviousTaskIdMeta,
+        desiredPreviousTaskId.isAcceptableOrUnknown(
+          data['desired_previous_task_id']!,
+          _desiredPreviousTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('content_dirty')) {
+      context.handle(
+        _contentDirtyMeta,
+        contentDirty.isAcceptableOrUnknown(
+          data['content_dirty']!,
+          _contentDirtyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('structure_dirty')) {
+      context.handle(
+        _structureDirtyMeta,
+        structureDirty.isAcceptableOrUnknown(
+          data['structure_dirty']!,
+          _structureDirtyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('lifecycle_dirty')) {
+      context.handle(
+        _lifecycleDirtyMeta,
+        lifecycleDirty.isAcceptableOrUnknown(
+          data['lifecycle_dirty']!,
+          _lifecycleDirtyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('local_modified_at')) {
+      context.handle(
+        _localModifiedAtMeta,
+        localModifiedAt.isAcceptableOrUnknown(
+          data['local_modified_at']!,
+          _localModifiedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('generation')) {
+      context.handle(
+        _generationMeta,
+        generation.isAcceptableOrUnknown(data['generation']!, _generationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_generationMeta);
+    }
+    if (data.containsKey('local_causal_sequence')) {
+      context.handle(
+        _localCausalSequenceMeta,
+        localCausalSequence.isAcceptableOrUnknown(
+          data['local_causal_sequence']!,
+          _localCausalSequenceMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_localCausalSequenceMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('base_remote_id')) {
+      context.handle(
+        _baseRemoteIdMeta,
+        baseRemoteId.isAcceptableOrUnknown(
+          data['base_remote_id']!,
+          _baseRemoteIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_etag')) {
+      context.handle(
+        _baseEtagMeta,
+        baseEtag.isAcceptableOrUnknown(data['base_etag']!, _baseEtagMeta),
+      );
+    }
+    if (data.containsKey('base_remote_updated_at')) {
+      context.handle(
+        _baseRemoteUpdatedAtMeta,
+        baseRemoteUpdatedAt.isAcceptableOrUnknown(
+          data['base_remote_updated_at']!,
+          _baseRemoteUpdatedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_observed_publication_id')) {
+      context.handle(
+        _baseObservedPublicationIdMeta,
+        baseObservedPublicationId.isAcceptableOrUnknown(
+          data['base_observed_publication_id']!,
+          _baseObservedPublicationIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_title')) {
+      context.handle(
+        _baseTitleMeta,
+        baseTitle.isAcceptableOrUnknown(data['base_title']!, _baseTitleMeta),
+      );
+    }
+    if (data.containsKey('failure_code')) {
+      context.handle(
+        _failureCodeMeta,
+        failureCode.isAcceptableOrUnknown(
+          data['failure_code']!,
+          _failureCodeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('last_transition_at')) {
+      context.handle(
+        _lastTransitionAtMeta,
+        lastTransitionAt.isAcceptableOrUnknown(
+          data['last_transition_at']!,
+          _lastTransitionAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_lastTransitionAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, id},
+    {accountId, targetKey},
+  ];
+  @override
+  DesiredStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesiredStateRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      targetKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_key'],
+      )!,
+      resourceType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}resource_type'],
+      )!,
+      targetTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}target_task_list_id'],
+      ),
+      targetTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}target_task_id'],
+      ),
+      desiredLifecycle: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}desired_lifecycle'],
+      )!,
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      ),
+      notes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}notes'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      ),
+      dueEpochDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}due_epoch_day'],
+      ),
+      desiredTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_task_list_id'],
+      ),
+      desiredParentTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_parent_task_id'],
+      ),
+      desiredPreviousTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_previous_task_id'],
+      ),
+      contentDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}content_dirty'],
+      )!,
+      structureDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}structure_dirty'],
+      )!,
+      lifecycleDirty: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}lifecycle_dirty'],
+      )!,
+      localModifiedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}local_modified_at'],
+      ),
+      generation: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}generation'],
+      )!,
+      localCausalSequence: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}local_causal_sequence'],
+      )!,
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      baseRemoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_remote_id'],
+      ),
+      baseEtag: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_etag'],
+      ),
+      baseRemoteUpdatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}base_remote_updated_at'],
+      ),
+      baseObservedPublicationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_observed_publication_id'],
+      ),
+      baseTitle: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_title'],
+      ),
+      failureCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_code'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      lastTransitionAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_transition_at'],
+      )!,
+    );
+  }
+
+  @override
+  $DesiredStateRowsTable createAlias(String alias) {
+    return $DesiredStateRowsTable(attachedDatabase, alias);
+  }
+}
+
+class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
+  final int id;
+  final int accountId;
+  final String targetKey;
+  final String resourceType;
+  final int? targetTaskListId;
+  final int? targetTaskId;
+  final String desiredLifecycle;
+  final String? title;
+  final String? notes;
+  final String? status;
+  final int? dueEpochDay;
+  final int? desiredTaskListId;
+  final int? desiredParentTaskId;
+  final int? desiredPreviousTaskId;
+  final bool contentDirty;
+  final bool structureDirty;
+  final bool lifecycleDirty;
+  final DateTime? localModifiedAt;
+  final int generation;
+  final int localCausalSequence;
+  final String state;
+  final String? baseRemoteId;
+  final String? baseEtag;
+  final DateTime? baseRemoteUpdatedAt;
+  final String? baseObservedPublicationId;
+  final String? baseTitle;
+  final String? failureCode;
+  final DateTime createdAt;
+  final DateTime lastTransitionAt;
+  const DesiredStateRow({
+    required this.id,
+    required this.accountId,
+    required this.targetKey,
+    required this.resourceType,
+    this.targetTaskListId,
+    this.targetTaskId,
+    required this.desiredLifecycle,
+    this.title,
+    this.notes,
+    this.status,
+    this.dueEpochDay,
+    this.desiredTaskListId,
+    this.desiredParentTaskId,
+    this.desiredPreviousTaskId,
+    required this.contentDirty,
+    required this.structureDirty,
+    required this.lifecycleDirty,
+    this.localModifiedAt,
+    required this.generation,
+    required this.localCausalSequence,
+    required this.state,
+    this.baseRemoteId,
+    this.baseEtag,
+    this.baseRemoteUpdatedAt,
+    this.baseObservedPublicationId,
+    this.baseTitle,
+    this.failureCode,
+    required this.createdAt,
+    required this.lastTransitionAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['target_key'] = Variable<String>(targetKey);
+    map['resource_type'] = Variable<String>(resourceType);
+    if (!nullToAbsent || targetTaskListId != null) {
+      map['target_task_list_id'] = Variable<int>(targetTaskListId);
+    }
+    if (!nullToAbsent || targetTaskId != null) {
+      map['target_task_id'] = Variable<int>(targetTaskId);
+    }
+    map['desired_lifecycle'] = Variable<String>(desiredLifecycle);
+    if (!nullToAbsent || title != null) {
+      map['title'] = Variable<String>(title);
+    }
+    if (!nullToAbsent || notes != null) {
+      map['notes'] = Variable<String>(notes);
+    }
+    if (!nullToAbsent || status != null) {
+      map['status'] = Variable<String>(status);
+    }
+    if (!nullToAbsent || dueEpochDay != null) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay);
+    }
+    if (!nullToAbsent || desiredTaskListId != null) {
+      map['desired_task_list_id'] = Variable<int>(desiredTaskListId);
+    }
+    if (!nullToAbsent || desiredParentTaskId != null) {
+      map['desired_parent_task_id'] = Variable<int>(desiredParentTaskId);
+    }
+    if (!nullToAbsent || desiredPreviousTaskId != null) {
+      map['desired_previous_task_id'] = Variable<int>(desiredPreviousTaskId);
+    }
+    map['content_dirty'] = Variable<bool>(contentDirty);
+    map['structure_dirty'] = Variable<bool>(structureDirty);
+    map['lifecycle_dirty'] = Variable<bool>(lifecycleDirty);
+    if (!nullToAbsent || localModifiedAt != null) {
+      map['local_modified_at'] = Variable<DateTime>(localModifiedAt);
+    }
+    map['generation'] = Variable<int>(generation);
+    map['local_causal_sequence'] = Variable<int>(localCausalSequence);
+    map['state'] = Variable<String>(state);
+    if (!nullToAbsent || baseRemoteId != null) {
+      map['base_remote_id'] = Variable<String>(baseRemoteId);
+    }
+    if (!nullToAbsent || baseEtag != null) {
+      map['base_etag'] = Variable<String>(baseEtag);
+    }
+    if (!nullToAbsent || baseRemoteUpdatedAt != null) {
+      map['base_remote_updated_at'] = Variable<DateTime>(baseRemoteUpdatedAt);
+    }
+    if (!nullToAbsent || baseObservedPublicationId != null) {
+      map['base_observed_publication_id'] = Variable<String>(
+        baseObservedPublicationId,
+      );
+    }
+    if (!nullToAbsent || baseTitle != null) {
+      map['base_title'] = Variable<String>(baseTitle);
+    }
+    if (!nullToAbsent || failureCode != null) {
+      map['failure_code'] = Variable<String>(failureCode);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['last_transition_at'] = Variable<DateTime>(lastTransitionAt);
+    return map;
+  }
+
+  DesiredStateRowsCompanion toCompanion(bool nullToAbsent) {
+    return DesiredStateRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      targetKey: Value(targetKey),
+      resourceType: Value(resourceType),
+      targetTaskListId: targetTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetTaskListId),
+      targetTaskId: targetTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetTaskId),
+      desiredLifecycle: Value(desiredLifecycle),
+      title: title == null && nullToAbsent
+          ? const Value.absent()
+          : Value(title),
+      notes: notes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notes),
+      status: status == null && nullToAbsent
+          ? const Value.absent()
+          : Value(status),
+      dueEpochDay: dueEpochDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueEpochDay),
+      desiredTaskListId: desiredTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredTaskListId),
+      desiredParentTaskId: desiredParentTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredParentTaskId),
+      desiredPreviousTaskId: desiredPreviousTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredPreviousTaskId),
+      contentDirty: Value(contentDirty),
+      structureDirty: Value(structureDirty),
+      lifecycleDirty: Value(lifecycleDirty),
+      localModifiedAt: localModifiedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localModifiedAt),
+      generation: Value(generation),
+      localCausalSequence: Value(localCausalSequence),
+      state: Value(state),
+      baseRemoteId: baseRemoteId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseRemoteId),
+      baseEtag: baseEtag == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseEtag),
+      baseRemoteUpdatedAt: baseRemoteUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseRemoteUpdatedAt),
+      baseObservedPublicationId:
+          baseObservedPublicationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseObservedPublicationId),
+      baseTitle: baseTitle == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseTitle),
+      failureCode: failureCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failureCode),
+      createdAt: Value(createdAt),
+      lastTransitionAt: Value(lastTransitionAt),
+    );
+  }
+
+  factory DesiredStateRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesiredStateRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      targetKey: serializer.fromJson<String>(json['targetKey']),
+      resourceType: serializer.fromJson<String>(json['resourceType']),
+      targetTaskListId: serializer.fromJson<int?>(json['targetTaskListId']),
+      targetTaskId: serializer.fromJson<int?>(json['targetTaskId']),
+      desiredLifecycle: serializer.fromJson<String>(json['desiredLifecycle']),
+      title: serializer.fromJson<String?>(json['title']),
+      notes: serializer.fromJson<String?>(json['notes']),
+      status: serializer.fromJson<String?>(json['status']),
+      dueEpochDay: serializer.fromJson<int?>(json['dueEpochDay']),
+      desiredTaskListId: serializer.fromJson<int?>(json['desiredTaskListId']),
+      desiredParentTaskId: serializer.fromJson<int?>(
+        json['desiredParentTaskId'],
+      ),
+      desiredPreviousTaskId: serializer.fromJson<int?>(
+        json['desiredPreviousTaskId'],
+      ),
+      contentDirty: serializer.fromJson<bool>(json['contentDirty']),
+      structureDirty: serializer.fromJson<bool>(json['structureDirty']),
+      lifecycleDirty: serializer.fromJson<bool>(json['lifecycleDirty']),
+      localModifiedAt: serializer.fromJson<DateTime?>(json['localModifiedAt']),
+      generation: serializer.fromJson<int>(json['generation']),
+      localCausalSequence: serializer.fromJson<int>(
+        json['localCausalSequence'],
+      ),
+      state: serializer.fromJson<String>(json['state']),
+      baseRemoteId: serializer.fromJson<String?>(json['baseRemoteId']),
+      baseEtag: serializer.fromJson<String?>(json['baseEtag']),
+      baseRemoteUpdatedAt: serializer.fromJson<DateTime?>(
+        json['baseRemoteUpdatedAt'],
+      ),
+      baseObservedPublicationId: serializer.fromJson<String?>(
+        json['baseObservedPublicationId'],
+      ),
+      baseTitle: serializer.fromJson<String?>(json['baseTitle']),
+      failureCode: serializer.fromJson<String?>(json['failureCode']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      lastTransitionAt: serializer.fromJson<DateTime>(json['lastTransitionAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'targetKey': serializer.toJson<String>(targetKey),
+      'resourceType': serializer.toJson<String>(resourceType),
+      'targetTaskListId': serializer.toJson<int?>(targetTaskListId),
+      'targetTaskId': serializer.toJson<int?>(targetTaskId),
+      'desiredLifecycle': serializer.toJson<String>(desiredLifecycle),
+      'title': serializer.toJson<String?>(title),
+      'notes': serializer.toJson<String?>(notes),
+      'status': serializer.toJson<String?>(status),
+      'dueEpochDay': serializer.toJson<int?>(dueEpochDay),
+      'desiredTaskListId': serializer.toJson<int?>(desiredTaskListId),
+      'desiredParentTaskId': serializer.toJson<int?>(desiredParentTaskId),
+      'desiredPreviousTaskId': serializer.toJson<int?>(desiredPreviousTaskId),
+      'contentDirty': serializer.toJson<bool>(contentDirty),
+      'structureDirty': serializer.toJson<bool>(structureDirty),
+      'lifecycleDirty': serializer.toJson<bool>(lifecycleDirty),
+      'localModifiedAt': serializer.toJson<DateTime?>(localModifiedAt),
+      'generation': serializer.toJson<int>(generation),
+      'localCausalSequence': serializer.toJson<int>(localCausalSequence),
+      'state': serializer.toJson<String>(state),
+      'baseRemoteId': serializer.toJson<String?>(baseRemoteId),
+      'baseEtag': serializer.toJson<String?>(baseEtag),
+      'baseRemoteUpdatedAt': serializer.toJson<DateTime?>(baseRemoteUpdatedAt),
+      'baseObservedPublicationId': serializer.toJson<String?>(
+        baseObservedPublicationId,
+      ),
+      'baseTitle': serializer.toJson<String?>(baseTitle),
+      'failureCode': serializer.toJson<String?>(failureCode),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'lastTransitionAt': serializer.toJson<DateTime>(lastTransitionAt),
+    };
+  }
+
+  DesiredStateRow copyWith({
+    int? id,
+    int? accountId,
+    String? targetKey,
+    String? resourceType,
+    Value<int?> targetTaskListId = const Value.absent(),
+    Value<int?> targetTaskId = const Value.absent(),
+    String? desiredLifecycle,
+    Value<String?> title = const Value.absent(),
+    Value<String?> notes = const Value.absent(),
+    Value<String?> status = const Value.absent(),
+    Value<int?> dueEpochDay = const Value.absent(),
+    Value<int?> desiredTaskListId = const Value.absent(),
+    Value<int?> desiredParentTaskId = const Value.absent(),
+    Value<int?> desiredPreviousTaskId = const Value.absent(),
+    bool? contentDirty,
+    bool? structureDirty,
+    bool? lifecycleDirty,
+    Value<DateTime?> localModifiedAt = const Value.absent(),
+    int? generation,
+    int? localCausalSequence,
+    String? state,
+    Value<String?> baseRemoteId = const Value.absent(),
+    Value<String?> baseEtag = const Value.absent(),
+    Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+    Value<String?> baseObservedPublicationId = const Value.absent(),
+    Value<String?> baseTitle = const Value.absent(),
+    Value<String?> failureCode = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? lastTransitionAt,
+  }) => DesiredStateRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    targetKey: targetKey ?? this.targetKey,
+    resourceType: resourceType ?? this.resourceType,
+    targetTaskListId: targetTaskListId.present
+        ? targetTaskListId.value
+        : this.targetTaskListId,
+    targetTaskId: targetTaskId.present ? targetTaskId.value : this.targetTaskId,
+    desiredLifecycle: desiredLifecycle ?? this.desiredLifecycle,
+    title: title.present ? title.value : this.title,
+    notes: notes.present ? notes.value : this.notes,
+    status: status.present ? status.value : this.status,
+    dueEpochDay: dueEpochDay.present ? dueEpochDay.value : this.dueEpochDay,
+    desiredTaskListId: desiredTaskListId.present
+        ? desiredTaskListId.value
+        : this.desiredTaskListId,
+    desiredParentTaskId: desiredParentTaskId.present
+        ? desiredParentTaskId.value
+        : this.desiredParentTaskId,
+    desiredPreviousTaskId: desiredPreviousTaskId.present
+        ? desiredPreviousTaskId.value
+        : this.desiredPreviousTaskId,
+    contentDirty: contentDirty ?? this.contentDirty,
+    structureDirty: structureDirty ?? this.structureDirty,
+    lifecycleDirty: lifecycleDirty ?? this.lifecycleDirty,
+    localModifiedAt: localModifiedAt.present
+        ? localModifiedAt.value
+        : this.localModifiedAt,
+    generation: generation ?? this.generation,
+    localCausalSequence: localCausalSequence ?? this.localCausalSequence,
+    state: state ?? this.state,
+    baseRemoteId: baseRemoteId.present ? baseRemoteId.value : this.baseRemoteId,
+    baseEtag: baseEtag.present ? baseEtag.value : this.baseEtag,
+    baseRemoteUpdatedAt: baseRemoteUpdatedAt.present
+        ? baseRemoteUpdatedAt.value
+        : this.baseRemoteUpdatedAt,
+    baseObservedPublicationId: baseObservedPublicationId.present
+        ? baseObservedPublicationId.value
+        : this.baseObservedPublicationId,
+    baseTitle: baseTitle.present ? baseTitle.value : this.baseTitle,
+    failureCode: failureCode.present ? failureCode.value : this.failureCode,
+    createdAt: createdAt ?? this.createdAt,
+    lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
+  );
+  DesiredStateRow copyWithCompanion(DesiredStateRowsCompanion data) {
+    return DesiredStateRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      targetKey: data.targetKey.present ? data.targetKey.value : this.targetKey,
+      resourceType: data.resourceType.present
+          ? data.resourceType.value
+          : this.resourceType,
+      targetTaskListId: data.targetTaskListId.present
+          ? data.targetTaskListId.value
+          : this.targetTaskListId,
+      targetTaskId: data.targetTaskId.present
+          ? data.targetTaskId.value
+          : this.targetTaskId,
+      desiredLifecycle: data.desiredLifecycle.present
+          ? data.desiredLifecycle.value
+          : this.desiredLifecycle,
+      title: data.title.present ? data.title.value : this.title,
+      notes: data.notes.present ? data.notes.value : this.notes,
+      status: data.status.present ? data.status.value : this.status,
+      dueEpochDay: data.dueEpochDay.present
+          ? data.dueEpochDay.value
+          : this.dueEpochDay,
+      desiredTaskListId: data.desiredTaskListId.present
+          ? data.desiredTaskListId.value
+          : this.desiredTaskListId,
+      desiredParentTaskId: data.desiredParentTaskId.present
+          ? data.desiredParentTaskId.value
+          : this.desiredParentTaskId,
+      desiredPreviousTaskId: data.desiredPreviousTaskId.present
+          ? data.desiredPreviousTaskId.value
+          : this.desiredPreviousTaskId,
+      contentDirty: data.contentDirty.present
+          ? data.contentDirty.value
+          : this.contentDirty,
+      structureDirty: data.structureDirty.present
+          ? data.structureDirty.value
+          : this.structureDirty,
+      lifecycleDirty: data.lifecycleDirty.present
+          ? data.lifecycleDirty.value
+          : this.lifecycleDirty,
+      localModifiedAt: data.localModifiedAt.present
+          ? data.localModifiedAt.value
+          : this.localModifiedAt,
+      generation: data.generation.present
+          ? data.generation.value
+          : this.generation,
+      localCausalSequence: data.localCausalSequence.present
+          ? data.localCausalSequence.value
+          : this.localCausalSequence,
+      state: data.state.present ? data.state.value : this.state,
+      baseRemoteId: data.baseRemoteId.present
+          ? data.baseRemoteId.value
+          : this.baseRemoteId,
+      baseEtag: data.baseEtag.present ? data.baseEtag.value : this.baseEtag,
+      baseRemoteUpdatedAt: data.baseRemoteUpdatedAt.present
+          ? data.baseRemoteUpdatedAt.value
+          : this.baseRemoteUpdatedAt,
+      baseObservedPublicationId: data.baseObservedPublicationId.present
+          ? data.baseObservedPublicationId.value
+          : this.baseObservedPublicationId,
+      baseTitle: data.baseTitle.present ? data.baseTitle.value : this.baseTitle,
+      failureCode: data.failureCode.present
+          ? data.failureCode.value
+          : this.failureCode,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      lastTransitionAt: data.lastTransitionAt.present
+          ? data.lastTransitionAt.value
+          : this.lastTransitionAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('resourceType: $resourceType, ')
+          ..write('targetTaskListId: $targetTaskListId, ')
+          ..write('targetTaskId: $targetTaskId, ')
+          ..write('desiredLifecycle: $desiredLifecycle, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('desiredTaskListId: $desiredTaskListId, ')
+          ..write('desiredParentTaskId: $desiredParentTaskId, ')
+          ..write('desiredPreviousTaskId: $desiredPreviousTaskId, ')
+          ..write('contentDirty: $contentDirty, ')
+          ..write('structureDirty: $structureDirty, ')
+          ..write('lifecycleDirty: $lifecycleDirty, ')
+          ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('generation: $generation, ')
+          ..write('localCausalSequence: $localCausalSequence, ')
+          ..write('state: $state, ')
+          ..write('baseRemoteId: $baseRemoteId, ')
+          ..write('baseEtag: $baseEtag, ')
+          ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
+          ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
+          ..write('baseTitle: $baseTitle, ')
+          ..write('failureCode: $failureCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('lastTransitionAt: $lastTransitionAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    accountId,
+    targetKey,
+    resourceType,
+    targetTaskListId,
+    targetTaskId,
+    desiredLifecycle,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    desiredTaskListId,
+    desiredParentTaskId,
+    desiredPreviousTaskId,
+    contentDirty,
+    structureDirty,
+    lifecycleDirty,
+    localModifiedAt,
+    generation,
+    localCausalSequence,
+    state,
+    baseRemoteId,
+    baseEtag,
+    baseRemoteUpdatedAt,
+    baseObservedPublicationId,
+    baseTitle,
+    failureCode,
+    createdAt,
+    lastTransitionAt,
+  ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesiredStateRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.targetKey == this.targetKey &&
+          other.resourceType == this.resourceType &&
+          other.targetTaskListId == this.targetTaskListId &&
+          other.targetTaskId == this.targetTaskId &&
+          other.desiredLifecycle == this.desiredLifecycle &&
+          other.title == this.title &&
+          other.notes == this.notes &&
+          other.status == this.status &&
+          other.dueEpochDay == this.dueEpochDay &&
+          other.desiredTaskListId == this.desiredTaskListId &&
+          other.desiredParentTaskId == this.desiredParentTaskId &&
+          other.desiredPreviousTaskId == this.desiredPreviousTaskId &&
+          other.contentDirty == this.contentDirty &&
+          other.structureDirty == this.structureDirty &&
+          other.lifecycleDirty == this.lifecycleDirty &&
+          other.localModifiedAt == this.localModifiedAt &&
+          other.generation == this.generation &&
+          other.localCausalSequence == this.localCausalSequence &&
+          other.state == this.state &&
+          other.baseRemoteId == this.baseRemoteId &&
+          other.baseEtag == this.baseEtag &&
+          other.baseRemoteUpdatedAt == this.baseRemoteUpdatedAt &&
+          other.baseObservedPublicationId == this.baseObservedPublicationId &&
+          other.baseTitle == this.baseTitle &&
+          other.failureCode == this.failureCode &&
+          other.createdAt == this.createdAt &&
+          other.lastTransitionAt == this.lastTransitionAt);
+}
+
+class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<String> targetKey;
+  final Value<String> resourceType;
+  final Value<int?> targetTaskListId;
+  final Value<int?> targetTaskId;
+  final Value<String> desiredLifecycle;
+  final Value<String?> title;
+  final Value<String?> notes;
+  final Value<String?> status;
+  final Value<int?> dueEpochDay;
+  final Value<int?> desiredTaskListId;
+  final Value<int?> desiredParentTaskId;
+  final Value<int?> desiredPreviousTaskId;
+  final Value<bool> contentDirty;
+  final Value<bool> structureDirty;
+  final Value<bool> lifecycleDirty;
+  final Value<DateTime?> localModifiedAt;
+  final Value<int> generation;
+  final Value<int> localCausalSequence;
+  final Value<String> state;
+  final Value<String?> baseRemoteId;
+  final Value<String?> baseEtag;
+  final Value<DateTime?> baseRemoteUpdatedAt;
+  final Value<String?> baseObservedPublicationId;
+  final Value<String?> baseTitle;
+  final Value<String?> failureCode;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> lastTransitionAt;
+  const DesiredStateRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.targetKey = const Value.absent(),
+    this.resourceType = const Value.absent(),
+    this.targetTaskListId = const Value.absent(),
+    this.targetTaskId = const Value.absent(),
+    this.desiredLifecycle = const Value.absent(),
+    this.title = const Value.absent(),
+    this.notes = const Value.absent(),
+    this.status = const Value.absent(),
+    this.dueEpochDay = const Value.absent(),
+    this.desiredTaskListId = const Value.absent(),
+    this.desiredParentTaskId = const Value.absent(),
+    this.desiredPreviousTaskId = const Value.absent(),
+    this.contentDirty = const Value.absent(),
+    this.structureDirty = const Value.absent(),
+    this.lifecycleDirty = const Value.absent(),
+    this.localModifiedAt = const Value.absent(),
+    this.generation = const Value.absent(),
+    this.localCausalSequence = const Value.absent(),
+    this.state = const Value.absent(),
+    this.baseRemoteId = const Value.absent(),
+    this.baseEtag = const Value.absent(),
+    this.baseRemoteUpdatedAt = const Value.absent(),
+    this.baseObservedPublicationId = const Value.absent(),
+    this.baseTitle = const Value.absent(),
+    this.failureCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.lastTransitionAt = const Value.absent(),
+  });
+  DesiredStateRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required String targetKey,
+    required String resourceType,
+    this.targetTaskListId = const Value.absent(),
+    this.targetTaskId = const Value.absent(),
+    required String desiredLifecycle,
+    this.title = const Value.absent(),
+    this.notes = const Value.absent(),
+    this.status = const Value.absent(),
+    this.dueEpochDay = const Value.absent(),
+    this.desiredTaskListId = const Value.absent(),
+    this.desiredParentTaskId = const Value.absent(),
+    this.desiredPreviousTaskId = const Value.absent(),
+    this.contentDirty = const Value.absent(),
+    this.structureDirty = const Value.absent(),
+    this.lifecycleDirty = const Value.absent(),
+    this.localModifiedAt = const Value.absent(),
+    required int generation,
+    required int localCausalSequence,
+    required String state,
+    this.baseRemoteId = const Value.absent(),
+    this.baseEtag = const Value.absent(),
+    this.baseRemoteUpdatedAt = const Value.absent(),
+    this.baseObservedPublicationId = const Value.absent(),
+    this.baseTitle = const Value.absent(),
+    this.failureCode = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime lastTransitionAt,
+  }) : accountId = Value(accountId),
+       targetKey = Value(targetKey),
+       resourceType = Value(resourceType),
+       desiredLifecycle = Value(desiredLifecycle),
+       generation = Value(generation),
+       localCausalSequence = Value(localCausalSequence),
+       state = Value(state),
+       createdAt = Value(createdAt),
+       lastTransitionAt = Value(lastTransitionAt);
+  static Insertable<DesiredStateRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<String>? targetKey,
+    Expression<String>? resourceType,
+    Expression<int>? targetTaskListId,
+    Expression<int>? targetTaskId,
+    Expression<String>? desiredLifecycle,
+    Expression<String>? title,
+    Expression<String>? notes,
+    Expression<String>? status,
+    Expression<int>? dueEpochDay,
+    Expression<int>? desiredTaskListId,
+    Expression<int>? desiredParentTaskId,
+    Expression<int>? desiredPreviousTaskId,
+    Expression<bool>? contentDirty,
+    Expression<bool>? structureDirty,
+    Expression<bool>? lifecycleDirty,
+    Expression<DateTime>? localModifiedAt,
+    Expression<int>? generation,
+    Expression<int>? localCausalSequence,
+    Expression<String>? state,
+    Expression<String>? baseRemoteId,
+    Expression<String>? baseEtag,
+    Expression<DateTime>? baseRemoteUpdatedAt,
+    Expression<String>? baseObservedPublicationId,
+    Expression<String>? baseTitle,
+    Expression<String>? failureCode,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? lastTransitionAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (targetKey != null) 'target_key': targetKey,
+      if (resourceType != null) 'resource_type': resourceType,
+      if (targetTaskListId != null) 'target_task_list_id': targetTaskListId,
+      if (targetTaskId != null) 'target_task_id': targetTaskId,
+      if (desiredLifecycle != null) 'desired_lifecycle': desiredLifecycle,
+      if (title != null) 'title': title,
+      if (notes != null) 'notes': notes,
+      if (status != null) 'status': status,
+      if (dueEpochDay != null) 'due_epoch_day': dueEpochDay,
+      if (desiredTaskListId != null) 'desired_task_list_id': desiredTaskListId,
+      if (desiredParentTaskId != null)
+        'desired_parent_task_id': desiredParentTaskId,
+      if (desiredPreviousTaskId != null)
+        'desired_previous_task_id': desiredPreviousTaskId,
+      if (contentDirty != null) 'content_dirty': contentDirty,
+      if (structureDirty != null) 'structure_dirty': structureDirty,
+      if (lifecycleDirty != null) 'lifecycle_dirty': lifecycleDirty,
+      if (localModifiedAt != null) 'local_modified_at': localModifiedAt,
+      if (generation != null) 'generation': generation,
+      if (localCausalSequence != null)
+        'local_causal_sequence': localCausalSequence,
+      if (state != null) 'state': state,
+      if (baseRemoteId != null) 'base_remote_id': baseRemoteId,
+      if (baseEtag != null) 'base_etag': baseEtag,
+      if (baseRemoteUpdatedAt != null)
+        'base_remote_updated_at': baseRemoteUpdatedAt,
+      if (baseObservedPublicationId != null)
+        'base_observed_publication_id': baseObservedPublicationId,
+      if (baseTitle != null) 'base_title': baseTitle,
+      if (failureCode != null) 'failure_code': failureCode,
+      if (createdAt != null) 'created_at': createdAt,
+      if (lastTransitionAt != null) 'last_transition_at': lastTransitionAt,
+    });
+  }
+
+  DesiredStateRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<String>? targetKey,
+    Value<String>? resourceType,
+    Value<int?>? targetTaskListId,
+    Value<int?>? targetTaskId,
+    Value<String>? desiredLifecycle,
+    Value<String?>? title,
+    Value<String?>? notes,
+    Value<String?>? status,
+    Value<int?>? dueEpochDay,
+    Value<int?>? desiredTaskListId,
+    Value<int?>? desiredParentTaskId,
+    Value<int?>? desiredPreviousTaskId,
+    Value<bool>? contentDirty,
+    Value<bool>? structureDirty,
+    Value<bool>? lifecycleDirty,
+    Value<DateTime?>? localModifiedAt,
+    Value<int>? generation,
+    Value<int>? localCausalSequence,
+    Value<String>? state,
+    Value<String?>? baseRemoteId,
+    Value<String?>? baseEtag,
+    Value<DateTime?>? baseRemoteUpdatedAt,
+    Value<String?>? baseObservedPublicationId,
+    Value<String?>? baseTitle,
+    Value<String?>? failureCode,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? lastTransitionAt,
+  }) {
+    return DesiredStateRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      targetKey: targetKey ?? this.targetKey,
+      resourceType: resourceType ?? this.resourceType,
+      targetTaskListId: targetTaskListId ?? this.targetTaskListId,
+      targetTaskId: targetTaskId ?? this.targetTaskId,
+      desiredLifecycle: desiredLifecycle ?? this.desiredLifecycle,
+      title: title ?? this.title,
+      notes: notes ?? this.notes,
+      status: status ?? this.status,
+      dueEpochDay: dueEpochDay ?? this.dueEpochDay,
+      desiredTaskListId: desiredTaskListId ?? this.desiredTaskListId,
+      desiredParentTaskId: desiredParentTaskId ?? this.desiredParentTaskId,
+      desiredPreviousTaskId:
+          desiredPreviousTaskId ?? this.desiredPreviousTaskId,
+      contentDirty: contentDirty ?? this.contentDirty,
+      structureDirty: structureDirty ?? this.structureDirty,
+      lifecycleDirty: lifecycleDirty ?? this.lifecycleDirty,
+      localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+      generation: generation ?? this.generation,
+      localCausalSequence: localCausalSequence ?? this.localCausalSequence,
+      state: state ?? this.state,
+      baseRemoteId: baseRemoteId ?? this.baseRemoteId,
+      baseEtag: baseEtag ?? this.baseEtag,
+      baseRemoteUpdatedAt: baseRemoteUpdatedAt ?? this.baseRemoteUpdatedAt,
+      baseObservedPublicationId:
+          baseObservedPublicationId ?? this.baseObservedPublicationId,
+      baseTitle: baseTitle ?? this.baseTitle,
+      failureCode: failureCode ?? this.failureCode,
+      createdAt: createdAt ?? this.createdAt,
+      lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (targetKey.present) {
+      map['target_key'] = Variable<String>(targetKey.value);
+    }
+    if (resourceType.present) {
+      map['resource_type'] = Variable<String>(resourceType.value);
+    }
+    if (targetTaskListId.present) {
+      map['target_task_list_id'] = Variable<int>(targetTaskListId.value);
+    }
+    if (targetTaskId.present) {
+      map['target_task_id'] = Variable<int>(targetTaskId.value);
+    }
+    if (desiredLifecycle.present) {
+      map['desired_lifecycle'] = Variable<String>(desiredLifecycle.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (notes.present) {
+      map['notes'] = Variable<String>(notes.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (dueEpochDay.present) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay.value);
+    }
+    if (desiredTaskListId.present) {
+      map['desired_task_list_id'] = Variable<int>(desiredTaskListId.value);
+    }
+    if (desiredParentTaskId.present) {
+      map['desired_parent_task_id'] = Variable<int>(desiredParentTaskId.value);
+    }
+    if (desiredPreviousTaskId.present) {
+      map['desired_previous_task_id'] = Variable<int>(
+        desiredPreviousTaskId.value,
+      );
+    }
+    if (contentDirty.present) {
+      map['content_dirty'] = Variable<bool>(contentDirty.value);
+    }
+    if (structureDirty.present) {
+      map['structure_dirty'] = Variable<bool>(structureDirty.value);
+    }
+    if (lifecycleDirty.present) {
+      map['lifecycle_dirty'] = Variable<bool>(lifecycleDirty.value);
+    }
+    if (localModifiedAt.present) {
+      map['local_modified_at'] = Variable<DateTime>(localModifiedAt.value);
+    }
+    if (generation.present) {
+      map['generation'] = Variable<int>(generation.value);
+    }
+    if (localCausalSequence.present) {
+      map['local_causal_sequence'] = Variable<int>(localCausalSequence.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (baseRemoteId.present) {
+      map['base_remote_id'] = Variable<String>(baseRemoteId.value);
+    }
+    if (baseEtag.present) {
+      map['base_etag'] = Variable<String>(baseEtag.value);
+    }
+    if (baseRemoteUpdatedAt.present) {
+      map['base_remote_updated_at'] = Variable<DateTime>(
+        baseRemoteUpdatedAt.value,
+      );
+    }
+    if (baseObservedPublicationId.present) {
+      map['base_observed_publication_id'] = Variable<String>(
+        baseObservedPublicationId.value,
+      );
+    }
+    if (baseTitle.present) {
+      map['base_title'] = Variable<String>(baseTitle.value);
+    }
+    if (failureCode.present) {
+      map['failure_code'] = Variable<String>(failureCode.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (lastTransitionAt.present) {
+      map['last_transition_at'] = Variable<DateTime>(lastTransitionAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('targetKey: $targetKey, ')
+          ..write('resourceType: $resourceType, ')
+          ..write('targetTaskListId: $targetTaskListId, ')
+          ..write('targetTaskId: $targetTaskId, ')
+          ..write('desiredLifecycle: $desiredLifecycle, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('desiredTaskListId: $desiredTaskListId, ')
+          ..write('desiredParentTaskId: $desiredParentTaskId, ')
+          ..write('desiredPreviousTaskId: $desiredPreviousTaskId, ')
+          ..write('contentDirty: $contentDirty, ')
+          ..write('structureDirty: $structureDirty, ')
+          ..write('lifecycleDirty: $lifecycleDirty, ')
+          ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('generation: $generation, ')
+          ..write('localCausalSequence: $localCausalSequence, ')
+          ..write('state: $state, ')
+          ..write('baseRemoteId: $baseRemoteId, ')
+          ..write('baseEtag: $baseEtag, ')
+          ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
+          ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
+          ..write('baseTitle: $baseTitle, ')
+          ..write('failureCode: $failureCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('lastTransitionAt: $lastTransitionAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesiredStateDependencyRowsTable extends DesiredStateDependencyRows
+    with
+        TableInfo<$DesiredStateDependencyRowsTable, DesiredStateDependencyRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesiredStateDependencyRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _desiredStateIdMeta = const VerificationMeta(
+    'desiredStateId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredStateId = GeneratedColumn<int>(
+    'desired_state_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _dependencyKindMeta = const VerificationMeta(
+    'dependencyKind',
+  );
+  @override
+  late final GeneratedColumn<String> dependencyKind = GeneratedColumn<String>(
+    'dependency_kind',
+    aliasedName,
+    false,
+    check: () => dependencyKind.isIn(const <String>[
+      'task_list',
+      'parent_task',
+      'previous_task',
+    ]),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _dependsOnTaskListIdMeta =
+      const VerificationMeta('dependsOnTaskListId');
+  @override
+  late final GeneratedColumn<int> dependsOnTaskListId = GeneratedColumn<int>(
+    'depends_on_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _dependsOnTaskIdMeta = const VerificationMeta(
+    'dependsOnTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> dependsOnTaskId = GeneratedColumn<int>(
+    'depends_on_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    desiredStateId,
+    dependencyKind,
+    dependsOnTaskListId,
+    dependsOnTaskId,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desired_state_dependencies';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesiredStateDependencyRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('desired_state_id')) {
+      context.handle(
+        _desiredStateIdMeta,
+        desiredStateId.isAcceptableOrUnknown(
+          data['desired_state_id']!,
+          _desiredStateIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredStateIdMeta);
+    }
+    if (data.containsKey('dependency_kind')) {
+      context.handle(
+        _dependencyKindMeta,
+        dependencyKind.isAcceptableOrUnknown(
+          data['dependency_kind']!,
+          _dependencyKindMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_dependencyKindMeta);
+    }
+    if (data.containsKey('depends_on_task_list_id')) {
+      context.handle(
+        _dependsOnTaskListIdMeta,
+        dependsOnTaskListId.isAcceptableOrUnknown(
+          data['depends_on_task_list_id']!,
+          _dependsOnTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('depends_on_task_id')) {
+      context.handle(
+        _dependsOnTaskIdMeta,
+        dependsOnTaskId.isAcceptableOrUnknown(
+          data['depends_on_task_id']!,
+          _dependsOnTaskIdMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, desiredStateId, dependencyKind},
+  ];
+  @override
+  DesiredStateDependencyRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesiredStateDependencyRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      desiredStateId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_state_id'],
+      )!,
+      dependencyKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}dependency_kind'],
+      )!,
+      dependsOnTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}depends_on_task_list_id'],
+      ),
+      dependsOnTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}depends_on_task_id'],
+      ),
+    );
+  }
+
+  @override
+  $DesiredStateDependencyRowsTable createAlias(String alias) {
+    return $DesiredStateDependencyRowsTable(attachedDatabase, alias);
+  }
+}
+
+class DesiredStateDependencyRow extends DataClass
+    implements Insertable<DesiredStateDependencyRow> {
+  final int id;
+  final int accountId;
+  final int desiredStateId;
+  final String dependencyKind;
+  final int? dependsOnTaskListId;
+  final int? dependsOnTaskId;
+  const DesiredStateDependencyRow({
+    required this.id,
+    required this.accountId,
+    required this.desiredStateId,
+    required this.dependencyKind,
+    this.dependsOnTaskListId,
+    this.dependsOnTaskId,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['desired_state_id'] = Variable<int>(desiredStateId);
+    map['dependency_kind'] = Variable<String>(dependencyKind);
+    if (!nullToAbsent || dependsOnTaskListId != null) {
+      map['depends_on_task_list_id'] = Variable<int>(dependsOnTaskListId);
+    }
+    if (!nullToAbsent || dependsOnTaskId != null) {
+      map['depends_on_task_id'] = Variable<int>(dependsOnTaskId);
+    }
+    return map;
+  }
+
+  DesiredStateDependencyRowsCompanion toCompanion(bool nullToAbsent) {
+    return DesiredStateDependencyRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      desiredStateId: Value(desiredStateId),
+      dependencyKind: Value(dependencyKind),
+      dependsOnTaskListId: dependsOnTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dependsOnTaskListId),
+      dependsOnTaskId: dependsOnTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dependsOnTaskId),
+    );
+  }
+
+  factory DesiredStateDependencyRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesiredStateDependencyRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      desiredStateId: serializer.fromJson<int>(json['desiredStateId']),
+      dependencyKind: serializer.fromJson<String>(json['dependencyKind']),
+      dependsOnTaskListId: serializer.fromJson<int?>(
+        json['dependsOnTaskListId'],
+      ),
+      dependsOnTaskId: serializer.fromJson<int?>(json['dependsOnTaskId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'desiredStateId': serializer.toJson<int>(desiredStateId),
+      'dependencyKind': serializer.toJson<String>(dependencyKind),
+      'dependsOnTaskListId': serializer.toJson<int?>(dependsOnTaskListId),
+      'dependsOnTaskId': serializer.toJson<int?>(dependsOnTaskId),
+    };
+  }
+
+  DesiredStateDependencyRow copyWith({
+    int? id,
+    int? accountId,
+    int? desiredStateId,
+    String? dependencyKind,
+    Value<int?> dependsOnTaskListId = const Value.absent(),
+    Value<int?> dependsOnTaskId = const Value.absent(),
+  }) => DesiredStateDependencyRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    desiredStateId: desiredStateId ?? this.desiredStateId,
+    dependencyKind: dependencyKind ?? this.dependencyKind,
+    dependsOnTaskListId: dependsOnTaskListId.present
+        ? dependsOnTaskListId.value
+        : this.dependsOnTaskListId,
+    dependsOnTaskId: dependsOnTaskId.present
+        ? dependsOnTaskId.value
+        : this.dependsOnTaskId,
+  );
+  DesiredStateDependencyRow copyWithCompanion(
+    DesiredStateDependencyRowsCompanion data,
+  ) {
+    return DesiredStateDependencyRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      desiredStateId: data.desiredStateId.present
+          ? data.desiredStateId.value
+          : this.desiredStateId,
+      dependencyKind: data.dependencyKind.present
+          ? data.dependencyKind.value
+          : this.dependencyKind,
+      dependsOnTaskListId: data.dependsOnTaskListId.present
+          ? data.dependsOnTaskListId.value
+          : this.dependsOnTaskListId,
+      dependsOnTaskId: data.dependsOnTaskId.present
+          ? data.dependsOnTaskId.value
+          : this.dependsOnTaskId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateDependencyRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('dependencyKind: $dependencyKind, ')
+          ..write('dependsOnTaskListId: $dependsOnTaskListId, ')
+          ..write('dependsOnTaskId: $dependsOnTaskId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    desiredStateId,
+    dependencyKind,
+    dependsOnTaskListId,
+    dependsOnTaskId,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesiredStateDependencyRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.desiredStateId == this.desiredStateId &&
+          other.dependencyKind == this.dependencyKind &&
+          other.dependsOnTaskListId == this.dependsOnTaskListId &&
+          other.dependsOnTaskId == this.dependsOnTaskId);
+}
+
+class DesiredStateDependencyRowsCompanion
+    extends UpdateCompanion<DesiredStateDependencyRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> desiredStateId;
+  final Value<String> dependencyKind;
+  final Value<int?> dependsOnTaskListId;
+  final Value<int?> dependsOnTaskId;
+  const DesiredStateDependencyRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.desiredStateId = const Value.absent(),
+    this.dependencyKind = const Value.absent(),
+    this.dependsOnTaskListId = const Value.absent(),
+    this.dependsOnTaskId = const Value.absent(),
+  });
+  DesiredStateDependencyRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int desiredStateId,
+    required String dependencyKind,
+    this.dependsOnTaskListId = const Value.absent(),
+    this.dependsOnTaskId = const Value.absent(),
+  }) : accountId = Value(accountId),
+       desiredStateId = Value(desiredStateId),
+       dependencyKind = Value(dependencyKind);
+  static Insertable<DesiredStateDependencyRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? desiredStateId,
+    Expression<String>? dependencyKind,
+    Expression<int>? dependsOnTaskListId,
+    Expression<int>? dependsOnTaskId,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (desiredStateId != null) 'desired_state_id': desiredStateId,
+      if (dependencyKind != null) 'dependency_kind': dependencyKind,
+      if (dependsOnTaskListId != null)
+        'depends_on_task_list_id': dependsOnTaskListId,
+      if (dependsOnTaskId != null) 'depends_on_task_id': dependsOnTaskId,
+    });
+  }
+
+  DesiredStateDependencyRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? desiredStateId,
+    Value<String>? dependencyKind,
+    Value<int?>? dependsOnTaskListId,
+    Value<int?>? dependsOnTaskId,
+  }) {
+    return DesiredStateDependencyRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      desiredStateId: desiredStateId ?? this.desiredStateId,
+      dependencyKind: dependencyKind ?? this.dependencyKind,
+      dependsOnTaskListId: dependsOnTaskListId ?? this.dependsOnTaskListId,
+      dependsOnTaskId: dependsOnTaskId ?? this.dependsOnTaskId,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (desiredStateId.present) {
+      map['desired_state_id'] = Variable<int>(desiredStateId.value);
+    }
+    if (dependencyKind.present) {
+      map['dependency_kind'] = Variable<String>(dependencyKind.value);
+    }
+    if (dependsOnTaskListId.present) {
+      map['depends_on_task_list_id'] = Variable<int>(dependsOnTaskListId.value);
+    }
+    if (dependsOnTaskId.present) {
+      map['depends_on_task_id'] = Variable<int>(dependsOnTaskId.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateDependencyRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('dependencyKind: $dependencyKind, ')
+          ..write('dependsOnTaskListId: $dependsOnTaskListId, ')
+          ..write('dependsOnTaskId: $dependsOnTaskId')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
+    with TableInfo<$DesiredStateAttemptRowsTable, DesiredStateAttemptRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesiredStateAttemptRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _desiredStateIdMeta = const VerificationMeta(
+    'desiredStateId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredStateId = GeneratedColumn<int>(
+    'desired_state_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _generationMeta = const VerificationMeta(
+    'generation',
+  );
+  @override
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(generation).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _desiredLifecycleMeta = const VerificationMeta(
+    'desiredLifecycle',
+  );
+  @override
+  late final GeneratedColumn<String> desiredLifecycle = GeneratedColumn<String>(
+    'desired_lifecycle',
+    aliasedName,
+    false,
+    check: () => desiredLifecycle.isIn(const <String>['present', 'deleted']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+    'title',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _notesMeta = const VerificationMeta('notes');
+  @override
+  late final GeneratedColumn<String> notes = GeneratedColumn<String>(
+    'notes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    true,
+    check: () =>
+        status.isNull() |
+        status.isIn(const <String>['needs_action', 'completed']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _dueEpochDayMeta = const VerificationMeta(
+    'dueEpochDay',
+  );
+  @override
+  late final GeneratedColumn<int> dueEpochDay = GeneratedColumn<int>(
+    'due_epoch_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredTaskListIdMeta = const VerificationMeta(
+    'desiredTaskListId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredTaskListId = GeneratedColumn<int>(
+    'desired_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredParentTaskIdMeta =
+      const VerificationMeta('desiredParentTaskId');
+  @override
+  late final GeneratedColumn<int> desiredParentTaskId = GeneratedColumn<int>(
+    'desired_parent_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _desiredPreviousTaskIdMeta =
+      const VerificationMeta('desiredPreviousTaskId');
+  @override
+  late final GeneratedColumn<int> desiredPreviousTaskId = GeneratedColumn<int>(
+    'desired_previous_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseRemoteIdMeta = const VerificationMeta(
+    'baseRemoteId',
+  );
+  @override
+  late final GeneratedColumn<String> baseRemoteId = GeneratedColumn<String>(
+    'base_remote_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseEtagMeta = const VerificationMeta(
+    'baseEtag',
+  );
+  @override
+  late final GeneratedColumn<String> baseEtag = GeneratedColumn<String>(
+    'base_etag',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseRemoteUpdatedAtMeta =
+      const VerificationMeta('baseRemoteUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> baseRemoteUpdatedAt =
+      GeneratedColumn<DateTime>(
+        'base_remote_updated_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _baseObservedPublicationIdMeta =
+      const VerificationMeta('baseObservedPublicationId');
+  @override
+  late final GeneratedColumn<String> baseObservedPublicationId =
+      GeneratedColumn<String>(
+        'base_observed_publication_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _baseTitleMeta = const VerificationMeta(
+    'baseTitle',
+  );
+  @override
+  late final GeneratedColumn<String> baseTitle = GeneratedColumn<String>(
+    'base_title',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    check: () => state.isIn(const <String>[
+      'pending',
+      'in_flight',
+      'uncertain',
+      'failed',
+      'confirmed',
+      'superseded',
+    ]),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _failureCodeMeta = const VerificationMeta(
+    'failureCode',
+  );
+  @override
+  late final GeneratedColumn<String> failureCode = GeneratedColumn<String>(
+    'failure_code',
+    aliasedName,
+    true,
+    check: () =>
+        failureCode.isNull() |
+        ComparableExpr(failureCode.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _claimedAtMeta = const VerificationMeta(
+    'claimedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> claimedAt = GeneratedColumn<DateTime>(
+    'claimed_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastTransitionAtMeta = const VerificationMeta(
+    'lastTransitionAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastTransitionAt =
+      GeneratedColumn<DateTime>(
+        'last_transition_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    desiredStateId,
+    generation,
+    desiredLifecycle,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    desiredTaskListId,
+    desiredParentTaskId,
+    desiredPreviousTaskId,
+    baseRemoteId,
+    baseEtag,
+    baseRemoteUpdatedAt,
+    baseObservedPublicationId,
+    baseTitle,
+    state,
+    failureCode,
+    claimedAt,
+    lastTransitionAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desired_state_attempts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesiredStateAttemptRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('desired_state_id')) {
+      context.handle(
+        _desiredStateIdMeta,
+        desiredStateId.isAcceptableOrUnknown(
+          data['desired_state_id']!,
+          _desiredStateIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredStateIdMeta);
+    }
+    if (data.containsKey('generation')) {
+      context.handle(
+        _generationMeta,
+        generation.isAcceptableOrUnknown(data['generation']!, _generationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_generationMeta);
+    }
+    if (data.containsKey('desired_lifecycle')) {
+      context.handle(
+        _desiredLifecycleMeta,
+        desiredLifecycle.isAcceptableOrUnknown(
+          data['desired_lifecycle']!,
+          _desiredLifecycleMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredLifecycleMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
+    }
+    if (data.containsKey('notes')) {
+      context.handle(
+        _notesMeta,
+        notes.isAcceptableOrUnknown(data['notes']!, _notesMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('due_epoch_day')) {
+      context.handle(
+        _dueEpochDayMeta,
+        dueEpochDay.isAcceptableOrUnknown(
+          data['due_epoch_day']!,
+          _dueEpochDayMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_task_list_id')) {
+      context.handle(
+        _desiredTaskListIdMeta,
+        desiredTaskListId.isAcceptableOrUnknown(
+          data['desired_task_list_id']!,
+          _desiredTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_parent_task_id')) {
+      context.handle(
+        _desiredParentTaskIdMeta,
+        desiredParentTaskId.isAcceptableOrUnknown(
+          data['desired_parent_task_id']!,
+          _desiredParentTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('desired_previous_task_id')) {
+      context.handle(
+        _desiredPreviousTaskIdMeta,
+        desiredPreviousTaskId.isAcceptableOrUnknown(
+          data['desired_previous_task_id']!,
+          _desiredPreviousTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_remote_id')) {
+      context.handle(
+        _baseRemoteIdMeta,
+        baseRemoteId.isAcceptableOrUnknown(
+          data['base_remote_id']!,
+          _baseRemoteIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_etag')) {
+      context.handle(
+        _baseEtagMeta,
+        baseEtag.isAcceptableOrUnknown(data['base_etag']!, _baseEtagMeta),
+      );
+    }
+    if (data.containsKey('base_remote_updated_at')) {
+      context.handle(
+        _baseRemoteUpdatedAtMeta,
+        baseRemoteUpdatedAt.isAcceptableOrUnknown(
+          data['base_remote_updated_at']!,
+          _baseRemoteUpdatedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_observed_publication_id')) {
+      context.handle(
+        _baseObservedPublicationIdMeta,
+        baseObservedPublicationId.isAcceptableOrUnknown(
+          data['base_observed_publication_id']!,
+          _baseObservedPublicationIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_title')) {
+      context.handle(
+        _baseTitleMeta,
+        baseTitle.isAcceptableOrUnknown(data['base_title']!, _baseTitleMeta),
+      );
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('failure_code')) {
+      context.handle(
+        _failureCodeMeta,
+        failureCode.isAcceptableOrUnknown(
+          data['failure_code']!,
+          _failureCodeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('claimed_at')) {
+      context.handle(
+        _claimedAtMeta,
+        claimedAt.isAcceptableOrUnknown(data['claimed_at']!, _claimedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_claimedAtMeta);
+    }
+    if (data.containsKey('last_transition_at')) {
+      context.handle(
+        _lastTransitionAtMeta,
+        lastTransitionAt.isAcceptableOrUnknown(
+          data['last_transition_at']!,
+          _lastTransitionAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_lastTransitionAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, id},
+    {desiredStateId, generation},
+  ];
+  @override
+  DesiredStateAttemptRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesiredStateAttemptRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      desiredStateId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_state_id'],
+      )!,
+      generation: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}generation'],
+      )!,
+      desiredLifecycle: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}desired_lifecycle'],
+      )!,
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      ),
+      notes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}notes'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      ),
+      dueEpochDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}due_epoch_day'],
+      ),
+      desiredTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_task_list_id'],
+      ),
+      desiredParentTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_parent_task_id'],
+      ),
+      desiredPreviousTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_previous_task_id'],
+      ),
+      baseRemoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_remote_id'],
+      ),
+      baseEtag: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_etag'],
+      ),
+      baseRemoteUpdatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}base_remote_updated_at'],
+      ),
+      baseObservedPublicationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_observed_publication_id'],
+      ),
+      baseTitle: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_title'],
+      ),
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      failureCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_code'],
+      ),
+      claimedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}claimed_at'],
+      )!,
+      lastTransitionAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_transition_at'],
+      )!,
+    );
+  }
+
+  @override
+  $DesiredStateAttemptRowsTable createAlias(String alias) {
+    return $DesiredStateAttemptRowsTable(attachedDatabase, alias);
+  }
+}
+
+class DesiredStateAttemptRow extends DataClass
+    implements Insertable<DesiredStateAttemptRow> {
+  final int id;
+  final int accountId;
+  final int desiredStateId;
+  final int generation;
+  final String desiredLifecycle;
+  final String? title;
+  final String? notes;
+  final String? status;
+  final int? dueEpochDay;
+  final int? desiredTaskListId;
+  final int? desiredParentTaskId;
+  final int? desiredPreviousTaskId;
+  final String? baseRemoteId;
+  final String? baseEtag;
+  final DateTime? baseRemoteUpdatedAt;
+  final String? baseObservedPublicationId;
+  final String? baseTitle;
+  final String state;
+  final String? failureCode;
+  final DateTime claimedAt;
+  final DateTime lastTransitionAt;
+  const DesiredStateAttemptRow({
+    required this.id,
+    required this.accountId,
+    required this.desiredStateId,
+    required this.generation,
+    required this.desiredLifecycle,
+    this.title,
+    this.notes,
+    this.status,
+    this.dueEpochDay,
+    this.desiredTaskListId,
+    this.desiredParentTaskId,
+    this.desiredPreviousTaskId,
+    this.baseRemoteId,
+    this.baseEtag,
+    this.baseRemoteUpdatedAt,
+    this.baseObservedPublicationId,
+    this.baseTitle,
+    required this.state,
+    this.failureCode,
+    required this.claimedAt,
+    required this.lastTransitionAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['desired_state_id'] = Variable<int>(desiredStateId);
+    map['generation'] = Variable<int>(generation);
+    map['desired_lifecycle'] = Variable<String>(desiredLifecycle);
+    if (!nullToAbsent || title != null) {
+      map['title'] = Variable<String>(title);
+    }
+    if (!nullToAbsent || notes != null) {
+      map['notes'] = Variable<String>(notes);
+    }
+    if (!nullToAbsent || status != null) {
+      map['status'] = Variable<String>(status);
+    }
+    if (!nullToAbsent || dueEpochDay != null) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay);
+    }
+    if (!nullToAbsent || desiredTaskListId != null) {
+      map['desired_task_list_id'] = Variable<int>(desiredTaskListId);
+    }
+    if (!nullToAbsent || desiredParentTaskId != null) {
+      map['desired_parent_task_id'] = Variable<int>(desiredParentTaskId);
+    }
+    if (!nullToAbsent || desiredPreviousTaskId != null) {
+      map['desired_previous_task_id'] = Variable<int>(desiredPreviousTaskId);
+    }
+    if (!nullToAbsent || baseRemoteId != null) {
+      map['base_remote_id'] = Variable<String>(baseRemoteId);
+    }
+    if (!nullToAbsent || baseEtag != null) {
+      map['base_etag'] = Variable<String>(baseEtag);
+    }
+    if (!nullToAbsent || baseRemoteUpdatedAt != null) {
+      map['base_remote_updated_at'] = Variable<DateTime>(baseRemoteUpdatedAt);
+    }
+    if (!nullToAbsent || baseObservedPublicationId != null) {
+      map['base_observed_publication_id'] = Variable<String>(
+        baseObservedPublicationId,
+      );
+    }
+    if (!nullToAbsent || baseTitle != null) {
+      map['base_title'] = Variable<String>(baseTitle);
+    }
+    map['state'] = Variable<String>(state);
+    if (!nullToAbsent || failureCode != null) {
+      map['failure_code'] = Variable<String>(failureCode);
+    }
+    map['claimed_at'] = Variable<DateTime>(claimedAt);
+    map['last_transition_at'] = Variable<DateTime>(lastTransitionAt);
+    return map;
+  }
+
+  DesiredStateAttemptRowsCompanion toCompanion(bool nullToAbsent) {
+    return DesiredStateAttemptRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      desiredStateId: Value(desiredStateId),
+      generation: Value(generation),
+      desiredLifecycle: Value(desiredLifecycle),
+      title: title == null && nullToAbsent
+          ? const Value.absent()
+          : Value(title),
+      notes: notes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notes),
+      status: status == null && nullToAbsent
+          ? const Value.absent()
+          : Value(status),
+      dueEpochDay: dueEpochDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueEpochDay),
+      desiredTaskListId: desiredTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredTaskListId),
+      desiredParentTaskId: desiredParentTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredParentTaskId),
+      desiredPreviousTaskId: desiredPreviousTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(desiredPreviousTaskId),
+      baseRemoteId: baseRemoteId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseRemoteId),
+      baseEtag: baseEtag == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseEtag),
+      baseRemoteUpdatedAt: baseRemoteUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseRemoteUpdatedAt),
+      baseObservedPublicationId:
+          baseObservedPublicationId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseObservedPublicationId),
+      baseTitle: baseTitle == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseTitle),
+      state: Value(state),
+      failureCode: failureCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failureCode),
+      claimedAt: Value(claimedAt),
+      lastTransitionAt: Value(lastTransitionAt),
+    );
+  }
+
+  factory DesiredStateAttemptRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesiredStateAttemptRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      desiredStateId: serializer.fromJson<int>(json['desiredStateId']),
+      generation: serializer.fromJson<int>(json['generation']),
+      desiredLifecycle: serializer.fromJson<String>(json['desiredLifecycle']),
+      title: serializer.fromJson<String?>(json['title']),
+      notes: serializer.fromJson<String?>(json['notes']),
+      status: serializer.fromJson<String?>(json['status']),
+      dueEpochDay: serializer.fromJson<int?>(json['dueEpochDay']),
+      desiredTaskListId: serializer.fromJson<int?>(json['desiredTaskListId']),
+      desiredParentTaskId: serializer.fromJson<int?>(
+        json['desiredParentTaskId'],
+      ),
+      desiredPreviousTaskId: serializer.fromJson<int?>(
+        json['desiredPreviousTaskId'],
+      ),
+      baseRemoteId: serializer.fromJson<String?>(json['baseRemoteId']),
+      baseEtag: serializer.fromJson<String?>(json['baseEtag']),
+      baseRemoteUpdatedAt: serializer.fromJson<DateTime?>(
+        json['baseRemoteUpdatedAt'],
+      ),
+      baseObservedPublicationId: serializer.fromJson<String?>(
+        json['baseObservedPublicationId'],
+      ),
+      baseTitle: serializer.fromJson<String?>(json['baseTitle']),
+      state: serializer.fromJson<String>(json['state']),
+      failureCode: serializer.fromJson<String?>(json['failureCode']),
+      claimedAt: serializer.fromJson<DateTime>(json['claimedAt']),
+      lastTransitionAt: serializer.fromJson<DateTime>(json['lastTransitionAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'desiredStateId': serializer.toJson<int>(desiredStateId),
+      'generation': serializer.toJson<int>(generation),
+      'desiredLifecycle': serializer.toJson<String>(desiredLifecycle),
+      'title': serializer.toJson<String?>(title),
+      'notes': serializer.toJson<String?>(notes),
+      'status': serializer.toJson<String?>(status),
+      'dueEpochDay': serializer.toJson<int?>(dueEpochDay),
+      'desiredTaskListId': serializer.toJson<int?>(desiredTaskListId),
+      'desiredParentTaskId': serializer.toJson<int?>(desiredParentTaskId),
+      'desiredPreviousTaskId': serializer.toJson<int?>(desiredPreviousTaskId),
+      'baseRemoteId': serializer.toJson<String?>(baseRemoteId),
+      'baseEtag': serializer.toJson<String?>(baseEtag),
+      'baseRemoteUpdatedAt': serializer.toJson<DateTime?>(baseRemoteUpdatedAt),
+      'baseObservedPublicationId': serializer.toJson<String?>(
+        baseObservedPublicationId,
+      ),
+      'baseTitle': serializer.toJson<String?>(baseTitle),
+      'state': serializer.toJson<String>(state),
+      'failureCode': serializer.toJson<String?>(failureCode),
+      'claimedAt': serializer.toJson<DateTime>(claimedAt),
+      'lastTransitionAt': serializer.toJson<DateTime>(lastTransitionAt),
+    };
+  }
+
+  DesiredStateAttemptRow copyWith({
+    int? id,
+    int? accountId,
+    int? desiredStateId,
+    int? generation,
+    String? desiredLifecycle,
+    Value<String?> title = const Value.absent(),
+    Value<String?> notes = const Value.absent(),
+    Value<String?> status = const Value.absent(),
+    Value<int?> dueEpochDay = const Value.absent(),
+    Value<int?> desiredTaskListId = const Value.absent(),
+    Value<int?> desiredParentTaskId = const Value.absent(),
+    Value<int?> desiredPreviousTaskId = const Value.absent(),
+    Value<String?> baseRemoteId = const Value.absent(),
+    Value<String?> baseEtag = const Value.absent(),
+    Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+    Value<String?> baseObservedPublicationId = const Value.absent(),
+    Value<String?> baseTitle = const Value.absent(),
+    String? state,
+    Value<String?> failureCode = const Value.absent(),
+    DateTime? claimedAt,
+    DateTime? lastTransitionAt,
+  }) => DesiredStateAttemptRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    desiredStateId: desiredStateId ?? this.desiredStateId,
+    generation: generation ?? this.generation,
+    desiredLifecycle: desiredLifecycle ?? this.desiredLifecycle,
+    title: title.present ? title.value : this.title,
+    notes: notes.present ? notes.value : this.notes,
+    status: status.present ? status.value : this.status,
+    dueEpochDay: dueEpochDay.present ? dueEpochDay.value : this.dueEpochDay,
+    desiredTaskListId: desiredTaskListId.present
+        ? desiredTaskListId.value
+        : this.desiredTaskListId,
+    desiredParentTaskId: desiredParentTaskId.present
+        ? desiredParentTaskId.value
+        : this.desiredParentTaskId,
+    desiredPreviousTaskId: desiredPreviousTaskId.present
+        ? desiredPreviousTaskId.value
+        : this.desiredPreviousTaskId,
+    baseRemoteId: baseRemoteId.present ? baseRemoteId.value : this.baseRemoteId,
+    baseEtag: baseEtag.present ? baseEtag.value : this.baseEtag,
+    baseRemoteUpdatedAt: baseRemoteUpdatedAt.present
+        ? baseRemoteUpdatedAt.value
+        : this.baseRemoteUpdatedAt,
+    baseObservedPublicationId: baseObservedPublicationId.present
+        ? baseObservedPublicationId.value
+        : this.baseObservedPublicationId,
+    baseTitle: baseTitle.present ? baseTitle.value : this.baseTitle,
+    state: state ?? this.state,
+    failureCode: failureCode.present ? failureCode.value : this.failureCode,
+    claimedAt: claimedAt ?? this.claimedAt,
+    lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
+  );
+  DesiredStateAttemptRow copyWithCompanion(
+    DesiredStateAttemptRowsCompanion data,
+  ) {
+    return DesiredStateAttemptRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      desiredStateId: data.desiredStateId.present
+          ? data.desiredStateId.value
+          : this.desiredStateId,
+      generation: data.generation.present
+          ? data.generation.value
+          : this.generation,
+      desiredLifecycle: data.desiredLifecycle.present
+          ? data.desiredLifecycle.value
+          : this.desiredLifecycle,
+      title: data.title.present ? data.title.value : this.title,
+      notes: data.notes.present ? data.notes.value : this.notes,
+      status: data.status.present ? data.status.value : this.status,
+      dueEpochDay: data.dueEpochDay.present
+          ? data.dueEpochDay.value
+          : this.dueEpochDay,
+      desiredTaskListId: data.desiredTaskListId.present
+          ? data.desiredTaskListId.value
+          : this.desiredTaskListId,
+      desiredParentTaskId: data.desiredParentTaskId.present
+          ? data.desiredParentTaskId.value
+          : this.desiredParentTaskId,
+      desiredPreviousTaskId: data.desiredPreviousTaskId.present
+          ? data.desiredPreviousTaskId.value
+          : this.desiredPreviousTaskId,
+      baseRemoteId: data.baseRemoteId.present
+          ? data.baseRemoteId.value
+          : this.baseRemoteId,
+      baseEtag: data.baseEtag.present ? data.baseEtag.value : this.baseEtag,
+      baseRemoteUpdatedAt: data.baseRemoteUpdatedAt.present
+          ? data.baseRemoteUpdatedAt.value
+          : this.baseRemoteUpdatedAt,
+      baseObservedPublicationId: data.baseObservedPublicationId.present
+          ? data.baseObservedPublicationId.value
+          : this.baseObservedPublicationId,
+      baseTitle: data.baseTitle.present ? data.baseTitle.value : this.baseTitle,
+      state: data.state.present ? data.state.value : this.state,
+      failureCode: data.failureCode.present
+          ? data.failureCode.value
+          : this.failureCode,
+      claimedAt: data.claimedAt.present ? data.claimedAt.value : this.claimedAt,
+      lastTransitionAt: data.lastTransitionAt.present
+          ? data.lastTransitionAt.value
+          : this.lastTransitionAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateAttemptRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('generation: $generation, ')
+          ..write('desiredLifecycle: $desiredLifecycle, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('desiredTaskListId: $desiredTaskListId, ')
+          ..write('desiredParentTaskId: $desiredParentTaskId, ')
+          ..write('desiredPreviousTaskId: $desiredPreviousTaskId, ')
+          ..write('baseRemoteId: $baseRemoteId, ')
+          ..write('baseEtag: $baseEtag, ')
+          ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
+          ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
+          ..write('baseTitle: $baseTitle, ')
+          ..write('state: $state, ')
+          ..write('failureCode: $failureCode, ')
+          ..write('claimedAt: $claimedAt, ')
+          ..write('lastTransitionAt: $lastTransitionAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    accountId,
+    desiredStateId,
+    generation,
+    desiredLifecycle,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    desiredTaskListId,
+    desiredParentTaskId,
+    desiredPreviousTaskId,
+    baseRemoteId,
+    baseEtag,
+    baseRemoteUpdatedAt,
+    baseObservedPublicationId,
+    baseTitle,
+    state,
+    failureCode,
+    claimedAt,
+    lastTransitionAt,
+  ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesiredStateAttemptRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.desiredStateId == this.desiredStateId &&
+          other.generation == this.generation &&
+          other.desiredLifecycle == this.desiredLifecycle &&
+          other.title == this.title &&
+          other.notes == this.notes &&
+          other.status == this.status &&
+          other.dueEpochDay == this.dueEpochDay &&
+          other.desiredTaskListId == this.desiredTaskListId &&
+          other.desiredParentTaskId == this.desiredParentTaskId &&
+          other.desiredPreviousTaskId == this.desiredPreviousTaskId &&
+          other.baseRemoteId == this.baseRemoteId &&
+          other.baseEtag == this.baseEtag &&
+          other.baseRemoteUpdatedAt == this.baseRemoteUpdatedAt &&
+          other.baseObservedPublicationId == this.baseObservedPublicationId &&
+          other.baseTitle == this.baseTitle &&
+          other.state == this.state &&
+          other.failureCode == this.failureCode &&
+          other.claimedAt == this.claimedAt &&
+          other.lastTransitionAt == this.lastTransitionAt);
+}
+
+class DesiredStateAttemptRowsCompanion
+    extends UpdateCompanion<DesiredStateAttemptRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> desiredStateId;
+  final Value<int> generation;
+  final Value<String> desiredLifecycle;
+  final Value<String?> title;
+  final Value<String?> notes;
+  final Value<String?> status;
+  final Value<int?> dueEpochDay;
+  final Value<int?> desiredTaskListId;
+  final Value<int?> desiredParentTaskId;
+  final Value<int?> desiredPreviousTaskId;
+  final Value<String?> baseRemoteId;
+  final Value<String?> baseEtag;
+  final Value<DateTime?> baseRemoteUpdatedAt;
+  final Value<String?> baseObservedPublicationId;
+  final Value<String?> baseTitle;
+  final Value<String> state;
+  final Value<String?> failureCode;
+  final Value<DateTime> claimedAt;
+  final Value<DateTime> lastTransitionAt;
+  const DesiredStateAttemptRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.desiredStateId = const Value.absent(),
+    this.generation = const Value.absent(),
+    this.desiredLifecycle = const Value.absent(),
+    this.title = const Value.absent(),
+    this.notes = const Value.absent(),
+    this.status = const Value.absent(),
+    this.dueEpochDay = const Value.absent(),
+    this.desiredTaskListId = const Value.absent(),
+    this.desiredParentTaskId = const Value.absent(),
+    this.desiredPreviousTaskId = const Value.absent(),
+    this.baseRemoteId = const Value.absent(),
+    this.baseEtag = const Value.absent(),
+    this.baseRemoteUpdatedAt = const Value.absent(),
+    this.baseObservedPublicationId = const Value.absent(),
+    this.baseTitle = const Value.absent(),
+    this.state = const Value.absent(),
+    this.failureCode = const Value.absent(),
+    this.claimedAt = const Value.absent(),
+    this.lastTransitionAt = const Value.absent(),
+  });
+  DesiredStateAttemptRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int desiredStateId,
+    required int generation,
+    required String desiredLifecycle,
+    this.title = const Value.absent(),
+    this.notes = const Value.absent(),
+    this.status = const Value.absent(),
+    this.dueEpochDay = const Value.absent(),
+    this.desiredTaskListId = const Value.absent(),
+    this.desiredParentTaskId = const Value.absent(),
+    this.desiredPreviousTaskId = const Value.absent(),
+    this.baseRemoteId = const Value.absent(),
+    this.baseEtag = const Value.absent(),
+    this.baseRemoteUpdatedAt = const Value.absent(),
+    this.baseObservedPublicationId = const Value.absent(),
+    this.baseTitle = const Value.absent(),
+    required String state,
+    this.failureCode = const Value.absent(),
+    required DateTime claimedAt,
+    required DateTime lastTransitionAt,
+  }) : accountId = Value(accountId),
+       desiredStateId = Value(desiredStateId),
+       generation = Value(generation),
+       desiredLifecycle = Value(desiredLifecycle),
+       state = Value(state),
+       claimedAt = Value(claimedAt),
+       lastTransitionAt = Value(lastTransitionAt);
+  static Insertable<DesiredStateAttemptRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? desiredStateId,
+    Expression<int>? generation,
+    Expression<String>? desiredLifecycle,
+    Expression<String>? title,
+    Expression<String>? notes,
+    Expression<String>? status,
+    Expression<int>? dueEpochDay,
+    Expression<int>? desiredTaskListId,
+    Expression<int>? desiredParentTaskId,
+    Expression<int>? desiredPreviousTaskId,
+    Expression<String>? baseRemoteId,
+    Expression<String>? baseEtag,
+    Expression<DateTime>? baseRemoteUpdatedAt,
+    Expression<String>? baseObservedPublicationId,
+    Expression<String>? baseTitle,
+    Expression<String>? state,
+    Expression<String>? failureCode,
+    Expression<DateTime>? claimedAt,
+    Expression<DateTime>? lastTransitionAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (desiredStateId != null) 'desired_state_id': desiredStateId,
+      if (generation != null) 'generation': generation,
+      if (desiredLifecycle != null) 'desired_lifecycle': desiredLifecycle,
+      if (title != null) 'title': title,
+      if (notes != null) 'notes': notes,
+      if (status != null) 'status': status,
+      if (dueEpochDay != null) 'due_epoch_day': dueEpochDay,
+      if (desiredTaskListId != null) 'desired_task_list_id': desiredTaskListId,
+      if (desiredParentTaskId != null)
+        'desired_parent_task_id': desiredParentTaskId,
+      if (desiredPreviousTaskId != null)
+        'desired_previous_task_id': desiredPreviousTaskId,
+      if (baseRemoteId != null) 'base_remote_id': baseRemoteId,
+      if (baseEtag != null) 'base_etag': baseEtag,
+      if (baseRemoteUpdatedAt != null)
+        'base_remote_updated_at': baseRemoteUpdatedAt,
+      if (baseObservedPublicationId != null)
+        'base_observed_publication_id': baseObservedPublicationId,
+      if (baseTitle != null) 'base_title': baseTitle,
+      if (state != null) 'state': state,
+      if (failureCode != null) 'failure_code': failureCode,
+      if (claimedAt != null) 'claimed_at': claimedAt,
+      if (lastTransitionAt != null) 'last_transition_at': lastTransitionAt,
+    });
+  }
+
+  DesiredStateAttemptRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? desiredStateId,
+    Value<int>? generation,
+    Value<String>? desiredLifecycle,
+    Value<String?>? title,
+    Value<String?>? notes,
+    Value<String?>? status,
+    Value<int?>? dueEpochDay,
+    Value<int?>? desiredTaskListId,
+    Value<int?>? desiredParentTaskId,
+    Value<int?>? desiredPreviousTaskId,
+    Value<String?>? baseRemoteId,
+    Value<String?>? baseEtag,
+    Value<DateTime?>? baseRemoteUpdatedAt,
+    Value<String?>? baseObservedPublicationId,
+    Value<String?>? baseTitle,
+    Value<String>? state,
+    Value<String?>? failureCode,
+    Value<DateTime>? claimedAt,
+    Value<DateTime>? lastTransitionAt,
+  }) {
+    return DesiredStateAttemptRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      desiredStateId: desiredStateId ?? this.desiredStateId,
+      generation: generation ?? this.generation,
+      desiredLifecycle: desiredLifecycle ?? this.desiredLifecycle,
+      title: title ?? this.title,
+      notes: notes ?? this.notes,
+      status: status ?? this.status,
+      dueEpochDay: dueEpochDay ?? this.dueEpochDay,
+      desiredTaskListId: desiredTaskListId ?? this.desiredTaskListId,
+      desiredParentTaskId: desiredParentTaskId ?? this.desiredParentTaskId,
+      desiredPreviousTaskId:
+          desiredPreviousTaskId ?? this.desiredPreviousTaskId,
+      baseRemoteId: baseRemoteId ?? this.baseRemoteId,
+      baseEtag: baseEtag ?? this.baseEtag,
+      baseRemoteUpdatedAt: baseRemoteUpdatedAt ?? this.baseRemoteUpdatedAt,
+      baseObservedPublicationId:
+          baseObservedPublicationId ?? this.baseObservedPublicationId,
+      baseTitle: baseTitle ?? this.baseTitle,
+      state: state ?? this.state,
+      failureCode: failureCode ?? this.failureCode,
+      claimedAt: claimedAt ?? this.claimedAt,
+      lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (desiredStateId.present) {
+      map['desired_state_id'] = Variable<int>(desiredStateId.value);
+    }
+    if (generation.present) {
+      map['generation'] = Variable<int>(generation.value);
+    }
+    if (desiredLifecycle.present) {
+      map['desired_lifecycle'] = Variable<String>(desiredLifecycle.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (notes.present) {
+      map['notes'] = Variable<String>(notes.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (dueEpochDay.present) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay.value);
+    }
+    if (desiredTaskListId.present) {
+      map['desired_task_list_id'] = Variable<int>(desiredTaskListId.value);
+    }
+    if (desiredParentTaskId.present) {
+      map['desired_parent_task_id'] = Variable<int>(desiredParentTaskId.value);
+    }
+    if (desiredPreviousTaskId.present) {
+      map['desired_previous_task_id'] = Variable<int>(
+        desiredPreviousTaskId.value,
+      );
+    }
+    if (baseRemoteId.present) {
+      map['base_remote_id'] = Variable<String>(baseRemoteId.value);
+    }
+    if (baseEtag.present) {
+      map['base_etag'] = Variable<String>(baseEtag.value);
+    }
+    if (baseRemoteUpdatedAt.present) {
+      map['base_remote_updated_at'] = Variable<DateTime>(
+        baseRemoteUpdatedAt.value,
+      );
+    }
+    if (baseObservedPublicationId.present) {
+      map['base_observed_publication_id'] = Variable<String>(
+        baseObservedPublicationId.value,
+      );
+    }
+    if (baseTitle.present) {
+      map['base_title'] = Variable<String>(baseTitle.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (failureCode.present) {
+      map['failure_code'] = Variable<String>(failureCode.value);
+    }
+    if (claimedAt.present) {
+      map['claimed_at'] = Variable<DateTime>(claimedAt.value);
+    }
+    if (lastTransitionAt.present) {
+      map['last_transition_at'] = Variable<DateTime>(lastTransitionAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesiredStateAttemptRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('generation: $generation, ')
+          ..write('desiredLifecycle: $desiredLifecycle, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('desiredTaskListId: $desiredTaskListId, ')
+          ..write('desiredParentTaskId: $desiredParentTaskId, ')
+          ..write('desiredPreviousTaskId: $desiredPreviousTaskId, ')
+          ..write('baseRemoteId: $baseRemoteId, ')
+          ..write('baseEtag: $baseEtag, ')
+          ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
+          ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
+          ..write('baseTitle: $baseTitle, ')
+          ..write('state: $state, ')
+          ..write('failureCode: $failureCode, ')
+          ..write('claimedAt: $claimedAt, ')
+          ..write('lastTransitionAt: $lastTransitionAt')
           ..write(')'))
         .toString();
   }
@@ -5450,6 +8903,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $ScopeCompletenessRowsTable(this);
   late final $AccountPreferenceRowsTable accountPreferenceRows =
       $AccountPreferenceRowsTable(this);
+  late final $DesiredStateRowsTable desiredStateRows = $DesiredStateRowsTable(
+    this,
+  );
+  late final $DesiredStateDependencyRowsTable desiredStateDependencyRows =
+      $DesiredStateDependencyRowsTable(this);
+  late final $DesiredStateAttemptRowsTable desiredStateAttemptRows =
+      $DesiredStateAttemptRowsTable(this);
   late final $SyncFactRowsTable syncFactRows = $SyncFactRowsTable(this);
   late final $TaskListPreferenceRowsTable taskListPreferenceRows =
       $TaskListPreferenceRowsTable(this);
@@ -5467,6 +8927,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     taskRemoteBases,
     scopeCompletenessRows,
     accountPreferenceRows,
+    desiredStateRows,
+    desiredStateDependencyRows,
+    desiredStateAttemptRows,
     syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
@@ -7191,12 +10654,14 @@ typedef $$AccountPreferenceRowsTableCreateCompanionBuilder =
       Value<int> accountId,
       Value<bool> syncEnabled,
       Value<int?> defaultTaskListId,
+      Value<int> nextLocalCausalSequence,
     });
 typedef $$AccountPreferenceRowsTableUpdateCompanionBuilder =
     AccountPreferenceRowsCompanion Function({
       Value<int> accountId,
       Value<bool> syncEnabled,
       Value<int?> defaultTaskListId,
+      Value<int> nextLocalCausalSequence,
     });
 
 class $$AccountPreferenceRowsTableFilterComposer
@@ -7220,6 +10685,11 @@ class $$AccountPreferenceRowsTableFilterComposer
 
   ColumnFilters<int> get defaultTaskListId => $composableBuilder(
     column: $table.defaultTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get nextLocalCausalSequence => $composableBuilder(
+    column: $table.nextLocalCausalSequence,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -7247,6 +10717,11 @@ class $$AccountPreferenceRowsTableOrderingComposer
     column: $table.defaultTaskListId,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get nextLocalCausalSequence => $composableBuilder(
+    column: $table.nextLocalCausalSequence,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$AccountPreferenceRowsTableAnnotationComposer
@@ -7268,6 +10743,11 @@ class $$AccountPreferenceRowsTableAnnotationComposer
 
   GeneratedColumn<int> get defaultTaskListId => $composableBuilder(
     column: $table.defaultTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get nextLocalCausalSequence => $composableBuilder(
+    column: $table.nextLocalCausalSequence,
     builder: (column) => column,
   );
 }
@@ -7321,20 +10801,24 @@ class $$AccountPreferenceRowsTableTableManager
                 Value<int> accountId = const Value.absent(),
                 Value<bool> syncEnabled = const Value.absent(),
                 Value<int?> defaultTaskListId = const Value.absent(),
+                Value<int> nextLocalCausalSequence = const Value.absent(),
               }) => AccountPreferenceRowsCompanion(
                 accountId: accountId,
                 syncEnabled: syncEnabled,
                 defaultTaskListId: defaultTaskListId,
+                nextLocalCausalSequence: nextLocalCausalSequence,
               ),
           createCompanionCallback:
               ({
                 Value<int> accountId = const Value.absent(),
                 Value<bool> syncEnabled = const Value.absent(),
                 Value<int?> defaultTaskListId = const Value.absent(),
+                Value<int> nextLocalCausalSequence = const Value.absent(),
               }) => AccountPreferenceRowsCompanion.insert(
                 accountId: accountId,
                 syncEnabled: syncEnabled,
                 defaultTaskListId: defaultTaskListId,
+                nextLocalCausalSequence: nextLocalCausalSequence,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -7363,6 +10847,1481 @@ typedef $$AccountPreferenceRowsTableProcessedTableManager =
         >,
       ),
       AccountPreferenceRow,
+      PrefetchHooks Function()
+    >;
+typedef $$DesiredStateRowsTableCreateCompanionBuilder =
+    DesiredStateRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required String targetKey,
+      required String resourceType,
+      Value<int?> targetTaskListId,
+      Value<int?> targetTaskId,
+      required String desiredLifecycle,
+      Value<String?> title,
+      Value<String?> notes,
+      Value<String?> status,
+      Value<int?> dueEpochDay,
+      Value<int?> desiredTaskListId,
+      Value<int?> desiredParentTaskId,
+      Value<int?> desiredPreviousTaskId,
+      Value<bool> contentDirty,
+      Value<bool> structureDirty,
+      Value<bool> lifecycleDirty,
+      Value<DateTime?> localModifiedAt,
+      required int generation,
+      required int localCausalSequence,
+      required String state,
+      Value<String?> baseRemoteId,
+      Value<String?> baseEtag,
+      Value<DateTime?> baseRemoteUpdatedAt,
+      Value<String?> baseObservedPublicationId,
+      Value<String?> baseTitle,
+      Value<String?> failureCode,
+      required DateTime createdAt,
+      required DateTime lastTransitionAt,
+    });
+typedef $$DesiredStateRowsTableUpdateCompanionBuilder =
+    DesiredStateRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<String> targetKey,
+      Value<String> resourceType,
+      Value<int?> targetTaskListId,
+      Value<int?> targetTaskId,
+      Value<String> desiredLifecycle,
+      Value<String?> title,
+      Value<String?> notes,
+      Value<String?> status,
+      Value<int?> dueEpochDay,
+      Value<int?> desiredTaskListId,
+      Value<int?> desiredParentTaskId,
+      Value<int?> desiredPreviousTaskId,
+      Value<bool> contentDirty,
+      Value<bool> structureDirty,
+      Value<bool> lifecycleDirty,
+      Value<DateTime?> localModifiedAt,
+      Value<int> generation,
+      Value<int> localCausalSequence,
+      Value<String> state,
+      Value<String?> baseRemoteId,
+      Value<String?> baseEtag,
+      Value<DateTime?> baseRemoteUpdatedAt,
+      Value<String?> baseObservedPublicationId,
+      Value<String?> baseTitle,
+      Value<String?> failureCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> lastTransitionAt,
+    });
+
+class $$DesiredStateRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $DesiredStateRowsTable> {
+  $$DesiredStateRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetKey => $composableBuilder(
+    column: $table.targetKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get resourceType => $composableBuilder(
+    column: $table.resourceType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get targetTaskListId => $composableBuilder(
+    column: $table.targetTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get targetTaskId => $composableBuilder(
+    column: $table.targetTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get contentDirty => $composableBuilder(
+    column: $table.contentDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get structureDirty => $composableBuilder(
+    column: $table.structureDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get lifecycleDirty => $composableBuilder(
+    column: $table.lifecycleDirty,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get localCausalSequence => $composableBuilder(
+    column: $table.localCausalSequence,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseEtag => $composableBuilder(
+    column: $table.baseEtag,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseTitle => $composableBuilder(
+    column: $table.baseTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesiredStateRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesiredStateRowsTable> {
+  $$DesiredStateRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetKey => $composableBuilder(
+    column: $table.targetKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get resourceType => $composableBuilder(
+    column: $table.resourceType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get targetTaskListId => $composableBuilder(
+    column: $table.targetTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get targetTaskId => $composableBuilder(
+    column: $table.targetTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get contentDirty => $composableBuilder(
+    column: $table.contentDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get structureDirty => $composableBuilder(
+    column: $table.structureDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get lifecycleDirty => $composableBuilder(
+    column: $table.lifecycleDirty,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get localCausalSequence => $composableBuilder(
+    column: $table.localCausalSequence,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseEtag => $composableBuilder(
+    column: $table.baseEtag,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseTitle => $composableBuilder(
+    column: $table.baseTitle,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesiredStateRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesiredStateRowsTable> {
+  $$DesiredStateRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get targetKey =>
+      $composableBuilder(column: $table.targetKey, builder: (column) => column);
+
+  GeneratedColumn<String> get resourceType => $composableBuilder(
+    column: $table.resourceType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get targetTaskListId => $composableBuilder(
+    column: $table.targetTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get targetTaskId => $composableBuilder(
+    column: $table.targetTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get notes =>
+      $composableBuilder(column: $table.notes, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get contentDirty => $composableBuilder(
+    column: $table.contentDirty,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get structureDirty => $composableBuilder(
+    column: $table.structureDirty,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get lifecycleDirty => $composableBuilder(
+    column: $table.lifecycleDirty,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get localCausalSequence => $composableBuilder(
+    column: $table.localCausalSequence,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseEtag =>
+      $composableBuilder(column: $table.baseEtag, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseTitle =>
+      $composableBuilder(column: $table.baseTitle, builder: (column) => column);
+
+  GeneratedColumn<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => column,
+  );
+}
+
+class $$DesiredStateRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesiredStateRowsTable,
+          DesiredStateRow,
+          $$DesiredStateRowsTableFilterComposer,
+          $$DesiredStateRowsTableOrderingComposer,
+          $$DesiredStateRowsTableAnnotationComposer,
+          $$DesiredStateRowsTableCreateCompanionBuilder,
+          $$DesiredStateRowsTableUpdateCompanionBuilder,
+          (
+            DesiredStateRow,
+            BaseReferences<
+              _$AppDatabase,
+              $DesiredStateRowsTable,
+              DesiredStateRow
+            >,
+          ),
+          DesiredStateRow,
+          PrefetchHooks Function()
+        > {
+  $$DesiredStateRowsTableTableManager(
+    _$AppDatabase db,
+    $DesiredStateRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesiredStateRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesiredStateRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DesiredStateRowsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<String> targetKey = const Value.absent(),
+                Value<String> resourceType = const Value.absent(),
+                Value<int?> targetTaskListId = const Value.absent(),
+                Value<int?> targetTaskId = const Value.absent(),
+                Value<String> desiredLifecycle = const Value.absent(),
+                Value<String?> title = const Value.absent(),
+                Value<String?> notes = const Value.absent(),
+                Value<String?> status = const Value.absent(),
+                Value<int?> dueEpochDay = const Value.absent(),
+                Value<int?> desiredTaskListId = const Value.absent(),
+                Value<int?> desiredParentTaskId = const Value.absent(),
+                Value<int?> desiredPreviousTaskId = const Value.absent(),
+                Value<bool> contentDirty = const Value.absent(),
+                Value<bool> structureDirty = const Value.absent(),
+                Value<bool> lifecycleDirty = const Value.absent(),
+                Value<DateTime?> localModifiedAt = const Value.absent(),
+                Value<int> generation = const Value.absent(),
+                Value<int> localCausalSequence = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String?> baseRemoteId = const Value.absent(),
+                Value<String?> baseEtag = const Value.absent(),
+                Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+                Value<String?> baseObservedPublicationId = const Value.absent(),
+                Value<String?> baseTitle = const Value.absent(),
+                Value<String?> failureCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> lastTransitionAt = const Value.absent(),
+              }) => DesiredStateRowsCompanion(
+                id: id,
+                accountId: accountId,
+                targetKey: targetKey,
+                resourceType: resourceType,
+                targetTaskListId: targetTaskListId,
+                targetTaskId: targetTaskId,
+                desiredLifecycle: desiredLifecycle,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                desiredTaskListId: desiredTaskListId,
+                desiredParentTaskId: desiredParentTaskId,
+                desiredPreviousTaskId: desiredPreviousTaskId,
+                contentDirty: contentDirty,
+                structureDirty: structureDirty,
+                lifecycleDirty: lifecycleDirty,
+                localModifiedAt: localModifiedAt,
+                generation: generation,
+                localCausalSequence: localCausalSequence,
+                state: state,
+                baseRemoteId: baseRemoteId,
+                baseEtag: baseEtag,
+                baseRemoteUpdatedAt: baseRemoteUpdatedAt,
+                baseObservedPublicationId: baseObservedPublicationId,
+                baseTitle: baseTitle,
+                failureCode: failureCode,
+                createdAt: createdAt,
+                lastTransitionAt: lastTransitionAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required String targetKey,
+                required String resourceType,
+                Value<int?> targetTaskListId = const Value.absent(),
+                Value<int?> targetTaskId = const Value.absent(),
+                required String desiredLifecycle,
+                Value<String?> title = const Value.absent(),
+                Value<String?> notes = const Value.absent(),
+                Value<String?> status = const Value.absent(),
+                Value<int?> dueEpochDay = const Value.absent(),
+                Value<int?> desiredTaskListId = const Value.absent(),
+                Value<int?> desiredParentTaskId = const Value.absent(),
+                Value<int?> desiredPreviousTaskId = const Value.absent(),
+                Value<bool> contentDirty = const Value.absent(),
+                Value<bool> structureDirty = const Value.absent(),
+                Value<bool> lifecycleDirty = const Value.absent(),
+                Value<DateTime?> localModifiedAt = const Value.absent(),
+                required int generation,
+                required int localCausalSequence,
+                required String state,
+                Value<String?> baseRemoteId = const Value.absent(),
+                Value<String?> baseEtag = const Value.absent(),
+                Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+                Value<String?> baseObservedPublicationId = const Value.absent(),
+                Value<String?> baseTitle = const Value.absent(),
+                Value<String?> failureCode = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime lastTransitionAt,
+              }) => DesiredStateRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                targetKey: targetKey,
+                resourceType: resourceType,
+                targetTaskListId: targetTaskListId,
+                targetTaskId: targetTaskId,
+                desiredLifecycle: desiredLifecycle,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                desiredTaskListId: desiredTaskListId,
+                desiredParentTaskId: desiredParentTaskId,
+                desiredPreviousTaskId: desiredPreviousTaskId,
+                contentDirty: contentDirty,
+                structureDirty: structureDirty,
+                lifecycleDirty: lifecycleDirty,
+                localModifiedAt: localModifiedAt,
+                generation: generation,
+                localCausalSequence: localCausalSequence,
+                state: state,
+                baseRemoteId: baseRemoteId,
+                baseEtag: baseEtag,
+                baseRemoteUpdatedAt: baseRemoteUpdatedAt,
+                baseObservedPublicationId: baseObservedPublicationId,
+                baseTitle: baseTitle,
+                failureCode: failureCode,
+                createdAt: createdAt,
+                lastTransitionAt: lastTransitionAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesiredStateRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesiredStateRowsTable,
+      DesiredStateRow,
+      $$DesiredStateRowsTableFilterComposer,
+      $$DesiredStateRowsTableOrderingComposer,
+      $$DesiredStateRowsTableAnnotationComposer,
+      $$DesiredStateRowsTableCreateCompanionBuilder,
+      $$DesiredStateRowsTableUpdateCompanionBuilder,
+      (
+        DesiredStateRow,
+        BaseReferences<_$AppDatabase, $DesiredStateRowsTable, DesiredStateRow>,
+      ),
+      DesiredStateRow,
+      PrefetchHooks Function()
+    >;
+typedef $$DesiredStateDependencyRowsTableCreateCompanionBuilder =
+    DesiredStateDependencyRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int desiredStateId,
+      required String dependencyKind,
+      Value<int?> dependsOnTaskListId,
+      Value<int?> dependsOnTaskId,
+    });
+typedef $$DesiredStateDependencyRowsTableUpdateCompanionBuilder =
+    DesiredStateDependencyRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> desiredStateId,
+      Value<String> dependencyKind,
+      Value<int?> dependsOnTaskListId,
+      Value<int?> dependsOnTaskId,
+    });
+
+class $$DesiredStateDependencyRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $DesiredStateDependencyRowsTable> {
+  $$DesiredStateDependencyRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get dependencyKind => $composableBuilder(
+    column: $table.dependencyKind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dependsOnTaskListId => $composableBuilder(
+    column: $table.dependsOnTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dependsOnTaskId => $composableBuilder(
+    column: $table.dependsOnTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesiredStateDependencyRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesiredStateDependencyRowsTable> {
+  $$DesiredStateDependencyRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get dependencyKind => $composableBuilder(
+    column: $table.dependencyKind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dependsOnTaskListId => $composableBuilder(
+    column: $table.dependsOnTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dependsOnTaskId => $composableBuilder(
+    column: $table.dependsOnTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesiredStateDependencyRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesiredStateDependencyRowsTable> {
+  $$DesiredStateDependencyRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get dependencyKind => $composableBuilder(
+    column: $table.dependencyKind,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get dependsOnTaskListId => $composableBuilder(
+    column: $table.dependsOnTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get dependsOnTaskId => $composableBuilder(
+    column: $table.dependsOnTaskId,
+    builder: (column) => column,
+  );
+}
+
+class $$DesiredStateDependencyRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesiredStateDependencyRowsTable,
+          DesiredStateDependencyRow,
+          $$DesiredStateDependencyRowsTableFilterComposer,
+          $$DesiredStateDependencyRowsTableOrderingComposer,
+          $$DesiredStateDependencyRowsTableAnnotationComposer,
+          $$DesiredStateDependencyRowsTableCreateCompanionBuilder,
+          $$DesiredStateDependencyRowsTableUpdateCompanionBuilder,
+          (
+            DesiredStateDependencyRow,
+            BaseReferences<
+              _$AppDatabase,
+              $DesiredStateDependencyRowsTable,
+              DesiredStateDependencyRow
+            >,
+          ),
+          DesiredStateDependencyRow,
+          PrefetchHooks Function()
+        > {
+  $$DesiredStateDependencyRowsTableTableManager(
+    _$AppDatabase db,
+    $DesiredStateDependencyRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesiredStateDependencyRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$DesiredStateDependencyRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$DesiredStateDependencyRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> desiredStateId = const Value.absent(),
+                Value<String> dependencyKind = const Value.absent(),
+                Value<int?> dependsOnTaskListId = const Value.absent(),
+                Value<int?> dependsOnTaskId = const Value.absent(),
+              }) => DesiredStateDependencyRowsCompanion(
+                id: id,
+                accountId: accountId,
+                desiredStateId: desiredStateId,
+                dependencyKind: dependencyKind,
+                dependsOnTaskListId: dependsOnTaskListId,
+                dependsOnTaskId: dependsOnTaskId,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int desiredStateId,
+                required String dependencyKind,
+                Value<int?> dependsOnTaskListId = const Value.absent(),
+                Value<int?> dependsOnTaskId = const Value.absent(),
+              }) => DesiredStateDependencyRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                desiredStateId: desiredStateId,
+                dependencyKind: dependencyKind,
+                dependsOnTaskListId: dependsOnTaskListId,
+                dependsOnTaskId: dependsOnTaskId,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesiredStateDependencyRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesiredStateDependencyRowsTable,
+      DesiredStateDependencyRow,
+      $$DesiredStateDependencyRowsTableFilterComposer,
+      $$DesiredStateDependencyRowsTableOrderingComposer,
+      $$DesiredStateDependencyRowsTableAnnotationComposer,
+      $$DesiredStateDependencyRowsTableCreateCompanionBuilder,
+      $$DesiredStateDependencyRowsTableUpdateCompanionBuilder,
+      (
+        DesiredStateDependencyRow,
+        BaseReferences<
+          _$AppDatabase,
+          $DesiredStateDependencyRowsTable,
+          DesiredStateDependencyRow
+        >,
+      ),
+      DesiredStateDependencyRow,
+      PrefetchHooks Function()
+    >;
+typedef $$DesiredStateAttemptRowsTableCreateCompanionBuilder =
+    DesiredStateAttemptRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int desiredStateId,
+      required int generation,
+      required String desiredLifecycle,
+      Value<String?> title,
+      Value<String?> notes,
+      Value<String?> status,
+      Value<int?> dueEpochDay,
+      Value<int?> desiredTaskListId,
+      Value<int?> desiredParentTaskId,
+      Value<int?> desiredPreviousTaskId,
+      Value<String?> baseRemoteId,
+      Value<String?> baseEtag,
+      Value<DateTime?> baseRemoteUpdatedAt,
+      Value<String?> baseObservedPublicationId,
+      Value<String?> baseTitle,
+      required String state,
+      Value<String?> failureCode,
+      required DateTime claimedAt,
+      required DateTime lastTransitionAt,
+    });
+typedef $$DesiredStateAttemptRowsTableUpdateCompanionBuilder =
+    DesiredStateAttemptRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> desiredStateId,
+      Value<int> generation,
+      Value<String> desiredLifecycle,
+      Value<String?> title,
+      Value<String?> notes,
+      Value<String?> status,
+      Value<int?> dueEpochDay,
+      Value<int?> desiredTaskListId,
+      Value<int?> desiredParentTaskId,
+      Value<int?> desiredPreviousTaskId,
+      Value<String?> baseRemoteId,
+      Value<String?> baseEtag,
+      Value<DateTime?> baseRemoteUpdatedAt,
+      Value<String?> baseObservedPublicationId,
+      Value<String?> baseTitle,
+      Value<String> state,
+      Value<String?> failureCode,
+      Value<DateTime> claimedAt,
+      Value<DateTime> lastTransitionAt,
+    });
+
+class $$DesiredStateAttemptRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $DesiredStateAttemptRowsTable> {
+  $$DesiredStateAttemptRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseEtag => $composableBuilder(
+    column: $table.baseEtag,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseTitle => $composableBuilder(
+    column: $table.baseTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get claimedAt => $composableBuilder(
+    column: $table.claimedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesiredStateAttemptRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesiredStateAttemptRowsTable> {
+  $$DesiredStateAttemptRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseEtag => $composableBuilder(
+    column: $table.baseEtag,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseTitle => $composableBuilder(
+    column: $table.baseTitle,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get claimedAt => $composableBuilder(
+    column: $table.claimedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesiredStateAttemptRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesiredStateAttemptRowsTable> {
+  $$DesiredStateAttemptRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get desiredLifecycle => $composableBuilder(
+    column: $table.desiredLifecycle,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get notes =>
+      $composableBuilder(column: $table.notes, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredTaskListId => $composableBuilder(
+    column: $table.desiredTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredParentTaskId => $composableBuilder(
+    column: $table.desiredParentTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredPreviousTaskId => $composableBuilder(
+    column: $table.desiredPreviousTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseRemoteId => $composableBuilder(
+    column: $table.baseRemoteId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseEtag =>
+      $composableBuilder(column: $table.baseEtag, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get baseRemoteUpdatedAt => $composableBuilder(
+    column: $table.baseRemoteUpdatedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseObservedPublicationId => $composableBuilder(
+    column: $table.baseObservedPublicationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseTitle =>
+      $composableBuilder(column: $table.baseTitle, builder: (column) => column);
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get claimedAt =>
+      $composableBuilder(column: $table.claimedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastTransitionAt => $composableBuilder(
+    column: $table.lastTransitionAt,
+    builder: (column) => column,
+  );
+}
+
+class $$DesiredStateAttemptRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesiredStateAttemptRowsTable,
+          DesiredStateAttemptRow,
+          $$DesiredStateAttemptRowsTableFilterComposer,
+          $$DesiredStateAttemptRowsTableOrderingComposer,
+          $$DesiredStateAttemptRowsTableAnnotationComposer,
+          $$DesiredStateAttemptRowsTableCreateCompanionBuilder,
+          $$DesiredStateAttemptRowsTableUpdateCompanionBuilder,
+          (
+            DesiredStateAttemptRow,
+            BaseReferences<
+              _$AppDatabase,
+              $DesiredStateAttemptRowsTable,
+              DesiredStateAttemptRow
+            >,
+          ),
+          DesiredStateAttemptRow,
+          PrefetchHooks Function()
+        > {
+  $$DesiredStateAttemptRowsTableTableManager(
+    _$AppDatabase db,
+    $DesiredStateAttemptRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesiredStateAttemptRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$DesiredStateAttemptRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$DesiredStateAttemptRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> desiredStateId = const Value.absent(),
+                Value<int> generation = const Value.absent(),
+                Value<String> desiredLifecycle = const Value.absent(),
+                Value<String?> title = const Value.absent(),
+                Value<String?> notes = const Value.absent(),
+                Value<String?> status = const Value.absent(),
+                Value<int?> dueEpochDay = const Value.absent(),
+                Value<int?> desiredTaskListId = const Value.absent(),
+                Value<int?> desiredParentTaskId = const Value.absent(),
+                Value<int?> desiredPreviousTaskId = const Value.absent(),
+                Value<String?> baseRemoteId = const Value.absent(),
+                Value<String?> baseEtag = const Value.absent(),
+                Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+                Value<String?> baseObservedPublicationId = const Value.absent(),
+                Value<String?> baseTitle = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String?> failureCode = const Value.absent(),
+                Value<DateTime> claimedAt = const Value.absent(),
+                Value<DateTime> lastTransitionAt = const Value.absent(),
+              }) => DesiredStateAttemptRowsCompanion(
+                id: id,
+                accountId: accountId,
+                desiredStateId: desiredStateId,
+                generation: generation,
+                desiredLifecycle: desiredLifecycle,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                desiredTaskListId: desiredTaskListId,
+                desiredParentTaskId: desiredParentTaskId,
+                desiredPreviousTaskId: desiredPreviousTaskId,
+                baseRemoteId: baseRemoteId,
+                baseEtag: baseEtag,
+                baseRemoteUpdatedAt: baseRemoteUpdatedAt,
+                baseObservedPublicationId: baseObservedPublicationId,
+                baseTitle: baseTitle,
+                state: state,
+                failureCode: failureCode,
+                claimedAt: claimedAt,
+                lastTransitionAt: lastTransitionAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int desiredStateId,
+                required int generation,
+                required String desiredLifecycle,
+                Value<String?> title = const Value.absent(),
+                Value<String?> notes = const Value.absent(),
+                Value<String?> status = const Value.absent(),
+                Value<int?> dueEpochDay = const Value.absent(),
+                Value<int?> desiredTaskListId = const Value.absent(),
+                Value<int?> desiredParentTaskId = const Value.absent(),
+                Value<int?> desiredPreviousTaskId = const Value.absent(),
+                Value<String?> baseRemoteId = const Value.absent(),
+                Value<String?> baseEtag = const Value.absent(),
+                Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
+                Value<String?> baseObservedPublicationId = const Value.absent(),
+                Value<String?> baseTitle = const Value.absent(),
+                required String state,
+                Value<String?> failureCode = const Value.absent(),
+                required DateTime claimedAt,
+                required DateTime lastTransitionAt,
+              }) => DesiredStateAttemptRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                desiredStateId: desiredStateId,
+                generation: generation,
+                desiredLifecycle: desiredLifecycle,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                desiredTaskListId: desiredTaskListId,
+                desiredParentTaskId: desiredParentTaskId,
+                desiredPreviousTaskId: desiredPreviousTaskId,
+                baseRemoteId: baseRemoteId,
+                baseEtag: baseEtag,
+                baseRemoteUpdatedAt: baseRemoteUpdatedAt,
+                baseObservedPublicationId: baseObservedPublicationId,
+                baseTitle: baseTitle,
+                state: state,
+                failureCode: failureCode,
+                claimedAt: claimedAt,
+                lastTransitionAt: lastTransitionAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesiredStateAttemptRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesiredStateAttemptRowsTable,
+      DesiredStateAttemptRow,
+      $$DesiredStateAttemptRowsTableFilterComposer,
+      $$DesiredStateAttemptRowsTableOrderingComposer,
+      $$DesiredStateAttemptRowsTableAnnotationComposer,
+      $$DesiredStateAttemptRowsTableCreateCompanionBuilder,
+      $$DesiredStateAttemptRowsTableUpdateCompanionBuilder,
+      (
+        DesiredStateAttemptRow,
+        BaseReferences<
+          _$AppDatabase,
+          $DesiredStateAttemptRowsTable,
+          DesiredStateAttemptRow
+        >,
+      ),
+      DesiredStateAttemptRow,
       PrefetchHooks Function()
     >;
 typedef $$SyncFactRowsTableCreateCompanionBuilder =
@@ -8199,6 +13158,19 @@ class $AppDatabaseManager {
       $$ScopeCompletenessRowsTableTableManager(_db, _db.scopeCompletenessRows);
   $$AccountPreferenceRowsTableTableManager get accountPreferenceRows =>
       $$AccountPreferenceRowsTableTableManager(_db, _db.accountPreferenceRows);
+  $$DesiredStateRowsTableTableManager get desiredStateRows =>
+      $$DesiredStateRowsTableTableManager(_db, _db.desiredStateRows);
+  $$DesiredStateDependencyRowsTableTableManager
+  get desiredStateDependencyRows =>
+      $$DesiredStateDependencyRowsTableTableManager(
+        _db,
+        _db.desiredStateDependencyRows,
+      );
+  $$DesiredStateAttemptRowsTableTableManager get desiredStateAttemptRows =>
+      $$DesiredStateAttemptRowsTableTableManager(
+        _db,
+        _db.desiredStateAttemptRows,
+      );
   $$SyncFactRowsTableTableManager get syncFactRows =>
       $$SyncFactRowsTableTableManager(_db, _db.syncFactRows);
   $$TaskListPreferenceRowsTableTableManager get taskListPreferenceRows =>

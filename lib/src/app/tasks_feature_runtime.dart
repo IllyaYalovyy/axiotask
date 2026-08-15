@@ -6,6 +6,7 @@ import '../data/database/read_sync_store.dart';
 import '../data/database/sync_health_dao.dart';
 import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
+import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/tasks_repository.dart';
@@ -98,7 +99,12 @@ final class TasksFeatureRuntime {
       viewModel: TasksViewModel(
         accountId: accountId,
         tasksRepository: DatabaseTasksRepository(database),
+        taskListsRepository: DatabaseTaskListsRepository(
+          database: database,
+          clock: composition.clock,
+        ),
         syncHealthRepository: healthRepository,
+        localEditCommitted: coordinator.localEditCommitted,
         refreshRequested: coordinator.refresh,
         stopSyncRequested: coordinator.stop,
         resumeSyncRequested: coordinator.resume,

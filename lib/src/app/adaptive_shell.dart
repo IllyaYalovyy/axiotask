@@ -62,6 +62,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     content: Text(message),
                     actions: const <Widget>[SizedBox.shrink()],
                   ),
+                if (state.listCommandFailureMessage case final message?)
+                  MaterialBanner(
+                    content: Text(message),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) => _ShellBody(
@@ -267,11 +272,39 @@ final class _TaskCollection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                state.selectedTaskList?.title ?? 'Cached tasks',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      state.selectedTaskList?.title ?? 'Cached tasks',
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Create Google task list',
+                    onPressed:
+                        state.isListCommandPending ||
+                            viewModel.taskListsRepository == null
+                        ? null
+                        : () => _showCreateTaskListDialog(context, viewModel),
+                    icon: const Icon(Icons.playlist_add),
+                  ),
+                  IconButton(
+                    tooltip: 'Rename selected task list',
+                    onPressed:
+                        state.isListCommandPending ||
+                            viewModel.taskListsRepository == null ||
+                            state.selectedTaskList == null
+                        ? null
+                        : () => _showRenameTaskListDialog(
+                            context,
+                            viewModel,
+                            state.selectedTaskList!,
+                          ),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                ],
               ),
               const SizedBox(height: 4),
               Text(
@@ -323,6 +356,111 @@ final class _TaskCollection extends StatelessWidget {
                 ),
         ),
       ],
+    );
+  }
+}
+
+Future<void> _showCreateTaskListDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _TaskListEditDialog(
+    viewModel: viewModel,
+    dialogTitle: 'Create task list',
+    actionLabel: 'Create',
+    initialTitle: '',
+    submit: viewModel.createTaskList,
+  ),
+);
+
+Future<void> _showRenameTaskListDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  CachedTaskList taskList,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _TaskListEditDialog(
+    viewModel: viewModel,
+    dialogTitle: 'Rename task list',
+    actionLabel: 'Rename',
+    initialTitle: taskList.title,
+    submit: (title) => viewModel.renameTaskList(taskList.id, title),
+  ),
+);
+
+final class _TaskListEditDialog extends StatefulWidget {
+  const _TaskListEditDialog({
+    required this.viewModel,
+    required this.dialogTitle,
+    required this.actionLabel,
+    required this.initialTitle,
+    required this.submit,
+  });
+
+  final TasksViewModel viewModel;
+  final String dialogTitle;
+  final String actionLabel;
+  final String initialTitle;
+  final Future<void> Function(String title) submit;
+
+  @override
+  State<_TaskListEditDialog> createState() => _TaskListEditDialogState();
+}
+
+final class _TaskListEditDialogState extends State<_TaskListEditDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialTitle,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    await widget.submit(_controller.text);
+    if (mounted && widget.viewModel.state.listCommandFailureMessage == null) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.viewModel,
+      builder: (context, _) => AlertDialog(
+        title: Text(widget.dialogTitle),
+        content: TextField(
+          controller: _controller,
+          autofocus: true,
+          maxLength: 1024,
+          decoration: const InputDecoration(labelText: 'List title'),
+          onSubmitted: widget.viewModel.state.isListCommandPending
+              ? null
+              : (_) => _submit(),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: widget.viewModel.state.isListCommandPending
+                ? null
+                : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: widget.viewModel.state.isListCommandPending
+                ? null
+                : _submit,
+            child: widget.viewModel.state.isListCommandPending
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(widget.actionLabel),
+          ),
+        ],
+      ),
     );
   }
 }

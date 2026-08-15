@@ -238,6 +238,10 @@ class AccountPreferenceRows extends Table {
 
   IntColumn get defaultTaskListId => integer().nullable()();
 
+  IntColumn get nextLocalCausalSequence => integer()
+      .withDefault(const Constant(1))
+      .check(nextLocalCausalSequence.isBiggerThanValue(0))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{accountId};
 
@@ -246,6 +250,247 @@ class AccountPreferenceRows extends Table {
     'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
     'FOREIGN KEY (account_id, default_task_list_id) '
         'REFERENCES task_lists(account_id, id)',
+  ];
+}
+
+class DesiredStateRows extends Table {
+  @override
+  String get tableName => 'desired_states';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  TextColumn get targetKey =>
+      text().check(targetKey.length.isBiggerThanValue(0))();
+
+  TextColumn get resourceType =>
+      text().check(resourceType.isIn(const <String>['task_list', 'task']))();
+
+  IntColumn get targetTaskListId => integer().nullable()();
+
+  IntColumn get targetTaskId => integer().nullable()();
+
+  TextColumn get desiredLifecycle => text().check(
+    desiredLifecycle.isIn(const <String>['present', 'deleted']),
+  )();
+
+  TextColumn get title => text().nullable()();
+
+  TextColumn get notes => text().nullable()();
+
+  TextColumn get status => text().nullable().check(
+    status.isNull() | status.isIn(const <String>['needs_action', 'completed']),
+  )();
+
+  IntColumn get dueEpochDay => integer().nullable()();
+
+  IntColumn get desiredTaskListId => integer().nullable()();
+
+  IntColumn get desiredParentTaskId => integer().nullable()();
+
+  IntColumn get desiredPreviousTaskId => integer().nullable()();
+
+  BoolColumn get contentDirty => boolean().withDefault(const Constant(false))();
+
+  BoolColumn get structureDirty =>
+      boolean().withDefault(const Constant(false))();
+
+  BoolColumn get lifecycleDirty =>
+      boolean().withDefault(const Constant(false))();
+
+  DateTimeColumn get localModifiedAt => dateTime().nullable()();
+
+  IntColumn get generation =>
+      integer().check(generation.isBiggerThanValue(0))();
+
+  IntColumn get localCausalSequence =>
+      integer().check(localCausalSequence.isBiggerThanValue(0))();
+
+  TextColumn get state => text().check(
+    state.isIn(const <String>[
+      'pending',
+      'in_flight',
+      'uncertain',
+      'failed',
+      'confirmed',
+      'superseded',
+    ]),
+  )();
+
+  TextColumn get baseRemoteId => text().nullable().check(
+    baseRemoteId.isNull() | baseRemoteId.length.isBiggerThanValue(0),
+  )();
+
+  TextColumn get baseEtag => text().nullable().check(
+    baseEtag.isNull() | baseEtag.length.isBiggerThanValue(0),
+  )();
+
+  DateTimeColumn get baseRemoteUpdatedAt => dateTime().nullable()();
+
+  TextColumn get baseObservedPublicationId => text().nullable().check(
+    baseObservedPublicationId.isNull() |
+        baseObservedPublicationId.length.isBiggerThanValue(0),
+  )();
+
+  TextColumn get baseTitle => text().nullable()();
+
+  TextColumn get failureCode => text().nullable().check(
+    failureCode.isNull() | failureCode.length.isBiggerThanValue(0),
+  )();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  DateTimeColumn get lastTransitionAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, id},
+    <Column<Object>>{accountId, targetKey},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, target_task_list_id) '
+        'REFERENCES task_lists(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, target_task_id) '
+        'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, desired_task_list_id) '
+        'REFERENCES task_lists(account_id, id)',
+    'FOREIGN KEY (account_id, desired_parent_task_id) '
+        'REFERENCES tasks(account_id, id)',
+    'FOREIGN KEY (account_id, desired_previous_task_id) '
+        'REFERENCES tasks(account_id, id)',
+    "CHECK ((resource_type = 'task_list' "
+        "AND target_key = 'task_list:' || target_task_list_id "
+        'AND target_task_list_id IS NOT NULL AND target_task_id IS NULL) OR '
+        "(resource_type = 'task' AND target_key = 'task:' || target_task_id "
+        'AND target_task_list_id IS NULL AND target_task_id IS NOT NULL))',
+    "CHECK (desired_lifecycle = 'deleted' OR title IS NOT NULL)",
+    'CHECK (content_dirty = 1 OR structure_dirty = 1 OR lifecycle_dirty = 1)',
+  ];
+}
+
+class DesiredStateDependencyRows extends Table {
+  @override
+  String get tableName => 'desired_state_dependencies';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get desiredStateId => integer()();
+
+  TextColumn get dependencyKind => text().check(
+    dependencyKind.isIn(const <String>[
+      'task_list',
+      'parent_task',
+      'previous_task',
+    ]),
+  )();
+
+  IntColumn get dependsOnTaskListId => integer().nullable()();
+
+  IntColumn get dependsOnTaskId => integer().nullable()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, desiredStateId, dependencyKind},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id, desired_state_id) '
+        'REFERENCES desired_states(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, depends_on_task_list_id) '
+        'REFERENCES task_lists(account_id, id)',
+    'FOREIGN KEY (account_id, depends_on_task_id) '
+        'REFERENCES tasks(account_id, id)',
+    "CHECK ((dependency_kind = 'task_list' "
+        'AND depends_on_task_list_id IS NOT NULL '
+        'AND depends_on_task_id IS NULL) OR '
+        "(dependency_kind IN ('parent_task', 'previous_task') "
+        'AND depends_on_task_list_id IS NULL '
+        'AND depends_on_task_id IS NOT NULL))',
+  ];
+}
+
+class DesiredStateAttemptRows extends Table {
+  @override
+  String get tableName => 'desired_state_attempts';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get desiredStateId => integer()();
+
+  IntColumn get generation =>
+      integer().check(generation.isBiggerThanValue(0))();
+
+  TextColumn get desiredLifecycle => text().check(
+    desiredLifecycle.isIn(const <String>['present', 'deleted']),
+  )();
+
+  TextColumn get title => text().nullable()();
+
+  TextColumn get notes => text().nullable()();
+
+  TextColumn get status => text().nullable().check(
+    status.isNull() | status.isIn(const <String>['needs_action', 'completed']),
+  )();
+
+  IntColumn get dueEpochDay => integer().nullable()();
+
+  IntColumn get desiredTaskListId => integer().nullable()();
+
+  IntColumn get desiredParentTaskId => integer().nullable()();
+
+  IntColumn get desiredPreviousTaskId => integer().nullable()();
+
+  TextColumn get baseRemoteId => text().nullable()();
+
+  TextColumn get baseEtag => text().nullable()();
+
+  DateTimeColumn get baseRemoteUpdatedAt => dateTime().nullable()();
+
+  TextColumn get baseObservedPublicationId => text().nullable()();
+
+  TextColumn get baseTitle => text().nullable()();
+
+  TextColumn get state => text().check(
+    state.isIn(const <String>[
+      'pending',
+      'in_flight',
+      'uncertain',
+      'failed',
+      'confirmed',
+      'superseded',
+    ]),
+  )();
+
+  TextColumn get failureCode => text().nullable().check(
+    failureCode.isNull() | failureCode.length.isBiggerThanValue(0),
+  )();
+
+  DateTimeColumn get claimedAt => dateTime()();
+
+  DateTimeColumn get lastTransitionAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, id},
+    <Column<Object>>{desiredStateId, generation},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id, desired_state_id) '
+        'REFERENCES desired_states(account_id, id) ON DELETE CASCADE',
+    "CHECK (desired_lifecycle = 'deleted' OR title IS NOT NULL)",
+    "CHECK ((state = 'failed' AND length(failure_code) > 0) OR "
+        "(state <> 'failed' AND failure_code IS NULL))",
   ];
 }
 

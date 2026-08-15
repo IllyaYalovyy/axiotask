@@ -186,6 +186,16 @@ authorization state, unresolved counts, and later catch-up remain intact. The
 outbound-mutation uncertainty half of `RUN-007`/`REL-006` remains gated on the
 later mutation engine rather than being simulated by the read-only S13B engine.
 
+S14A repository tests inject deterministic transaction boundaries around list
+projection and desired-state writes. They cover atomic commit/rollback,
+rename coalescing with the original base, stable provisional identity, restart,
+account rejection, attempt claiming and stale-generation completion, atomic
+create acknowledgement, and resolved-attempt compaction. ViewModel/widget tests
+prove duplicate-tap suppression, no local-only choice, and no success or sync
+notification before persistence succeeds. The Linux integration reopens an
+isolated temporary database while synchronization is stopped and edits the
+same durable provisional list after restart without Google access.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

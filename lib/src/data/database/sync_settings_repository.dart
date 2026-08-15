@@ -43,12 +43,17 @@ final class DatabaseSyncSettingsRepository implements SyncSettingsRepository {
       }
       await _database
           .into(_database.accountPreferenceRows)
-          .insertOnConflictUpdate(
+          .insert(
             AccountPreferenceRowsCompanion.insert(
               accountId: Value<int>(accountId.value),
-              syncEnabled: Value<bool>(enabled),
             ),
+            mode: InsertMode.insertOrIgnore,
           );
+      await (_database.update(
+        _database.accountPreferenceRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        AccountPreferenceRowsCompanion(syncEnabled: Value<bool>(enabled)),
+      );
     });
   }
 }

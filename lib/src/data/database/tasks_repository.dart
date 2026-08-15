@@ -80,7 +80,18 @@ final class DatabaseTasksRepository implements TasksRepository {
       LEFT JOIN task_lists l
         ON l.account_id = a.id
        AND l.projection = 'supported'
-       AND l.remote_id IS NOT NULL
+       AND (
+         l.remote_id IS NOT NULL OR EXISTS (
+           SELECT 1 FROM desired_states local_list_intent
+           WHERE local_list_intent.account_id = l.account_id
+             AND local_list_intent.resource_type = 'task_list'
+             AND local_list_intent.target_task_list_id = l.id
+             AND local_list_intent.desired_lifecycle = 'present'
+             AND local_list_intent.state IN (
+               'pending', 'in_flight', 'uncertain', 'failed'
+             )
+         )
+       )
        AND (?2 = 0 OR l.id = ?2)
       LEFT JOIN tasks t
         ON t.account_id = a.id
@@ -110,6 +121,7 @@ final class DatabaseTasksRepository implements TasksRepository {
         _database.taskListCacheRows,
         _database.taskCacheRows,
         _database.scopeCompletenessRows,
+        _database.desiredStateRows,
       },
     );
     return result.watch().map((rows) => _mapSnapshot(query.accountId, rows));
@@ -133,17 +145,14 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
     };
     final listIdValue = row.readNullable<int>('list_id');
     if (listIdValue == null) continue;
-    final listRemoteId = _requiredRemoteId(
-      row.readNullable<String>('list_remote_id'),
-      'task_list_remote_id',
-    );
+    final listRemoteId = row.readNullable<String>('list_remote_id');
     final listId = TaskListId(listIdValue);
     taskLists.putIfAbsent(
       listId,
       () => CachedTaskList(
         id: listId,
         accountId: accountId,
-        remoteId: TaskListRemoteId(listRemoteId),
+        remoteId: listRemoteId == null ? null : TaskListRemoteId(listRemoteId),
         title: row.read<String>('list_title'),
       ),
     );

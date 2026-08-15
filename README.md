@@ -5,7 +5,9 @@ Android. The current Linux shell opens the versioned, account-scoped
 Drift/SQLite store, renders cached Google lists/tasks immediately, and presents
 truthful Inactive, Pending, Failed, or Good synchronization health with exact
 reason, unresolved counts, and last-success time. It also provides a read-only
-task-detail surface plus explicit Refresh and Stop/Resume actions. Stop is a
+task-detail surface, durable offline list create/rename, and explicit Refresh
+and Stop/Resume actions. List edits become visible only after the projected row
+and coalesced desired state commit together. Stop is a
 durable account-scoped scheduler control: it cancels an active read, prevents
 new Google requests, and preserves authorization, cache, and unresolved work;
 Resume immediately verifies and catches up. One deterministic coordinator
@@ -17,8 +19,8 @@ debounce capped at ten seconds, and every run has a two-minute monotonic
 deadline. Validated pages appear incrementally; only complete durable
 finalization can show Synced. Partial, malformed, unavailable, unauthorized, or
 timed-out results preserve usable cache under an explicit non-green status.
-Writes, retry, Android lifecycle wiring, and account connection UI remain later
-slices.
+Outbound mutation reconciliation, task writes, list delete/reorder, retry,
+Android lifecycle wiring, and account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -28,9 +30,10 @@ freshness or healthy-sync claim. Durable account-scoped health facts retain the
 last verified success, newest failure, unresolved counts, and scheduler latches;
 runtime authorization/connectivity/activity facts are projected separately.
 Read walks use the existing publication/completeness rows as their durable walk
-identity and update last success only during complete finalization. Desired
-mutations and mutation attempts are not yet implemented. The exact schema-v1
-contract is documented in
+identity and update last success only during complete finalization. Durable
+list desired state, dependency metadata, and immutable attempt snapshots are
+part of schema version 1; unresolved list work keeps health non-green until a
+later outbound slice confirms it. The exact schema-v1 contract is documented in
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
 ## Supported development environment
@@ -357,7 +360,9 @@ flutter test test/app/composition/isolation_test.dart
 flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
+flutter test test/domain/task_list_commands_test.dart
 flutter test test/domain/tasks_repository_test.dart
+flutter test test/data/database/task_lists_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/data/database/sync_settings_repository_test.dart
@@ -380,13 +385,15 @@ flutter test test/support/replay_seed_test.dart
 flutter test test/data/google_tasks/decoder_test.dart
 flutter test test/data/google_tasks/http_service_test.dart
 flutter test test/data/google_tasks/mutation_http_service_test.dart
+flutter test integration_test/offline_list_edits_linux_test.dart -d linux
 flutter test integration_test/read_slice_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```
 
-Capture the isolated synthetic Linux health states, including active Stop and
+Capture the isolated synthetic Linux states, including a pending provisional
+list create, a rename while synchronization is stopped, active Stop, and
 stopped Resume controls, into the ignored `screenshots/actual/` directory, then
 inspect each PNG:
 
