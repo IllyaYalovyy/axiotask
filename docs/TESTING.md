@@ -131,6 +131,15 @@ typed addresses rather than call counts; and typed observations retain exact
 wall/monotonic timestamps and insertion order. These controls use no elapsed-time
 sleeps and contain synthetic test data only.
 
+S09B qualifies stateful `FakeAuthorization`, `FakeLifecycle`, and
+`FakeConnectivity` through the production authorization, lifecycle, and
+connectivity ports. Authorization scripts cover restore, refresh, expiry,
+terminal rejection, cancellation, subject mismatch, and request rejection after
+dispatch. Lifecycle facts separate foreground eligibility, Linux window focus,
+best-effort exit requests, and termination without an exit callback.
+Connectivity emits only unknown, proven-no-route, or may-have-returned hints and
+coalesces repeats; it has no reachability or synchronization-health authority.
+
 ### 5. Synchronization subsystem tests
 
 After Stage 4, the sync engine is run without Flutter against real temporary

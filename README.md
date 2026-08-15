@@ -313,6 +313,9 @@ flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
+flutter test test/support/fake_auth_test.dart
+flutter test test/support/fake_lifecycle_test.dart
+flutter test test/support/fake_connectivity_test.dart
 flutter test test/data/google_tasks/decoder_test.dart
 flutter test test/data/google_tasks/http_service_test.dart
 flutter test test/data/google_tasks/mutation_http_service_test.dart

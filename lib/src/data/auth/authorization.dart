@@ -43,6 +43,17 @@ final class AuthorizationRefreshPending extends AuthorizationState {
   final AccountSubject subject;
 }
 
+/// A usable grant whose access token requires a refresh before another request.
+///
+/// This is an authorization fact only. It does not describe connectivity or
+/// synchronization health.
+final class AuthorizationExpired extends AuthorizationState {
+  const AuthorizationExpired(this.subject, {this.failure});
+
+  final AccountSubject subject;
+  final Failure? failure;
+}
+
 final class AuthorizationRejected extends AuthorizationState {
   const AuthorizationRejected(this.failure);
 
@@ -60,6 +71,10 @@ abstract interface class AuthorizationPort {
 
   Stream<AuthorizationState> get states;
 
+  Future<Outcome<AccountSubject>> restoreTasksAuthorization();
+
+  Future<Outcome<AccountSubject>> refreshTasksAuthorization();
+
   Future<Outcome<AccountSubject>> requestTasksAuthorization();
 }
 
@@ -74,19 +89,30 @@ final class UnavailableAuthorization implements AuthorizationPort {
       Stream<AuthorizationState>.value(currentState);
 
   @override
+  Future<Outcome<AccountSubject>> restoreTasksAuthorization() async =>
+      _unavailableOutcome;
+
+  @override
+  Future<Outcome<AccountSubject>> refreshTasksAuthorization() async =>
+      _unavailableOutcome;
+
+  @override
   Future<Outcome<AccountSubject>> requestTasksAuthorization() async =>
-      const Outcome<AccountSubject>.failure(
-        Failure(
-          code: 'auth.adapter_not_available',
-          category: FailureCategory.configuration,
-          operation: FailureOperation.authorize,
-          retry: RetryClassification.permanent,
-          impact: 'Google Tasks cannot be connected yet.',
-          action: FailureAction.reviewConfiguration,
-          safeSummary: 'No platform authorization adapter is configured.',
-        ),
-      );
+      _unavailableOutcome;
 }
+
+const Outcome<AccountSubject> _unavailableOutcome =
+    Outcome<AccountSubject>.failure(
+      Failure(
+        code: 'auth.adapter_not_available',
+        category: FailureCategory.configuration,
+        operation: FailureOperation.authorize,
+        retry: RetryClassification.permanent,
+        impact: 'Google Tasks cannot be connected yet.',
+        action: FailureAction.reviewConfiguration,
+        safeSummary: 'No platform authorization adapter is configured.',
+      ),
+    );
 
 final class SyntheticAuthorization implements AuthorizationPort {
   const SyntheticAuthorization(this.subject);
@@ -99,6 +125,14 @@ final class SyntheticAuthorization implements AuthorizationPort {
   @override
   Stream<AuthorizationState> get states =>
       Stream<AuthorizationState>.value(currentState);
+
+  @override
+  Future<Outcome<AccountSubject>> restoreTasksAuthorization() async =>
+      Outcome<AccountSubject>.success(subject);
+
+  @override
+  Future<Outcome<AccountSubject>> refreshTasksAuthorization() async =>
+      Outcome<AccountSubject>.success(subject);
 
   @override
   Future<Outcome<AccountSubject>> requestTasksAuthorization() async =>

@@ -46,9 +46,9 @@ their complete before/after state.
 | `F-GOOGLE` | Stateful strict Tasks server with lists/tasks/tombstones, ETags, server `updated`, pagination, completion cascades, stable-ID moves, opaque positions, request validation, scripted status/body/header outcomes, and a complete call ledger. | S08 ordinary read/write state, strict in-memory HTTP validation, shared adapter contract, and exact ledger are qualified. S09A distinguishes a committed mutation from headers and individually delivered response chunks. Later focused slices still own scripted status/body/header faults. |
 | `F-BARRIER` | Named deterministic barriers at run phases, page boundaries, request dispatch, server commit, response delivery, and every SQLite transaction boundary. Supports kill/cancel and ordered release. | S09A qualified typed, independently addressed run/page/request/commit/response/transaction boundaries with deterministic arrival, release, cancel, and kill outcomes. Production transaction and process-death consumers remain owned by their later slices. |
 | `F-TIME` | Independently controlled UTC wall clock, monotonic clock, timers, and deterministic full-jitter source; supports wall-clock discontinuities. | S09A qualified exact monotonic timer release, independent UTC wall discontinuities, stable same-deadline ordering, scripted jitter boundaries, and seeded replay. |
-| `F-AUTH` | Stateful authorization fake for unknown/usable/refreshing/expired/wrong-scope/revoked/terminal states, subject mismatch, interactive cancellation/success, and request rejection after dispatch. | Missing; required. |
-| `F-LIFE` | Linux process/window and Android resumed/paused/stopped event driver with explicit cancellation acknowledgement. | Missing; required. |
-| `F-CONN` | Connectivity hints for unknown, proven-no-route, and may-have-returned; cannot directly declare Google healthy. | Missing; required. |
+| `F-AUTH` | Stateful authorization fake for unknown/usable/refreshing/expired/wrong-scope/revoked/terminal states, subject mismatch, interactive cancellation/success, and request rejection after dispatch. | S09B qualified scripted restore, refresh, expiry, terminal failure, cancellation, matching success, subject mismatch, and post-dispatch rejection through `AuthorizationPort`; invalid scripts fail closed. |
+| `F-LIFE` | Linux process/window and Android resumed/paused/stopped event driver with explicit cancellation acknowledgement. | S09B qualified foreground/background facts, Linux focus independence, best-effort exit requests, missing-exit-callback termination, duplicate coalescing, and fail-closed post-termination behavior through `LifecyclePort`. Android platform lifecycle policy remains deferred to S27B. |
+| `F-CONN` | Connectivity hints for unknown, proven-no-route, and may-have-returned; cannot directly declare Google healthy. | S09B qualified typed, repeated-hint-coalesced unknown/no-route/may-have-returned facts through `ConnectivityPort`. The port exposes no reachability or `SyncHealth` setter. |
 | `F-OBS` | Records typed repository streams, `SyncHealth`, user-safe details, diagnostics, run/phase transitions, and request counts without deriving expected values from production code. | S09A qualified a clock-stamped, sequence-ordered typed ledger with exact-trace validation and a deliberately incorrect consumer self-test. Production event producers remain owned by their implementation slices. |
 | `F-MULTI` | Two or three isolated installation stores/coordinators sharing one `F-GOOGLE`, each with its own local IDs and clock. | Missing; required. |
 | `F-MODEL` | Reference state machine and command generator with replayable seeds, shrinking, invariant checks after every transition, and bounded quiescence detection. | Missing; required. |
@@ -252,9 +252,9 @@ S08 establishes the ordinary-state portion of `F-GOOGLE`: the direct fake and
 the HTTP adapter pass one shared read/write contract, unsupported wire requests
 fail closed, and exact page/operation calls are assertable. S09A adds qualified
 `F-BARRIER`, `F-TIME`, and `F-OBS` controls, including a separately observable
-server commit and partial HTTP response delivery. Store, auth, lifecycle,
-connectivity, multi-host, model, and remaining scripted remote-fault capabilities
-are still absent. Before engine code is accepted:
+server commit and partial HTTP response delivery. S09B adds qualified `F-AUTH`,
+`F-LIFE`, and `F-CONN` controls. Store, multi-host, model, and remaining scripted
+remote-fault capabilities are still absent. Before engine code is accepted:
 
 1. `F-STORE`, `F-GOOGLE`, `F-BARRIER`, `F-TIME`, `F-AUTH`, `F-LIFE`, `F-CONN`,
    and `F-OBS` must pass their own qualification tests, including `MOD-005`.

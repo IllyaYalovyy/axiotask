@@ -503,6 +503,26 @@ final class LinuxAuthorization implements AuthorizationPort {
   }
 
   @override
+  Future<Outcome<AccountSubject>> restoreTasksAuthorization() async {
+    return switch (await restore()) {
+      Success<LinuxAuthorizedSession>(:final value) =>
+        Outcome<AccountSubject>.success(value.subject),
+      Failed<LinuxAuthorizedSession>(:final failure) =>
+        Outcome<AccountSubject>.failure(failure),
+    };
+  }
+
+  @override
+  Future<Outcome<AccountSubject>> refreshTasksAuthorization() async {
+    return switch (await refresh()) {
+      Success<LinuxAuthorizedSession>(:final value) =>
+        Outcome<AccountSubject>.success(value.subject),
+      Failed<LinuxAuthorizedSession>(:final failure) =>
+        Outcome<AccountSubject>.failure(failure),
+    };
+  }
+
+  @override
   Future<Outcome<AccountSubject>> requestTasksAuthorization() async {
     return switch (await connect()) {
       Success<LinuxAuthorizedSession>(:final value) =>

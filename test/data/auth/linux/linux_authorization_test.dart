@@ -238,10 +238,10 @@ void main() {
           credentials: MemoryCredentialStore(initial: credentials.bundle),
           subjects: MemoryPinnedSubjectStore(initial: subjects.subject),
         );
-        final result = await restored.restore();
+        final result = await restored.restoreTasksAuthorization();
 
         expect(
-          (result as Failed<LinuxAuthorizedSession>).failure.code,
+          (result as Failed<AccountSubject>).failure.code,
           'auth.refresh_rejected',
         );
         expect(restored.currentState, isA<AuthorizationRejected>());
