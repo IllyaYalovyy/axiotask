@@ -36,6 +36,7 @@ final class SyncEngine {
     var remoteTasks = 0;
     var resourceProjectionWrites = 0;
     Failure? firstFailure;
+    var begun = false;
 
     SyncRunReport report(
       SyncRunOutcome outcome, {
@@ -55,20 +56,39 @@ final class SyncEngine {
       resourceProjectionWrites: resourceProjectionWrites,
     );
 
-    Future<bool> phase(SyncRunPhase value) async {
+    Future<SyncRunReport?> interrupted(SyncRunBoundary boundary) async {
+      if (!await _interrupted(boundary)) return null;
+      final failure = switch (control) {
+        SyncRunInterruptionFailure(:final interruptionFailure) =>
+          interruptionFailure,
+        _ => null,
+      };
+      if (begun && failure != null) {
+        await store.finalizeReadFailure(
+          accountId: request.accountId,
+          runId: runId,
+          failedAt: clock.now().toUtc(),
+          failure: failure,
+        );
+        return report(SyncRunOutcome.failed, failure: failure);
+      }
+      return report(SyncRunOutcome.interrupted);
+    }
+
+    Future<SyncRunReport?> phase(SyncRunPhase value) async {
       observer.phaseStarted(runId, value);
-      return _interrupted(
+      return interrupted(
         SyncRunBoundary(kind: SyncRunBoundaryKind.phase, phase: value),
       );
     }
 
-    if (await phase(SyncRunPhase.recover)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.recover) case final interruption?) {
+      return interruption;
     }
     await store.recoverReadRun(request.accountId);
 
-    if (await phase(SyncRunPhase.checkEligibility)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.checkEligibility) case final interruption?) {
+      return interruption;
     }
     final eligibility = await store.readEligibility(request.accountId);
     if (!eligibility.exists) {
@@ -90,8 +110,8 @@ final class SyncEngine {
       );
     }
 
-    if (await phase(SyncRunPhase.authorize)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.authorize) case final interruption?) {
+      return interruption;
     }
     final subject = await _usableSubject();
     if (subject == null) {
@@ -107,8 +127,8 @@ final class SyncEngine {
       );
     }
 
-    if (await phase(SyncRunPhase.begin)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.begin) case final interruption?) {
+      return interruption;
     }
     await store.beginReadRun(
       accountId: request.accountId,
@@ -116,9 +136,10 @@ final class SyncEngine {
       triggers: request.triggers,
       startedAt: clock.now().toUtc(),
     );
+    begun = true;
 
-    if (await phase(SyncRunPhase.enumerateGoogle)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.enumerateGoogle) case final interruption?) {
+      return interruption;
     }
     final listPlan = TaskListReadPlan();
     final selectedLists = <PublishedTaskList>[];
@@ -143,8 +164,8 @@ final class SyncEngine {
             scope: 'task_lists',
             pageIndex: listPageIndex,
           );
-          if (await _interrupted(boundary)) {
-            return report(SyncRunOutcome.interrupted);
+          if (await interrupted(boundary) case final interruption?) {
+            return interruption;
           }
           final published = await store.publishTaskListPage(
             accountId: request.accountId,
@@ -157,14 +178,15 @@ final class SyncEngine {
           resourceProjectionWrites += published.resourceWrites;
           taskListPages += 1;
           remoteTaskLists += value.items.length;
-          if (await _interrupted(
-            SyncRunBoundary(
-              kind: SyncRunBoundaryKind.afterPagePublication,
-              scope: 'task_lists',
-              pageIndex: listPageIndex,
-            ),
-          )) {
-            return report(SyncRunOutcome.interrupted);
+          if (await interrupted(
+                SyncRunBoundary(
+                  kind: SyncRunBoundaryKind.afterPagePublication,
+                  scope: 'task_lists',
+                  pageIndex: listPageIndex,
+                ),
+              )
+              case final interruption?) {
+            return interruption;
           }
           listToken = value.nextPageToken;
           listPageIndex += 1;
@@ -200,14 +222,15 @@ final class SyncEngine {
                 break;
               }
               final scope = 'tasks:${taskList.localId.value}';
-              if (await _interrupted(
-                SyncRunBoundary(
-                  kind: SyncRunBoundaryKind.beforePagePublication,
-                  scope: scope,
-                  pageIndex: pageIndex,
-                ),
-              )) {
-                return report(SyncRunOutcome.interrupted);
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.beforePagePublication,
+                      scope: scope,
+                      pageIndex: pageIndex,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
               }
               final published = await store.publishTaskPage(
                 accountId: request.accountId,
@@ -220,14 +243,15 @@ final class SyncEngine {
               resourceProjectionWrites += published.resourceWrites;
               taskPages += 1;
               remoteTasks += value.items.length;
-              if (await _interrupted(
-                SyncRunBoundary(
-                  kind: SyncRunBoundaryKind.afterPagePublication,
-                  scope: scope,
-                  pageIndex: pageIndex,
-                ),
-              )) {
-                return report(SyncRunOutcome.interrupted);
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.afterPagePublication,
+                      scope: scope,
+                      pageIndex: pageIndex,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
               }
               taskToken = value.nextPageToken;
               pageIndex += 1;
@@ -241,23 +265,24 @@ final class SyncEngine {
     // These phases are deliberately read-only in S12A. Emitting them keeps the
     // durable run order aligned with the accepted engine contract without
     // claiming or issuing outbound work.
-    if (await phase(SyncRunPhase.reconcileAndPlan)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.reconcileAndPlan) case final interruption?) {
+      return interruption;
     }
-    if (await phase(SyncRunPhase.executeOperations)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.executeOperations) case final interruption?) {
+      return interruption;
     }
-    if (await phase(SyncRunPhase.verifyOutcomes)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.verifyOutcomes) case final interruption?) {
+      return interruption;
     }
-    if (await phase(SyncRunPhase.finalize)) {
-      return report(SyncRunOutcome.interrupted);
+    if (await phase(SyncRunPhase.finalize) case final interruption?) {
+      return interruption;
     }
 
-    if (await _interrupted(
-      const SyncRunBoundary(kind: SyncRunBoundaryKind.beforeFinalization),
-    )) {
-      return report(SyncRunOutcome.interrupted);
+    if (await interrupted(
+          const SyncRunBoundary(kind: SyncRunBoundaryKind.beforeFinalization),
+        )
+        case final interruption?) {
+      return interruption;
     }
 
     if (firstFailure case final failure?) {

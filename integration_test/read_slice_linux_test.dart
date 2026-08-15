@@ -185,6 +185,9 @@ final class _IntegrationComposition implements AppComposition {
   ManualClock get clock => _base.clock;
 
   @override
+  MonotonicScheduler get scheduler => clock;
+
+  @override
   RandomSource get randomness => _base.randomness;
 
   @override

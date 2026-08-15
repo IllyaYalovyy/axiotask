@@ -54,6 +54,9 @@ final class TestComposition implements AppComposition {
   final ManualClock clock;
 
   @override
+  MonotonicScheduler get scheduler => clock;
+
+  @override
   final SequenceRandomSource randomness;
 
   @override

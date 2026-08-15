@@ -168,6 +168,14 @@ pages, child-before-parent deferral, unsupported depth, malformed/page failures,
 no-op second runs, account eligibility, and durable success/failure facts.
 Later slices extend the same boundary with reconciliation and outbound work.
 
+The S13A coordinator suite drives the qualified monotonic fake clock and typed
+authorization, lifecycle, and connectivity ports. It proves exact local-edit
+debounce/cap, foreground cadence, outer run deadline, one active plus one merged
+follow-up, cadence arriving during another run, repeated hints, stale-finalizer
+rejection, and quiescence without wall-clock sleeps. The production composition
+uses the same scheduler boundary; platform connectivity and Stop/Resume wiring
+remain in their owning lifecycle slice.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

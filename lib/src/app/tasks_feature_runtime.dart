@@ -8,12 +8,12 @@ import '../data/database/tasks_repository.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/tasks/tasks_view_model.dart';
+import '../sync/coordinator/sync_coordinator.dart';
 import '../sync/engine.dart';
 import '../sync/health/sync_health.dart';
 import '../sync/health/sync_health_repository.dart';
 import '../sync/run.dart';
 import 'composition/app_composition.dart';
-import 'foreground_read_coordinator.dart';
 import 'lifecycle.dart';
 
 final class TasksFeatureRuntime {
@@ -26,7 +26,7 @@ final class TasksFeatureRuntime {
 
   final TasksViewModel viewModel;
   final AppDatabase database;
-  final ForegroundReadCoordinator? coordinator;
+  final SyncCoordinator? coordinator;
   final ReadSliceTransport? transport;
 
   static Future<TasksFeatureRuntime> open(
@@ -61,17 +61,28 @@ final class TasksFeatureRuntime {
     final accountId = AccountId(accounts.first.id);
     final subject = AccountSubject(accounts.first.googleSubject);
     final transport = await composition.createReadTransport(subject);
-    final coordinator = ForegroundReadCoordinator(
+    final coordinator = SyncCoordinator(
       accountId: accountId,
       authorization: transport.authorization,
+      clock: composition.clock,
+      scheduler: composition.scheduler,
       lifecycle: lifecycle,
-      run: (triggers) => SyncEngine(
-        store: DatabaseReadSyncStore(database),
-        googleTasks: transport.googleTasks,
-        authorization: transport.authorization,
-        clock: composition.clock,
-        random: composition.randomness,
-      ).run(SyncRunRequest(accountId: accountId, triggers: triggers)),
+      run: (request) =>
+          SyncEngine(
+            store: DatabaseReadSyncStore(database),
+            googleTasks: transport.googleTasks,
+            authorization: transport.authorization,
+            clock: composition.clock,
+            random: composition.randomness,
+            control: request.control,
+          ).run(
+            SyncRunRequest(
+              accountId: accountId,
+              triggers: request.triggers
+                  .map((trigger) => trigger.value)
+                  .toSet(),
+            ),
+          ),
     );
     final healthRepository = DatabaseSyncHealthRepository(
       dao: SyncHealthDao(database),

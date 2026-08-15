@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:axiotask/src/app/foreground_read_coordinator.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
@@ -14,6 +13,7 @@ import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/sync/coordinator/sync_coordinator.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/run.dart';
@@ -135,6 +135,40 @@ void main() {
   );
 
   test(
+    'REL-005 deadline cancellation finalizes durable Failed facts',
+    () async {
+      final remote = _ScriptedReadService(blockFirstList: true);
+      final harness = await _Harness.create(
+        authorization: const SyntheticAuthorization(subject),
+        now: now,
+        remote: remote,
+      );
+      addTearDown(harness.close);
+
+      final startup = harness.coordinator.start();
+      await remote.firstListRequested;
+      harness.clock.advance(
+        const Duration(minutes: 1, seconds: 59, milliseconds: 999),
+      );
+      expect(harness.coordinator.currentFacts.detectedFailureReason, isNull);
+
+      harness.clock.advance(const Duration(milliseconds: 1));
+      expect(
+        harness.coordinator.currentFacts.detectedFailureReason,
+        SyncFailureReason.remoteFailure,
+      );
+      remote.releaseFirstList();
+      await startup;
+
+      final facts = await SyncHealthDao(
+        harness.database,
+      ).watchFacts(harness.accountId).first;
+      expect(facts.latestFailure?.diagnosticCode, 'sync.run_timeout');
+      expect((await harness.health()).outcome, SyncHealthOutcome.failed);
+    },
+  );
+
+  test(
     'malformed remote data becomes application Failed and never Good',
     () async {
       final harness = await _Harness.create(
@@ -218,18 +252,31 @@ final class _Harness {
     }
     final clock = FakeClock(now);
     final service = remote ?? _ScriptedReadService();
-    late final ForegroundReadCoordinator coordinator;
-    coordinator = ForegroundReadCoordinator(
+    late final SyncCoordinator coordinator;
+    coordinator = SyncCoordinator(
       accountId: accountId,
       authorization: authorization,
+      clock: clock,
+      scheduler: clock,
       lifecycle: lifecycle,
-      run: (triggers) => SyncEngine(
-        store: DatabaseReadSyncStore(database),
-        googleTasks: service,
-        authorization: authorization,
-        clock: clock,
-        random: SequenceRandomSource(List<int>.generate(256, (index) => index)),
-      ).run(SyncRunRequest(accountId: accountId, triggers: triggers)),
+      run: (request) =>
+          SyncEngine(
+            store: DatabaseReadSyncStore(database),
+            googleTasks: service,
+            authorization: authorization,
+            clock: clock,
+            random: SequenceRandomSource(
+              List<int>.generate(256, (index) => index),
+            ),
+            control: request.control,
+          ).run(
+            SyncRunRequest(
+              accountId: accountId,
+              triggers: request.triggers
+                  .map((trigger) => trigger.value)
+                  .toSet(),
+            ),
+          ),
     );
     return _Harness._(
       database: database,
@@ -243,7 +290,7 @@ final class _Harness {
   final AppDatabase database;
   final AccountId accountId;
   final _ScriptedReadService remote;
-  final ForegroundReadCoordinator coordinator;
+  final SyncCoordinator coordinator;
   final FakeClock clock;
 
   Stream<SyncHealth> watchHealth() => DatabaseSyncHealthRepository(

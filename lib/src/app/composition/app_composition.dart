@@ -96,6 +96,8 @@ final class CompositionBoundary {
 abstract interface class AppComposition {
   Clock get clock;
 
+  MonotonicScheduler get scheduler;
+
   RandomSource get randomness;
 
   AuthorizationPort get authorization;

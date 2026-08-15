@@ -36,7 +36,10 @@ final class DevelopmentComposition implements AppComposition {
   }
 
   @override
-  final Clock clock;
+  final SystemClock clock;
+
+  @override
+  MonotonicScheduler get scheduler => clock;
 
   @override
   final RandomSource randomness;

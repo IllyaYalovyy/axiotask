@@ -193,6 +193,10 @@ abstract interface class SyncRunControl {
   Future<SyncRunControlDecision> reach(SyncRunBoundary boundary);
 }
 
+abstract interface class SyncRunInterruptionFailure {
+  Failure? get interruptionFailure;
+}
+
 final class NoopSyncRunControl implements SyncRunControl {
   const NoopSyncRunControl();
 

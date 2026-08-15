@@ -6,7 +6,7 @@ import 'package:axiotask/src/core/clock.dart';
 ///
 /// Timers use only [monotonicElapsed]. Wall-time jumps therefore cannot fire,
 /// postpone, or reorder a deadline.
-final class FakeClock implements Clock {
+final class FakeClock implements Clock, MonotonicScheduler {
   FakeClock(DateTime wallTime) : _wallTime = _requireUtc(wallTime);
 
   DateTime _wallTime;
@@ -22,6 +22,7 @@ final class FakeClock implements Clock {
 
   int get pendingTimerCount => _timers.where((timer) => timer.isActive).length;
 
+  @override
   FakeTimerHandle schedule(Duration delay, void Function() callback) {
     if (delay.isNegative) {
       throw ArgumentError.value(delay, 'delay', 'must not be negative');
@@ -97,13 +98,15 @@ final class FakeClock implements Clock {
   }
 }
 
-final class FakeTimerHandle {
+final class FakeTimerHandle implements ScheduledTimer {
   FakeTimerHandle._(this._timer);
 
   final _ScheduledFakeTimer _timer;
 
+  @override
   bool get isActive => _timer.isActive;
 
+  @override
   bool cancel() {
     if (!_timer.isActive) return false;
     _timer.isActive = false;

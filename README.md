@@ -5,12 +5,16 @@ Android. The current Linux shell opens the versioned, account-scoped
 Drift/SQLite store, renders cached Google lists/tasks immediately, and presents
 truthful Inactive, Pending, Failed, or Good synchronization health with exact
 reason, unresolved counts, and last-success time. It also provides a read-only
-task-detail surface and an explicit Refresh action. Startup, Linux resume, and
-Refresh run one serialized foreground verification for the configured account.
-Validated pages appear incrementally; only complete durable finalization can
-show Synced. Partial, malformed, unavailable, or unauthorized results preserve
-usable cache under an explicit non-green status. Writes, automatic cadence and
-retry, Android lifecycle wiring, and account connection UI remain later slices.
+task-detail surface and an explicit Refresh action. One deterministic
+coordinator serializes startup, Linux resume, Refresh, connectivity-restored,
+five-minute foreground cadence, and future durable-edit notifications. Trigger
+bursts merge into at most one follow-up; edits use a five-second trailing
+debounce capped at ten seconds, and every run has a two-minute monotonic
+deadline. Validated pages appear incrementally; only complete durable
+finalization can show Synced. Partial, malformed, unavailable, unauthorized, or
+timed-out results preserve usable cache under an explicit non-green status.
+Writes, retry, production connectivity wiring, Android lifecycle wiring, and
+account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -352,6 +356,7 @@ flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
+flutter test test/sync/coordinator/sync_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart

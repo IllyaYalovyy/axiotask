@@ -18,6 +18,23 @@ void main() {
     );
   });
 
+  test('ManualClock schedules and cancels exact monotonic deadlines', () {
+    final clock = ManualClock(DateTime.utc(2026, 8, 12, 12));
+    final fired = <Duration>[];
+    clock.schedule(const Duration(seconds: 5), () {
+      fired.add(clock.monotonicElapsed);
+    });
+    final cancelled = clock.schedule(const Duration(seconds: 5), () {
+      fired.add(const Duration(days: 1));
+    });
+    expect(cancelled.cancel(), isTrue);
+
+    clock.advance(const Duration(seconds: 4, milliseconds: 999));
+    expect(fired, isEmpty);
+    clock.advance(const Duration(milliseconds: 1));
+    expect(fired, <Duration>[const Duration(seconds: 5)]);
+  });
+
   test(
     'SequenceRandomSource returns injected bytes without system entropy',
     () {
