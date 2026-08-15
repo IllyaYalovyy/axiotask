@@ -6,6 +6,7 @@ import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
+import 'barriers.dart';
 import 'fake_google_tasks_service.dart';
 
 void main() {
@@ -172,6 +173,66 @@ void main() {
         expect(invalidParent.statusCode, 404);
         expect(fake.callCount(FakeGoogleTasksMethod.createTask), 1);
         expect(fake.taskCount, 0);
+      },
+    );
+
+    test(
+      'server commit is observable before partial response delivery',
+      () async {
+        final fake = FakeGoogleTasksService();
+        final barriers = DeterministicBarriers();
+        const scope = '/tasks/v1/users/@me/lists';
+        const commitAddress = BarrierAddress(
+          point: BarrierPoint.afterServerCommit,
+          operation: 'createTaskList',
+          scope: scope,
+        );
+        const secondChunkAddress = BarrierAddress(
+          point: BarrierPoint.beforeResponseChunk,
+          operation: 'createTaskList',
+          scope: scope,
+          chunkIndex: 1,
+        );
+        final commitGate = barriers.arm(commitAddress);
+        final secondChunkGate = barriers.arm(secondChunkAddress);
+        final client = FakeGoogleTasksHttpClient(
+          fake,
+          barriers: barriers,
+          responseChunkSize: 8,
+        );
+        addTearDown(client.close);
+        final request =
+            http.Request(
+                'POST',
+                Uri.parse('https://fake.googleapis.test$scope'),
+              )
+              ..headers['content-type'] = 'application/json; charset=utf-8'
+              ..body = jsonEncode(<String, Object?>{
+                'title': 'Synthetic committed list',
+              });
+
+        final responseFuture = client.send(request);
+        await commitGate.whenReached;
+        final committedState =
+            (await fake.listTaskLists() as Success<RemotePage<RemoteTaskList>>)
+                .value;
+        expect(committedState.items.single.title, 'Synthetic committed list');
+
+        expect(commitGate.release(), isTrue);
+        final response = await responseFuture;
+        final delivered = <int>[];
+        final deliveredAll = response.stream.forEach(delivered.addAll);
+        await secondChunkGate.whenReached;
+        expect(delivered, hasLength(8));
+        expect(delivered.length, lessThan(response.contentLength!));
+
+        expect(secondChunkGate.release(), isTrue);
+        await deliveredAll;
+        expect(delivered, hasLength(response.contentLength));
+        expect(
+          barriers.arrivals.indexOf(commitAddress),
+          lessThan(barriers.arrivals.indexOf(secondChunkAddress)),
+        );
       },
     );
   });

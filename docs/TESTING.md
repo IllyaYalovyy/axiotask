@@ -99,9 +99,11 @@ maintains strict in-memory list/task state. S08 supports:
   references.
 
 A shared contract suite runs the same observable scenarios against the direct
-fake and `HttpGoogleTasksService` over that in-memory transport. Later S09
-slices own barriers, response-loss/partial-delivery controls, auth/lifecycle,
-and other fault scripting; S08 does not invent those behaviors.
+fake and `HttpGoogleTasksService` over that in-memory transport. S09A adds
+independently addressed barriers and splits the fake HTTP response into
+controllable chunks, so a committed mutation, response headers, and partial or
+complete body delivery are distinct observations. Later S09 slices own
+auth/lifecycle and other fault scripting; S08 does not invent those behaviors.
 
 The fake behavior/evidence mapping is:
 
@@ -119,6 +121,15 @@ The fake behavior/evidence mapping is:
 | UTC-midnight due values and JSON-null clearing for `notes` / `due` | Controlled P9 and S07 P12 follow-up; `API-005`, `API-009` |
 | Possibly stale source-list task operations | Exact server effect remains absent. The direct fake returns conservative uncertainty without mutation; the HTTP adapter's admitted stale-path boundary remains covered separately. |
 | Exact request ledger | Test-harness observation only; it makes `RUN-011`–`RUN-013` assertable and is not presented as Google behavior. |
+| Commit and partial response boundaries | Test-harness transport control only. It exposes uncertainty interleavings without claiming that Google uses the fake's byte chunking. |
+
+S09A also qualifies `FakeClock`, `FakeRandom`, `DeterministicBarriers`, and
+`ObservationLedger`. UTC wall time can jump independently of monotonic time;
+timers release at exact monotonic deadlines; jitter is scripted or seed-replayed;
+run, page, request, server-commit, response, and transaction boundaries use
+typed addresses rather than call counts; and typed observations retain exact
+wall/monotonic timestamps and insertion order. These controls use no elapsed-time
+sleeps and contain synthetic test data only.
 
 ### 5. Synchronization subsystem tests
 

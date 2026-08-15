@@ -43,13 +43,13 @@ their complete before/after state.
 | Capability | Required behavior | Implementation status |
 |---|---|---|
 | `F-STORE` | Real temporary-file SQLite store with the production schema/transactions; a killable child-process driver; reopen/WAL recovery from a separate process; commit barriers; fail-before/fail-after-commit; unavailable, malformed-schema, and corrupt-file modes. | Missing; required before synchronization implementation can be accepted. |
-| `F-GOOGLE` | Stateful strict Tasks server with lists/tasks/tombstones, ETags, server `updated`, pagination, completion cascades, stable-ID moves, opaque positions, request validation, scripted status/body/header outcomes, and a complete call ledger. | S08 ordinary read/write state, strict in-memory HTTP validation, shared adapter contract, and exact ledger are qualified. Scripted fault/interleaving and partial-delivery controls remain gated on S09A and later focused slices. |
-| `F-BARRIER` | Named deterministic barriers at run phases, page boundaries, request dispatch, server commit, response delivery, and every SQLite transaction boundary. Supports kill/cancel and ordered release. | Missing; required. |
-| `F-TIME` | Independently controlled UTC wall clock, monotonic clock, timers, and deterministic full-jitter source; supports wall-clock discontinuities. | Missing; required. |
+| `F-GOOGLE` | Stateful strict Tasks server with lists/tasks/tombstones, ETags, server `updated`, pagination, completion cascades, stable-ID moves, opaque positions, request validation, scripted status/body/header outcomes, and a complete call ledger. | S08 ordinary read/write state, strict in-memory HTTP validation, shared adapter contract, and exact ledger are qualified. S09A distinguishes a committed mutation from headers and individually delivered response chunks. Later focused slices still own scripted status/body/header faults. |
+| `F-BARRIER` | Named deterministic barriers at run phases, page boundaries, request dispatch, server commit, response delivery, and every SQLite transaction boundary. Supports kill/cancel and ordered release. | S09A qualified typed, independently addressed run/page/request/commit/response/transaction boundaries with deterministic arrival, release, cancel, and kill outcomes. Production transaction and process-death consumers remain owned by their later slices. |
+| `F-TIME` | Independently controlled UTC wall clock, monotonic clock, timers, and deterministic full-jitter source; supports wall-clock discontinuities. | S09A qualified exact monotonic timer release, independent UTC wall discontinuities, stable same-deadline ordering, scripted jitter boundaries, and seeded replay. |
 | `F-AUTH` | Stateful authorization fake for unknown/usable/refreshing/expired/wrong-scope/revoked/terminal states, subject mismatch, interactive cancellation/success, and request rejection after dispatch. | Missing; required. |
 | `F-LIFE` | Linux process/window and Android resumed/paused/stopped event driver with explicit cancellation acknowledgement. | Missing; required. |
 | `F-CONN` | Connectivity hints for unknown, proven-no-route, and may-have-returned; cannot directly declare Google healthy. | Missing; required. |
-| `F-OBS` | Records typed repository streams, `SyncHealth`, user-safe details, diagnostics, run/phase transitions, and request counts without deriving expected values from production code. | Missing; required. |
+| `F-OBS` | Records typed repository streams, `SyncHealth`, user-safe details, diagnostics, run/phase transitions, and request counts without deriving expected values from production code. | S09A qualified a clock-stamped, sequence-ordered typed ledger with exact-trace validation and a deliberately incorrect consumer self-test. Production event producers remain owned by their implementation slices. |
 | `F-MULTI` | Two or three isolated installation stores/coordinators sharing one `F-GOOGLE`, each with its own local IDs and clock. | Missing; required. |
 | `F-MODEL` | Reference state machine and command generator with replayable seeds, shrinking, invariant checks after every transition, and bounded quiescence detection. | Missing; required. |
 | `F-PROBE` | Opt-in live-adapter runner that verifies an ignored expected Google subject before any Tasks call, fails mismatches with zero Tasks enumeration/mutation, uses disposable unique prefixes, sanitizes records, guarantees cleanup, and verifies zero matches. | A historical probe harness exists outside product code; a subject-guarded Flutter adapter contract runner is still missing. |
@@ -250,18 +250,20 @@ explicit specification change.
 
 S08 establishes the ordinary-state portion of `F-GOOGLE`: the direct fake and
 the HTTP adapter pass one shared read/write contract, unsupported wire requests
-fail closed, and exact page/operation calls are assertable. It deliberately
-does not satisfy later fault/interleaving, store, time, auth, lifecycle,
-connectivity, observation, multi-host, or model capabilities. Before engine
-code is accepted:
+fail closed, and exact page/operation calls are assertable. S09A adds qualified
+`F-BARRIER`, `F-TIME`, and `F-OBS` controls, including a separately observable
+server commit and partial HTTP response delivery. Store, auth, lifecycle,
+connectivity, multi-host, model, and remaining scripted remote-fault capabilities
+are still absent. Before engine code is accepted:
 
 1. `F-STORE`, `F-GOOGLE`, `F-BARRIER`, `F-TIME`, `F-AUTH`, `F-LIFE`, `F-CONN`,
    and `F-OBS` must pass their own qualification tests, including `MOD-005`.
 2. Every named run phase and durable transaction boundary must be addressable by a barrier;
    a generic “throw on call N” fake is insufficient.
 3. S08 proves that `F-GOOGLE` rejects unsupported requests and exposes exact
-   call/page/operation counts. S09A must still model partial response delivery
-   separately from server commit before dependent uncertainty tests can pass.
+   call/page/operation counts. S09A proves partial response delivery separately
+   from server commit; later slices must consume those controls for dependent
+   uncertainty tests rather than infer commit from response delivery.
 4. `F-STORE` must exercise SQLite atomicity and reopen behavior. An in-memory map cannot
    provide crash-safety evidence; process-death rows require a killed child process and
    recovery from another process.

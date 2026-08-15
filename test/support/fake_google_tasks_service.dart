@@ -11,6 +11,8 @@ import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:http/http.dart' as http;
 
+import 'barriers.dart';
+
 enum FakeGoogleTasksMethod {
   listTaskLists,
   listTasks,
@@ -650,13 +652,23 @@ final class FakeGoogleTasksService implements GoogleTasksService {
 }
 
 final class FakeGoogleTasksHttpClient extends http.BaseClient {
-  FakeGoogleTasksHttpClient(this.backend);
+  FakeGoogleTasksHttpClient(
+    this.backend, {
+    this.barriers,
+    this.responseChunkSize,
+  }) {
+    if (responseChunkSize != null && responseChunkSize! <= 0) {
+      throw ArgumentError.value(responseChunkSize, 'responseChunkSize');
+    }
+  }
 
   static final Uri endpoint = Uri.parse(
     'https://fake.googleapis.test/tasks/v1/',
   );
 
   final FakeGoogleTasksService backend;
+  final DeterministicBarriers? barriers;
+  final int? responseChunkSize;
   var _closed = false;
 
   @override
@@ -672,72 +684,145 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
     if (segments.length < 3 || segments[0] != 'tasks' || segments[1] != 'v1') {
       return _error(HttpStatus.notFound);
     }
-    try {
-      if (_matches(segments, <String>[
-        'tasks',
-        'v1',
-        'users',
-        '@me',
-        'lists',
-      ])) {
-        return switch (request.method) {
-          'GET' => _listTaskLists(request),
-          'POST' => _createTaskList(request, bodyBytes),
-          _ => _error(HttpStatus.methodNotAllowed),
-        };
-      }
-      if (segments.length == 6 &&
-          _matches(segments.take(5).toList(), <String>[
-            'tasks',
-            'v1',
-            'users',
-            '@me',
-            'lists',
-          ])) {
-        return switch (request.method) {
-          'PATCH' => _renameTaskList(request, segments[5], bodyBytes),
-          'DELETE' => _deleteTaskList(request, segments[5], bodyBytes),
-          _ => _error(HttpStatus.methodNotAllowed),
-        };
-      }
-      if (segments.length == 5 &&
-          segments[0] == 'tasks' &&
-          segments[1] == 'v1' &&
-          segments[2] == 'lists' &&
-          segments[4] == 'tasks') {
-        return switch (request.method) {
-          'GET' => _listTasks(request, segments[3]),
-          'POST' => _createTask(request, segments[3], bodyBytes),
-          _ => _error(HttpStatus.methodNotAllowed),
-        };
-      }
-      if (segments.length == 6 &&
-          segments[0] == 'tasks' &&
-          segments[1] == 'v1' &&
-          segments[2] == 'lists' &&
-          segments[4] == 'tasks') {
-        return switch (request.method) {
-          'PATCH' => _patchTask(request, segments[3], segments[5], bodyBytes),
-          'DELETE' => _deleteTask(request, segments[3], segments[5], bodyBytes),
-          _ => _error(HttpStatus.methodNotAllowed),
-        };
-      }
-      if (segments.length == 7 &&
-          segments[0] == 'tasks' &&
-          segments[1] == 'v1' &&
-          segments[2] == 'lists' &&
-          segments[4] == 'tasks' &&
-          segments[6] == 'move') {
-        return request.method == 'POST'
-            ? _moveTask(request, segments[3], segments[5], bodyBytes)
-            : _error(HttpStatus.methodNotAllowed);
-      }
-      return _error(HttpStatus.notFound);
-    } on FormatException {
-      return _error(HttpStatus.badRequest);
-    } on ArgumentError {
-      return _error(HttpStatus.badRequest);
+    final operation = _operationFor(request, segments);
+    if (operation != null) {
+      await _cross(
+        BarrierPoint.beforeRequestDispatch,
+        operation,
+        request.url.path,
+      );
     }
+    late http.StreamedResponse response;
+    try {
+      response = await _route(request, segments, bodyBytes);
+    } on FormatException {
+      response = _error(HttpStatus.badRequest);
+    } on ArgumentError {
+      response = _error(HttpStatus.badRequest);
+    }
+    return operation == null
+        ? response
+        : _controlResponse(response, operation, request.url.path);
+  }
+
+  Future<http.StreamedResponse> _route(
+    http.BaseRequest request,
+    List<String> segments,
+    List<int> bodyBytes,
+  ) async {
+    if (_matches(segments, <String>['tasks', 'v1', 'users', '@me', 'lists'])) {
+      return switch (request.method) {
+        'GET' => _listTaskLists(request),
+        'POST' => _createTaskList(request, bodyBytes),
+        _ => _error(HttpStatus.methodNotAllowed),
+      };
+    }
+    if (segments.length == 6 &&
+        _matches(segments.take(5).toList(), <String>[
+          'tasks',
+          'v1',
+          'users',
+          '@me',
+          'lists',
+        ])) {
+      return switch (request.method) {
+        'PATCH' => _renameTaskList(request, segments[5], bodyBytes),
+        'DELETE' => _deleteTaskList(request, segments[5], bodyBytes),
+        _ => _error(HttpStatus.methodNotAllowed),
+      };
+    }
+    if (segments.length == 5 &&
+        segments[0] == 'tasks' &&
+        segments[1] == 'v1' &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks') {
+      return switch (request.method) {
+        'GET' => _listTasks(request, segments[3]),
+        'POST' => _createTask(request, segments[3], bodyBytes),
+        _ => _error(HttpStatus.methodNotAllowed),
+      };
+    }
+    if (segments.length == 6 &&
+        segments[0] == 'tasks' &&
+        segments[1] == 'v1' &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks') {
+      return switch (request.method) {
+        'PATCH' => _patchTask(request, segments[3], segments[5], bodyBytes),
+        'DELETE' => _deleteTask(request, segments[3], segments[5], bodyBytes),
+        _ => _error(HttpStatus.methodNotAllowed),
+      };
+    }
+    if (segments.length == 7 &&
+        segments[0] == 'tasks' &&
+        segments[1] == 'v1' &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks' &&
+        segments[6] == 'move') {
+      return request.method == 'POST'
+          ? _moveTask(request, segments[3], segments[5], bodyBytes)
+          : _error(HttpStatus.methodNotAllowed);
+    }
+    return _error(HttpStatus.notFound);
+  }
+
+  FakeGoogleTasksMethod? _operationFor(
+    http.BaseRequest request,
+    List<String> segments,
+  ) {
+    if (_matches(segments, const <String>[
+      'tasks',
+      'v1',
+      'users',
+      '@me',
+      'lists',
+    ])) {
+      return switch (request.method) {
+        'GET' => FakeGoogleTasksMethod.listTaskLists,
+        'POST' => FakeGoogleTasksMethod.createTaskList,
+        _ => null,
+      };
+    }
+    if (segments.length == 6 &&
+        _matches(segments.take(5).toList(), const <String>[
+          'tasks',
+          'v1',
+          'users',
+          '@me',
+          'lists',
+        ])) {
+      return switch (request.method) {
+        'PATCH' => FakeGoogleTasksMethod.renameTaskList,
+        'DELETE' => FakeGoogleTasksMethod.deleteTaskList,
+        _ => null,
+      };
+    }
+    if (segments.length == 5 &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks') {
+      return switch (request.method) {
+        'GET' => FakeGoogleTasksMethod.listTasks,
+        'POST' => FakeGoogleTasksMethod.createTask,
+        _ => null,
+      };
+    }
+    if (segments.length == 6 &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks') {
+      return switch (request.method) {
+        'PATCH' => FakeGoogleTasksMethod.patchTask,
+        'DELETE' => FakeGoogleTasksMethod.deleteTask,
+        _ => null,
+      };
+    }
+    if (segments.length == 7 &&
+        segments[2] == 'lists' &&
+        segments[4] == 'tasks' &&
+        segments[6] == 'move' &&
+        request.method == 'POST') {
+      return FakeGoogleTasksMethod.moveTask;
+    }
+    return null;
   }
 
   Future<http.StreamedResponse> _listTaskLists(http.BaseRequest request) async {
@@ -794,6 +879,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         CreateTaskListOperation(title: body['title']! as String),
       ),
       _taskListJson,
+      FakeGoogleTasksMethod.createTaskList,
+      request.url.path,
     );
   }
 
@@ -817,6 +904,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         ),
       ),
       _taskListJson,
+      FakeGoogleTasksMethod.renameTaskList,
+      request.url.path,
     );
   }
 
@@ -832,6 +921,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
       await backend.deleteTaskList(
         DeleteTaskListOperation(RemoteTaskListId(listId)),
       ),
+      FakeGoogleTasksMethod.deleteTaskList,
+      request.url.path,
     );
   }
 
@@ -875,6 +966,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         ),
       ),
       _taskJson,
+      FakeGoogleTasksMethod.createTask,
+      request.url.path,
     );
   }
 
@@ -913,6 +1006,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         ),
       ),
       _taskJson,
+      FakeGoogleTasksMethod.patchTask,
+      request.url.path,
     );
   }
 
@@ -938,6 +1033,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
           pathFreshness: MutationPathFreshness.current,
         ),
       ),
+      FakeGoogleTasksMethod.deleteTask,
+      request.url.path,
     );
   }
 
@@ -974,6 +1071,8 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         ),
       ),
       _taskJson,
+      FakeGoogleTasksMethod.moveTask,
+      request.url.path,
     );
   }
 
@@ -993,28 +1092,42 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
     Failed<RemotePage<T>>(:final failure) => _failureResponse(failure),
   };
 
-  http.StreamedResponse _mutationResponse<T>(
+  Future<http.StreamedResponse> _mutationResponse<T>(
     GoogleTasksMutationResult<T> result,
     Map<String, Object?> Function(T value) encode,
-  ) => switch (result) {
-    CommittedMutation<T>(:final value) => _jsonResponse(
-      HttpStatus.ok,
-      encode(value),
-    ),
-    RejectedMutation<T>(:final error) => _mutationFailureResponse(error),
-    UncertainMutation<T>(:final error) => _mutationFailureResponse(error),
-  };
+    FakeGoogleTasksMethod operation,
+    String scope,
+  ) async {
+    if (result is CommittedMutation<T>) {
+      await _cross(BarrierPoint.afterServerCommit, operation, scope);
+    }
+    return switch (result) {
+      CommittedMutation<T>(:final value) => _jsonResponse(
+        HttpStatus.ok,
+        encode(value),
+      ),
+      RejectedMutation<T>(:final error) => _mutationFailureResponse(error),
+      UncertainMutation<T>(:final error) => _mutationFailureResponse(error),
+    };
+  }
 
-  http.StreamedResponse _emptyMutationResponse(
+  Future<http.StreamedResponse> _emptyMutationResponse(
     GoogleTasksMutationResult<void> result,
-  ) => switch (result) {
-    CommittedMutation<void>() => _bytesResponse(
-      HttpStatus.noContent,
-      const <int>[],
-    ),
-    RejectedMutation<void>(:final error) => _mutationFailureResponse(error),
-    UncertainMutation<void>(:final error) => _mutationFailureResponse(error),
-  };
+    FakeGoogleTasksMethod operation,
+    String scope,
+  ) async {
+    if (result is CommittedMutation<void>) {
+      await _cross(BarrierPoint.afterServerCommit, operation, scope);
+    }
+    return switch (result) {
+      CommittedMutation<void>() => _bytesResponse(
+        HttpStatus.noContent,
+        const <int>[],
+      ),
+      RejectedMutation<void>(:final error) => _mutationFailureResponse(error),
+      UncertainMutation<void>(:final error) => _mutationFailureResponse(error),
+    };
+  }
 
   http.StreamedResponse _mutationFailureResponse(
     GoogleTasksMutationError error,
@@ -1048,6 +1161,68 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
         HttpHeaders.contentTypeHeader: 'application/json; charset=utf-8',
     },
   );
+
+  Future<http.StreamedResponse> _controlResponse(
+    http.StreamedResponse response,
+    FakeGoogleTasksMethod operation,
+    String scope,
+  ) async {
+    final bytes = await response.stream.toBytes();
+    await _cross(BarrierPoint.beforeResponseHeaders, operation, scope);
+    return http.StreamedResponse(
+      _deliver(bytes, operation, scope),
+      response.statusCode,
+      contentLength: response.contentLength,
+      request: response.request,
+      headers: response.headers,
+      isRedirect: response.isRedirect,
+      persistentConnection: response.persistentConnection,
+      reasonPhrase: response.reasonPhrase,
+    );
+  }
+
+  Stream<List<int>> _deliver(
+    List<int> bytes,
+    FakeGoogleTasksMethod operation,
+    String scope,
+  ) async* {
+    final chunkSize = responseChunkSize ?? (bytes.isEmpty ? 1 : bytes.length);
+    var chunkIndex = 0;
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      await _cross(
+        BarrierPoint.beforeResponseChunk,
+        operation,
+        scope,
+        chunkIndex: chunkIndex,
+      );
+      final end = (offset + chunkSize).clamp(0, bytes.length);
+      yield bytes.sublist(offset, end);
+      chunkIndex += 1;
+    }
+    await _cross(BarrierPoint.afterResponseDelivery, operation, scope);
+  }
+
+  Future<void> _cross(
+    BarrierPoint point,
+    FakeGoogleTasksMethod operation,
+    String scope, {
+    int? chunkIndex,
+  }) async {
+    final controls = barriers;
+    if (controls == null) return;
+    final outcome = await controls.reach(
+      BarrierAddress(
+        point: point,
+        operation: operation.name,
+        scope: scope,
+        chunkIndex: chunkIndex,
+      ),
+    );
+    if (outcome == BarrierOutcome.cancelled ||
+        outcome == BarrierOutcome.killed) {
+      throw http.ClientException('Synthetic cancellation at ${point.name}.');
+    }
+  }
 
   @override
   void close() {
