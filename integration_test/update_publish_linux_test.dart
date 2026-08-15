@@ -6,6 +6,7 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
+import 'package:axiotask/src/data/database/desired_state_dao.dart';
 import 'package:axiotask/src/data/database/read_sync_store.dart';
 import 'package:axiotask/src/data/database/sync_health_dao.dart';
 import 'package:axiotask/src/data/database/sync_health_repository.dart';
@@ -21,6 +22,7 @@ import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/coordinator/sync_coordinator.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/run.dart';
+import 'package:axiotask/src/sync/update_operations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -31,7 +33,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'offline list and task updates survive restart and confirm on Resume',
+    'offline updates publish, then newer Google content wins on Resume',
     (tester) async {
       final root = await Directory.systemTemp.createTemp(
         'axiotask-s15b-linux-integration-',
@@ -41,7 +43,7 @@ void main() {
       var database = await AppDatabase.openFile(file);
       const subject = AccountSubject('synthetic-update-publish-linux');
       final account = AccountId(await database.createAccount(subject.value));
-      final clock = ManualClock(DateTime.utc(2026, 8, 15, 15));
+      final clock = ManualClock(DateTime.utc(2026, 8, 15, 12, 0, 2));
       final remote = FakeGoogleTasksService();
       final remoteList = switch (await remote.createTaskList(
         const CreateTaskListOperation(title: 'Original remote list'),
@@ -123,30 +125,35 @@ void main() {
         isA<Success<void>>(),
       );
 
+      final runReports = <SyncRunReport>[];
       final coordinator = SyncCoordinator(
         accountId: account,
         authorization: authorization,
         clock: clock,
         scheduler: clock,
         settings: settings,
-        run: (request) =>
-            SyncEngine(
-              store: DatabaseReadSyncStore(database),
-              googleTasks: remote,
-              authorization: authorization,
-              clock: clock,
-              random: SequenceRandomSource(
-                List<int>.generate(256, (index) => index % 256),
-              ),
-              control: request.control,
-            ).run(
-              SyncRunRequest(
-                accountId: account,
-                triggers: request.triggers
-                    .map((trigger) => trigger.value)
-                    .toSet(),
-              ),
-            ),
+        run: (request) async {
+          final report =
+              await SyncEngine(
+                store: DatabaseReadSyncStore(database),
+                googleTasks: remote,
+                authorization: authorization,
+                clock: clock,
+                random: SequenceRandomSource(
+                  List<int>.generate(256, (index) => index % 256),
+                ),
+                control: request.control,
+              ).run(
+                SyncRunRequest(
+                  accountId: account,
+                  triggers: request.triggers
+                      .map((trigger) => trigger.value)
+                      .toSet(),
+                ),
+              );
+          runReports.add(report);
+          return report;
+        },
       );
       await coordinator.start();
       final viewModel = TasksViewModel(
@@ -203,6 +210,74 @@ void main() {
       expect(updateCalls.last.body, <String, Object?>{
         'title': 'Offline renamed list',
       });
+
+      await coordinator.stop();
+      expect(
+        await tasks.apply(
+          UpdateTaskContentCommand(
+            accountId: account,
+            taskId: taskId,
+            title: 'Older second offline edit',
+            notes: null,
+            status: TaskStatus.completed,
+            due: null,
+          ),
+        ),
+        isA<Success<void>>(),
+      );
+      final currentRemoteTask = switch (await remote.listTasks(remoteList.id)) {
+        Success<RemotePage<RemoteTask>>(:final value) =>
+          value.items.whereType<RemoteLiveTask>().single,
+        _ => throw StateError('Synthetic task read failed.'),
+      };
+      expect(
+        await remote.patchTask(
+          PatchTaskOperation(
+            taskListId: remoteList.id,
+            taskId: remoteTask.id,
+            etag: currentRemoteTask.etag!,
+            title: 'Newer Google whole record',
+            notes: const OptionalFieldWrite<String>.set('Google notes'),
+            status: RemoteTaskStatus.needsAction,
+            due: const OptionalFieldWrite<RemoteDate>.set(
+              RemoteDate(2026, 8, 25),
+            ),
+          ),
+        ),
+        isA<CommittedMutation<RemoteTask>>(),
+      );
+      final patchesBeforeConflictSync = remote.callCount(
+        FakeGoogleTasksMethod.patchTask,
+      );
+
+      await coordinator.resume();
+      await coordinator.whenIdle;
+      await tester.pumpAndSettle();
+
+      expect(find.text('Synced'), findsWidgets);
+      expect(find.text('Newer Google whole record'), findsOneWidget);
+      final reconciled = await tasks
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
+      final reconciledTask = reconciled.tasks.singleWhere(
+        (task) => task.id == taskId,
+      );
+      expect(reconciledTask.notes, 'Google notes');
+      expect(reconciledTask.status, TaskStatus.needsAction);
+      expect(reconciledTask.due, TaskDate(2026, 8, 25));
+      expect(
+        (await DesiredStateDao(database).readTask(account, taskId))?.state,
+        DesiredStateLifecycle.superseded,
+      );
+      expect(
+        remote.callCount(FakeGoogleTasksMethod.patchTask),
+        patchesBeforeConflictSync,
+      );
+      expect(runReports.last.googleWonReplacements, 1);
+      expect(
+        runReports.last.googleWonReplacementDetails.single.kind,
+        ContentSupersessionKind.taskContent,
+      );
     },
   );
 }

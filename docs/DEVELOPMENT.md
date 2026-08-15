@@ -83,6 +83,15 @@ replayed by this non-retry slice. The Linux integration reopens a temporary
 stopped database before Resume and uses only synthetic state plus the strict
 in-memory Google service.
 
+S16 adds no dependency or namespace. Reconciliation compares the complete
+stored base, desired task-content or list-title record, and the current complete
+Google observation. A one-sided change survives; a two-sided change selects the
+strictly newer local timestamp or Google for a later/equal timestamp. Missing
+required timestamp/base evidence fails closed without a write. A task 412
+supersedes that immutable attempt, refetches the complete task scope, and
+replans the same durable generation. Focused tests use synthetic isolated
+stores, independently clocked hosts, and the strict in-memory Google service.
+
 S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
 3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;
 runtime access requires an active Secret Service, normally `gnome-keyring` in a

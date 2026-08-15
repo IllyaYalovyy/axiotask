@@ -5,6 +5,33 @@ import '../domain/model/tasks.dart';
 
 enum UpdateOperationKind { task, taskList }
 
+enum ContentSupersessionKind { taskContent, taskListTitle, completionCascade }
+
+final class ContentSupersessionResult {
+  const ContentSupersessionResult({required this.kind, required this.count})
+    : assert(count > 0);
+
+  final ContentSupersessionKind kind;
+  final int count;
+}
+
+final class ContentReconciliationSummary {
+  const ContentReconciliationSummary({
+    this.confirmedReadBacks = 0,
+    this.localWritesPending = 0,
+    this.supersessions = const <ContentSupersessionResult>[],
+    this.failure,
+  });
+
+  final int confirmedReadBacks;
+  final int localWritesPending;
+  final List<ContentSupersessionResult> supersessions;
+  final Failure? failure;
+
+  int get googleWonReplacements =>
+      supersessions.fold<int>(0, (total, result) => total + result.count);
+}
+
 final class UpdateOperationClaim {
   const UpdateOperationClaim.taskList({
     required this.attemptId,
@@ -94,6 +121,18 @@ abstract interface class UpdateSyncStore {
     required AccountId accountId,
     required String runId,
     required DateTime confirmedAt,
+  });
+
+  Future<ContentReconciliationSummary> reconcileContent({
+    required AccountId accountId,
+    required String runId,
+    required DateTime reconciledAt,
+  });
+
+  Future<void> prepareTaskUpdateReplan({
+    required AccountId accountId,
+    required UpdateOperationClaim claim,
+    required DateTime replannedAt,
   });
 
   Future<UpdateOperationClaim?> claimNextUpdate({

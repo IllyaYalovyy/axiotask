@@ -224,6 +224,14 @@ durable and are not replayed because read-back recovery belongs to a later
 slice. The Linux application integration reopens an isolated stopped database,
 then observes Resume confirm both updates through the production coordinator.
 
+S16 adds pure whole-record policy tests, engine cases for one-sided and
+two-sided changes, Google timestamp ties, optional clears, completion cascades,
+fail-closed timestamp evidence, 412 refetch/replan, and file-backed restart
+after supersession. A two-host production-store harness proves convergence and
+quiescence with independent clocks. The Linux application integration also
+stops synchronization, creates competing synthetic edits, resumes through the
+production coordinator, and inspects the typed aggregate Google-won result.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

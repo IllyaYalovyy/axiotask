@@ -291,6 +291,28 @@ void main() {
       );
     });
 
+    test('REC-007 rejects a malformed conflict timestamp', () {
+      final result = decoder.decodeTaskPage(
+        utf8.encode(
+          jsonEncode(<String, Object>{
+            'kind': 'tasks#tasks',
+            'items': <Object>[
+              <String, Object>{
+                ..._liveTask('task-1'),
+                'updated': 'not-a-timestamp',
+              },
+            ],
+          }),
+        ),
+      );
+
+      expect(result, isA<Failed<RemotePage<RemoteTask>>>());
+      expect(
+        (result as Failed<RemotePage<RemoteTask>>).failure.code,
+        'google_tasks.malformed_success',
+      );
+    });
+
     test('rejects malformed JSON as a typed scope failure', () {
       final result = decoder.decodeTaskPage(
         utf8.encode('{"kind":"tasks#tasks","items":['),

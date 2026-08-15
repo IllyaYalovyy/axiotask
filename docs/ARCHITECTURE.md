@@ -2,10 +2,10 @@
 
 Status: **Stage 3 and Stage 4 synchronization design accepted; deterministic
 foreground coordination, Linux lifecycle/Stop/Resume control, durable offline
-list/task acknowledgement, ordered Google create publication, and eligible
-whole-content/list-title publication are implemented through S15B. Conflict
-resolution, retry, Android lifecycle control, and other mutations remain later
-slices.**
+list/task acknowledgement, ordered Google create/update publication, and
+whole-record task-content/list-title reconciliation are implemented through
+S16. Structure/deletion reconciliation, general retry, Android lifecycle
+control, and other mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed

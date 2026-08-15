@@ -62,6 +62,29 @@ final class DatabaseReadSyncStore implements SyncStore {
   );
 
   @override
+  Future<ContentReconciliationSummary> reconcileContent({
+    required AccountId accountId,
+    required String runId,
+    required DateTime reconciledAt,
+  }) => _desired.reconcileContent(
+    accountId: accountId,
+    runId: runId,
+    reconciledAt: reconciledAt,
+  );
+
+  @override
+  Future<void> prepareTaskUpdateReplan({
+    required AccountId accountId,
+    required UpdateOperationClaim claim,
+    required DateTime replannedAt,
+  }) => _desired.prepareTaskUpdateReplan(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    generation: claim.generation,
+    replannedAt: replannedAt,
+  );
+
+  @override
   Future<UpdateOperationClaim?> claimNextUpdate({
     required AccountId accountId,
     required String runId,
@@ -131,6 +154,9 @@ final class DatabaseReadSyncStore implements SyncStore {
       remoteUpdatedAt: remote.updated,
       observedPublicationId: observationId,
       acknowledgedAt: acknowledgedAt,
+      resolution: remote.title == claim.title
+          ? DesiredStateLifecycle.confirmed
+          : DesiredStateLifecycle.superseded,
     );
   }
 
@@ -163,6 +189,13 @@ final class DatabaseReadSyncStore implements SyncStore {
       remoteUpdatedAt: remote.updated,
       observedPublicationId: observationId,
       acknowledgedAt: acknowledgedAt,
+      resolution:
+          remote.title == claim.title &&
+              remote.notes == claim.notes &&
+              _taskStatus(remote.status) == claim.status &&
+              _taskDate(remote.due) == claim.due
+          ? DesiredStateLifecycle.confirmed
+          : DesiredStateLifecycle.superseded,
     );
   }
 

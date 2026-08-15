@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:drift/drift.dart';
 
+import '../../core/failure.dart';
 import '../../domain/model/tasks.dart';
+import '../../sync/reconciliation/content_policy.dart';
+import '../../sync/update_operations.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
 
@@ -56,6 +59,7 @@ final class TaskListDesiredStateRecord {
     required this.baseRemoteUpdatedAt,
     required this.baseObservedPublicationId,
     required this.baseTitle,
+    required this.localModifiedAt,
     required this.createdAt,
     required this.lastTransitionAt,
   });
@@ -72,6 +76,7 @@ final class TaskListDesiredStateRecord {
   final DateTime? baseRemoteUpdatedAt;
   final String? baseObservedPublicationId;
   final String? baseTitle;
+  final DateTime? localModifiedAt;
   final DateTime createdAt;
   final DateTime lastTransitionAt;
 }
@@ -95,6 +100,10 @@ final class TaskDesiredStateRecord {
     required this.baseRemoteUpdatedAt,
     required this.baseObservedPublicationId,
     required this.baseTitle,
+    required this.baseNotes,
+    required this.baseStatus,
+    required this.baseDue,
+    required this.localModifiedAt,
     required this.createdAt,
     required this.lastTransitionAt,
   });
@@ -116,6 +125,10 @@ final class TaskDesiredStateRecord {
   final DateTime? baseRemoteUpdatedAt;
   final String? baseObservedPublicationId;
   final String? baseTitle;
+  final String? baseNotes;
+  final TaskStatus? baseStatus;
+  final TaskDate? baseDue;
+  final DateTime? localModifiedAt;
   final DateTime createdAt;
   final DateTime lastTransitionAt;
 }
@@ -488,6 +501,285 @@ final class DesiredStateDao {
     );
   }
 
+  Future<ContentReconciliationSummary> reconcileContent({
+    required AccountId accountId,
+    required String runId,
+    required DateTime reconciledAt,
+  }) {
+    return _database.transaction(() async {
+      var confirmedReadBacks = 0;
+      var localWritesPending = 0;
+      var googleWonTaskContents = 0;
+      var googleWonListTitles = 0;
+      Failure? failure;
+      final desiredRows =
+          await (_database.select(_database.desiredStateRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.desiredLifecycle.equals('present') &
+                    row.contentDirty.equals(true) &
+                    row.baseRemoteId.isNotNull() &
+                    row.state.isIn(const <String>['pending', 'uncertain']),
+              ))
+              .get();
+
+      for (final desired in desiredRows) {
+        if (desired.resourceType == 'task') {
+          final taskId = desired.targetTaskId;
+          if (taskId == null ||
+              desired.baseTitle == null ||
+              desired.baseStatus == null ||
+              desired.title == null ||
+              desired.status == null) {
+            failure ??= _invalidConflictBaseFailure;
+            continue;
+          }
+          final current =
+              await (_database.select(_database.taskRemoteBases)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.taskId.equals(taskId) &
+                        row.deleted.equals(false) &
+                        row.observedPublicationId.equals(runId),
+                  ))
+                  .getSingleOrNull();
+          if (current == null ||
+              current.title == null ||
+              current.status == null ||
+              !await _taskScopeComplete(
+                accountId,
+                TaskListId(current.taskListId),
+                runId,
+              )) {
+            continue;
+          }
+          final base = TaskContentSnapshot(
+            title: desired.baseTitle!,
+            notes: desired.baseNotes,
+            status: _status(desired.baseStatus),
+            due: _taskDate(desired.baseDueEpochDay),
+          );
+          final local = TaskContentSnapshot(
+            title: desired.title!,
+            notes: desired.notes,
+            status: _status(desired.status),
+            due: _taskDate(desired.dueEpochDay),
+          );
+          final remote = TaskContentSnapshot(
+            title: current.title!,
+            notes: current.notes,
+            status: _status(current.status),
+            due: _taskDate(current.dueEpochDay),
+          );
+          final result = reconcileWholeRecord(
+            base: base,
+            local: local,
+            remote: remote,
+            localModifiedAt: desired.localModifiedAt?.toUtc(),
+            remoteModifiedAt: current.remoteUpdatedAt?.toUtc(),
+          );
+          switch (result) {
+            case WholeRecordConflictEvidenceFailure<TaskContentSnapshot>():
+              failure ??= _invalidConflictTimestampFailure;
+            case WholeRecordResolution<TaskContentSnapshot>(
+              winner: WholeRecordWinner.local,
+            ):
+              await _rebaseDesiredTask(
+                desired: desired,
+                current: current,
+                state: DesiredStateLifecycle.pending,
+                transitionedAt: reconciledAt,
+                updateProjection: false,
+              );
+              await _resolvePriorAttempts(
+                desired,
+                DesiredStateLifecycle.superseded,
+                reconciledAt,
+              );
+              localWritesPending += 1;
+            case WholeRecordResolution<TaskContentSnapshot>(
+              winner: WholeRecordWinner.confirmed,
+            ):
+              await _rebaseDesiredTask(
+                desired: desired,
+                current: current,
+                state: DesiredStateLifecycle.confirmed,
+                transitionedAt: reconciledAt,
+                updateProjection: true,
+              );
+              await _resolvePriorAttempts(
+                desired,
+                DesiredStateLifecycle.confirmed,
+                reconciledAt,
+              );
+              confirmedReadBacks += 1;
+            case WholeRecordResolution<TaskContentSnapshot>(
+              winner: WholeRecordWinner.google,
+            ):
+              await _rebaseDesiredTask(
+                desired: desired,
+                current: current,
+                state: DesiredStateLifecycle.superseded,
+                transitionedAt: reconciledAt,
+                updateProjection: true,
+              );
+              await _resolvePriorAttempts(
+                desired,
+                DesiredStateLifecycle.superseded,
+                reconciledAt,
+              );
+              googleWonTaskContents += 1;
+          }
+          continue;
+        }
+
+        if (desired.resourceType != 'task_list' ||
+            desired.targetTaskListId == null ||
+            desired.baseTitle == null ||
+            desired.title == null) {
+          failure ??= _invalidConflictBaseFailure;
+          continue;
+        }
+        final current =
+            await (_database.select(_database.taskListRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskListId.equals(desired.targetTaskListId!) &
+                      row.deleted.equals(false) &
+                      row.observedPublicationId.equals(runId),
+                ))
+                .getSingleOrNull();
+        if (current == null || !await _listScopeComplete(accountId, runId)) {
+          continue;
+        }
+        final result = reconcileWholeRecord(
+          base: TaskListTitleSnapshot(desired.baseTitle!),
+          local: TaskListTitleSnapshot(desired.title!),
+          remote: TaskListTitleSnapshot(current.title),
+          localModifiedAt: desired.localModifiedAt?.toUtc(),
+          remoteModifiedAt: current.remoteUpdatedAt?.toUtc(),
+        );
+        switch (result) {
+          case WholeRecordConflictEvidenceFailure<TaskListTitleSnapshot>():
+            failure ??= _invalidConflictTimestampFailure;
+          case WholeRecordResolution<TaskListTitleSnapshot>(
+            winner: WholeRecordWinner.local,
+          ):
+            await _rebaseDesiredTaskList(
+              desired: desired,
+              current: current,
+              state: DesiredStateLifecycle.pending,
+              transitionedAt: reconciledAt,
+              updateProjection: false,
+            );
+            await _resolvePriorAttempts(
+              desired,
+              DesiredStateLifecycle.superseded,
+              reconciledAt,
+            );
+            localWritesPending += 1;
+          case WholeRecordResolution<TaskListTitleSnapshot>(
+            winner: WholeRecordWinner.confirmed,
+          ):
+            await _rebaseDesiredTaskList(
+              desired: desired,
+              current: current,
+              state: DesiredStateLifecycle.confirmed,
+              transitionedAt: reconciledAt,
+              updateProjection: true,
+            );
+            await _resolvePriorAttempts(
+              desired,
+              DesiredStateLifecycle.confirmed,
+              reconciledAt,
+            );
+            confirmedReadBacks += 1;
+          case WholeRecordResolution<TaskListTitleSnapshot>(
+            winner: WholeRecordWinner.google,
+          ):
+            await _rebaseDesiredTaskList(
+              desired: desired,
+              current: current,
+              state: DesiredStateLifecycle.superseded,
+              transitionedAt: reconciledAt,
+              updateProjection: true,
+            );
+            await _resolvePriorAttempts(
+              desired,
+              DesiredStateLifecycle.superseded,
+              reconciledAt,
+            );
+            googleWonListTitles += 1;
+        }
+      }
+      await _recomputeCounts(accountId);
+      return ContentReconciliationSummary(
+        confirmedReadBacks: confirmedReadBacks,
+        localWritesPending: localWritesPending,
+        supersessions: <ContentSupersessionResult>[
+          if (googleWonTaskContents > 0)
+            ContentSupersessionResult(
+              kind: ContentSupersessionKind.taskContent,
+              count: googleWonTaskContents,
+            ),
+          if (googleWonListTitles > 0)
+            ContentSupersessionResult(
+              kind: ContentSupersessionKind.taskListTitle,
+              count: googleWonListTitles,
+            ),
+        ],
+        failure: failure,
+      );
+    });
+  }
+
+  Future<void> prepareTaskUpdateReplan({
+    required AccountId accountId,
+    required int attemptId,
+    required int generation,
+    required DateTime replannedAt,
+  }) {
+    return _database.transaction(() async {
+      final attempt =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(attemptId) &
+                    row.generation.equals(generation) &
+                    row.state.equals('in_flight'),
+              ))
+              .getSingleOrNull();
+      if (attempt == null) {
+        throw const DesiredStateInvariantException(
+          'conditional_attempt_not_replannable',
+        );
+      }
+      await (_database.update(
+        _database.desiredStateAttemptRows,
+      )..where((row) => row.id.equals(attempt.id))).write(
+        DesiredStateAttemptRowsCompanion(
+          state: const Value<String>('superseded'),
+          failureCode: const Value<String?>(null),
+          lastTransitionAt: Value<DateTime>(replannedAt.toUtc()),
+        ),
+      );
+      await (_database.update(_database.desiredStateRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.id.equals(attempt.desiredStateId) &
+                row.generation.equals(generation),
+          ))
+          .write(
+            DesiredStateRowsCompanion(
+              state: const Value<String>('pending'),
+              failureCode: const Value<String?>(null),
+              lastTransitionAt: Value<DateTime>(replannedAt.toUtc()),
+            ),
+          );
+      await _recomputeCounts(accountId);
+    });
+  }
+
   Future<int> confirmNoOpUpdates({
     required AccountId accountId,
     required String runId,
@@ -510,6 +802,9 @@ final class DesiredStateDao {
             list_base.observed_publication_id
           ) AS current_publication_id,
           COALESCE(task_base.title, list_base.title) AS current_title
+          ,task_base.notes AS current_notes
+          ,task_base.status AS current_status
+          ,task_base.due_epoch_day AS current_due_epoch_day
         FROM desired_states d
         LEFT JOIN task_list_remote_bases list_base
           ON list_base.account_id = d.account_id
@@ -593,6 +888,17 @@ final class DesiredStateDao {
                 baseTitle: Value<String?>(
                   row.readNullable<String>('current_title'),
                 ),
+                baseNotes: row.read<String>('resource_type') == 'task'
+                    ? Value<String?>(row.readNullable<String>('current_notes'))
+                    : const Value<String?>.absent(),
+                baseStatus: row.read<String>('resource_type') == 'task'
+                    ? Value<String?>(row.readNullable<String>('current_status'))
+                    : const Value<String?>.absent(),
+                baseDueEpochDay: row.read<String>('resource_type') == 'task'
+                    ? Value<int?>(
+                        row.readNullable<int>('current_due_epoch_day'),
+                      )
+                    : const Value<int?>.absent(),
                 state: const Value<String>('confirmed'),
                 failureCode: const Value<String?>(null),
                 lastTransitionAt: Value<DateTime>(confirmedAt.toUtc()),
@@ -816,6 +1122,9 @@ final class DesiredStateDao {
                 base?.observedPublicationId,
               ),
               baseTitle: Value<String?>(base?.title),
+              baseNotes: Value<String?>(base?.notes),
+              baseStatus: Value<String?>(base?.status),
+              baseDueEpochDay: Value<int?>(base?.dueEpochDay),
               localModifiedAt: Value<DateTime>(modifiedAt.toUtc()),
               createdAt: modifiedAt.toUtc(),
               lastTransitionAt: modifiedAt.toUtc(),
@@ -1093,8 +1402,15 @@ final class DesiredStateDao {
     required DateTime? remoteUpdatedAt,
     required String observedPublicationId,
     required DateTime acknowledgedAt,
+    DesiredStateLifecycle resolution = DesiredStateLifecycle.confirmed,
   }) {
     return _database.transaction(() async {
+      if (resolution != DesiredStateLifecycle.confirmed &&
+          resolution != DesiredStateLifecycle.superseded) {
+        throw const DesiredStateInvariantException(
+          'invalid_acknowledgement_resolution',
+        );
+      }
       final attempt =
           await (_database.select(_database.desiredStateAttemptRows)..where(
                 (row) =>
@@ -1150,7 +1466,7 @@ final class DesiredStateDao {
         _database.desiredStateAttemptRows,
       )..where((row) => row.id.equals(attemptId))).write(
         DesiredStateAttemptRowsCompanion(
-          state: const Value<String>('confirmed'),
+          state: Value<String>(_stateValue(resolution)),
           failureCode: const Value<String?>(null),
           lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
         ),
@@ -1166,7 +1482,7 @@ final class DesiredStateDao {
             baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
             baseObservedPublicationId: Value<String>(observedPublicationId),
             baseTitle: Value<String>(title),
-            state: const Value<String>('confirmed'),
+            state: Value<String>(_stateValue(resolution)),
             failureCode: const Value<String?>(null),
             lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
           ),
@@ -1204,8 +1520,15 @@ final class DesiredStateDao {
     required DateTime? remoteUpdatedAt,
     required String observedPublicationId,
     required DateTime acknowledgedAt,
+    DesiredStateLifecycle resolution = DesiredStateLifecycle.confirmed,
   }) {
     return _database.transaction(() async {
+      if (resolution != DesiredStateLifecycle.confirmed &&
+          resolution != DesiredStateLifecycle.superseded) {
+        throw const DesiredStateInvariantException(
+          'invalid_acknowledgement_resolution',
+        );
+      }
       final attempt =
           await (_database.select(_database.desiredStateAttemptRows)..where(
                 (row) =>
@@ -1273,7 +1596,7 @@ final class DesiredStateDao {
         _database.desiredStateAttemptRows,
       )..where((row) => row.id.equals(attemptId))).write(
         DesiredStateAttemptRowsCompanion(
-          state: const Value<String>('confirmed'),
+          state: Value<String>(_stateValue(resolution)),
           failureCode: const Value<String?>(null),
           lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
         ),
@@ -1294,7 +1617,10 @@ final class DesiredStateDao {
             baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
             baseObservedPublicationId: Value<String>(observedPublicationId),
             baseTitle: Value<String>(title),
-            state: const Value<String>('confirmed'),
+            baseNotes: Value<String?>(notes),
+            baseStatus: Value<String>(_statusValue(status)),
+            baseDueEpochDay: Value<int?>(_epochDay(due)),
+            state: Value<String>(_stateValue(resolution)),
             failureCode: const Value<String?>(null),
             lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
           ),
@@ -1309,6 +1635,9 @@ final class DesiredStateDao {
             baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
             baseObservedPublicationId: Value<String>(observedPublicationId),
             baseTitle: Value<String>(title),
+            baseNotes: Value<String?>(notes),
+            baseStatus: Value<String>(_statusValue(status)),
+            baseDueEpochDay: Value<int?>(_epochDay(due)),
           ),
         );
       }
@@ -1405,6 +1734,146 @@ final class DesiredStateDao {
     );
   }
 
+  Future<bool> _listScopeComplete(AccountId accountId, String runId) async =>
+      await (_database.select(_database.scopeCompletenessRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.scopeKind.equals('task_lists') &
+                row.taskListId.isNull() &
+                row.publicationId.equals(runId) &
+                row.isComplete.equals(true),
+          ))
+          .getSingleOrNull() !=
+      null;
+
+  Future<bool> _taskScopeComplete(
+    AccountId accountId,
+    TaskListId taskListId,
+    String runId,
+  ) async =>
+      await (_database.select(_database.scopeCompletenessRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.scopeKind.equals('tasks') &
+                row.taskListId.equals(taskListId.value) &
+                row.publicationId.equals(runId) &
+                row.isComplete.equals(true),
+          ))
+          .getSingleOrNull() !=
+      null;
+
+  Future<void> _rebaseDesiredTask({
+    required DesiredStateRow desired,
+    required TaskRemoteBase current,
+    required DesiredStateLifecycle state,
+    required DateTime transitionedAt,
+    required bool updateProjection,
+  }) async {
+    if (updateProjection) {
+      await (_database.update(_database.taskCacheRows)..where(
+            (row) =>
+                row.accountId.equals(desired.accountId) &
+                row.id.equals(desired.targetTaskId!),
+          ))
+          .write(
+            TaskCacheRowsCompanion(
+              title: Value<String>(current.title!),
+              notes: Value<String?>(current.notes),
+              status: Value<String>(current.status!),
+              dueEpochDay: Value<int?>(current.dueEpochDay),
+            ),
+          );
+    }
+    await (_database.update(
+      _database.desiredStateRows,
+    )..where((row) => row.id.equals(desired.id))).write(
+      DesiredStateRowsCompanion(
+        title: updateProjection
+            ? Value<String>(current.title!)
+            : const Value<String>.absent(),
+        notes: updateProjection
+            ? Value<String?>(current.notes)
+            : const Value<String?>.absent(),
+        status: updateProjection
+            ? Value<String>(current.status!)
+            : const Value<String>.absent(),
+        dueEpochDay: updateProjection
+            ? Value<int?>(current.dueEpochDay)
+            : const Value<int?>.absent(),
+        baseRemoteId: Value<String>(current.remoteId),
+        baseEtag: Value<String?>(current.etag),
+        baseRemoteUpdatedAt: Value<DateTime?>(current.remoteUpdatedAt?.toUtc()),
+        baseObservedPublicationId: Value<String>(current.observedPublicationId),
+        baseTitle: Value<String>(current.title!),
+        baseNotes: Value<String?>(current.notes),
+        baseStatus: Value<String>(current.status!),
+        baseDueEpochDay: Value<int?>(current.dueEpochDay),
+        state: Value<String>(_stateValue(state)),
+        failureCode: const Value<String?>(null),
+        lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+      ),
+    );
+  }
+
+  Future<void> _rebaseDesiredTaskList({
+    required DesiredStateRow desired,
+    required TaskListRemoteBase current,
+    required DesiredStateLifecycle state,
+    required DateTime transitionedAt,
+    required bool updateProjection,
+  }) async {
+    if (updateProjection) {
+      await (_database.update(_database.taskListCacheRows)..where(
+            (row) =>
+                row.accountId.equals(desired.accountId) &
+                row.id.equals(desired.targetTaskListId!),
+          ))
+          .write(TaskListCacheRowsCompanion(title: Value(current.title)));
+    }
+    await (_database.update(
+      _database.desiredStateRows,
+    )..where((row) => row.id.equals(desired.id))).write(
+      DesiredStateRowsCompanion(
+        title: updateProjection
+            ? Value<String>(current.title)
+            : const Value<String>.absent(),
+        baseRemoteId: Value<String>(current.remoteId),
+        baseEtag: Value<String?>(current.etag),
+        baseRemoteUpdatedAt: Value<DateTime?>(current.remoteUpdatedAt?.toUtc()),
+        baseObservedPublicationId: Value<String>(current.observedPublicationId),
+        baseTitle: Value<String>(current.title),
+        state: Value<String>(_stateValue(state)),
+        failureCode: const Value<String?>(null),
+        lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+      ),
+    );
+  }
+
+  Future<void> _resolvePriorAttempts(
+    DesiredStateRow desired,
+    DesiredStateLifecycle state,
+    DateTime transitionedAt,
+  ) async {
+    await (_database.update(_database.desiredStateAttemptRows)..where(
+          (row) =>
+              row.accountId.equals(desired.accountId) &
+              row.desiredStateId.equals(desired.id) &
+              row.generation.equals(desired.generation) &
+              row.state.isIn(const <String>[
+                'in_flight',
+                'uncertain',
+                'failed',
+              ]),
+        ))
+        .write(
+          DesiredStateAttemptRowsCompanion(
+            state: Value<String>(_stateValue(state)),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+          ),
+        );
+  }
+
   Future<void> _reach(DesiredStateTransactionBoundary boundary) async {
     await transactionControl?.call(boundary);
   }
@@ -1426,6 +1895,7 @@ TaskListDesiredStateRecord _mapTaskList(DesiredStateRow row) =>
       baseRemoteUpdatedAt: row.baseRemoteUpdatedAt?.toUtc(),
       baseObservedPublicationId: row.baseObservedPublicationId,
       baseTitle: row.baseTitle,
+      localModifiedAt: row.localModifiedAt?.toUtc(),
       createdAt: row.createdAt.toUtc(),
       lastTransitionAt: row.lastTransitionAt.toUtc(),
     );
@@ -1452,6 +1922,10 @@ TaskDesiredStateRecord _mapTask(DesiredStateRow row) => TaskDesiredStateRecord(
   baseRemoteUpdatedAt: row.baseRemoteUpdatedAt?.toUtc(),
   baseObservedPublicationId: row.baseObservedPublicationId,
   baseTitle: row.baseTitle,
+  baseNotes: row.baseNotes,
+  baseStatus: row.baseStatus == null ? null : _status(row.baseStatus),
+  baseDue: _taskDate(row.baseDueEpochDay),
+  localModifiedAt: row.localModifiedAt?.toUtc(),
   createdAt: row.createdAt.toUtc(),
   lastTransitionAt: row.lastTransitionAt.toUtc(),
 );
@@ -1521,6 +1995,24 @@ String _stateValue(DesiredStateLifecycle state) => switch (state) {
   DesiredStateLifecycle.confirmed => 'confirmed',
   DesiredStateLifecycle.superseded => 'superseded',
 };
+
+const Failure _invalidConflictBaseFailure = Failure(
+  code: 'sync.content_conflict_base_invalid',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.permanent,
+  impact: 'A pending Google Tasks edit could not be reconciled safely.',
+  safeSummary: 'The stored whole-record conflict base was incomplete.',
+);
+
+const Failure _invalidConflictTimestampFailure = Failure(
+  code: 'sync.content_conflict_timestamp_invalid',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.permanent,
+  impact: 'Concurrent Google Tasks edits could not be ordered safely.',
+  safeSummary: 'Required whole-record conflict timestamp evidence was absent.',
+);
 
 DesiredStateLifecycle _state(String state) => switch (state) {
   'pending' => DesiredStateLifecycle.pending,

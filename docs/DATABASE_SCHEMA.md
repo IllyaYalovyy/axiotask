@@ -20,9 +20,9 @@ replaced with an empty cache.
 | `scope_completeness` | Account list-enumeration or per-list task-enumeration page-chain state, including the opaque next-page token while incomplete. |
 | `account_preferences` | Relational account settings: sync-enabled control, optional account-owned default list reference, and the next account-scoped causal sequence for durable desired state. |
 | `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
-| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content. |
+| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed whole-content base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content; S16 compares the preserved base during reconciliation. |
 | `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. Provisional task creates record their list and optional parent references; list edits need no edge. |
-| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure or uncertainty evidence for recovery. |
+| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure, uncertainty, confirmation, or supersession evidence. A 412 may supersede one attempt and create a fresh attempt for the same desired generation after refetch/replan. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -102,8 +102,15 @@ application adapter and device-only preferences remain the S22A slice.
   task-content attempts before list-title attempts. Task attempts snapshot every
   supported content field and use the current ETag; canonical acknowledgements
   advance the base atomically and cannot clear a newer desired generation.
-  Rejected or ambiguous updates remain failed/uncertain and are not selected
-  again by this non-retry, non-conflict slice.
+  Rejected or ambiguous updates remain failed/uncertain.
+- S16 compares each pending or uncertain content generation with its complete
+  original task-content/list-title base and the complete current publication.
+  One-sided changes are retained; two-sided changes use strictly-newer local
+  time with Google winning later/equal timestamps. Missing base or timestamp
+  evidence fails closed. Google winners atomically replace the complete
+  projection/base and become superseded; local winners rebase before dispatch.
+  Task 412 handling supersedes the immutable attempt, refetches the task scope,
+  and replans the same generation without weakening ETag protection.
 - S13B Stop/Resume updates only `account_preferences.sync_enabled` in one
   account-scoped transaction. It does not delete or rewrite cache rows, remote
   bases, health evidence, unresolved counts, account identity, or credentials.

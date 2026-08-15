@@ -4143,6 +4143,42 @@ class $DesiredStateRowsTable extends DesiredStateRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _baseNotesMeta = const VerificationMeta(
+    'baseNotes',
+  );
+  @override
+  late final GeneratedColumn<String> baseNotes = GeneratedColumn<String>(
+    'base_notes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseStatusMeta = const VerificationMeta(
+    'baseStatus',
+  );
+  @override
+  late final GeneratedColumn<String> baseStatus = GeneratedColumn<String>(
+    'base_status',
+    aliasedName,
+    true,
+    check: () =>
+        baseStatus.isNull() |
+        baseStatus.isIn(const <String>['needs_action', 'completed']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseDueEpochDayMeta = const VerificationMeta(
+    'baseDueEpochDay',
+  );
+  @override
+  late final GeneratedColumn<int> baseDueEpochDay = GeneratedColumn<int>(
+    'base_due_epoch_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _failureCodeMeta = const VerificationMeta(
     'failureCode',
   );
@@ -4208,6 +4244,9 @@ class $DesiredStateRowsTable extends DesiredStateRows
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    baseNotes,
+    baseStatus,
+    baseDueEpochDay,
     failureCode,
     createdAt,
     lastTransitionAt,
@@ -4439,6 +4478,27 @@ class $DesiredStateRowsTable extends DesiredStateRows
         baseTitle.isAcceptableOrUnknown(data['base_title']!, _baseTitleMeta),
       );
     }
+    if (data.containsKey('base_notes')) {
+      context.handle(
+        _baseNotesMeta,
+        baseNotes.isAcceptableOrUnknown(data['base_notes']!, _baseNotesMeta),
+      );
+    }
+    if (data.containsKey('base_status')) {
+      context.handle(
+        _baseStatusMeta,
+        baseStatus.isAcceptableOrUnknown(data['base_status']!, _baseStatusMeta),
+      );
+    }
+    if (data.containsKey('base_due_epoch_day')) {
+      context.handle(
+        _baseDueEpochDayMeta,
+        baseDueEpochDay.isAcceptableOrUnknown(
+          data['base_due_epoch_day']!,
+          _baseDueEpochDayMeta,
+        ),
+      );
+    }
     if (data.containsKey('failure_code')) {
       context.handle(
         _failureCodeMeta,
@@ -4585,6 +4645,18 @@ class $DesiredStateRowsTable extends DesiredStateRows
         DriftSqlType.string,
         data['${effectivePrefix}base_title'],
       ),
+      baseNotes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_notes'],
+      ),
+      baseStatus: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_status'],
+      ),
+      baseDueEpochDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_due_epoch_day'],
+      ),
       failureCode: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}failure_code'],
@@ -4633,6 +4705,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
   final DateTime? baseRemoteUpdatedAt;
   final String? baseObservedPublicationId;
   final String? baseTitle;
+  final String? baseNotes;
+  final String? baseStatus;
+  final int? baseDueEpochDay;
   final String? failureCode;
   final DateTime createdAt;
   final DateTime lastTransitionAt;
@@ -4663,6 +4738,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     this.baseRemoteUpdatedAt,
     this.baseObservedPublicationId,
     this.baseTitle,
+    this.baseNotes,
+    this.baseStatus,
+    this.baseDueEpochDay,
     this.failureCode,
     required this.createdAt,
     required this.lastTransitionAt,
@@ -4727,6 +4805,15 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     }
     if (!nullToAbsent || baseTitle != null) {
       map['base_title'] = Variable<String>(baseTitle);
+    }
+    if (!nullToAbsent || baseNotes != null) {
+      map['base_notes'] = Variable<String>(baseNotes);
+    }
+    if (!nullToAbsent || baseStatus != null) {
+      map['base_status'] = Variable<String>(baseStatus);
+    }
+    if (!nullToAbsent || baseDueEpochDay != null) {
+      map['base_due_epoch_day'] = Variable<int>(baseDueEpochDay);
     }
     if (!nullToAbsent || failureCode != null) {
       map['failure_code'] = Variable<String>(failureCode);
@@ -4795,6 +4882,15 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       baseTitle: baseTitle == null && nullToAbsent
           ? const Value.absent()
           : Value(baseTitle),
+      baseNotes: baseNotes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseNotes),
+      baseStatus: baseStatus == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseStatus),
+      baseDueEpochDay: baseDueEpochDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseDueEpochDay),
       failureCode: failureCode == null && nullToAbsent
           ? const Value.absent()
           : Value(failureCode),
@@ -4845,6 +4941,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
         json['baseObservedPublicationId'],
       ),
       baseTitle: serializer.fromJson<String?>(json['baseTitle']),
+      baseNotes: serializer.fromJson<String?>(json['baseNotes']),
+      baseStatus: serializer.fromJson<String?>(json['baseStatus']),
+      baseDueEpochDay: serializer.fromJson<int?>(json['baseDueEpochDay']),
       failureCode: serializer.fromJson<String?>(json['failureCode']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       lastTransitionAt: serializer.fromJson<DateTime>(json['lastTransitionAt']),
@@ -4882,6 +4981,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
         baseObservedPublicationId,
       ),
       'baseTitle': serializer.toJson<String?>(baseTitle),
+      'baseNotes': serializer.toJson<String?>(baseNotes),
+      'baseStatus': serializer.toJson<String?>(baseStatus),
+      'baseDueEpochDay': serializer.toJson<int?>(baseDueEpochDay),
       'failureCode': serializer.toJson<String?>(failureCode),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'lastTransitionAt': serializer.toJson<DateTime>(lastTransitionAt),
@@ -4915,6 +5017,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
     Value<String?> baseObservedPublicationId = const Value.absent(),
     Value<String?> baseTitle = const Value.absent(),
+    Value<String?> baseNotes = const Value.absent(),
+    Value<String?> baseStatus = const Value.absent(),
+    Value<int?> baseDueEpochDay = const Value.absent(),
     Value<String?> failureCode = const Value.absent(),
     DateTime? createdAt,
     DateTime? lastTransitionAt,
@@ -4959,6 +5064,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
         ? baseObservedPublicationId.value
         : this.baseObservedPublicationId,
     baseTitle: baseTitle.present ? baseTitle.value : this.baseTitle,
+    baseNotes: baseNotes.present ? baseNotes.value : this.baseNotes,
+    baseStatus: baseStatus.present ? baseStatus.value : this.baseStatus,
+    baseDueEpochDay: baseDueEpochDay.present
+        ? baseDueEpochDay.value
+        : this.baseDueEpochDay,
     failureCode: failureCode.present ? failureCode.value : this.failureCode,
     createdAt: createdAt ?? this.createdAt,
     lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
@@ -5025,6 +5135,13 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           ? data.baseObservedPublicationId.value
           : this.baseObservedPublicationId,
       baseTitle: data.baseTitle.present ? data.baseTitle.value : this.baseTitle,
+      baseNotes: data.baseNotes.present ? data.baseNotes.value : this.baseNotes,
+      baseStatus: data.baseStatus.present
+          ? data.baseStatus.value
+          : this.baseStatus,
+      baseDueEpochDay: data.baseDueEpochDay.present
+          ? data.baseDueEpochDay.value
+          : this.baseDueEpochDay,
       failureCode: data.failureCode.present
           ? data.failureCode.value
           : this.failureCode,
@@ -5064,6 +5181,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('baseNotes: $baseNotes, ')
+          ..write('baseStatus: $baseStatus, ')
+          ..write('baseDueEpochDay: $baseDueEpochDay, ')
           ..write('failureCode: $failureCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastTransitionAt: $lastTransitionAt')
@@ -5099,6 +5219,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    baseNotes,
+    baseStatus,
+    baseDueEpochDay,
     failureCode,
     createdAt,
     lastTransitionAt,
@@ -5133,6 +5256,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           other.baseRemoteUpdatedAt == this.baseRemoteUpdatedAt &&
           other.baseObservedPublicationId == this.baseObservedPublicationId &&
           other.baseTitle == this.baseTitle &&
+          other.baseNotes == this.baseNotes &&
+          other.baseStatus == this.baseStatus &&
+          other.baseDueEpochDay == this.baseDueEpochDay &&
           other.failureCode == this.failureCode &&
           other.createdAt == this.createdAt &&
           other.lastTransitionAt == this.lastTransitionAt);
@@ -5165,6 +5291,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
   final Value<DateTime?> baseRemoteUpdatedAt;
   final Value<String?> baseObservedPublicationId;
   final Value<String?> baseTitle;
+  final Value<String?> baseNotes;
+  final Value<String?> baseStatus;
+  final Value<int?> baseDueEpochDay;
   final Value<String?> failureCode;
   final Value<DateTime> createdAt;
   final Value<DateTime> lastTransitionAt;
@@ -5195,6 +5324,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.baseNotes = const Value.absent(),
+    this.baseStatus = const Value.absent(),
+    this.baseDueEpochDay = const Value.absent(),
     this.failureCode = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.lastTransitionAt = const Value.absent(),
@@ -5226,6 +5358,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.baseNotes = const Value.absent(),
+    this.baseStatus = const Value.absent(),
+    this.baseDueEpochDay = const Value.absent(),
     this.failureCode = const Value.absent(),
     required DateTime createdAt,
     required DateTime lastTransitionAt,
@@ -5265,6 +5400,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Expression<DateTime>? baseRemoteUpdatedAt,
     Expression<String>? baseObservedPublicationId,
     Expression<String>? baseTitle,
+    Expression<String>? baseNotes,
+    Expression<String>? baseStatus,
+    Expression<int>? baseDueEpochDay,
     Expression<String>? failureCode,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? lastTransitionAt,
@@ -5301,6 +5439,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       if (baseObservedPublicationId != null)
         'base_observed_publication_id': baseObservedPublicationId,
       if (baseTitle != null) 'base_title': baseTitle,
+      if (baseNotes != null) 'base_notes': baseNotes,
+      if (baseStatus != null) 'base_status': baseStatus,
+      if (baseDueEpochDay != null) 'base_due_epoch_day': baseDueEpochDay,
       if (failureCode != null) 'failure_code': failureCode,
       if (createdAt != null) 'created_at': createdAt,
       if (lastTransitionAt != null) 'last_transition_at': lastTransitionAt,
@@ -5334,6 +5475,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Value<DateTime?>? baseRemoteUpdatedAt,
     Value<String?>? baseObservedPublicationId,
     Value<String?>? baseTitle,
+    Value<String?>? baseNotes,
+    Value<String?>? baseStatus,
+    Value<int?>? baseDueEpochDay,
     Value<String?>? failureCode,
     Value<DateTime>? createdAt,
     Value<DateTime>? lastTransitionAt,
@@ -5367,6 +5511,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       baseObservedPublicationId:
           baseObservedPublicationId ?? this.baseObservedPublicationId,
       baseTitle: baseTitle ?? this.baseTitle,
+      baseNotes: baseNotes ?? this.baseNotes,
+      baseStatus: baseStatus ?? this.baseStatus,
+      baseDueEpochDay: baseDueEpochDay ?? this.baseDueEpochDay,
       failureCode: failureCode ?? this.failureCode,
       createdAt: createdAt ?? this.createdAt,
       lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
@@ -5460,6 +5607,15 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     if (baseTitle.present) {
       map['base_title'] = Variable<String>(baseTitle.value);
     }
+    if (baseNotes.present) {
+      map['base_notes'] = Variable<String>(baseNotes.value);
+    }
+    if (baseStatus.present) {
+      map['base_status'] = Variable<String>(baseStatus.value);
+    }
+    if (baseDueEpochDay.present) {
+      map['base_due_epoch_day'] = Variable<int>(baseDueEpochDay.value);
+    }
     if (failureCode.present) {
       map['failure_code'] = Variable<String>(failureCode.value);
     }
@@ -5501,6 +5657,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('baseNotes: $baseNotes, ')
+          ..write('baseStatus: $baseStatus, ')
+          ..write('baseDueEpochDay: $baseDueEpochDay, ')
           ..write('failureCode: $failureCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastTransitionAt: $lastTransitionAt')
@@ -6420,7 +6579,6 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
     {accountId, id},
-    {desiredStateId, generation},
   ];
   @override
   DesiredStateAttemptRow map(Map<String, dynamic> data, {String? tablePrefix}) {
@@ -10877,6 +11035,9 @@ typedef $$DesiredStateRowsTableCreateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<String?> baseNotes,
+      Value<String?> baseStatus,
+      Value<int?> baseDueEpochDay,
       Value<String?> failureCode,
       required DateTime createdAt,
       required DateTime lastTransitionAt,
@@ -10909,6 +11070,9 @@ typedef $$DesiredStateRowsTableUpdateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<String?> baseNotes,
+      Value<String?> baseStatus,
+      Value<int?> baseDueEpochDay,
       Value<String?> failureCode,
       Value<DateTime> createdAt,
       Value<DateTime> lastTransitionAt,
@@ -11050,6 +11214,21 @@ class $$DesiredStateRowsTableFilterComposer
 
   ColumnFilters<String> get baseTitle => $composableBuilder(
     column: $table.baseTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseNotes => $composableBuilder(
+    column: $table.baseNotes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseStatus => $composableBuilder(
+    column: $table.baseStatus,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseDueEpochDay => $composableBuilder(
+    column: $table.baseDueEpochDay,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11208,6 +11387,21 @@ class $$DesiredStateRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get baseNotes => $composableBuilder(
+    column: $table.baseNotes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseStatus => $composableBuilder(
+    column: $table.baseStatus,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get baseDueEpochDay => $composableBuilder(
+    column: $table.baseDueEpochDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get failureCode => $composableBuilder(
     column: $table.failureCode,
     builder: (column) => ColumnOrderings(column),
@@ -11345,6 +11539,19 @@ class $$DesiredStateRowsTableAnnotationComposer
   GeneratedColumn<String> get baseTitle =>
       $composableBuilder(column: $table.baseTitle, builder: (column) => column);
 
+  GeneratedColumn<String> get baseNotes =>
+      $composableBuilder(column: $table.baseNotes, builder: (column) => column);
+
+  GeneratedColumn<String> get baseStatus => $composableBuilder(
+    column: $table.baseStatus,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get baseDueEpochDay => $composableBuilder(
+    column: $table.baseDueEpochDay,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get failureCode => $composableBuilder(
     column: $table.failureCode,
     builder: (column) => column,
@@ -11422,6 +11629,9 @@ class $$DesiredStateRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<String?> baseNotes = const Value.absent(),
+                Value<String?> baseStatus = const Value.absent(),
+                Value<int?> baseDueEpochDay = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> lastTransitionAt = const Value.absent(),
@@ -11452,6 +11662,9 @@ class $$DesiredStateRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                baseNotes: baseNotes,
+                baseStatus: baseStatus,
+                baseDueEpochDay: baseDueEpochDay,
                 failureCode: failureCode,
                 createdAt: createdAt,
                 lastTransitionAt: lastTransitionAt,
@@ -11484,6 +11697,9 @@ class $$DesiredStateRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<String?> baseNotes = const Value.absent(),
+                Value<String?> baseStatus = const Value.absent(),
+                Value<int?> baseDueEpochDay = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime lastTransitionAt,
@@ -11514,6 +11730,9 @@ class $$DesiredStateRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                baseNotes: baseNotes,
+                baseStatus: baseStatus,
+                baseDueEpochDay: baseDueEpochDay,
                 failureCode: failureCode,
                 createdAt: createdAt,
                 lastTransitionAt: lastTransitionAt,

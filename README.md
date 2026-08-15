@@ -25,8 +25,12 @@ is durably claimed first; a canonical response atomically binds the Google ID
 and remote base without changing local identity. Independent creates continue
 after a conclusive failure, failed dependencies remain unattempted, confirmed
 creates never replay, and uncertain creates remain non-green without content
-matching. Updates, conflict resolution, delete/move/reorder, retry, Android
-lifecycle wiring, and account connection UI remain later slices.
+matching. Eligible complete task-content updates and list renames also publish
+after enumeration. Base-aware reconciliation selects one whole local or Google
+record, gives Google timestamp ties, fails closed without required conflict
+evidence, and refetches/replans task PATCH precondition races. Delete,
+move/reorder, general retry, Android lifecycle wiring, and account connection UI
+remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope

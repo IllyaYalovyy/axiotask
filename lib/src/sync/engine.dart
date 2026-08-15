@@ -9,6 +9,7 @@ import '../data/google_tasks/dto.dart';
 import '../data/google_tasks/mutation.dart';
 import '../data/google_tasks/request.dart';
 import '../data/google_tasks/service.dart';
+import '../domain/model/tasks.dart';
 import 'create_operations.dart';
 import 'phase.dart';
 import 'read_plan.dart';
@@ -44,6 +45,10 @@ final class SyncEngine {
     var resourceProjectionWrites = 0;
     var createOperations = 0;
     var updateOperations = 0;
+    var googleWonReplacements = 0;
+    final googleWonReplacementCounts = <ContentSupersessionKind, int>{};
+    var confirmedUpdateReadBacks = 0;
+    var conditionalReplans = 0;
     Failure? firstFailure;
     var begun = false;
 
@@ -65,7 +70,30 @@ final class SyncEngine {
       resourceProjectionWrites: resourceProjectionWrites,
       createOperations: createOperations,
       updateOperations: updateOperations,
+      googleWonReplacements: googleWonReplacements,
+      googleWonReplacementDetails: ContentSupersessionKind.values
+          .where((kind) => (googleWonReplacementCounts[kind] ?? 0) > 0)
+          .map(
+            (kind) => ContentSupersessionResult(
+              kind: kind,
+              count: googleWonReplacementCounts[kind]!,
+            ),
+          )
+          .toList(growable: false),
+      confirmedUpdateReadBacks: confirmedUpdateReadBacks,
+      conditionalReplans: conditionalReplans,
     );
+
+    void recordSupersessions(Iterable<ContentSupersessionResult> results) {
+      for (final result in results) {
+        googleWonReplacements += result.count;
+        googleWonReplacementCounts.update(
+          result.kind,
+          (count) => count + result.count,
+          ifAbsent: () => result.count,
+        );
+      }
+    }
 
     Future<SyncRunReport?> interrupted(SyncRunBoundary boundary) async {
       if (!await _interrupted(boundary)) return null;
@@ -91,6 +119,61 @@ final class SyncEngine {
       return interrupted(
         SyncRunBoundary(kind: SyncRunBoundaryKind.phase, phase: value),
       );
+    }
+
+    Future<Failure?> refetchTaskScope(UpdateOperationClaim claim) async {
+      final plan = TaskScopeReadPlan();
+      PageToken? token;
+      var pageIndex = 0;
+      do {
+        final result = await googleTasks.listTasks(
+          claim.taskListRemoteId,
+          pageToken: token,
+          cancellation: readCancellation,
+        );
+        switch (result) {
+          case Failed<RemotePage<RemoteTask>>(:final failure):
+            return failure;
+          case Success<RemotePage<RemoteTask>>(:final value):
+            final List<RemoteTask> ready;
+            try {
+              ready = plan.acceptPage(
+                value.items,
+                terminal: value.nextPageToken == null,
+              );
+            } on ReadPlanException catch (error) {
+              return error.failure;
+            }
+            final scope = 'tasks:${claim.taskListId.value}:conditional';
+            if (await interrupted(
+                  SyncRunBoundary(
+                    kind: SyncRunBoundaryKind.beforePagePublication,
+                    scope: scope,
+                    pageIndex: pageIndex,
+                  ),
+                )
+                case final interruption?) {
+              return interruption.failure ?? _conditionalRefetchFailure;
+            }
+            final published = await store.publishTaskPage(
+              accountId: request.accountId,
+              runId: runId,
+              taskList: PublishedTaskList(
+                localId: claim.taskListId,
+                remoteId: claim.taskListRemoteId,
+              ),
+              items: ready,
+              nextPageToken: value.nextPageToken,
+              collectionEtag: value.collectionEtag,
+            );
+            resourceProjectionWrites += published.resourceWrites;
+            taskPages += 1;
+            remoteTasks += value.items.length;
+            token = value.nextPageToken;
+            pageIndex += 1;
+        }
+      } while (token != null);
+      return null;
     }
 
     if (await phase(SyncRunPhase.recover) case final interruption?) {
@@ -288,6 +371,14 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.reconcileAndPlan) case final interruption?) {
       return interruption;
     }
+    final reconciliation = await store.reconcileContent(
+      accountId: request.accountId,
+      runId: runId.value,
+      reconciledAt: clock.now().toUtc(),
+    );
+    recordSupersessions(reconciliation.supersessions);
+    confirmedUpdateReadBacks += reconciliation.confirmedReadBacks;
+    firstFailure ??= reconciliation.failure;
     if (await phase(SyncRunPhase.executeOperations) case final interruption?) {
       return interruption;
     }
@@ -457,6 +548,8 @@ final class SyncEngine {
         stopOperations = true;
       }
     }
+    final conditionalAttempts = <RemoteTaskId, int>{};
+    updateLoop:
     while (!stopOperations) {
       if (await interrupted(
             const SyncRunBoundary(
@@ -512,6 +605,11 @@ final class SyncEngine {
                 return interruption;
               }
               try {
+                final googleReplacedClaim =
+                    value.title != claim.title ||
+                    value.notes != claim.notes ||
+                    _taskStatus(value.status) != claim.status ||
+                    _taskDate(value.due) != claim.due;
                 await store.acknowledgeTaskUpdate(
                   accountId: request.accountId,
                   claim: claim,
@@ -519,6 +617,18 @@ final class SyncEngine {
                   observationId: 'mutation:${runId.value}:${claim.attemptId}',
                   acknowledgedAt: clock.now().toUtc(),
                 );
+                if (googleReplacedClaim) {
+                  recordSupersessions(<ContentSupersessionResult>[
+                    ContentSupersessionResult(
+                      kind:
+                          claim.status == TaskStatus.needsAction &&
+                              value.status == RemoteTaskStatus.completed
+                          ? ContentSupersessionKind.completionCascade
+                          : ContentSupersessionKind.taskContent,
+                      count: 1,
+                    ),
+                  ]);
+                }
               } on Object {
                 firstFailure ??= _updateAcknowledgementFailure;
                 stopOperations = true;
@@ -534,6 +644,36 @@ final class SyncEngine {
                 return interruption;
               }
             case RejectedMutation<RemoteTask>(:final error):
+              if (error.kind == GoogleTasksErrorKind.conditional) {
+                final count =
+                    (conditionalAttempts[claim.taskRemoteId!] ?? 0) + 1;
+                conditionalAttempts[claim.taskRemoteId!] = count;
+                if (count <= _maximumConditionalReplans) {
+                  conditionalReplans += 1;
+                  await store.prepareTaskUpdateReplan(
+                    accountId: request.accountId,
+                    claim: claim,
+                    replannedAt: clock.now().toUtc(),
+                  );
+                  final refetchFailure = await refetchTaskScope(claim);
+                  if (refetchFailure != null) {
+                    firstFailure ??= refetchFailure;
+                    stopOperations = true;
+                    break;
+                  }
+                  final replanned = await store.reconcileContent(
+                    accountId: request.accountId,
+                    runId: runId.value,
+                    reconciledAt: clock.now().toUtc(),
+                  );
+                  recordSupersessions(replanned.supersessions);
+                  confirmedUpdateReadBacks += replanned.confirmedReadBacks;
+                  firstFailure ??= replanned.failure;
+                  if (replanned.failure == null) continue updateLoop;
+                  stopOperations = true;
+                  break;
+                }
+              }
               await store.resolveUpdateFailure(
                 accountId: request.accountId,
                 claim: claim,
@@ -578,6 +718,7 @@ final class SyncEngine {
                 return interruption;
               }
               try {
+                final googleReplacedClaim = value.title != claim.title;
                 await store.acknowledgeTaskListUpdate(
                   accountId: request.accountId,
                   claim: claim,
@@ -585,6 +726,14 @@ final class SyncEngine {
                   observationId: 'mutation:${runId.value}:${claim.attemptId}',
                   acknowledgedAt: clock.now().toUtc(),
                 );
+                if (googleReplacedClaim) {
+                  recordSupersessions(const <ContentSupersessionResult>[
+                    ContentSupersessionResult(
+                      kind: ContentSupersessionKind.taskListTitle,
+                      count: 1,
+                    ),
+                  ]);
+                }
               } on Object {
                 firstFailure ??= _updateAcknowledgementFailure;
                 stopOperations = true;
@@ -766,3 +915,22 @@ const Failure _updateAcknowledgementFailure = Failure(
   impact: 'A Google update could not be confirmed locally.',
   safeSummary: 'The update acknowledgement transaction did not commit.',
 );
+
+const int _maximumConditionalReplans = 3;
+
+const Failure _conditionalRefetchFailure = Failure(
+  code: 'sync.task_precondition_refetch_interrupted',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'A changed Google task could not be reconciled.',
+  safeSummary: 'The conditional-conflict refetch did not complete.',
+);
+
+TaskStatus _taskStatus(RemoteTaskStatus status) => switch (status) {
+  RemoteTaskStatus.needsAction => TaskStatus.needsAction,
+  RemoteTaskStatus.completed => TaskStatus.completed,
+};
+
+TaskDate? _taskDate(RemoteDate? value) =>
+    value == null ? null : TaskDate(value.year, value.month, value.day);

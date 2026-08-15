@@ -335,6 +335,15 @@ class DesiredStateRows extends Table {
 
   TextColumn get baseTitle => text().nullable()();
 
+  TextColumn get baseNotes => text().nullable()();
+
+  TextColumn get baseStatus => text().nullable().check(
+    baseStatus.isNull() |
+        baseStatus.isIn(const <String>['needs_action', 'completed']),
+  )();
+
+  IntColumn get baseDueEpochDay => integer().nullable()();
+
   TextColumn get failureCode => text().nullable().check(
     failureCode.isNull() | failureCode.length.isBiggerThanValue(0),
   )();
@@ -481,7 +490,6 @@ class DesiredStateAttemptRows extends Table {
   @override
   List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
     <Column<Object>>{accountId, id},
-    <Column<Object>>{desiredStateId, generation},
   ];
 
   @override

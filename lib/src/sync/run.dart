@@ -55,6 +55,10 @@ final class SyncRunReport {
     required this.resourceProjectionWrites,
     this.createOperations = 0,
     this.updateOperations = 0,
+    this.googleWonReplacements = 0,
+    this.googleWonReplacementDetails = const <ContentSupersessionResult>[],
+    this.confirmedUpdateReadBacks = 0,
+    this.conditionalReplans = 0,
     this.ineligibleReason,
     this.failure,
   });
@@ -71,6 +75,10 @@ final class SyncRunReport {
   final int resourceProjectionWrites;
   final int createOperations;
   final int updateOperations;
+  final int googleWonReplacements;
+  final List<ContentSupersessionResult> googleWonReplacementDetails;
+  final int confirmedUpdateReadBacks;
+  final int conditionalReplans;
 }
 
 final class ReadSyncEligibility {
