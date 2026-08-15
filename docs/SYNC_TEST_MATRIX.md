@@ -2,7 +2,7 @@
 
 - Status: **Accepted**
 - Scope: synchronization behavior, recovery, evidence, and test-harness requirements
-- Updated: 2026-08-11
+- Updated: 2026-08-15
 
 This matrix is the verification contract for [the synchronization specification](SYNC_SPEC.md).
 External behavior comes from the [Google Tasks API contract](GOOGLE_TASKS_API_CONTRACT.md),
@@ -50,8 +50,8 @@ their complete before/after state.
 | `F-LIFE` | Linux process/window and Android resumed/paused/stopped event driver with explicit cancellation acknowledgement. | S09B qualified foreground/background facts, Linux focus independence, best-effort exit requests, missing-exit-callback termination, duplicate coalescing, and fail-closed post-termination behavior through `LifecyclePort`. Android platform lifecycle policy remains deferred to S27B. |
 | `F-CONN` | Connectivity hints for unknown, proven-no-route, and may-have-returned; cannot directly declare Google healthy. | S09B qualified typed, repeated-hint-coalesced unknown/no-route/may-have-returned facts through `ConnectivityPort`. The port exposes no reachability or `SyncHealth` setter. |
 | `F-OBS` | Records typed repository streams, `SyncHealth`, user-safe details, diagnostics, run/phase transitions, and request counts without deriving expected values from production code. | S09A qualified a clock-stamped, sequence-ordered typed ledger with exact-trace validation and a deliberately incorrect consumer self-test. Production event producers remain owned by their implementation slices. |
-| `F-MULTI` | Two or three isolated installation stores/coordinators sharing one `F-GOOGLE`, each with its own local IDs and clock. | Missing; required. |
-| `F-MODEL` | Reference state machine and command generator with replayable seeds, shrinking, invariant checks after every transition, and bounded quiescence detection. | Missing; required. |
+| `F-MULTI` | Two or three isolated installation stores/coordinators sharing one `F-GOOGLE`, each with its own local IDs and clock. | S09C qualified two/three independent production `AppDatabase` instances, installation-local IDs and clocks, every host ordering, and one shared `GoogleTasksService` through production ports. Coordinator consumers remain owned by their implementation slices. |
+| `F-MODEL` | Reference state machine and command generator with replayable seeds, shrinking, invariant checks after every transition, and bounded quiescence detection. | S09C qualified independent post-transition invariants, asynchronous snapshots, bounded quiescence, stable seeded command generation, failure seed output, exact replay, and deterministic one-minimal shrinking. Production reconciliation consumers remain owned by later slices. |
 | `F-PROBE` | Opt-in live-adapter runner that verifies an ignored expected Google subject before any Tasks call, fails mismatches with zero Tasks enumeration/mutation, uses disposable unique prefixes, sanitizes records, guarantees cleanup, and verifies zero matches. | A historical probe harness exists outside product code; a subject-guarded Flutter adapter contract runner is still missing. |
 
 `F-GOOGLE` must not silently implement undocumented server behavior. Its defaults are only
@@ -253,11 +253,14 @@ the HTTP adapter pass one shared read/write contract, unsupported wire requests
 fail closed, and exact page/operation calls are assertable. S09A adds qualified
 `F-BARRIER`, `F-TIME`, and `F-OBS` controls, including a separately observable
 server commit and partial HTTP response delivery. S09B adds qualified `F-AUTH`,
-`F-LIFE`, and `F-CONN` controls. Store, multi-host, model, and remaining scripted
-remote-fault capabilities are still absent. Before engine code is accepted:
+`F-LIFE`, and `F-CONN` controls. S09C adds `F-MULTI` and `F-MODEL` harnesses and
+qualifies `MOD-005` replay mechanics without implementing reconciliation. Store
+and remaining scripted remote-fault capabilities are still absent. Before
+engine code is accepted:
 
 1. `F-STORE`, `F-GOOGLE`, `F-BARRIER`, `F-TIME`, `F-AUTH`, `F-LIFE`, `F-CONN`,
-   and `F-OBS` must pass their own qualification tests, including `MOD-005`.
+   `F-OBS`, `F-MULTI`, and `F-MODEL` must pass their own qualification tests,
+   including `MOD-005`.
 2. Every named run phase and durable transaction boundary must be addressable by a barrier;
    a generic “throw on call N” fake is insufficient.
 3. S08 proves that `F-GOOGLE` rejects unsupported requests and exposes exact

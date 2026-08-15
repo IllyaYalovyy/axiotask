@@ -140,6 +140,25 @@ best-effort exit requests, and termination without an exit callback.
 Connectivity emits only unknown, proven-no-route, or may-have-returned hints and
 coalesces repeats; it has no reachability or synchronization-health authority.
 
+S09C qualifies `MultiHostHarness`, `ReferenceModel`, and `ReplaySeed`. A
+multi-host case creates two or three independent production `AppDatabase`
+instances with installation-local IDs and clocks while every host receives the
+same `GoogleTasksService` through the production port. The remaining host
+collaborators also retain the production clock, randomness, authorization,
+lifecycle, and connectivity interfaces. Host-order permutations are explicit
+and deterministic.
+
+The reference runner applies commands to a system under test, observes its
+public facts, and checks independently supplied invariants after every
+transition; it never computes a reconciliation result. It supports asynchronous
+store snapshots and bounded quiescence. Its fixed generator algorithm, failure
+seed hint, exact replay, and deterministic one-minimal shrinking qualify the
+`MOD-005` harness. Self-tests replay production-store snapshots, fake Google
+state and call ledgers, and a synthetic visible sequence exactly, and prove the
+oracle rejects both an illegal transition and a deliberately account-leaking
+consumer mutation. Production sync decisions and full `F-STORE` crash evidence
+remain owned by later slices.
+
 ### 5. Synchronization subsystem tests
 
 After Stage 4, the sync engine is run without Flutter against real temporary
