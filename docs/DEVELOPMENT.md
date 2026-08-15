@@ -73,6 +73,16 @@ stopped isolated temporary database, resumes through the real coordinator, and
 confirms against the strict in-memory Google service; it opens no OAuth or
 normal application storage.
 
+S15B adds no dependency or namespace. After a complete applicable enumeration,
+the same engine confirms read-proven no-op content, then claims eligible task
+content snapshots before list titles. Task PATCH payloads always include title,
+notes, due, and completion, using the admitted JSON-null clears and the current
+task ETag. Each canonical response is acknowledged independently; interrupted,
+ambiguous, and conclusively rejected attempts remain durable and are not
+replayed by this non-retry slice. The Linux integration reopens a temporary
+stopped database before Resume and uses only synthetic state plus the strict
+in-memory Google service.
+
 S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
 3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;
 runtime access requires an active Secret Service, normally `gnome-keyring` in a

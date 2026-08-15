@@ -13,6 +13,7 @@ import 'create_operations.dart';
 import 'phase.dart';
 import 'read_plan.dart';
 import 'run.dart';
+import 'update_operations.dart';
 
 final class SyncEngine {
   SyncEngine({
@@ -42,6 +43,7 @@ final class SyncEngine {
     var remoteTasks = 0;
     var resourceProjectionWrites = 0;
     var createOperations = 0;
+    var updateOperations = 0;
     Failure? firstFailure;
     var begun = false;
 
@@ -62,6 +64,7 @@ final class SyncEngine {
       remoteTasks: remoteTasks,
       resourceProjectionWrites: resourceProjectionWrites,
       createOperations: createOperations,
+      updateOperations: updateOperations,
     );
 
     Future<SyncRunReport?> interrupted(SyncRunBoundary boundary) async {
@@ -95,6 +98,10 @@ final class SyncEngine {
     }
     await store.recoverReadRun(request.accountId);
     await store.recoverCreateAttempts(
+      accountId: request.accountId,
+      recoveredAt: clock.now().toUtc(),
+    );
+    await store.recoverUpdateAttempts(
       accountId: request.accountId,
       recoveredAt: clock.now().toUtc(),
     );
@@ -438,6 +445,183 @@ final class SyncEngine {
           throw StateError('Unsupported create operation mapping.');
       }
     }
+    if (!stopOperations) {
+      try {
+        await store.confirmNoOpUpdates(
+          accountId: request.accountId,
+          runId: runId.value,
+          confirmedAt: clock.now().toUtc(),
+        );
+      } on Object {
+        firstFailure ??= _updateAcknowledgementFailure;
+        stopOperations = true;
+      }
+    }
+    while (!stopOperations) {
+      if (await interrupted(
+            const SyncRunBoundary(
+              kind: SyncRunBoundaryKind.beforeOperationClaim,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+      final claim = await store.claimNextUpdate(
+        accountId: request.accountId,
+        runId: runId.value,
+        claimedAt: clock.now().toUtc(),
+      );
+      if (claim == null) break;
+      if (await interrupted(
+            SyncRunBoundary(
+              kind: SyncRunBoundaryKind.afterOperationClaim,
+              operationAttemptId: claim.attemptId,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+
+      final mapped = const UpdateOperationMapper().map(claim);
+      switch (mapped) {
+        case final PatchTaskOperation operation:
+          updateOperations += 1;
+          final result = await googleTasks.patchTask(operation);
+          switch (result) {
+            case CommittedMutation<RemoteTask>(:final value):
+              if (value is! RemoteLiveTask ||
+                  value.id != claim.taskRemoteId ||
+                  value.parentId != claim.parentRemoteId) {
+                await store.resolveUpdateFailure(
+                  accountId: request.accountId,
+                  claim: claim,
+                  failure: _invalidUpdateResponseFailure,
+                  uncertain: true,
+                  resolvedAt: clock.now().toUtc(),
+                );
+                firstFailure ??= _invalidUpdateResponseFailure;
+                break;
+              }
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.beforeRemoteAcknowledgement,
+                      operationAttemptId: claim.attemptId,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
+              }
+              try {
+                await store.acknowledgeTaskUpdate(
+                  accountId: request.accountId,
+                  claim: claim,
+                  remote: value,
+                  observationId: 'mutation:${runId.value}:${claim.attemptId}',
+                  acknowledgedAt: clock.now().toUtc(),
+                );
+              } on Object {
+                firstFailure ??= _updateAcknowledgementFailure;
+                stopOperations = true;
+                break;
+              }
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.afterRemoteAcknowledgement,
+                      operationAttemptId: claim.attemptId,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
+              }
+            case RejectedMutation<RemoteTask>(:final error):
+              await store.resolveUpdateFailure(
+                accountId: request.accountId,
+                claim: claim,
+                failure: error.failure,
+                uncertain: false,
+                resolvedAt: clock.now().toUtc(),
+              );
+              firstFailure ??= error.failure;
+            case UncertainMutation<RemoteTask>(:final error):
+              await store.resolveUpdateFailure(
+                accountId: request.accountId,
+                claim: claim,
+                failure: error.failure,
+                uncertain: true,
+                resolvedAt: clock.now().toUtc(),
+              );
+              firstFailure ??= error.failure;
+          }
+        case final RenameTaskListOperation operation:
+          updateOperations += 1;
+          final result = await googleTasks.renameTaskList(operation);
+          switch (result) {
+            case CommittedMutation<RemoteTaskList>(:final value):
+              if (value.id != claim.taskListRemoteId) {
+                await store.resolveUpdateFailure(
+                  accountId: request.accountId,
+                  claim: claim,
+                  failure: _invalidUpdateResponseFailure,
+                  uncertain: true,
+                  resolvedAt: clock.now().toUtc(),
+                );
+                firstFailure ??= _invalidUpdateResponseFailure;
+                break;
+              }
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.beforeRemoteAcknowledgement,
+                      operationAttemptId: claim.attemptId,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
+              }
+              try {
+                await store.acknowledgeTaskListUpdate(
+                  accountId: request.accountId,
+                  claim: claim,
+                  remote: value,
+                  observationId: 'mutation:${runId.value}:${claim.attemptId}',
+                  acknowledgedAt: clock.now().toUtc(),
+                );
+              } on Object {
+                firstFailure ??= _updateAcknowledgementFailure;
+                stopOperations = true;
+                break;
+              }
+              if (await interrupted(
+                    SyncRunBoundary(
+                      kind: SyncRunBoundaryKind.afterRemoteAcknowledgement,
+                      operationAttemptId: claim.attemptId,
+                    ),
+                  )
+                  case final interruption?) {
+                return interruption;
+              }
+            case RejectedMutation<RemoteTaskList>(:final error):
+              await store.resolveUpdateFailure(
+                accountId: request.accountId,
+                claim: claim,
+                failure: error.failure,
+                uncertain: false,
+                resolvedAt: clock.now().toUtc(),
+              );
+              firstFailure ??= error.failure;
+            case UncertainMutation<RemoteTaskList>(:final error):
+              await store.resolveUpdateFailure(
+                accountId: request.accountId,
+                claim: claim,
+                failure: error.failure,
+                uncertain: true,
+                resolvedAt: clock.now().toUtc(),
+              );
+              firstFailure ??= error.failure;
+          }
+        default:
+          throw StateError('Unsupported update operation mapping.');
+      }
+    }
     if (await phase(SyncRunPhase.verifyOutcomes) case final interruption?) {
       return interruption;
     }
@@ -556,6 +740,15 @@ const Failure _invalidCreateResponseFailure = Failure(
   safeSummary: 'The create response did not match the claimed operation.',
 );
 
+const Failure _invalidUpdateResponseFailure = Failure(
+  code: 'sync.update_response_invalid',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'Google did not return the expected updated resource.',
+  safeSummary: 'The update response did not match the claimed operation.',
+);
+
 const Failure _mutationAcknowledgementFailure = Failure(
   code: 'sync.create_acknowledgement_failed',
   category: FailureCategory.persistence,
@@ -563,4 +756,13 @@ const Failure _mutationAcknowledgementFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'A Google create could not be confirmed locally.',
   safeSummary: 'The create acknowledgement transaction did not commit.',
+);
+
+const Failure _updateAcknowledgementFailure = Failure(
+  code: 'sync.update_acknowledgement_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'A Google update could not be confirmed locally.',
+  safeSummary: 'The update acknowledgement transaction did not commit.',
 );

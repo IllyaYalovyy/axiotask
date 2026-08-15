@@ -96,6 +96,14 @@ application adapter and device-only preferences remain the S22A slice.
   dependency Google IDs are read from account-scoped cache rows. A conclusive
   rejection stores a failed code, while an interrupted or ambiguous create
   stores an uncertain code and is not selected again by this non-retry slice.
+- S15B confirms an eligible pending content generation without a mutation only
+  when the complete current scope proves Google already holds the exact desired
+  title or task snapshot. Otherwise, unchanged confirmed bases allow immutable
+  task-content attempts before list-title attempts. Task attempts snapshot every
+  supported content field and use the current ETag; canonical acknowledgements
+  advance the base atomically and cannot clear a newer desired generation.
+  Rejected or ambiguous updates remain failed/uncertain and are not selected
+  again by this non-retry, non-conflict slice.
 - S13B Stop/Resume updates only `account_preferences.sync_enabled` in one
   account-scoped transaction. It does not delete or rewrite cache rows, remote
   bases, health evidence, unresolved counts, account identity, or credentials.

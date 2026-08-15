@@ -172,8 +172,10 @@ encodes due dates at UTC midnight, uses the live-proven JSON `null` spelling to
 clear notes and due, and requires canonical 200 resource or empty 204 responses.
 It performs no retries or reconciliation: response loss, malformed success,
 unknown responses, and possibly stale source-list paths remain explicit
-uncertain results. The engine currently consumes only list/task create
-operations; other mutation kinds remain adapter-only until their owning slices.
+uncertain results. The engine consumes ordered list/task creates plus eligible
+complete task-content PATCHes and list-title updates. Confirmed operations and
+read-proven no-ops are not replayed; deletes and moves remain adapter-only until
+their owning slices.
 
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
@@ -377,6 +379,8 @@ flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/data/database/sync_settings_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
+flutter test test/sync/create_sync_engine_test.dart
+flutter test test/sync/update_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
@@ -397,6 +401,8 @@ flutter test test/data/google_tasks/mutation_http_service_test.dart
 flutter test integration_test/offline_list_edits_linux_test.dart -d linux
 flutter test integration_test/offline_task_edits_linux_test.dart -d linux
 flutter test integration_test/read_slice_linux_test.dart -d linux
+flutter test integration_test/create_publish_linux_test.dart -d linux
+flutter test integration_test/update_publish_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

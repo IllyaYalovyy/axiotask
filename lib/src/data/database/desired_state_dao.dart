@@ -170,6 +170,30 @@ final class DesiredCreateCandidate {
   final TaskRemoteId? parentRemoteId;
 }
 
+enum DesiredUpdateResourceType { task, taskList }
+
+final class DesiredUpdateCandidate {
+  const DesiredUpdateCandidate({
+    required this.resourceType,
+    required this.taskListId,
+    required this.taskListRemoteId,
+    required this.taskId,
+    required this.taskRemoteId,
+    required this.parentTaskId,
+    required this.parentRemoteId,
+    required this.etag,
+  });
+
+  final DesiredUpdateResourceType resourceType;
+  final TaskListId taskListId;
+  final TaskListRemoteId taskListRemoteId;
+  final TaskId? taskId;
+  final TaskRemoteId? taskRemoteId;
+  final TaskId? parentTaskId;
+  final TaskRemoteId? parentRemoteId;
+  final String? etag;
+}
+
 final class DesiredStateDao {
   const DesiredStateDao(this._database, {this.transactionControl});
 
@@ -323,6 +347,263 @@ final class DesiredStateDao {
     );
   }
 
+  Future<DesiredUpdateCandidate?> readNextUpdateCandidate(
+    AccountId accountId,
+    String runId,
+  ) async {
+    final row = await _database
+        .customSelect(
+          '''
+          SELECT
+            d.resource_type,
+            d.target_task_list_id,
+            d.target_task_id,
+            d.desired_task_list_id,
+            d.desired_parent_task_id,
+            target_list.remote_id AS target_list_remote_id,
+            target_task.remote_id AS target_task_remote_id,
+            desired_list.remote_id AS desired_list_remote_id,
+            desired_parent.remote_id AS desired_parent_remote_id,
+            task_base.etag AS task_etag
+          FROM desired_states d
+          LEFT JOIN task_lists target_list
+            ON target_list.account_id = d.account_id
+           AND target_list.id = d.target_task_list_id
+          LEFT JOIN tasks target_task
+            ON target_task.account_id = d.account_id
+           AND target_task.id = d.target_task_id
+          LEFT JOIN task_lists desired_list
+            ON desired_list.account_id = d.account_id
+           AND desired_list.id = d.desired_task_list_id
+          LEFT JOIN tasks desired_parent
+            ON desired_parent.account_id = d.account_id
+           AND desired_parent.id = d.desired_parent_task_id
+          LEFT JOIN task_list_remote_bases list_base
+            ON list_base.account_id = d.account_id
+           AND list_base.task_list_id = d.target_task_list_id
+          LEFT JOIN task_remote_bases task_base
+            ON task_base.account_id = d.account_id
+           AND task_base.task_id = d.target_task_id
+          WHERE d.account_id = ?1
+            AND d.desired_lifecycle = 'present'
+            AND d.state = 'pending'
+            AND d.content_dirty = 1
+            AND d.structure_dirty = 0
+            AND d.lifecycle_dirty = 0
+            AND d.base_remote_id IS NOT NULL
+            AND (
+              (d.resource_type = 'task'
+                AND target_task.remote_id = d.base_remote_id
+                AND desired_list.remote_id IS NOT NULL
+                AND task_base.remote_id = d.base_remote_id
+                AND task_base.deleted = 0
+                AND task_base.observed_publication_id = ?2
+                AND d.base_etag IS NOT NULL
+                AND task_base.etag = d.base_etag
+                AND task_base.task_list_id = d.desired_task_list_id
+                AND task_base.parent_task_id IS d.desired_parent_task_id
+                AND EXISTS (
+                  SELECT 1
+                  FROM scope_completeness task_scope
+                  WHERE task_scope.account_id = d.account_id
+                    AND task_scope.scope_kind = 'tasks'
+                    AND task_scope.task_list_id = d.desired_task_list_id
+                    AND task_scope.publication_id = ?2
+                    AND task_scope.is_complete = 1
+                )
+                AND NOT (
+                  task_base.title = d.title
+                  AND task_base.notes IS d.notes
+                  AND task_base.status = d.status
+                  AND task_base.due_epoch_day IS d.due_epoch_day
+                ))
+              OR
+              (d.resource_type = 'task_list'
+                AND target_list.remote_id = d.base_remote_id
+                AND list_base.remote_id = d.base_remote_id
+                AND list_base.deleted = 0
+                AND list_base.observed_publication_id = ?2
+                AND d.base_etag IS NOT NULL
+                AND list_base.etag = d.base_etag
+                AND list_base.title <> d.title
+                AND EXISTS (
+                  SELECT 1
+                  FROM scope_completeness list_scope
+                  WHERE list_scope.account_id = d.account_id
+                    AND list_scope.scope_kind = 'task_lists'
+                    AND list_scope.publication_id = ?2
+                    AND list_scope.is_complete = 1
+                ))
+            )
+          ORDER BY
+            CASE WHEN d.resource_type = 'task' THEN 0 ELSE 1 END,
+            d.local_causal_sequence,
+            d.id
+          LIMIT 1
+          ''',
+          variables: <Variable<Object>>[
+            Variable<int>(accountId.value),
+            Variable<String>(runId),
+          ],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            _database.desiredStateRows,
+            _database.taskListCacheRows,
+            _database.taskCacheRows,
+            _database.taskListRemoteBases,
+            _database.taskRemoteBases,
+            _database.scopeCompletenessRows,
+          },
+        )
+        .getSingleOrNull();
+    if (row == null) return null;
+    if (row.read<String>('resource_type') == 'task_list') {
+      return DesiredUpdateCandidate(
+        resourceType: DesiredUpdateResourceType.taskList,
+        taskListId: TaskListId(row.read<int>('target_task_list_id')),
+        taskListRemoteId: TaskListRemoteId(
+          row.read<String>('target_list_remote_id'),
+        ),
+        taskId: null,
+        taskRemoteId: null,
+        parentTaskId: null,
+        parentRemoteId: null,
+        etag: null,
+      );
+    }
+    final parentTaskId = row.readNullable<int>('desired_parent_task_id');
+    final parentRemoteId = row.readNullable<String>('desired_parent_remote_id');
+    return DesiredUpdateCandidate(
+      resourceType: DesiredUpdateResourceType.task,
+      taskListId: TaskListId(row.read<int>('desired_task_list_id')),
+      taskListRemoteId: TaskListRemoteId(
+        row.read<String>('desired_list_remote_id'),
+      ),
+      taskId: TaskId(row.read<int>('target_task_id')),
+      taskRemoteId: TaskRemoteId(row.read<String>('target_task_remote_id')),
+      parentTaskId: parentTaskId == null ? null : TaskId(parentTaskId),
+      parentRemoteId: parentRemoteId == null
+          ? null
+          : TaskRemoteId(parentRemoteId),
+      etag: row.read<String>('task_etag'),
+    );
+  }
+
+  Future<int> confirmNoOpUpdates({
+    required AccountId accountId,
+    required String runId,
+    required DateTime confirmedAt,
+  }) {
+    return _database.transaction(() async {
+      final rows = await _database
+          .customSelect(
+            '''
+        SELECT
+          d.id,
+          d.resource_type,
+          COALESCE(task_base.etag, list_base.etag) AS current_etag,
+          COALESCE(
+            task_base.remote_updated_at,
+            list_base.remote_updated_at
+          ) AS current_updated_at,
+          COALESCE(
+            task_base.observed_publication_id,
+            list_base.observed_publication_id
+          ) AS current_publication_id,
+          COALESCE(task_base.title, list_base.title) AS current_title
+        FROM desired_states d
+        LEFT JOIN task_list_remote_bases list_base
+          ON list_base.account_id = d.account_id
+         AND list_base.task_list_id = d.target_task_list_id
+        LEFT JOIN task_remote_bases task_base
+          ON task_base.account_id = d.account_id
+         AND task_base.task_id = d.target_task_id
+        WHERE d.account_id = ?1
+          AND d.desired_lifecycle = 'present'
+          AND d.state = 'pending'
+          AND d.content_dirty = 1
+          AND d.structure_dirty = 0
+          AND d.lifecycle_dirty = 0
+          AND d.base_remote_id IS NOT NULL
+          AND (
+            (d.resource_type = 'task'
+              AND task_base.remote_id = d.base_remote_id
+              AND task_base.deleted = 0
+              AND task_base.observed_publication_id = ?2
+              AND task_base.task_list_id = d.desired_task_list_id
+              AND task_base.parent_task_id IS d.desired_parent_task_id
+              AND task_base.title = d.title
+              AND task_base.notes IS d.notes
+              AND task_base.status = d.status
+              AND task_base.due_epoch_day IS d.due_epoch_day
+              AND EXISTS (
+                SELECT 1
+                FROM scope_completeness task_scope
+                WHERE task_scope.account_id = d.account_id
+                  AND task_scope.scope_kind = 'tasks'
+                  AND task_scope.task_list_id = d.desired_task_list_id
+                  AND task_scope.publication_id = ?2
+                  AND task_scope.is_complete = 1
+              ))
+            OR
+            (d.resource_type = 'task_list'
+              AND list_base.remote_id = d.base_remote_id
+              AND list_base.deleted = 0
+              AND list_base.observed_publication_id = ?2
+              AND list_base.title = d.title
+              AND EXISTS (
+                SELECT 1
+                FROM scope_completeness list_scope
+                WHERE list_scope.account_id = d.account_id
+                  AND list_scope.scope_kind = 'task_lists'
+                  AND list_scope.publication_id = ?2
+                  AND list_scope.is_complete = 1
+              ))
+          )
+        ''',
+            variables: <Variable<Object>>[
+              Variable<int>(accountId.value),
+              Variable<String>(runId),
+            ],
+            readsFrom: <ResultSetImplementation<Table, Object?>>{
+              _database.desiredStateRows,
+              _database.taskListRemoteBases,
+              _database.taskRemoteBases,
+              _database.scopeCompletenessRows,
+            },
+          )
+          .get();
+      for (final row in rows) {
+        await (_database.update(_database.desiredStateRows)..where(
+              (candidate) =>
+                  candidate.accountId.equals(accountId.value) &
+                  candidate.id.equals(row.read<int>('id')) &
+                  candidate.state.equals('pending'),
+            ))
+            .write(
+              DesiredStateRowsCompanion(
+                baseEtag: Value<String?>(
+                  row.readNullable<String>('current_etag'),
+                ),
+                baseRemoteUpdatedAt: Value<DateTime?>(
+                  row.readNullable<DateTime>('current_updated_at')?.toUtc(),
+                ),
+                baseObservedPublicationId: Value<String>(
+                  row.read<String>('current_publication_id'),
+                ),
+                baseTitle: Value<String?>(
+                  row.readNullable<String>('current_title'),
+                ),
+                state: const Value<String>('confirmed'),
+                failureCode: const Value<String?>(null),
+                lastTransitionAt: Value<DateTime>(confirmedAt.toUtc()),
+              ),
+            );
+      }
+      await _recomputeCounts(accountId);
+      return rows.length;
+    });
+  }
+
   Future<int> recoverInFlightCreates({
     required AccountId accountId,
     required DateTime recoveredAt,
@@ -360,6 +641,52 @@ final class DesiredStateDao {
               DesiredStateRowsCompanion(
                 state: const Value<String>('uncertain'),
                 failureCode: const Value<String>('sync.create_interrupted'),
+                lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+              ),
+            );
+      }
+      await _recomputeCounts(accountId);
+      return attempts.length;
+    });
+  }
+
+  Future<int> recoverInFlightUpdates({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) {
+    return _database.transaction(() async {
+      final accountExists = await (_database.select(
+        _database.accounts,
+      )..where((row) => row.id.equals(accountId.value))).getSingleOrNull();
+      if (accountExists == null) return 0;
+      final attempts =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.state.equals('in_flight') &
+                    row.baseRemoteId.isNotNull(),
+              ))
+              .get();
+      for (final attempt in attempts) {
+        await (_database.update(
+          _database.desiredStateAttemptRows,
+        )..where((row) => row.id.equals(attempt.id))).write(
+          DesiredStateAttemptRowsCompanion(
+            state: const Value<String>('uncertain'),
+            failureCode: const Value<String>('sync.update_interrupted'),
+            lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+          ),
+        );
+        await (_database.update(_database.desiredStateRows)..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.id.equals(attempt.desiredStateId) &
+                  row.generation.equals(attempt.generation),
+            ))
+            .write(
+              DesiredStateRowsCompanion(
+                state: const Value<String>('uncertain'),
+                failureCode: const Value<String>('sync.update_interrupted'),
                 lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
               ),
             );

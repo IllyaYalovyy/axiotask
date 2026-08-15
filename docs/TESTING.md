@@ -215,6 +215,15 @@ create non-matching. The Linux application integration resumes an isolated
 stopped database through the production coordinator and observes Pending become
 Good only after remote confirmation.
 
+S15B extends that boundary with task content PATCH and list-title publication.
+The focused suite asserts complete title/notes/due/completion payloads, admitted
+JSON-null clears, task-before-list call order, read-proven no-op suppression,
+independent partial acknowledgement, newer-generation preservation, and
+restart at claim/response/acknowledgement boundaries. Uncertain updates remain
+durable and are not replayed because read-back recovery belongs to a later
+slice. The Linux application integration reopens an isolated stopped database,
+then observes Resume confirm both updates through the production coordinator.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

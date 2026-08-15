@@ -6,16 +6,22 @@ import '../../domain/model/tasks.dart';
 import '../../sync/create_operations.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/run.dart';
+import '../../sync/update_operations.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
 import 'desired_state_dao.dart';
 import 'sync_health_dao.dart';
 
 final class DatabaseReadSyncStore implements SyncStore {
-  DatabaseReadSyncStore(this._database)
-    : _cache = CacheDao(_database),
-      _desired = DesiredStateDao(_database),
-      _health = SyncHealthDao(_database);
+  DatabaseReadSyncStore(
+    this._database, {
+    DesiredStateTransactionControl? transactionControl,
+  }) : _cache = CacheDao(_database),
+       _desired = DesiredStateDao(
+         _database,
+         transactionControl: transactionControl,
+       ),
+       _health = SyncHealthDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
@@ -32,6 +38,150 @@ final class DatabaseReadSyncStore implements SyncStore {
       recoveredAt: recoveredAt,
     );
   }
+
+  @override
+  Future<void> recoverUpdateAttempts({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) async {
+    await _desired.recoverInFlightUpdates(
+      accountId: accountId,
+      recoveredAt: recoveredAt,
+    );
+  }
+
+  @override
+  Future<int> confirmNoOpUpdates({
+    required AccountId accountId,
+    required String runId,
+    required DateTime confirmedAt,
+  }) => _desired.confirmNoOpUpdates(
+    accountId: accountId,
+    runId: runId,
+    confirmedAt: confirmedAt,
+  );
+
+  @override
+  Future<UpdateOperationClaim?> claimNextUpdate({
+    required AccountId accountId,
+    required String runId,
+    required DateTime claimedAt,
+  }) => _database.transaction(() async {
+    final candidate = await _desired.readNextUpdateCandidate(accountId, runId);
+    if (candidate == null) return null;
+    switch (candidate.resourceType) {
+      case DesiredUpdateResourceType.task:
+        final attempt = await _desired.claimTask(
+          accountId: accountId,
+          taskId: candidate.taskId!,
+          claimedAt: claimedAt,
+        );
+        return UpdateOperationClaim.task(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          taskListRemoteId: RemoteTaskListId(candidate.taskListRemoteId.value),
+          taskId: candidate.taskId!,
+          taskRemoteId: RemoteTaskId(candidate.taskRemoteId!.value),
+          parentTaskId: candidate.parentTaskId,
+          parentRemoteId: candidate.parentRemoteId == null
+              ? null
+              : RemoteTaskId(candidate.parentRemoteId!.value),
+          etag: candidate.etag!,
+          title: attempt.title!,
+          notes: attempt.notes,
+          status: attempt.status!,
+          due: attempt.due,
+        );
+      case DesiredUpdateResourceType.taskList:
+        final attempt = await _desired.claimTaskList(
+          accountId: accountId,
+          taskListId: candidate.taskListId,
+          claimedAt: claimedAt,
+        );
+        return UpdateOperationClaim.taskList(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          taskListRemoteId: RemoteTaskListId(candidate.taskListRemoteId.value),
+          title: attempt.title!,
+        );
+    }
+  });
+
+  @override
+  Future<void> acknowledgeTaskListUpdate({
+    required AccountId accountId,
+    required UpdateOperationClaim claim,
+    required RemoteTaskList remote,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) async {
+    if (remote.id != claim.taskListRemoteId) {
+      throw const DesiredStateInvariantException(
+        'update_task_list_response_mismatch',
+      );
+    }
+    await _desired.acknowledgeTaskList(
+      accountId: accountId,
+      attemptId: claim.attemptId,
+      remoteId: TaskListRemoteId(remote.id.value),
+      title: remote.title,
+      etag: remote.etag,
+      remoteUpdatedAt: remote.updated,
+      observedPublicationId: observationId,
+      acknowledgedAt: acknowledgedAt,
+    );
+  }
+
+  @override
+  Future<void> acknowledgeTaskUpdate({
+    required AccountId accountId,
+    required UpdateOperationClaim claim,
+    required RemoteLiveTask remote,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) async {
+    if (remote.id != claim.taskRemoteId ||
+        remote.parentId != claim.parentRemoteId) {
+      throw const DesiredStateInvariantException(
+        'update_task_response_mismatch',
+      );
+    }
+    await _desired.acknowledgeTask(
+      accountId: accountId,
+      attemptId: claim.attemptId,
+      remoteId: TaskRemoteId(remote.id.value),
+      taskListId: claim.taskListId,
+      parentTaskId: claim.parentTaskId,
+      title: remote.title,
+      notes: remote.notes,
+      status: _taskStatus(remote.status),
+      due: _taskDate(remote.due),
+      position: remote.position,
+      etag: remote.etag,
+      remoteUpdatedAt: remote.updated,
+      observedPublicationId: observationId,
+      acknowledgedAt: acknowledgedAt,
+    );
+  }
+
+  @override
+  Future<void> resolveUpdateFailure({
+    required AccountId accountId,
+    required UpdateOperationClaim claim,
+    required Failure failure,
+    required bool uncertain,
+    required DateTime resolvedAt,
+  }) => _desired.transitionAttempt(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    state: uncertain
+        ? DesiredStateLifecycle.uncertain
+        : DesiredStateLifecycle.failed,
+    transitionedAt: resolvedAt,
+    failureCode: failure.code,
+  );
 
   @override
   Future<CreateOperationClaim?> claimNextCreate({

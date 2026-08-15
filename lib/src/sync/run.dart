@@ -3,6 +3,7 @@ import '../data/google_tasks/dto.dart';
 import '../domain/model/tasks.dart';
 import 'create_operations.dart';
 import 'phase.dart';
+import 'update_operations.dart';
 
 final class SyncRunId {
   const SyncRunId(this.value) : assert(value != '');
@@ -53,6 +54,7 @@ final class SyncRunReport {
     required this.remoteTasks,
     required this.resourceProjectionWrites,
     this.createOperations = 0,
+    this.updateOperations = 0,
     this.ineligibleReason,
     this.failure,
   });
@@ -68,6 +70,7 @@ final class SyncRunReport {
   final int remoteTasks;
   final int resourceProjectionWrites;
   final int createOperations;
+  final int updateOperations;
 }
 
 final class ReadSyncEligibility {
@@ -147,7 +150,8 @@ abstract interface class ReadSyncStore {
   });
 }
 
-abstract interface class SyncStore implements ReadSyncStore, CreateSyncStore {}
+abstract interface class SyncStore
+    implements ReadSyncStore, CreateSyncStore, UpdateSyncStore {}
 
 abstract interface class SyncRunObserver {
   void phaseStarted(SyncRunId runId, SyncRunPhase phase);
