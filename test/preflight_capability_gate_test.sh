@@ -30,7 +30,6 @@ assert_fails_with 'private configuration is missing' \
 
 mkdir -p "${config_path%/*}" "$fixture_root/bin"
 printf '%s\n' \
-  'AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT=subject-output-canary' \
   'AXIOTASK_ANDROID_AUTH_CLIENT_ID=android-output-canary.apps.googleusercontent.com' \
   'AXIOTASK_LINUX_AUTH_CLIENT_ID=linux-output-canary.apps.googleusercontent.com' \
   'AXIOTASK_LINUX_AUTH_CLIENT_SECRET=secret-output-canary' \

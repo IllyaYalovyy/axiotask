@@ -41,8 +41,7 @@ load_private_config() {
     key=${line%%=*}
     value=${line#*=}
     case "$key" in
-      AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT | \
-        AXIOTASK_ANDROID_AUTH_CLIENT_ID | \
+      AXIOTASK_ANDROID_AUTH_CLIENT_ID | \
         AXIOTASK_LINUX_AUTH_CLIENT_ID | \
         AXIOTASK_LINUX_AUTH_CLIENT_SECRET)
         [[ ! -v "private_config[$key]" ]] ||
@@ -69,7 +68,6 @@ check_android_auth() {
   require_command adb
   require_command flutter
   load_private_config
-  require_value AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT
   require_google_client_id AXIOTASK_ANDROID_AUTH_CLIENT_ID
 
   local -a physical_devices=()
@@ -105,7 +103,6 @@ check_linux_auth() {
   pkg-config --exists libsecret-1 ||
     fail 'libsecret-devel is required; install it outside ktask before continuing'
   load_private_config
-  require_value AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT
   require_google_client_id AXIOTASK_LINUX_AUTH_CLIENT_ID
   require_value AXIOTASK_LINUX_AUTH_CLIENT_SECRET
 

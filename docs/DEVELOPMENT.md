@@ -113,8 +113,11 @@ logging path in every build.
 production-safe, sensitive-development, and synthetic-test roots respectively.
 Their injected database filename, preferences namespace, secure-storage
 namespace, OAuth configuration identity, diagnostics namespace, authorization,
-clock, and randomness are distinct. Development Google access additionally
-requires an exact dedicated-account subject; absence or mismatch fails closed.
+clock, and randomness are distinct. On first authorization, development Google
+access obtains the stable account subject from the authenticated identity and
+pins it in ignored private development storage before any Google Tasks request.
+Later absence or mismatch fails closed; a subject is never guessed or required
+before authorization.
 The reproducible launch, isolation, and current cleanup commands are maintained
 in the repository README.
 

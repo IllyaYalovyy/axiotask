@@ -182,11 +182,15 @@ file. Create `.ktask/gates/stage7.env`, set its permissions to `600`, and add
 only the values required by the platform being proved:
 
 ```text
-AXIOTASK_AUTH_PROBE_ACCOUNT_SUBJECT=<dedicated-account-subject>
 AXIOTASK_ANDROID_AUTH_CLIENT_ID=<android-oauth-client-id>
 AXIOTASK_LINUX_AUTH_CLIENT_ID=<linux-oauth-client-id>
 AXIOTASK_LINUX_AUTH_CLIENT_SECRET=<linux-oauth-client-secret>
 ```
+
+Do not invent or preconfigure a Google account subject. The authorization
+capability proof obtains the stable `sub` claim from the authenticated identity,
+records it only in ignored private development storage, and pins subsequent
+development access to that exact subject before any Google Tasks request.
 
 Never use a normal personal account, put these values on a command line, or
 commit this file. Before the Android authorization slice, connect, unlock, and
