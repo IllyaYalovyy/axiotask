@@ -61,6 +61,13 @@ loads OAuth configuration or reaches Google. The optional real-account read
 probe remains outside this slice and may run only through the already isolated
 S05 harness.
 
+S07 reuses the same HTTP and authorization dependencies for strict mutation
+operations and adds no package. Normal mutation tests use a loopback scripted
+server and synthetic authorization. The explicit opt-in mutation probe alone
+may use Google; it requires the already pinned dedicated subject, uses a unique
+disposable prefix and separate credential namespace, and verifies both Google
+resource cleanup and credential cleanup.
+
 ## Branch and commits
 
 Development occurs on the independent orphan branch `flutter2` in the same

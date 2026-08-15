@@ -7,6 +7,26 @@ import 'dto.dart';
 final class GoogleTasksDecoder {
   const GoogleTasksDecoder();
 
+  Outcome<RemoteTaskList> decodeTaskListResource(List<int> bytes) {
+    try {
+      return Outcome<RemoteTaskList>.success(_taskList(_decodeRoot(bytes)));
+    } on _DecodeFailure catch (error) {
+      return Outcome<RemoteTaskList>.failure(_mutationDecodeFailure(error));
+    } on FormatException {
+      return Outcome<RemoteTaskList>.failure(_malformedMutationFailure());
+    }
+  }
+
+  Outcome<RemoteTask> decodeTaskResource(List<int> bytes) {
+    try {
+      return Outcome<RemoteTask>.success(_task(_decodeRoot(bytes)));
+    } on _DecodeFailure catch (error) {
+      return Outcome<RemoteTask>.failure(_mutationDecodeFailure(error));
+    } on FormatException {
+      return Outcome<RemoteTask>.failure(_malformedMutationFailure());
+    }
+  }
+
   Outcome<RemotePage<RemoteTaskList>> decodeTaskListPage(List<int> bytes) {
     try {
       final root = _decodeRoot(bytes);
@@ -338,4 +358,22 @@ Failure _malformedSuccessFailure() => const Failure(
   retry: RetryClassification.permanent,
   impact: 'Google Tasks data could not be read safely.',
   safeSummary: 'Google returned malformed task data.',
+);
+
+Failure _mutationDecodeFailure(_DecodeFailure error) => Failure(
+  code: error.code,
+  category: FailureCategory.unsupportedRemoteState,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'A Google Tasks mutation could not be confirmed safely.',
+  safeSummary: error.summary,
+);
+
+Failure _malformedMutationFailure() => const Failure(
+  code: 'google_tasks.malformed_mutation_success',
+  category: FailureCategory.unsupportedRemoteState,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'A Google Tasks mutation could not be confirmed safely.',
+  safeSummary: 'Google returned a malformed Tasks mutation response.',
 );

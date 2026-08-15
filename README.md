@@ -6,8 +6,9 @@ constructor-injected core/authorization/diagnostic boundaries, and the
 versioned Drift/SQLite persistence foundation. Linux additionally has a
 capability-proven GNOME Secret Service credential boundary and a Linux system-
 browser authorization adapter. A strict, injected Google Tasks HTTP boundary
-can read validated list/task pages; synchronization orchestration, writes, and
-task workflows arrive only in their approved later slices.
+can read validated list/task pages and issue strict typed mutations;
+synchronization orchestration and task workflows arrive only in their approved
+later slices.
 
 ## Supported development environment
 
@@ -113,6 +114,14 @@ fails its scope rather than being skipped. Each attempt has a 30-second timeout,
 supports transport cancellation, does not follow redirects, and never retries
 inside the adapter.
 
+The mutation service supports task-list create/rename/delete and task
+create/complete-snapshot patch/delete/move. It sends task ETags with `If-Match`,
+encodes due dates at UTC midnight, uses the live-proven JSON `null` spelling to
+clear notes and due, and requires canonical 200 resource or empty 204 responses.
+It performs no retries or reconciliation: response loss, malformed success,
+unknown responses, and possibly stale source-list paths remain explicit
+uncertain results for later synchronization work.
+
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
 namespace. Synthetic instance names additionally partition parallel runs. The
@@ -189,6 +198,29 @@ PKCE verifiers, DPoP private keys, and callback URLs remain redacted. The probe
 verifies restart/refresh behavior and deletes only its isolated credential
 bundle afterward. It never reads or changes normal Axiotask credentials or
 local data.
+
+## Isolated Google Tasks mutation probe
+
+The S07 P7/P12-style probe is destructive only to uniquely prefixed disposable
+data in the pinned dedicated account. It creates two scratch lists, proves JSON
+`null` clearing for synthetic notes and due values, moves a synthetic task
+between those lists, and exercises DELETE through its stale source-list path.
+It preserves that stale-path outcome as uncertain and performs a positive
+destination read-back. Cleanup deletes both scratch lists, confirms no matching
+prefix remains, deletes only the probe's separate secure-storage bundle, and
+verifies that deletion.
+
+Use the same ignored mode-`600` OAuth configuration and pinned subject as the
+Linux authorization probe, then opt in explicitly:
+
+```bash
+AXIOTASK_RUN_GOOGLE_TASKS_MUTATION_PROBE=1 \
+  ./scripts/probe_google_tasks_mutations.sh
+```
+
+The command opens the system browser. Complete authorization only with the
+already pinned dedicated test account. The subject mismatch guard runs before
+any Google Tasks enumeration or mutation.
 
 ## Android build, local installation, and development run
 
@@ -283,6 +315,7 @@ flutter test test/data/database/native_database_probe_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/data/google_tasks/decoder_test.dart
 flutter test test/data/google_tasks/http_service_test.dart
+flutter test test/data/google_tasks/mutation_http_service_test.dart
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

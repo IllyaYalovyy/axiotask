@@ -212,7 +212,7 @@ promoting any such behavior into the fake.
 | `API-006` | Auth classification is not accepted until each platform flow supplies evidence. | Dedicated-account expired/revoked/wrong-scope/malformed cases. | Request and refresh through Linux/Android auth adapters. | Cancel/reject/subject mismatch. | Only evidenced adapter outcomes map to refreshable/terminal states; secrets never enter fixtures/logs. | No task mutation required. | Correct Pending/Inactive/Failed projection in integration follow-up. | Platform/live auth contract | `F-PROBE`, `F-AUTH` | Yes—required before the affected auth adapter is admitted |
 | `API-007` | Rate/error handling preserves unknowns. | Quota-safe disposable read; synthetic 429/5xx/403 reason/header fixtures. | Observe naturally occurring headers/reasons; never exhaust quota intentionally. | Retry-After/malformed body variants. | Only observed stable facts are promoted; synthetic outcomes remain client-policy tests. | No claim beyond observation. | No false Good; conservative visible failure. | Adapter/live evidence + engine contract | `F-PROBE`, `F-GOOGLE` | Yes—opportunistic; conservative policy is already accepted |
 | `API-008` | Live probes cannot touch the wrong Google account. | Expected subject A in ignored configuration; auth subjects A, B, missing, and malformed in variants. | Invoke every live probe entry point through its normal opt-in command. | Subject mismatch or identity resolution failure. | No task/list fixture, token, or account data enters the repository; safe refusal evidence only. | Subjects B/missing/malformed produce zero Tasks enumeration/mutation calls; A alone may proceed to disposable setup. | Explicit safe refusal; no fallback account selection. | Live-harness security contract | `F-PROBE`, identity-call ledger | Yes—dedicated account identity only; no task mutation for rejection cases |
-| `API-009` | Optional-field clearing and stale-source task DELETE enter the fake only after evidence. | Dedicated disposable tasks with every optional writable field; task moved A→B. | Set/clear/read back each field; DELETE through A and B in separate cases. | Lost response variants after each server commit. | Sanitized capability record distinguishes confirmed facts from unknowns. | Exact canonical clear values and stale/current-path delete effects are recorded without generalization. | N/A at adapter layer; affected implementation remains gated until evidence passes. | Fake-versus-live contract | `F-PROBE`, `F-GOOGLE` | Yes—extended P7/P12 |
+| `API-009` | Optional-field clearing and stale-source task DELETE enter the fake only after evidence. | Dedicated disposable tasks with every optional writable field; task moved A→B. | Set/clear/read back each field; DELETE through A and B in separate cases. | Lost response variants after each server commit. | Sanitized capability record distinguishes confirmed facts from unknowns. | JSON `null` for supported `notes`/`due` is admitted by S07; exact stale/current-path delete effects remain unpromoted until their status and lifecycle bit are retained. | The adapter preserves stale paths as uncertain; later fake/recovery behavior remains gated. | Fake-versus-live contract | `F-PROBE`, `F-GOOGLE` | Yes—extended P7/P12 |
 
 ## Coverage audit
 
@@ -264,9 +264,9 @@ Before engine code is accepted:
 5. `F-MULTI` and `F-MODEL` must use the same production ports as deterministic integration
    tests and must not duplicate production reconciliation code as their oracle.
 6. `API-006` remains a capability gate for the affected Linux and Android authentication
-   slices. `API-009` gates optional-field clearing and stale-source delete behavior. P10
-   recurrence-link evidence remains outside core synchronization and does not block this
-   matrix.
+   slices. `API-009` now admits JSON-null clearing for supported `notes`/`due`, while exact
+   stale-source delete fake/recovery behavior remains gated. P10 recurrence-link evidence
+   remains outside core synchronization and does not block this matrix.
 7. `API-008` must fail closed before any Tasks request when the authenticated subject is
    missing or differs from the ignored expected-subject value.
 

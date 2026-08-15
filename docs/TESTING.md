@@ -73,6 +73,13 @@ server responses and an injected timeout signal rather than elapsed-time sleeps.
 The server sees only synthetic identifiers/content and an in-memory synthetic
 authorization header; no test reads platform authorization or normal storage.
 
+The S07 suite adds
+`test/data/google_tasks/mutation_http_service_test.dart`. It exercises every
+supported mutation request/response shape, strict success decoding, response
+loss/truncation, conditional and structured error mapping, stale source-list
+paths, and release/development diagnostic separation. The adapter performs one
+request and exposes ambiguity; retry and reconciliation remain sync-engine work.
+
 ### 4. Stateful fake Google service
 
 `FakeGoogleTasksService` implements the same narrow port as the HTTP adapter and
@@ -274,6 +281,19 @@ AXIOTASK_RUN_LINUX_SECURE_STORAGE_PROBE=1 \
 
 The script fails closed when its explicit opt-in, `libsecret-devel`, user D-Bus,
 GNOME desktop, or Secret Service prerequisite is absent.
+
+Run the isolated Google Tasks P7/P12 mutation proof only after the S05 subject
+has been pinned for the dedicated test account:
+
+```text
+AXIOTASK_RUN_GOOGLE_TASKS_MUTATION_PROBE=1 \
+  ./scripts/probe_google_tasks_mutations.sh
+```
+
+It sets and clears only synthetic optional fields, tests DELETE through a stale
+source-list path after a stable-ID cross-list move, deletes its uniquely
+prefixed scratch lists, confirms zero prefix matches, and deletes/verifies only
+its separate probe credential bundle.
 
 There is deliberately no hosted CI. The same local gate is run before every
 commit, followed by staged-diff review; the repository privacy check is repeated

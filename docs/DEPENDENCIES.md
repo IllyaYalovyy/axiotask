@@ -125,6 +125,16 @@ The adapter is handwritten so request flags, redirect behavior, HTTP status,
 remain visible to application policy. It contains no retry interceptor and does
 not use the generated `googleapis` client.
 
+## Applied to the S07 Google Tasks mutation adapter
+
+S07 also reuses the locked `http` 1.6.0 package and adds no dependency. Explicit
+operation DTOs build task-list create/rename/delete and task
+create/patch/delete/move requests. The adapter exposes structured committed,
+rejected, and uncertain results, parses quota reasons and `Retry-After`, and
+never installs a retry interceptor. The isolated live harness reuses the S05
+Linux authorization boundary with a separate secure-storage namespace,
+pinned-subject guard, disposable Google list prefix, and verified cleanup.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

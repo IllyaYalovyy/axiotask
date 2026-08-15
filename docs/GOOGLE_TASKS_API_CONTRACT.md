@@ -20,6 +20,11 @@ raw IDs, and raw output remained outside Git; committed observations below are
 sanitized. Historical Rust probes remain leads only unless the new run reproduced
 them explicitly.
 
+An isolated Flutter S07 follow-up ran on 2026-08-15 with the same account class
+and a pinned-subject guard. It recorded only the sanitized capability facts
+below; OAuth material, raw IDs/content/URLs, and machine paths remained outside
+Git.
+
 ## Evidence labels
 
 | Label | Meaning in this document |
@@ -177,6 +182,7 @@ evidence for exact Tasks endpoint status codes or conditional behavior.
 | Clear completed | `tasks.clear` marks completed tasks in the list as hidden and returns an empty body. | **Officially documented** | Complete enumeration must account for hidden tasks. Exact field/ETag changes are unknown. |
 | Due date | `due` accepts an RFC 3339 representation but stores only a date; time is discarded and unavailable through the API. | **Officially documented** | No time-of-day or deadline can be synchronized through this API. |
 | Due timezone/canonical echo | P9 converted the supplied instant to its UTC calendar date and returned midnight UTC with milliseconds. Offset inputs crossed to the prior/next UTC date. Bare/invalid strings returned 400; empty string and JSON `null` cleared/omitted due. | **Observed by a controlled probe** | The encoder must intentionally send a UTC-midnight representation of the product date; it must never reuse an arbitrary local-offset timestamp. |
+| Optional task-field clearing | The isolated S07 P12 follow-up set nonempty synthetic `notes` and `due`, PATCHed both as JSON `null`, received a valid 200 task resource, and read back both fields absent. | **Observed by a controlled probe** | Complete task-content writes may use JSON `null` to clear `notes` and `due`; no other optional-field clear spelling is promoted. |
 | Completion timestamp | `completed` is RFC 3339 and absent for incomplete tasks. | **Officially documented** | Who assigns/clears it and its precision under status transitions are not documented. |
 | Hidden/completed listing | First-party-completed tasks may require both `showCompleted=true` and `showHidden=true`; `clear` makes completed tasks hidden. | **Officially documented** | A default request is not a complete account view. |
 | Web UI link meaning | `webViewLink` is an output-only absolute Google Tasks Web UI link. | **Officially documented** | It is distinct from a user-authored URL in task text. |
@@ -326,6 +332,14 @@ rate-limit response details remain Unknown.
 - Each successful run performed prefix-scoped deletion and a zero-match
   re-enumeration. A separate cleanup-only invocation independently reconfirmed
   zero matching lists for both prefixes.
+- The 2026-08-15 S07 Flutter follow-up verified the pinned subject before Tasks
+  access, used two uniquely prefixed scratch lists and a separate secure-storage
+  namespace, confirmed JSON-null clearing for synthetic `notes` and `due`,
+  preserved stale-source DELETE as uncertain while completing a positive
+  destination read-back, confirmed zero prefix matches, and verified credential
+  cleanup. The human resolution retained the pass/cleanup facts but not the
+  stale DELETE status and destination lifecycle bit, so those exact server
+  semantics are deliberately not promoted here.
 - One earlier unpaced run was discarded after 403 `quotaExceeded` responses.
   It left 26 prefixed lists temporarily; a later prefix-scoped cleanup deleted
   all 26 and confirmed zero remaining. Only the rate-limit response itself is
@@ -345,6 +359,8 @@ rate-limit response details remain Unknown.
 | P8 completion | Parent completion cascaded to children; parent reopen did not. Child reopen under a completed parent returned 200 but remained completed. Insert/move under a completed parent returned a completed child. Clear returned 204 and all observed completed rows were hidden. | Mutation echoes/read-back and server cascades are authoritative; requested `needsAction` cannot be assumed to land under a completed parent. |
 | P9 due | Google normalized valid instants to the corresponding UTC date at `00:00:00.000Z`. Offset boundary inputs moved to the prior/next UTC date. Bare/invalid values returned 400; empty string and JSON `null` cleared/omitted due. | Encode the product date directly as UTC midnight. Do not serialize a local-offset instant and assume its written calendar date survives. |
 | P11 malformed bearer | Malformed bearer produced 401, `WWW-Authenticate`, and JSON error fields `code`, `errors`, `message`, and `status`. | This case is unauthorized. Expired, revoked, and wrong-scope classification still needs separate safe evidence. |
+| S07 P12 follow-up | PATCH with JSON `null` returned a valid 200 task resource and read-back omitted both synthetic `notes` and `due`. | Admit JSON `null` clearing for the supported optional task-content fields. |
+| S07 stale-source DELETE follow-up | The adapter preserved the old-source DELETE as uncertain and a destination read-back positively found the stable task ID. The retained resolution omitted the status and live/tombstone bit. | Keep stale-path confirmation conservative; do not promote exact fake/recovery behavior from an incomplete sanitized record. |
 
 ## Remaining API unknowns and implementation gates
 
@@ -357,8 +373,8 @@ adapter or later UX slice; none permits guessed behavior.
 | Uncertain create recovery | P5 proves replay can duplicate and discovery exposes no idempotency/client-ID facility. Retry without content matching, bind the first durably received ID, then apply the newest desired generation; an earlier duplicate may remain. | P5 remains the live contract test for both task and list creates. |
 | Concurrent pagination beyond observed cases | P3 proves insertion can be omitted. A successful run means the required traversal completed, not that Google supplied an atomic snapshot. Server mutation results are authoritative for an unobservable race; absence alone never deletes. | P3 remains the fake/live contract boundary. |
 | Tombstone retention duration | Do not rely on indefinite retention. Confirm only from current positive evidence or a confirmed local operation. | No adapter slice depends on a retention duration. |
-| DELETE after a concurrent cross-list move | Old-source MOVE returns 404, but old-source task DELETE has not been probed. Never confirm from old-list absence or an unverified stale-path response; resolve/read back by stable ID. | The P7 extension gates delete/move race handling. |
-| Optional writable-field clearing | Generic PATCH documentation does not establish every task field's accepted clear representation. Whole-record writes may use only representations reproduced by P12. | The P12 extension gates the task-write adapter. |
+| Exact DELETE result after a concurrent cross-list move | The S07 follow-up exercised old-source DELETE and completed a positive destination read-back, but the retained human resolution omitted the sanitized HTTP status and live/tombstone bit. Never confirm from old-list absence or a stale-path response; resolve/read back by stable ID. | The conservative adapter boundary is admitted; exact fake/recovery semantics still require a retained sanitized result. |
+| Optional writable-field clearing beyond `notes` and `due` | The S07 P12 follow-up proved JSON `null` for the two optional writable fields in Axiotask's supported task-content model. No representation is inferred for a future optional writable field. | `notes`/`due` writes are admitted; any expanded writable model needs its own evidence. |
 | Exact expired/revoked/wrong-scope auth mapping | Only malformed bearer is currently established. Unknown shapes do not become `noAuthorization` by guess. | P11 and platform auth tests gate the affected Linux/Android slices. |
 | Due encoder implementation | P9 establishes UTC-midnight spelling and the offset hazard. | Adapter contract tests must reproduce P9 before admission. |
 | `webViewLink` presence and recurrence navigation | This does not affect core sync. | P10 gates only the recurrence-management UX slice. |
@@ -370,14 +386,14 @@ adapter or later UX slice; none permits guessed behavior.
 Current primary documentation remains strongest for resource shape and method
 surface. The controlled runs now provide current evidence for task versus list
 preconditions, non-atomic pagination, deletion/cascade behavior, replay effects,
-stable-ID cross-list movement, completion cascades, UTC due normalization, one
-auth failure, and one quota response.
+stable-ID cross-list movement, completion cascades, UTC due normalization,
+JSON-null notes/due clearing, one auth failure, and one quota response.
 
 The evidence sharply reduces capability uncertainty but does not itself invent
 policy. The accepted synchronization specification records possible duplication
 for an uncertain create, server-authoritative uncloseable races, non-atomic
 pagination semantics, and task-list delete recovery explicitly. Auth cases
-beyond malformed bearer, optional-field clearing, stale-source task DELETE, and
+beyond malformed bearer, the exact stale-source task DELETE result, and
 recurrence navigation remain named implementation gates.
 Historical Rust claims are accepted only where the new results reproduce them,
 and the deleted-tombstone mutation claim is explicitly superseded by the

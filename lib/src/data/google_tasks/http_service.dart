@@ -11,6 +11,7 @@ import '../../core/outcome.dart';
 import '../auth/authorization.dart';
 import 'decoder.dart';
 import 'dto.dart';
+import 'mutation.dart';
 import 'request.dart';
 import 'service.dart';
 
@@ -27,6 +28,8 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     int maxResponseBytes = defaultMaxResponseBytes,
     TimeoutSignal? timeoutSignal,
     GoogleTasksDecoder decoder = const GoogleTasksDecoder(),
+    GoogleTasksMutationCapabilities mutationCapabilities =
+        const GoogleTasksMutationCapabilities(),
   }) {
     if (requestTimeout <= Duration.zero) {
       throw ArgumentError.value(
@@ -42,18 +45,20 @@ final class HttpGoogleTasksService implements GoogleTasksService {
         'must be positive',
       );
     }
+    final resolvedEndpoint =
+        endpoint ?? GoogleTasksReadRequestFactory.googleEndpoint;
     return HttpGoogleTasksService._(
       client,
       authorization,
       accountGuard,
       diagnostics,
-      GoogleTasksReadRequestFactory(
-        endpoint ?? GoogleTasksReadRequestFactory.googleEndpoint,
-      ),
+      GoogleTasksReadRequestFactory(resolvedEndpoint),
+      resolvedEndpoint,
       requestTimeout,
       maxResponseBytes,
       timeoutSignal ?? _defaultTimeoutSignal,
       decoder,
+      mutationCapabilities,
     );
   }
 
@@ -63,10 +68,12 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     this._accountGuard,
     this._diagnostics,
     this._requestFactory,
+    this._mutationEndpoint,
     this._requestTimeout,
     this._maxResponseBytes,
     this._timeoutSignal,
     this._decoder,
+    this._mutationCapabilities,
   );
 
   static const int defaultMaxResponseBytes = 8 * 1024 * 1024;
@@ -76,10 +83,12 @@ final class HttpGoogleTasksService implements GoogleTasksService {
   final AccountGuard _accountGuard;
   final DiagnosticSink _diagnostics;
   final GoogleTasksReadRequestFactory _requestFactory;
+  final Uri _mutationEndpoint;
   final Duration _requestTimeout;
   final int _maxResponseBytes;
   final TimeoutSignal _timeoutSignal;
   final GoogleTasksDecoder _decoder;
+  final GoogleTasksMutationCapabilities _mutationCapabilities;
   bool _closed = false;
 
   @override
@@ -112,13 +121,276 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     decode: _decoder.decodeTaskPage,
   );
 
+  @override
+  Future<GoogleTasksMutationResult<RemoteTaskList>> createTaskList(
+    CreateTaskListOperation operation,
+  ) => _mutateResource<RemoteTaskList>(
+    operation: operation,
+    decode: _decoder.decodeTaskListResource,
+  );
+
+  @override
+  Future<GoogleTasksMutationResult<RemoteTaskList>> renameTaskList(
+    RenameTaskListOperation operation,
+  ) => _mutateResource<RemoteTaskList>(
+    operation: operation,
+    decode: _decoder.decodeTaskListResource,
+  );
+
+  @override
+  Future<GoogleTasksMutationResult<void>> deleteTaskList(
+    DeleteTaskListOperation operation,
+  ) => _mutateEmpty(operation);
+
+  @override
+  Future<GoogleTasksMutationResult<RemoteTask>> createTask(
+    CreateTaskOperation operation,
+  ) => _mutateResource<RemoteTask>(
+    operation: operation,
+    decode: _decoder.decodeTaskResource,
+  );
+
+  @override
+  Future<GoogleTasksMutationResult<RemoteTask>> patchTask(
+    PatchTaskOperation operation,
+  ) => _mutateResource<RemoteTask>(
+    operation: operation,
+    decode: _decoder.decodeTaskResource,
+  );
+
+  @override
+  Future<GoogleTasksMutationResult<void>> deleteTask(
+    DeleteTaskOperation operation,
+  ) => _mutateEmpty(operation);
+
+  @override
+  Future<GoogleTasksMutationResult<RemoteTask>> moveTask(
+    MoveTaskOperation operation,
+  ) => _mutateResource<RemoteTask>(
+    operation: operation,
+    decode: _decoder.decodeTaskResource,
+  );
+
+  Future<GoogleTasksMutationResult<T>> _mutateResource<T>({
+    required GoogleTasksMutationOperation<T> operation,
+    required Outcome<T> Function(List<int>) decode,
+  }) => _mutate<T>(
+    operation: operation,
+    expectedStatus: HttpStatus.ok,
+    decode: decode,
+  );
+
+  Future<GoogleTasksMutationResult<void>> _mutateEmpty(
+    GoogleTasksMutationOperation<void> operation,
+  ) => _mutate<void>(
+    operation: operation,
+    expectedStatus: HttpStatus.noContent,
+    decode: (bytes) => bytes.isEmpty
+        ? const Outcome<void>.success(null)
+        : Outcome<void>.failure(_malformedMutationSuccessFailure()),
+  );
+
+  Future<GoogleTasksMutationResult<T>> _mutate<T>({
+    required GoogleTasksMutationOperation<T> operation,
+    required int expectedStatus,
+    required Outcome<T> Function(List<int>) decode,
+  }) async {
+    final eligibility = _verifyEligibility(FailureOperation.write);
+    if (eligibility case Failed<void>(:final failure)) {
+      final error = GoogleTasksMutationError(
+        failure: _asWriteFailure(failure),
+        kind: failure.category == FailureCategory.authorization
+            ? GoogleTasksErrorKind.authorization
+            : GoogleTasksErrorKind.permanent,
+        commitState: MutationCommitState.notCommitted,
+      );
+      _recordMutationFailure(operation, error);
+      return RejectedMutation<T>(error);
+    }
+
+    final abortReason = Completer<_AbortReason>();
+    unawaited(
+      _timeoutSignal(_requestTimeout).then((_) {
+        if (!abortReason.isCompleted) {
+          abortReason.complete(_AbortReason.timeout);
+        }
+      }),
+    );
+    final request = operation.toRequest(
+      endpoint: _mutationEndpoint,
+      abortTrigger: abortReason.future.then<void>((_) {}),
+      capabilities: _mutationCapabilities,
+    );
+    final requestBody = request.bodyBytes;
+    http.StreamedResponse? receivedResponse;
+
+    try {
+      final response = await _client.send(request);
+      receivedResponse = response;
+      final bytes = await _readBounded(response);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        var error = _mapMutationHttpError(
+          response.statusCode,
+          bytes,
+          response.headers,
+        );
+        if (operation.pathFreshness == MutationPathFreshness.possiblyStale &&
+            response.statusCode == HttpStatus.notFound) {
+          error = _stalePathMutationError(response.statusCode);
+        }
+        _recordMutationFailure(
+          operation,
+          error,
+          requestUri: request.url,
+          requestBody: requestBody,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return _mutationErrorResult<T>(error);
+      }
+
+      if (response.statusCode != expectedStatus ||
+          (expectedStatus == HttpStatus.ok &&
+              !_isJson(response.headers['content-type']))) {
+        final error = _uncertainMutationError(
+          expectedStatus == HttpStatus.ok
+              ? 'google_tasks.malformed_mutation_success'
+              : 'google_tasks.unexpected_mutation_success',
+          'Google returned an unexpected Tasks mutation response.',
+          statusCode: response.statusCode,
+        );
+        _recordMutationFailure(
+          operation,
+          error,
+          requestUri: request.url,
+          requestBody: requestBody,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return UncertainMutation<T>(error);
+      }
+
+      final decoded = decode(bytes);
+      if (decoded case Failed<T>(:final failure)) {
+        final error = GoogleTasksMutationError(
+          failure: _asWriteFailure(failure),
+          kind: GoogleTasksErrorKind.unknown,
+          commitState: MutationCommitState.uncertain,
+        );
+        _recordMutationFailure(
+          operation,
+          error,
+          requestUri: request.url,
+          requestBody: requestBody,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return UncertainMutation<T>(error);
+      }
+      if (operation.pathFreshness == MutationPathFreshness.possiblyStale) {
+        final error = _stalePathMutationError(response.statusCode);
+        _recordMutationFailure(
+          operation,
+          error,
+          requestUri: request.url,
+          requestBody: requestBody,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return UncertainMutation<T>(error);
+      }
+
+      final value = (decoded as Success<T>).value;
+      _recordMutationSuccess(
+        operation,
+        statusCode: response.statusCode,
+        requestUri: request.url,
+        requestBody: requestBody,
+        responseBody: bytes,
+      );
+      return CommittedMutation<T>(value);
+    } on _ResponseTooLarge {
+      final response = receivedResponse;
+      if (response != null &&
+          (response.statusCode < 200 || response.statusCode >= 300)) {
+        var error = _mapMutationHttpError(
+          response.statusCode,
+          const <int>[],
+          response.headers,
+        );
+        if (operation.pathFreshness == MutationPathFreshness.possiblyStale &&
+            response.statusCode == HttpStatus.notFound) {
+          error = _stalePathMutationError(response.statusCode);
+        }
+        _recordMutationFailure(
+          operation,
+          error,
+          requestUri: request.url,
+          requestBody: requestBody,
+          statusCode: response.statusCode,
+        );
+        return _mutationErrorResult<T>(error);
+      }
+      final error = _uncertainMutationError(
+        'google_tasks.mutation_response_too_large',
+        'Google returned a mutation response above the decoding limit.',
+      );
+      _recordMutationFailure(
+        operation,
+        error,
+        requestUri: request.url,
+        requestBody: requestBody,
+      );
+      return UncertainMutation<T>(error);
+    } on http.RequestAbortedException {
+      final error = _uncertainMutationError(
+        'google_tasks.mutation_timeout',
+        'The Google Tasks mutation reached its request timeout.',
+        transient: true,
+      );
+      _recordMutationFailure(
+        operation,
+        error,
+        requestUri: request.url,
+        requestBody: requestBody,
+      );
+      return UncertainMutation<T>(error);
+    } on TimeoutException {
+      final error = _uncertainMutationError(
+        'google_tasks.mutation_timeout',
+        'The Google Tasks mutation reached its request timeout.',
+        transient: true,
+      );
+      _recordMutationFailure(
+        operation,
+        error,
+        requestUri: request.url,
+        requestBody: requestBody,
+      );
+      return UncertainMutation<T>(error);
+    } on http.ClientException {
+      final error = _uncertainMutationError(
+        'google_tasks.mutation_transport',
+        'The Google Tasks mutation transport failed.',
+        transient: true,
+      );
+      _recordMutationFailure(
+        operation,
+        error,
+        requestUri: request.url,
+        requestBody: requestBody,
+      );
+      return UncertainMutation<T>(error);
+    }
+  }
+
   Future<Outcome<RemotePage<T>>> _read<T>({
     required String resourceType,
     required GoogleTasksReadCancellation? cancellation,
     required http.AbortableRequest Function(Future<void>) createRequest,
     required Outcome<RemotePage<T>> Function(List<int>) decode,
   }) async {
-    final eligibility = _verifyEligibility();
+    final eligibility = _verifyEligibility(FailureOperation.read);
     if (eligibility case Failed<void>(:final failure)) {
       _recordFailure(resourceType, failure);
       return Outcome<RemotePage<T>>.failure(failure);
@@ -226,15 +498,15 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     }
   }
 
-  Outcome<void> _verifyEligibility() {
+  Outcome<void> _verifyEligibility(FailureOperation operation) {
     if (_closed) {
-      return const Outcome<void>.failure(
+      return Outcome<void>.failure(
         Failure(
           code: 'google_tasks.service_closed',
           category: FailureCategory.internal,
-          operation: FailureOperation.read,
+          operation: operation,
           retry: RetryClassification.permanent,
-          impact: 'Google Tasks data cannot be read.',
+          impact: _eligibilityImpact(operation),
           safeSummary: 'The Google Tasks service is closed.',
         ),
       );
@@ -243,13 +515,13 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     if (state case TasksAuthorized(:final subject)) {
       return _accountGuard.verify(subject);
     }
-    return const Outcome<void>.failure(
+    return Outcome<void>.failure(
       Failure(
         code: 'google_tasks.authorization_unavailable',
         category: FailureCategory.authorization,
-        operation: FailureOperation.read,
+        operation: operation,
         retry: RetryClassification.permanent,
-        impact: 'Google Tasks data cannot be read.',
+        impact: _eligibilityImpact(operation),
         action: FailureAction.connect,
         safeSummary: 'Usable Google Tasks authorization is unavailable.',
       ),
@@ -362,6 +634,177 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     }
   }
 
+  GoogleTasksMutationError _mapMutationHttpError(
+    int statusCode,
+    List<int> body,
+    Map<String, String> headers,
+  ) {
+    final remoteContext = RemoteFailureContext(
+      statusCode: statusCode,
+      retryAfter: _parseRetryAfter(headers['retry-after']),
+    );
+    if (statusCode == HttpStatus.unauthorized) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.unauthorized',
+          category: FailureCategory.authorization,
+          operation: FailureOperation.write,
+          retry: RetryClassification.unknown,
+          impact: 'Google Tasks authorization was not accepted.',
+          action: FailureAction.connect,
+          safeSummary: 'Google rejected a Tasks mutation as unauthorized.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.authorization,
+        commitState: MutationCommitState.notCommitted,
+      );
+    }
+    if (statusCode == HttpStatus.tooManyRequests ||
+        (statusCode == HttpStatus.forbidden &&
+            _errorReasons(body).contains('quotaExceeded'))) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.rate_limited',
+          category: FailureCategory.rateLimit,
+          operation: FailureOperation.write,
+          retry: RetryClassification.transient,
+          impact: 'A Google Tasks mutation was rejected because of a limit.',
+          action: FailureAction.retry,
+          safeSummary: 'Google limited a Tasks mutation request.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.quota,
+        commitState: MutationCommitState.notCommitted,
+      );
+    }
+    if (statusCode == HttpStatus.notFound) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.not_found',
+          category: FailureCategory.remote,
+          operation: FailureOperation.write,
+          retry: RetryClassification.permanent,
+          impact: 'The addressed Google Tasks resource was not mutated.',
+          safeSummary: 'Google did not find the addressed Tasks resource.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.notFound,
+        commitState: MutationCommitState.notCommitted,
+      );
+    }
+    if (statusCode == HttpStatus.preconditionFailed) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.precondition_failed',
+          category: FailureCategory.remote,
+          operation: FailureOperation.write,
+          retry: RetryClassification.permanent,
+          impact: 'The Google Tasks mutation did not pass its precondition.',
+          safeSummary: 'Google rejected a stale Tasks mutation precondition.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.conditional,
+        commitState: MutationCommitState.notCommitted,
+      );
+    }
+    if (statusCode >= 500 && statusCode <= 599) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.remote_unavailable',
+          category: FailureCategory.remote,
+          operation: FailureOperation.write,
+          retry: RetryClassification.transient,
+          impact: 'A Google Tasks mutation may not have completed.',
+          action: FailureAction.retry,
+          safeSummary: 'Google Tasks returned a server failure.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.transient,
+        commitState: MutationCommitState.uncertain,
+      );
+    }
+    if (statusCode == HttpStatus.badRequest ||
+        statusCode == HttpStatus.unprocessableEntity) {
+      return GoogleTasksMutationError(
+        failure: Failure(
+          code: 'google_tasks.invalid_mutation',
+          category: FailureCategory.remote,
+          operation: FailureOperation.write,
+          retry: RetryClassification.permanent,
+          impact: 'Google rejected the Tasks mutation without changing it.',
+          safeSummary: 'Google rejected an invalid Tasks mutation.',
+          remoteContext: remoteContext,
+        ),
+        kind: GoogleTasksErrorKind.permanent,
+        commitState: MutationCommitState.notCommitted,
+      );
+    }
+    return GoogleTasksMutationError(
+      failure: Failure(
+        code: 'google_tasks.unknown_mutation_response',
+        category: FailureCategory.remote,
+        operation: FailureOperation.write,
+        retry: RetryClassification.unknown,
+        impact: 'A Google Tasks mutation outcome could not be established.',
+        safeSummary: 'Google returned an unclassified mutation response.',
+        remoteContext: remoteContext,
+      ),
+      kind: GoogleTasksErrorKind.unknown,
+      commitState: MutationCommitState.uncertain,
+    );
+  }
+
+  void _recordMutationSuccess<T>(
+    GoogleTasksMutationOperation<T> operation, {
+    required int statusCode,
+    required Uri requestUri,
+    required List<int> requestBody,
+    required List<int> responseBody,
+  }) {
+    _diagnostics.record(
+      DiagnosticEvent(
+        code: 'google_tasks.mutation_succeeded',
+        operation: 'write',
+        fields: <DiagnosticField>[
+          DiagnosticField.safe('mutation', operation.diagnosticName),
+          DiagnosticField.safe('status', statusCode),
+          DiagnosticField.private('requestUri', requestUri),
+          DiagnosticField.private('requestBody', _safeUtf8(requestBody)),
+          DiagnosticField.private('responseBody', _safeUtf8(responseBody)),
+        ],
+      ),
+    );
+  }
+
+  void _recordMutationFailure<T>(
+    GoogleTasksMutationOperation<T> operation,
+    GoogleTasksMutationError error, {
+    Uri? requestUri,
+    List<int>? requestBody,
+    List<int>? responseBody,
+    int? statusCode,
+  }) {
+    _diagnostics.record(
+      DiagnosticEvent(
+        code: 'google_tasks.mutation_failed',
+        operation: 'write',
+        fields: <DiagnosticField>[
+          DiagnosticField.safe('mutation', operation.diagnosticName),
+          DiagnosticField.safe('failureCode', error.failure.code),
+          DiagnosticField.safe('errorKind', error.kind.name),
+          DiagnosticField.safe('commitState', error.commitState.name),
+          if (statusCode != null) DiagnosticField.safe('status', statusCode),
+          if (requestUri != null)
+            DiagnosticField.private('requestUri', requestUri),
+          if (requestBody != null)
+            DiagnosticField.private('requestBody', _safeUtf8(requestBody)),
+          if (responseBody != null)
+            DiagnosticField.private('responseBody', _safeUtf8(responseBody)),
+        ],
+      ),
+    );
+  }
+
   void _recordFailure(
     String resourceType,
     Failure failure, {
@@ -400,10 +843,90 @@ final class _ResponseTooLarge implements Exception {
   const _ResponseTooLarge();
 }
 
+GoogleTasksMutationResult<T> _mutationErrorResult<T>(
+  GoogleTasksMutationError error,
+) => switch (error.commitState) {
+  MutationCommitState.notCommitted => RejectedMutation<T>(error),
+  MutationCommitState.uncertain => UncertainMutation<T>(error),
+};
+
+GoogleTasksMutationError _stalePathMutationError(int statusCode) =>
+    GoogleTasksMutationError(
+      failure: Failure(
+        code: 'google_tasks.stale_path_unresolved',
+        category: FailureCategory.remote,
+        operation: FailureOperation.write,
+        retry: RetryClassification.unknown,
+        impact: 'The intended Google Tasks mutation is not yet confirmed.',
+        safeSummary:
+            'A possibly stale task-list path cannot confirm the mutation.',
+        remoteContext: RemoteFailureContext(
+          statusCode: statusCode,
+          retryAfter: null,
+        ),
+      ),
+      kind: GoogleTasksErrorKind.stalePath,
+      commitState: MutationCommitState.uncertain,
+    );
+
+GoogleTasksMutationError _uncertainMutationError(
+  String code,
+  String summary, {
+  bool transient = false,
+  int? statusCode,
+}) => GoogleTasksMutationError(
+  failure: Failure(
+    code: code,
+    category: transient
+        ? FailureCategory.network
+        : FailureCategory.unsupportedRemoteState,
+    operation: FailureOperation.write,
+    retry: transient
+        ? RetryClassification.transient
+        : RetryClassification.unknown,
+    impact: 'A Google Tasks mutation may have completed remotely.',
+    action: transient ? FailureAction.retry : null,
+    safeSummary: summary,
+    remoteContext: statusCode == null
+        ? null
+        : RemoteFailureContext(statusCode: statusCode, retryAfter: null),
+  ),
+  kind: transient
+      ? GoogleTasksErrorKind.transient
+      : GoogleTasksErrorKind.unknown,
+  commitState: MutationCommitState.uncertain,
+);
+
+Failure _asWriteFailure(Failure failure) => Failure(
+  code: failure.code,
+  category: failure.category,
+  operation: FailureOperation.write,
+  retry: failure.retry,
+  impact: failure.impact,
+  action: failure.action,
+  safeSummary: failure.safeSummary,
+  sensitiveContext: failure.sensitiveContext,
+  remoteContext: failure.remoteContext,
+);
+
+Failure _malformedMutationSuccessFailure() => const Failure(
+  code: 'google_tasks.malformed_mutation_success',
+  category: FailureCategory.unsupportedRemoteState,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'A Google Tasks mutation may have completed remotely.',
+  safeSummary: 'Google returned a malformed Tasks mutation response.',
+);
+
 Future<void> _defaultTimeoutSignal(Duration duration) =>
     Future<void>.delayed(duration);
 
 String _safeUtf8(List<int> bytes) => utf8.decode(bytes, allowMalformed: true);
+
+String _eligibilityImpact(FailureOperation operation) =>
+    operation == FailureOperation.write
+    ? 'Google Tasks data cannot be changed.'
+    : 'Google Tasks data cannot be read.';
 
 Failure _cancelledFailure() => const Failure(
   code: 'google_tasks.read_cancelled',

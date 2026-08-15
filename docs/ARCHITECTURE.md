@@ -144,6 +144,13 @@ abstract interface class GoogleTasksService {
     PageToken? pageToken,
     GoogleTasksReadCancellation? cancellation,
   });
+  Future<GoogleTasksMutationResult<RemoteTaskList>> createTaskList(
+    CreateTaskListOperation operation,
+  );
+  Future<GoogleTasksMutationResult<RemoteTask>> patchTask(
+    PatchTaskOperation operation,
+  );
+  // Rename/delete/create/move operations use the same typed boundary.
 }
 
 abstract interface class SyncRunner {
@@ -163,7 +170,18 @@ JSON collection decoding. Known fields are type-checked; future unknown optional
 fields are deliberately ignored. Live resources require the fields needed for a
 remote base, while a positive `deleted=true` task is represented separately and
 may retain only the fields actually present. Assigned resources and malformed
-rows fail the containing scope. Mutation methods join this port only in S07.
+rows fail the containing scope.
+
+The S07 mutation boundary uses explicit operation values for task-list
+create/rename/delete and task create/complete-snapshot patch/delete/move. It
+validates exact paths, bodies, placement queries, task `If-Match`, response
+status/content type/body shape, and the same response-size bound as reads. It
+does not retry. A valid canonical response is `Committed`; a conclusive
+rejection is `Rejected`; transport loss, malformed/unexpected success, 5xx,
+unknown responses, and any possibly stale source-list path are `Uncertain` so
+later synchronization policy must resolve them. JSON `null` for task `notes`
+and `due` is admitted by the isolated S07 probe; no unproved optional clear
+spelling is available through the operation DTO.
 
 ## Identity and account scoping
 

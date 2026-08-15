@@ -1096,11 +1096,13 @@ not authorize an implementation to guess or silently fall back:
 
 1. Complete safe platform-auth evidence for expired, revoked, and wrong-scope
    cases. The current probe establishes only malformed bearer as 401.
-2. Before admitting the task-write adapter, probe the exact clear representation
-   for every optional writable content field. Before admitting delete/move race
-   handling, probe task DELETE through the old source list after a concurrent
-   cross-list move. Until then the conservative policy never confirms deletion
-   from an old-list absence or unverified stale-path response.
+2. The S07 P12 follow-up admits JSON `null` for the supported optional `notes`
+   and `due` fields. Any future writable optional field needs equivalent
+   evidence. The stale-source DELETE follow-up admits only the conservative
+   adapter boundary because its retained resolution omitted the exact HTTP
+   status and destination live/tombstone bit. Delete/move recovery therefore
+   still never confirms deletion from an old-list absence or stale-path
+   response; exact fake semantics require a retained sanitized result.
 3. Probe `webViewLink` presence/navigation with an ordinary and recurring task
    created in the current Google UI before implementing the recurrence escape
    hatch.
