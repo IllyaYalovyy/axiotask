@@ -22,7 +22,7 @@ replaced with an empty cache.
 | `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
 | `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content. |
 | `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. Provisional task creates record their list and optional parent references; list edits need no edge. |
-| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure evidence for retry and uncertainty recovery. |
+| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure or uncertainty evidence for recovery. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -91,6 +91,11 @@ application adapter and device-only preferences remain the S22A slice.
   older attempt cannot clear a newer coalesced generation. Atomic create
   acknowledgement binds the Google ID and canonical base/projection while
   resolving only the matching generation.
+- S15A selects only pending unbound create generations after complete applicable
+  enumeration. It claims lists before top-level tasks before children; resolved
+  dependency Google IDs are read from account-scoped cache rows. A conclusive
+  rejection stores a failed code, while an interrupted or ambiguous create
+  stores an uncertain code and is not selected again by this non-retry slice.
 - S13B Stop/Resume updates only `account_preferences.sync_enabled` in one
   account-scoped transaction. It does not delete or rewrite cache rows, remote
   bases, health evidence, unresolved counts, account identity, or credentials.

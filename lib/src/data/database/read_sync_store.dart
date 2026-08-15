@@ -3,20 +3,146 @@ import 'package:drift/drift.dart';
 import '../../core/failure.dart';
 import '../../data/google_tasks/dto.dart';
 import '../../domain/model/tasks.dart';
+import '../../sync/create_operations.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/run.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
+import 'desired_state_dao.dart';
 import 'sync_health_dao.dart';
 
-final class DatabaseReadSyncStore implements ReadSyncStore {
+final class DatabaseReadSyncStore implements SyncStore {
   DatabaseReadSyncStore(this._database)
     : _cache = CacheDao(_database),
+      _desired = DesiredStateDao(_database),
       _health = SyncHealthDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
+  final DesiredStateDao _desired;
   final SyncHealthDao _health;
+
+  @override
+  Future<void> recoverCreateAttempts({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) async {
+    await _desired.recoverInFlightCreates(
+      accountId: accountId,
+      recoveredAt: recoveredAt,
+    );
+  }
+
+  @override
+  Future<CreateOperationClaim?> claimNextCreate({
+    required AccountId accountId,
+    required String runId,
+    required DateTime claimedAt,
+  }) => _database.transaction(() async {
+    final candidate = await _desired.readNextCreateCandidate(accountId, runId);
+    if (candidate == null) return null;
+    switch (candidate.resourceType) {
+      case DesiredCreateResourceType.taskList:
+        final attempt = await _desired.claimTaskList(
+          accountId: accountId,
+          taskListId: candidate.taskListId,
+          claimedAt: claimedAt,
+        );
+        return CreateOperationClaim.taskList(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          title: attempt.title!,
+        );
+      case DesiredCreateResourceType.task:
+        final attempt = await _desired.claimTask(
+          accountId: accountId,
+          taskId: candidate.taskId!,
+          claimedAt: claimedAt,
+        );
+        return CreateOperationClaim.task(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          taskId: candidate.taskId!,
+          parentTaskId: candidate.parentTaskId,
+          taskListRemoteId: RemoteTaskListId(candidate.taskListRemoteId!.value),
+          parentRemoteId: candidate.parentRemoteId == null
+              ? null
+              : RemoteTaskId(candidate.parentRemoteId!.value),
+          title: attempt.title!,
+          notes: attempt.notes,
+          status: attempt.status!,
+          due: attempt.due,
+        );
+    }
+  });
+
+  @override
+  Future<void> acknowledgeTaskListCreate({
+    required AccountId accountId,
+    required CreateOperationClaim claim,
+    required RemoteTaskList remote,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) => _desired.acknowledgeTaskList(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    remoteId: TaskListRemoteId(remote.id.value),
+    title: remote.title,
+    etag: remote.etag,
+    remoteUpdatedAt: remote.updated,
+    observedPublicationId: observationId,
+    acknowledgedAt: acknowledgedAt,
+  );
+
+  @override
+  Future<void> acknowledgeTaskCreate({
+    required AccountId accountId,
+    required CreateOperationClaim claim,
+    required RemoteLiveTask remote,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) async {
+    if (remote.parentId != claim.parentRemoteId) {
+      throw const DesiredStateInvariantException(
+        'create_parent_response_mismatch',
+      );
+    }
+    await _desired.acknowledgeTask(
+      accountId: accountId,
+      attemptId: claim.attemptId,
+      remoteId: TaskRemoteId(remote.id.value),
+      taskListId: claim.taskListId,
+      parentTaskId: claim.parentTaskId,
+      title: remote.title,
+      notes: remote.notes,
+      status: _taskStatus(remote.status),
+      due: _taskDate(remote.due),
+      position: remote.position,
+      etag: remote.etag,
+      remoteUpdatedAt: remote.updated,
+      observedPublicationId: observationId,
+      acknowledgedAt: acknowledgedAt,
+    );
+  }
+
+  @override
+  Future<void> resolveCreateFailure({
+    required AccountId accountId,
+    required CreateOperationClaim claim,
+    required Failure failure,
+    required bool uncertain,
+    required DateTime resolvedAt,
+  }) => _desired.transitionAttempt(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    state: uncertain
+        ? DesiredStateLifecycle.uncertain
+        : DesiredStateLifecycle.failed,
+    transitionedAt: resolvedAt,
+    failureCode: failure.code,
+  );
 
   @override
   Future<void> recoverReadRun(AccountId accountId) async {

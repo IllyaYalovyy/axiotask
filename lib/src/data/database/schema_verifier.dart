@@ -139,4 +139,4 @@ const List<String> _expectedTableNames = <String>[
 ];
 
 const String _expectedSchemaDigest =
-    '09e2f2e52fcf4179e4982714592e9d177c34f3020b0c7c719a37d43812c1cfde';
+    '590efe19b87cd5844ab30ec542d5044dfbb84cfac30c99c7a7fcc87b36a266c6';

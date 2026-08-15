@@ -127,6 +127,9 @@ final class DesiredStateAttemptRecord {
     required this.desiredStateId,
     required this.generation,
     required this.title,
+    required this.notes,
+    required this.status,
+    required this.due,
     required this.state,
     required this.failureCode,
     required this.claimedAt,
@@ -138,10 +141,33 @@ final class DesiredStateAttemptRecord {
   final int desiredStateId;
   final int generation;
   final String? title;
+  final String? notes;
+  final TaskStatus? status;
+  final TaskDate? due;
   final DesiredStateLifecycle state;
   final String? failureCode;
   final DateTime claimedAt;
   final DateTime lastTransitionAt;
+}
+
+enum DesiredCreateResourceType { taskList, task }
+
+final class DesiredCreateCandidate {
+  const DesiredCreateCandidate({
+    required this.resourceType,
+    required this.taskListId,
+    required this.taskId,
+    required this.parentTaskId,
+    required this.taskListRemoteId,
+    required this.parentRemoteId,
+  });
+
+  final DesiredCreateResourceType resourceType;
+  final TaskListId taskListId;
+  final TaskId? taskId;
+  final TaskId? parentTaskId;
+  final TaskListRemoteId? taskListRemoteId;
+  final TaskRemoteId? parentRemoteId;
 }
 
 final class DesiredStateDao {
@@ -172,6 +198,175 @@ final class DesiredStateDao {
       ..addColumns(<Expression<Object>>[count])
       ..where(_database.desiredStateRows.accountId.equals(accountId.value));
     return (await query.getSingle()).read(count) ?? 0;
+  }
+
+  Future<DesiredCreateCandidate?> readNextCreateCandidate(
+    AccountId accountId,
+    String runId,
+  ) async {
+    final row = await _database
+        .customSelect(
+          '''
+          SELECT
+            d.resource_type,
+            d.target_task_list_id,
+            d.target_task_id,
+            d.desired_task_list_id,
+            d.desired_parent_task_id,
+            desired_list.remote_id AS desired_list_remote_id,
+            desired_parent.remote_id AS desired_parent_remote_id
+          FROM desired_states d
+          LEFT JOIN task_lists target_list
+            ON target_list.account_id = d.account_id
+           AND target_list.id = d.target_task_list_id
+          LEFT JOIN tasks target_task
+            ON target_task.account_id = d.account_id
+           AND target_task.id = d.target_task_id
+          LEFT JOIN task_lists desired_list
+            ON desired_list.account_id = d.account_id
+           AND desired_list.id = d.desired_task_list_id
+          LEFT JOIN tasks desired_parent
+            ON desired_parent.account_id = d.account_id
+           AND desired_parent.id = d.desired_parent_task_id
+          WHERE d.account_id = ?1
+            AND EXISTS (
+              SELECT 1
+              FROM scope_completeness list_scope
+              WHERE list_scope.account_id = d.account_id
+                AND list_scope.scope_kind = 'task_lists'
+                AND list_scope.publication_id = ?2
+                AND list_scope.is_complete = 1
+            )
+            AND d.desired_lifecycle = 'present'
+            AND d.state = 'pending'
+            AND d.base_remote_id IS NULL
+            AND (
+              (d.resource_type = 'task_list'
+                AND target_list.remote_id IS NULL)
+              OR
+              (d.resource_type = 'task'
+                AND target_task.remote_id IS NULL
+                AND desired_list.remote_id IS NOT NULL
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM scope_completeness task_scope
+                    WHERE task_scope.account_id = d.account_id
+                      AND task_scope.scope_kind = 'tasks'
+                      AND task_scope.task_list_id = d.desired_task_list_id
+                      AND task_scope.publication_id = ?2
+                      AND task_scope.is_complete = 1
+                  )
+                  OR EXISTS (
+                    SELECT 1
+                    FROM task_list_remote_bases created_list_base
+                    WHERE created_list_base.account_id = d.account_id
+                      AND created_list_base.task_list_id = d.desired_task_list_id
+                      AND created_list_base.observed_publication_id
+                        LIKE 'mutation:' || ?2 || ':%'
+                  )
+                )
+                AND (d.desired_parent_task_id IS NULL
+                  OR desired_parent.remote_id IS NOT NULL))
+            )
+          ORDER BY
+            CASE
+              WHEN d.resource_type = 'task_list' THEN 0
+              WHEN d.desired_parent_task_id IS NULL THEN 1
+              ELSE 2
+            END,
+            d.local_causal_sequence,
+            d.id
+          LIMIT 1
+          ''',
+          variables: <Variable<Object>>[
+            Variable<int>(accountId.value),
+            Variable<String>(runId),
+          ],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            _database.desiredStateRows,
+            _database.taskListCacheRows,
+            _database.taskCacheRows,
+            _database.scopeCompletenessRows,
+            _database.taskListRemoteBases,
+          },
+        )
+        .getSingleOrNull();
+    if (row == null) return null;
+    final resourceType = row.read<String>('resource_type');
+    if (resourceType == 'task_list') {
+      return DesiredCreateCandidate(
+        resourceType: DesiredCreateResourceType.taskList,
+        taskListId: TaskListId(row.read<int>('target_task_list_id')),
+        taskId: null,
+        parentTaskId: null,
+        taskListRemoteId: null,
+        parentRemoteId: null,
+      );
+    }
+    if (resourceType != 'task') {
+      throw const DesiredStateInvariantException('unknown_resource_type');
+    }
+    final parentTaskId = row.readNullable<int>('desired_parent_task_id');
+    final parentRemoteId = row.readNullable<String>('desired_parent_remote_id');
+    return DesiredCreateCandidate(
+      resourceType: DesiredCreateResourceType.task,
+      taskListId: TaskListId(row.read<int>('desired_task_list_id')),
+      taskId: TaskId(row.read<int>('target_task_id')),
+      parentTaskId: parentTaskId == null ? null : TaskId(parentTaskId),
+      taskListRemoteId: TaskListRemoteId(
+        row.read<String>('desired_list_remote_id'),
+      ),
+      parentRemoteId: parentRemoteId == null
+          ? null
+          : TaskRemoteId(parentRemoteId),
+    );
+  }
+
+  Future<int> recoverInFlightCreates({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) {
+    return _database.transaction(() async {
+      final accountExists = await (_database.select(
+        _database.accounts,
+      )..where((row) => row.id.equals(accountId.value))).getSingleOrNull();
+      if (accountExists == null) return 0;
+      final attempts =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.state.equals('in_flight') &
+                    row.baseRemoteId.isNull(),
+              ))
+              .get();
+      for (final attempt in attempts) {
+        await (_database.update(
+          _database.desiredStateAttemptRows,
+        )..where((row) => row.id.equals(attempt.id))).write(
+          DesiredStateAttemptRowsCompanion(
+            state: const Value<String>('uncertain'),
+            failureCode: const Value<String>('sync.create_interrupted'),
+            lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+          ),
+        );
+        await (_database.update(_database.desiredStateRows)..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.id.equals(attempt.desiredStateId) &
+                  row.generation.equals(attempt.generation),
+            ))
+            .write(
+              DesiredStateRowsCompanion(
+                state: const Value<String>('uncertain'),
+                failureCode: const Value<String>('sync.create_interrupted'),
+                lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+              ),
+            );
+      }
+      await _recomputeCounts(accountId);
+      return attempts.length;
+    });
   }
 
   Future<TaskListDesiredStateRecord> writeTaskListPresent({
@@ -524,7 +719,8 @@ final class DesiredStateDao {
       }
       final from = _state(attempt.state);
       if (!_allowedAttemptTransitions[from]!.contains(state) ||
-          (state == DesiredStateLifecycle.failed) !=
+          (state == DesiredStateLifecycle.failed ||
+                  state == DesiredStateLifecycle.uncertain) !=
               (failureCode != null && failureCode.isNotEmpty)) {
         throw const DesiredStateInvariantException(
           'illegal_attempt_transition',
@@ -638,9 +834,26 @@ final class DesiredStateDao {
         )..where((row) => row.id.equals(desired.id))).write(
           DesiredStateRowsCompanion(
             title: Value<String>(title),
+            baseRemoteId: Value<String>(remoteId.value),
+            baseEtag: Value<String?>(etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
+            baseObservedPublicationId: Value<String>(observedPublicationId),
+            baseTitle: Value<String>(title),
             state: const Value<String>('confirmed'),
             failureCode: const Value<String?>(null),
             lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
+          ),
+        );
+      } else {
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            baseRemoteId: Value<String>(remoteId.value),
+            baseEtag: Value<String?>(etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
+            baseObservedPublicationId: Value<String>(observedPublicationId),
+            baseTitle: Value<String>(title),
           ),
         );
       }
@@ -749,9 +962,26 @@ final class DesiredStateDao {
             dueEpochDay: Value<int?>(_epochDay(due)),
             desiredTaskListId: Value<int>(taskListId.value),
             desiredParentTaskId: Value<int?>(parentTaskId?.value),
+            baseRemoteId: Value<String>(remoteId.value),
+            baseEtag: Value<String?>(etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
+            baseObservedPublicationId: Value<String>(observedPublicationId),
+            baseTitle: Value<String>(title),
             state: const Value<String>('confirmed'),
             failureCode: const Value<String?>(null),
             lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
+          ),
+        );
+      } else {
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            baseRemoteId: Value<String>(remoteId.value),
+            baseEtag: Value<String?>(etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(remoteUpdatedAt?.toUtc()),
+            baseObservedPublicationId: Value<String>(observedPublicationId),
+            baseTitle: Value<String>(title),
           ),
         );
       }
@@ -906,6 +1136,9 @@ DesiredStateAttemptRecord _mapAttempt(DesiredStateAttemptRow row) =>
       desiredStateId: row.desiredStateId,
       generation: row.generation,
       title: row.title,
+      notes: row.notes,
+      status: row.status == null ? null : _status(row.status),
+      due: _taskDate(row.dueEpochDay),
       state: _state(row.state),
       failureCode: row.failureCode,
       claimedAt: row.claimedAt.toUtc(),

@@ -64,6 +64,15 @@ integration closes and reopens a temporary database immediately after an edit;
 the synthetic screenshot composition covers provisional and stopped-sync task
 states without loading Google or normal application storage.
 
+S15A adds no dependency or storage namespace. After complete applicable remote
+enumeration, the headless engine claims immutable create generations and sends
+eligible list, top-level-task, and child-task creates in dependency order.
+Canonical responses bind Google IDs and remote bases atomically without
+replacing local IDs. The focused Linux application integration starts from a
+stopped isolated temporary database, resumes through the real coordinator, and
+confirms against the strict in-memory Google service; it opens no OAuth or
+normal application storage.
+
 S04 locks `flutter_secure_storage` 10.3.1 and the resolved Linux implementation
 3.0.2. Linux builds require Fedora's `libsecret` and `libsecret-devel` packages;
 runtime access requires an active Secret Service, normally `gnome-keyring` in a

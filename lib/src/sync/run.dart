@@ -1,6 +1,7 @@
 import '../core/failure.dart';
 import '../data/google_tasks/dto.dart';
 import '../domain/model/tasks.dart';
+import 'create_operations.dart';
 import 'phase.dart';
 
 final class SyncRunId {
@@ -51,6 +52,7 @@ final class SyncRunReport {
     required this.remoteTaskLists,
     required this.remoteTasks,
     required this.resourceProjectionWrites,
+    this.createOperations = 0,
     this.ineligibleReason,
     this.failure,
   });
@@ -65,6 +67,7 @@ final class SyncRunReport {
   final int remoteTaskLists;
   final int remoteTasks;
   final int resourceProjectionWrites;
+  final int createOperations;
 }
 
 final class ReadSyncEligibility {
@@ -144,6 +147,8 @@ abstract interface class ReadSyncStore {
   });
 }
 
+abstract interface class SyncStore implements ReadSyncStore, CreateSyncStore {}
+
 abstract interface class SyncRunObserver {
   void phaseStarted(SyncRunId runId, SyncRunPhase phase);
 }
@@ -159,6 +164,10 @@ enum SyncRunBoundaryKind {
   phase,
   beforePagePublication,
   afterPagePublication,
+  beforeOperationClaim,
+  afterOperationClaim,
+  beforeRemoteAcknowledgement,
+  afterRemoteAcknowledgement,
   beforeFinalization,
 }
 
@@ -168,12 +177,14 @@ final class SyncRunBoundary {
     this.scope,
     this.pageIndex,
     this.phase,
+    this.operationAttemptId,
   });
 
   final SyncRunBoundaryKind kind;
   final String? scope;
   final int? pageIndex;
   final SyncRunPhase? phase;
+  final int? operationAttemptId;
 
   @override
   bool operator ==(Object other) =>
@@ -181,10 +192,12 @@ final class SyncRunBoundary {
       kind == other.kind &&
       scope == other.scope &&
       pageIndex == other.pageIndex &&
-      phase == other.phase;
+      phase == other.phase &&
+      operationAttemptId == other.operationAttemptId;
 
   @override
-  int get hashCode => Object.hash(kind, scope, pageIndex, phase);
+  int get hashCode =>
+      Object.hash(kind, scope, pageIndex, phase, operationAttemptId);
 }
 
 enum SyncRunControlDecision { proceed, interrupt }

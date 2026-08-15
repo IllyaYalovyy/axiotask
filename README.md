@@ -19,8 +19,14 @@ debounce capped at ten seconds, and every run has a two-minute monotonic
 deadline. Validated pages appear incrementally; only complete durable
 finalization can show Synced. Partial, malformed, unavailable, unauthorized, or
 timed-out results preserve usable cache under an explicit non-green status.
-Outbound mutation reconciliation, delete/move/reorder, retry,
-Android lifecycle wiring, and account connection UI remain later slices.
+Eligible provisional list, top-level-task, and child-task creates publish after
+complete applicable enumeration in strict list→parent→child order. Each request
+is durably claimed first; a canonical response atomically binds the Google ID
+and remote base without changing local identity. Independent creates continue
+after a conclusive failure, failed dependencies remain unattempted, confirmed
+creates never replay, and uncertain creates remain non-green without content
+matching. Updates, conflict resolution, delete/move/reorder, retry, Android
+lifecycle wiring, and account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -33,7 +39,7 @@ Read walks use the existing publication/completeness rows as their durable walk
 identity and update last success only during complete finalization. Durable
 list/task desired state, dependency metadata, and immutable attempt snapshots
 are part of schema version 1; unresolved local work keeps health non-green until
-a later outbound slice confirms it. The exact schema-v1 contract is documented in
+remote confirmation. The exact schema-v1 contract is documented in
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
 ## Supported development environment
@@ -108,8 +114,8 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Restores Linux authorization and performs read-only verification for an existing configured account; missing configuration/authorization fails closed | Safe structured fields only |
-| Sensitive development | `lib/main_development.dart` | Read-only verification must match the explicit dedicated-account subject before any Google request | Local private context retained; credentials always redacted |
+| Production-safe | `lib/main.dart` | Restores Linux authorization, verifies an existing configured account, and publishes eligible creates; missing configuration/authorization fails closed | Safe structured fields only |
+| Sensitive development | `lib/main_development.dart` | Verification and eligible create publication require the explicit dedicated-account subject to match before any Google request | Local private context retained; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Creates only its isolated synthetic account and verifies against an in-process synthetic read service | Safe in-memory history |
 
 Run the synthetic composition with a unique lowercase instance name:
@@ -166,7 +172,8 @@ encodes due dates at UTC midnight, uses the live-proven JSON `null` spelling to
 clear notes and due, and requires canonical 200 resource or empty 204 responses.
 It performs no retries or reconciliation: response loss, malformed success,
 unknown responses, and possibly stale source-list paths remain explicit
-uncertain results for later synchronization work.
+uncertain results. The engine currently consumes only list/task create
+operations; other mutation kinds remain adapter-only until their owning slices.
 
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic

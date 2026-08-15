@@ -1,9 +1,9 @@
 # Target architecture
 
 Status: **Stage 3 and Stage 4 synchronization design accepted; deterministic
-foreground coordination plus Linux lifecycle/Stop/Resume control and durable
-offline list and task-content acknowledgement are implemented through S14B.
-Retry, Android lifecycle control and outbound reconciliation remain
+foreground coordination, Linux lifecycle/Stop/Resume control, durable offline
+list/task acknowledgement, and ordered Google create publication are implemented
+through S15A. Retry, Android lifecycle control and non-create reconciliation remain
 later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

@@ -489,8 +489,9 @@ class DesiredStateAttemptRows extends Table {
     'FOREIGN KEY (account_id, desired_state_id) '
         'REFERENCES desired_states(account_id, id) ON DELETE CASCADE',
     "CHECK (desired_lifecycle = 'deleted' OR title IS NOT NULL)",
-    "CHECK ((state = 'failed' AND length(failure_code) > 0) OR "
-        "(state <> 'failed' AND failure_code IS NULL))",
+    "CHECK ((state IN ('failed', 'uncertain') "
+        'AND length(failure_code) > 0) OR '
+        "(state NOT IN ('failed', 'uncertain') AND failure_code IS NULL))",
   ];
 }
 

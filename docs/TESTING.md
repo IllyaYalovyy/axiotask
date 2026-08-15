@@ -206,6 +206,15 @@ content acknowledgement, and completion. The Linux integration reopens a
 temporary stopped-sync database and renders the acknowledged task without any
 Google or normal-storage access.
 
+S15A extends the engine/store/fake boundary with durable create claiming and
+list→top-level→child execution. The focused suite asserts exact payload/call
+order, stable local IDs, atomic Google-ID/base binding, independent partial
+success, dependency suppression, restart after claim and acknowledgement,
+newer-generation preservation, duplicate-content independence, and uncertain
+create non-matching. The Linux application integration resumes an isolated
+stopped database through the production coordinator and observes Pending become
+Good only after remote confirmation.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly
