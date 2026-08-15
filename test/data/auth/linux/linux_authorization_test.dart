@@ -168,10 +168,12 @@ void main() {
       final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
         ..omitTasksScope = true;
       final credentials = MemoryCredentialStore();
+      final history = InMemoryDiagnosticHistory();
       final adapter = createAdapter(
         endpoint: endpoint,
         credentials: credentials,
         subjects: MemoryPinnedSubjectStore(),
+        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
       );
 
       final result = await adapter.connect();
@@ -182,6 +184,10 @@ void main() {
       );
       expect(credentials.bundle, isNull);
       expect(endpoint.tasksCalls, 0);
+      expect(
+        history.records.map((record) => record.renderedText).join('\n'),
+        contains('grantedScopes=openid'),
+      );
     });
 
     test(

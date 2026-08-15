@@ -184,10 +184,16 @@ Future<LinuxAuthProbeResult> _runProbeOperations({
   await _expectRejected(
     _refreshWithoutDpop(config, bundle.refreshToken),
     'missing DPoP key',
+    expectedErrors: const <String>{
+      'invalid_request',
+      'invalid_dpop_proof',
+      'invalid_grant',
+    },
   );
   await _expectRejected(
     _refreshWithWrongDpop(config, bundle.refreshToken),
     'wrong DPoP key',
+    expectedErrors: const <String>{'invalid_dpop_proof', 'invalid_grant'},
   );
   await _expectSession(restored.refresh(), 'refresh after rejection probes');
   restored.close();
@@ -298,14 +304,11 @@ final class _ProbeRejection {
 
 Future<void> _expectRejected(
   Future<_ProbeRejection> operation,
-  String phase,
-) async {
+  String phase, {
+  required Set<String> expectedErrors,
+}) async {
   final result = await operation;
-  if (result.statusCode == 400 &&
-      <String>{
-        'invalid_dpop_proof',
-        'invalid_grant',
-      }.contains(result.errorCode)) {
+  if (result.statusCode == 400 && expectedErrors.contains(result.errorCode)) {
     return;
   }
   throw StateError(

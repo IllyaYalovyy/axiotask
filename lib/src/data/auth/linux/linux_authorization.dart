@@ -522,7 +522,9 @@ final class LinuxAuthorization implements AuthorizationPort {
     final credentials = client.credentials;
     if (!(credentials.scopes?.contains(googleTasksScope) ?? false)) {
       client.close();
-      return _fail(_missingScopeFailure());
+      return _fail(
+        _missingScopeFailure(credentials.scopes ?? const <String>[]),
+      );
     }
     final refreshToken = credentials.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) {
@@ -645,10 +647,8 @@ final class LinuxAuthorization implements AuthorizationPort {
           DiagnosticField.safe('retry', failure.retry.name),
           DiagnosticField.safe('action', failure.action?.name ?? 'none'),
           DiagnosticField.safe('summary', failure.safeSummary),
-          DiagnosticField.private(
-            'developmentContext',
-            failure.sensitiveContext,
-          ),
+          if (failure.sensitiveContext case final context?)
+            DiagnosticField.private('developmentContext', context),
         ],
       ),
     );
@@ -761,14 +761,17 @@ Failure _dpopKeyInvalidFailure() => const Failure(
   safeSummary: 'The saved DPoP key is missing or invalid.',
 );
 
-Failure _missingScopeFailure() => const Failure(
+Failure _missingScopeFailure(Iterable<String> grantedScopes) => Failure(
   code: 'auth.tasks_scope_absent',
   category: FailureCategory.authorization,
   operation: FailureOperation.authorize,
   retry: RetryClassification.permanent,
   impact: 'Google Tasks access was not granted.',
   action: FailureAction.connect,
-  safeSummary: 'The Google Tasks scope is absent.',
+  safeSummary:
+      'Google sign-in completed, but Google Tasks access was not granted. '
+      'Reconnect and select Google Tasks access on the consent screen.',
+  sensitiveContext: 'grantedScopes=${grantedScopes.join(',')}',
 );
 
 Failure _refreshTokenAbsentFailure() => const Failure(
