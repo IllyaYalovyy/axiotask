@@ -83,22 +83,42 @@ request and exposes ambiguity; retry and reconciliation remain sync-engine work.
 ### 4. Stateful fake Google service
 
 `FakeGoogleTasksService` implements the same narrow port as the HTTP adapter and
-maintains real list/task state. It supports:
+maintains strict in-memory list/task state. S08 supports:
 
-- pagination and stable ordering;
-- etags and stale-version failures;
-- soft-deleted representations where the real API uses them;
-- per-operation transient and permanent failures;
-- authentication expiration and reauthorization;
-- rate limiting and retry hints;
-- malformed or partial responses;
-- commit-then-fail/lost-response outcomes;
-- remote changes injected between awaited operations;
-- deterministic cancellation and process-restart snapshots;
-- call recording for API-efficiency assertions.
+- deterministic pagination and canonical test ordering without claiming that
+  Google's collection pages have stable order or snapshot isolation;
+- resource/collection etags and task stale-version rejection;
+- one supported parent/child level, opaque sibling positions, completion
+  cascades, and stable task identity across same-list and cross-list moves;
+- duplicate creates, task tombstones and parent-delete cascades, and complete
+  list removal with the observed repeated-delete representation;
+- every ordinary service mutation plus a canonical request ledger with exact
+  operation counts;
+- an in-memory HTTP transport that fails closed on unsupported methods, paths,
+  queries, flags, missing or invalid required headers, bodies, and hierarchy
+  references.
 
-A shared contract suite prevents convenient fake behavior from drifting away
-from the verified Google adapter behavior.
+A shared contract suite runs the same observable scenarios against the direct
+fake and `HttpGoogleTasksService` over that in-memory transport. Later S09
+slices own barriers, response-loss/partial-delivery controls, auth/lifecycle,
+and other fault scripting; S08 does not invent those behaviors.
+
+The fake behavior/evidence mapping is:
+
+| Fake behavior | API evidence boundary |
+|---|---|
+| Full-view task flags and documented maximum request sizes | Official `tasklists.list` / `tasks.list` contract; `API-001`, `API-002`, `REL-018` |
+| Deterministic page tokens and list ordering | Test-only canonical mechanism. P3 / `API-002` explicitly prevents treating it as Google snapshot isolation or a server order guarantee. |
+| Lexicographic sibling positions and parent/previous placement | Official Task resource and `tasks.insert` / `tasks.move`; `API-005` |
+| Task ETag changes and stale task mutation rejection | Controlled P1; `API-003` |
+| List ETag changes without conditional-write safety | Controlled P2; `API-003` |
+| Repeated identical creates produce distinct IDs | Controlled P5; `API-004` |
+| Stable task ID and subtree preservation across a cross-list move | Controlled P7; `API-004`, `API-005` |
+| Task tombstones, parent-delete cascade, list disappearance, and repeated list delete | Controlled P4; `API-004`, `API-005` |
+| Parent completion cascade and completed-parent insertion/move result | Controlled P8; `API-005` |
+| UTC-midnight due values and JSON-null clearing for `notes` / `due` | Controlled P9 and S07 P12 follow-up; `API-005`, `API-009` |
+| Possibly stale source-list task operations | Exact server effect remains absent. The direct fake returns conservative uncertainty without mutation; the HTTP adapter's admitted stale-path boundary remains covered separately. |
+| Exact request ledger | Test-harness observation only; it makes `RUN-011`–`RUN-013` assertable and is not presented as Google behavior. |
 
 ### 5. Synchronization subsystem tests
 
