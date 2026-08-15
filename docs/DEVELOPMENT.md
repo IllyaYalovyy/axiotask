@@ -36,8 +36,10 @@ S02 additionally locks `drift` 2.34.3, `sqlite3` 3.5.1 with bundled SQLite
 `build_runner` 2.15.1. The generated Drift output is committed. The normal
 quality gate regenerates it and fails if any generated Dart file changes.
 
-The version-1 database contains only account identity. File-backed connections
-run on a Drift background isolate and measured `foreign_keys=ON`,
+The version-1 database contains the account-scoped Google list/task cache,
+separate remote bases, page-scope completeness, and relational preference
+foundation documented in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md). File-backed
+connections run on a Drift background isolate and measured `foreign_keys=ON`,
 `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`, and
 `wal_autocheckpoint=1000` on Fedora and the API 36 Android emulator. Explicit
 `wal_checkpoint(TRUNCATE)` is supported and tested. In-memory tests retain
@@ -179,6 +181,7 @@ cannot block or dilute desktop completion.
 - `docs/UX.md`: adaptive interaction and visual review principles.
 - `docs/SECURITY.md`: threat model and privacy controls.
 - `docs/DEPENDENCIES.md`: admitted/rejected dependencies and rationale.
+- `docs/DATABASE_SCHEMA.md`: exact version-1 tables and persistence invariants.
 - `README.md`: supported build/run/test instructions once executable code exists.
 
 Documentation is updated in the same coherent commit as the behavior it governs.

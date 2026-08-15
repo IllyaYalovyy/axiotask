@@ -4,17 +4,23 @@ import 'package:drift/drift.dart';
 
 import 'connection.dart';
 import 'schema_verifier.dart';
+import 'tables.dart';
 
 part 'app_database.g.dart';
 
-class Accounts extends Table {
-  IntColumn get id => integer().autoIncrement()();
-
-  TextColumn get googleSubject =>
-      text().unique().check(googleSubject.length.isBiggerThanValue(0))();
-}
-
-@DriftDatabase(tables: <Type>[Accounts])
+@DriftDatabase(
+  tables: <Type>[
+    Accounts,
+    TaskListCacheRows,
+    TaskCacheRows,
+    TaskListRemoteBases,
+    TaskRemoteBases,
+    ScopeCompletenessRows,
+    AccountPreferenceRows,
+    TaskListPreferenceRows,
+    ViewPreferenceRows,
+  ],
+)
 class AppDatabase extends _$AppDatabase {
   AppDatabase._(super.executor);
 

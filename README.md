@@ -3,12 +3,20 @@
 Axiotask is a native Flutter client for Google Tasks on Fedora GNOME and
 Android. The current foundation provides a minimal launchable shell,
 constructor-injected core/authorization/diagnostic boundaries, and the
-versioned Drift/SQLite persistence foundation. Linux additionally has a
-capability-proven GNOME Secret Service credential boundary and a Linux system-
-browser authorization adapter. A strict, injected Google Tasks HTTP boundary
-can read validated list/task pages and issue strict typed mutations;
-synchronization orchestration and task workflows arrive only in their approved
-later slices.
+versioned, account-scoped Drift/SQLite Google cache and read repository. Linux
+additionally has a capability-proven GNOME Secret Service credential boundary
+and a Linux system-browser authorization adapter. A strict, injected Google
+Tasks HTTP boundary can read validated list/task pages and issue strict typed
+mutations; synchronization orchestration and task workflows arrive only in
+their approved later slices.
+
+The cache stores stable local list/task identities separately from nullable,
+account-unique Google IDs and retains confirmed remote bases plus page-scope
+completeness. Every repository query requires an account partition. Cached rows
+are always labeled unverified; even a complete recorded page walk is not a
+freshness or healthy-sync claim. Desired mutations and sync attempts are not yet
+implemented. The exact schema-v1 contract is documented in
+[`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
 ## Supported development environment
 
@@ -312,6 +320,8 @@ flutter test test/app/composition/isolation_test.dart
 flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
+flutter test test/domain/tasks_repository_test.dart
+flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
 flutter test test/support/fake_lifecycle_test.dart
@@ -370,3 +380,4 @@ or iOS.
 - [Testing strategy](docs/TESTING.md)
 - [Security and privacy](docs/SECURITY.md)
 - [Dependency decisions](docs/DEPENDENCIES.md)
+- [Database schema v1](docs/DATABASE_SCHEMA.md)

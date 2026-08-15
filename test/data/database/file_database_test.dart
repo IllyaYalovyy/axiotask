@@ -136,6 +136,37 @@ void main() {
     );
   });
 
+  test('rejects and preserves a modified version-1 cache schema', () async {
+    final file = File('${temporaryRoot.path}/modified-v1.sqlite');
+    final original = await AppDatabase.openFile(file);
+    await original.createAccount('synthetic-modified-schema');
+    await original.close();
+    final modified = sqlite.sqlite3.open(file.path)
+      ..execute('ALTER TABLE tasks ADD COLUMN unexpected_value TEXT');
+    modified.close();
+
+    expect(
+      AppDatabase.openFile(file),
+      throwsA(
+        isA<SchemaVerificationException>().having(
+          (error) => error.code,
+          'code',
+          'schema_contract_mismatch',
+        ),
+      ),
+    );
+
+    final preserved = sqlite.sqlite3.open(
+      file.path,
+      mode: sqlite.OpenMode.readOnly,
+    );
+    addTearDown(preserved.close);
+    expect(
+      preserved.select('PRAGMA table_info(tasks)').map((row) => row['name']),
+      contains('unexpected_value'),
+    );
+  });
+
   test('rejects and preserves a corrupt existing database', () async {
     final file = File('${temporaryRoot.path}/corrupt.sqlite');
     final corruptBytes = Uint8List.fromList(<int>[

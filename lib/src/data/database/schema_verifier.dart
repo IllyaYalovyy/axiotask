@@ -1,10 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 const int currentDatabaseSchemaVersion = 1;
 const String expectedSchemaFingerprint =
-    'axiotask-schema-v1:accounts(id,google_subject)';
+    'axiotask-schema-v1:account-scoped-google-cache';
 
 final class SchemaVerificationException implements Exception {
   const SchemaVerificationException(this.code);
@@ -74,15 +76,20 @@ Future<void> verifyOpenDatabaseSchema(
 }
 
 void _verifySchemaContract(List<List<Object?>> schema) {
-  if (schema.length != 1 ||
-      schema.single.length != 2 ||
-      schema.single[0] != 'accounts') {
+  if (schema.length != _expectedTableNames.length ||
+      schema.any((row) => row.length != 2) ||
+      !List<Object?>.generate(
+        schema.length,
+        (index) => schema[index][0],
+      ).every(_expectedTableNames.contains)) {
     throw const SchemaVerificationException('schema_objects_mismatch');
   }
-
-  final normalizedSql = _normalizeSql(schema.single[1]);
-  if (normalizedSql != _expectedAccountsSql) {
-    throw const SchemaVerificationException('accounts_schema_mismatch');
+  final contract = schema
+      .map((row) => '${row[0]}:${_normalizeSql(row[1])}')
+      .join('\n');
+  if (sha256.convert(utf8.encode(contract)).toString() !=
+      _expectedSchemaDigest) {
+    throw const SchemaVerificationException('schema_contract_mismatch');
   }
 }
 
@@ -115,8 +122,17 @@ const String _schemaContractQuery = '''
   ORDER BY name
 ''';
 
-const String _expectedAccountsSql =
-    'createtableaccounts('
-    'idintegernotnullprimarykeyautoincrement,'
-    'google_subjecttextnotnullcheck(length(google_subject)>0)unique'
-    ')';
+const List<String> _expectedTableNames = <String>[
+  'account_preferences',
+  'accounts',
+  'scope_completeness',
+  'task_list_preferences',
+  'task_list_remote_bases',
+  'task_lists',
+  'task_remote_bases',
+  'tasks',
+  'view_preferences',
+];
+
+const String _expectedSchemaDigest =
+    '06b34bb71253e034efff33017903c1fc1e0dddb18f54015b41e1ba7876ea5fbc';
