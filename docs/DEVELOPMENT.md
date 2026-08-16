@@ -268,6 +268,16 @@ Ignored `task-workflows-{light,dark}.png` captures use fixed 2026-08-15 data and
 were reviewed at the Linux runner's 1280×720 size; they read no normal storage,
 preferences, credentials, OAuth configuration, or Google account.
 
+S24A adds no dependency, schema version, OAuth configuration, account access,
+or storage namespace. Its parser accepts only a terminal ISO date or the exact
+today, tomorrow, next week, and next month phrases, using the injected local
+date and S23B month clamping. Quick add displays the stripped title, selected
+Google list, and interpreted date before Enter; dismissing the parsed chip
+keeps the phrase as literal title text. The isolated Linux integration closes
+and reopens one temporary database before the ordinary create engine publishes
+the task. Curated and actual `quick-capture-{light,dark}.png` images use only
+fixed synthetic content and show the keyboard-focused preview.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

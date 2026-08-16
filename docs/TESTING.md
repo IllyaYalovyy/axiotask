@@ -370,6 +370,13 @@ completion and every date route share these repository commands. Update-engine
 coverage publishes Google's returned/refetched P8 child cascade in the same run
 and retains the existing impossible-child-reopen and Google-won policy evidence.
 
+S24A adds `test/domain/quick_capture_parser_test.dart` for exact terminal
+grammar, invalid calendar dates, phrase position, ambiguity, and clamped month
+boundaries. `test/features/tasks/quick_add_view_model_test.dart` proves preview
+dismissal, target revalidation, persistence rollback, publication-after-commit,
+and duplicate-submit suppression. Adaptive-shell widget tests prove the title,
+Google list, and parsed or smart-view default date are visible before Enter.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -455,6 +462,13 @@ S23B extends that integration with complete/reopen, a fixed-local-date shortcut,
 multi-row due propagation, restart-visible grouped Undo, and exact restoration
 of all prior dates in the same isolated file-backed composition.
 
+S24A adds `integration_test/quick_capture_linux_test.dart`. It enters one
+synthetic parsed capture through the production widget/ViewModel/repository
+path, closes and reopens the unique temporary SQLite file, then resumes the
+production coordinator and proves one ordinary list create plus one ordinary
+task create bind Google identities without losing the stripped title or due
+date.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the
@@ -486,6 +500,12 @@ adds actual `task-workflows-light` / `task-workflows-dark` scenarios at 1280×72
 The reviewed captures show an explicit and inherited effective date, one
 completed child, non-green pending health, and restart-durable grouped Undo
 using only fixed synthetic content.
+
+S24A adds curated `quick_capture_light` / `quick_capture_dark` goldens at
+1280×800 and matching actual `quick-capture-light` / `quick-capture-dark`
+application scenarios at 1280×720. The reviewed captures show the focused
+single-line keyboard field, stripped title, visible Google list target, exact
+date chip with dismissal affordance, and non-green pending synchronization.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

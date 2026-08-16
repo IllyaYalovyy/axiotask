@@ -11,6 +11,8 @@ scenarios=(
   task-workflows-dark
   smart-views-light
   smart-views-dark
+  quick-capture-light
+  quick-capture-dark
   health-cached-pending
   health-partial-failed
   health-first-good

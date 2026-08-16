@@ -30,6 +30,9 @@ S23B adds one date policy for local shortcuts and edited-row-wins propagation,
 transactional due-cascade snapshots with restart-durable grouped Undo, detail
 completion/date actions and effective-date provenance, plus same-run publication
 of Google's authoritative child completion cascade after a parent completes.
+S24A adds a pure terminal-date capture parser and a quick-add ViewModel that
+keeps the Google list, stripped title, and any interpreted date visible before
+delegating one create to the existing durable task repository boundary.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

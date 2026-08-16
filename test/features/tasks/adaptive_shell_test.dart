@@ -140,7 +140,13 @@ void main() {
     await tester.ensureVisible(addSubtask);
     await tester.tap(addSubtask);
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'New child');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'New child',
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(fixture.tasks.created.last.parentTaskId, const TaskId(11));
@@ -473,7 +479,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Create task list'), findsOneWidget);
       expect(find.textContaining('local-only'), findsNothing);
-      await tester.enterText(find.byType(TextField), 'Offline project');
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        'Offline project',
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pump();
       final dialogSubmit = find.descendant(
@@ -514,7 +526,13 @@ void main() {
     await tester.tap(find.byTooltip('Rename selected task list'));
     await tester.pumpAndSettle();
     expect(find.text('Rename task list'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Stopped rename');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Stopped rename',
+    );
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pump();
     expect(lists.renamed, isEmpty, reason: 'uncommitted editor text is inert');
@@ -541,7 +559,13 @@ void main() {
 
       await tester.tap(find.byTooltip('Create task'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), '離線 🌍');
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        '離線 🌍',
+      );
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pump();
       final submit = find.descendant(
@@ -558,6 +582,70 @@ void main() {
       expect(find.text('Create task'), findsNothing);
     },
   );
+
+  testWidgets('quick add previews target and terminal date before Enter', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('quick-add-input')),
+      'Send synthetic invoice tomorrow',
+    );
+    await tester.pump();
+
+    expect(find.text('Create “Send synthetic invoice”'), findsOneWidget);
+    expect(find.text('Synthetic inbox'), findsWidgets);
+    expect(find.text('Due 2026-08-16'), findsOneWidget);
+    expect(fixture.tasks.created, isEmpty);
+
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(fixture.tasks.created.single.title, 'Send synthetic invoice');
+    expect(fixture.tasks.created.single.due, TaskDate(2026, 8, 16));
+  });
+
+  testWidgets('quick add smart-view default is explicit before creation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Focus').first);
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('quick-add-input')),
+      'Visible smart capture',
+    );
+    await tester.pump();
+
+    expect(find.text('Due 2026-08-15'), findsOneWidget);
+    expect(find.text('Synthetic inbox'), findsWidgets);
+    await tester.tap(find.byKey(const Key('quick-add-submit')));
+    await tester.pumpAndSettle();
+
+    expect(fixture.tasks.created.single.due, TaskDate(2026, 8, 15));
+  });
 
   testWidgets('task content editor keeps text inert until one valid save', (
     tester,

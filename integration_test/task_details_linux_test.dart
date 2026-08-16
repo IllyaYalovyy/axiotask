@@ -123,7 +123,13 @@ void main() {
 
     await tester.tap(find.widgetWithText(OutlinedButton, 'Add subtask'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Created Linux child');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Created Linux child',
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(find.text('Created Linux child'), findsOneWidget);

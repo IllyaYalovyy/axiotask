@@ -88,7 +88,13 @@ void main() {
 
     await tester.tap(find.byTooltip('Rename selected task list'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Renamed while stopped');
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Renamed while stopped',
+    );
     await tester.tap(find.widgetWithText(FilledButton, 'Rename'));
     await tester.pumpAndSettle();
 

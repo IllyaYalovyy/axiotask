@@ -78,6 +78,14 @@ diagnostics, and issues no repair mutation. General retry, bulk delete, Clear
 completed, Android lifecycle wiring, and
 account connection UI remain later slices.
 
+The desktop collection also provides one-line quick capture with an explicit
+Google-list target. A terminal ISO date or the exact today, tomorrow, next week,
+or next month phrase produces a visible stripped-title/date preview before
+Enter; dismissing the date keeps the phrase as literal title text. Smart views
+show their honest date default before acknowledgement, and every accepted task
+uses the same restart-safe desired-state create and Google publication path as
+ordinary task creation.
+
 The desktop shell also projects Focus, Upcoming, Missed, Unscheduled, All, and
 per-list collections from the cached supported task graph. A parent's effective
 date is the earlier of its explicit date and unfinished direct-child dates;
@@ -482,6 +490,8 @@ flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/task_detail_view_model_test.dart
+flutter test test/domain/quick_capture_parser_test.dart
+flutter test test/features/tasks/quick_add_view_model_test.dart
 flutter test test/features/tasks/smart_views_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
 flutter test test/features/tasks/smart_views_widget_test.dart
@@ -510,6 +520,7 @@ flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 flutter test integration_test/preferences_native_smoke_test.dart -d linux
 flutter test integration_test/smart_views_restart_linux_test.dart -d linux
 flutter test integration_test/task_details_linux_test.dart -d linux
+flutter test integration_test/quick_capture_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -521,7 +532,8 @@ provisional list and task creates, stopped list/task content edits, active Stop,
 stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
 protected-depth failure, fixed-time light/dark smart views, and long-content
 light/dark task details plus effective-date/completion/durable-Undo workflow
-states into the ignored `screenshots/actual/` directory, then inspect each PNG:
+states, plus keyboard-focused light/dark quick-capture previews, into the ignored
+`screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh

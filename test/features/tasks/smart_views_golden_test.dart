@@ -58,6 +58,31 @@ void main() {
           '../../goldens/linux/smart_views_${brightness.name}.png',
         ),
       );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: brightness,
+            colorSchemeSeed: const Color(0xff315da8),
+            fontFamily: 'GoldenRoboto',
+            useMaterial3: true,
+          ),
+          home: AdaptiveShell(
+            key: ValueKey<String>('quick-capture-${brightness.name}'),
+            viewModel: viewModel,
+            initialQuickAddInput: 'Prepare synthetic brief tomorrow',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile(
+          '../../goldens/linux/quick_capture_${brightness.name}.png',
+        ),
+      );
     });
   }
 }

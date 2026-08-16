@@ -5,10 +5,13 @@ import 'package:flutter/services.dart';
 
 import '../domain/model/preferences.dart';
 import '../domain/model/tasks.dart';
+import '../domain/policy/date_workflow.dart';
 import '../domain/policy/smart_views.dart';
 import '../domain/policy/subtask_progress.dart';
+import '../features/tasks/quick_add_view_model.dart';
 import '../features/tasks/task_detail_view_model.dart';
 import '../features/tasks/tasks_view_model.dart';
+import '../features/tasks/widgets/quick_add.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
 import '../sync/health/sync_health.dart';
@@ -17,27 +20,97 @@ final class AdaptiveShell extends StatefulWidget {
   const AdaptiveShell({
     required this.viewModel,
     this.onHealthAction,
+    this.initialQuickAddInput,
     super.key,
   });
 
   final TasksViewModel viewModel;
   final ValueChanged<SyncHealthAction>? onHealthAction;
+  final String? initialQuickAddInput;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
 }
 
 final class _AdaptiveShellState extends State<AdaptiveShell> {
+  late QuickAddViewModel _quickAdd;
+  final FocusNode _quickAddFocus = FocusNode(debugLabel: 'Quick add');
+
   @override
   void initState() {
     super.initState();
     widget.viewModel.start();
+    _quickAdd = _createQuickAdd();
+    if (widget.initialQuickAddInput case final input?) {
+      _quickAdd.setInput(input);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _quickAddFocus.requestFocus();
+      });
+    }
+    widget.viewModel.addListener(_refreshQuickAdd);
   }
 
   @override
   void didUpdateWidget(covariant AdaptiveShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.viewModel != widget.viewModel) widget.viewModel.start();
+    if (oldWidget.viewModel != widget.viewModel) {
+      oldWidget.viewModel.removeListener(_refreshQuickAdd);
+      _quickAdd.dispose();
+      widget.viewModel.start();
+      _quickAdd = _createQuickAdd();
+      if (widget.initialQuickAddInput case final input?) {
+        _quickAdd.setInput(input);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _quickAddFocus.requestFocus();
+        });
+      }
+      widget.viewModel.addListener(_refreshQuickAdd);
+    }
+  }
+
+  QuickAddViewModel _createQuickAdd() => QuickAddViewModel(
+    accountId: widget.viewModel.accountId,
+    repository: widget.viewModel.tasksRepository,
+    today: () => widget.viewModel.state.today,
+    lists: () => widget.viewModel.state.orderedTaskLists,
+    defaultTarget: _defaultQuickAddTarget,
+    defaultDue: _defaultQuickAddDue,
+    localEditCommitted: widget.viewModel.localEditCommitted,
+    created: (_, due) async {
+      if (widget.viewModel.state.selectedSmartView == SmartView.missed &&
+          due == widget.viewModel.state.today) {
+        widget.viewModel.selectSmartView(SmartView.focus);
+      }
+    },
+  );
+
+  TaskListId? _defaultQuickAddTarget() {
+    final state = widget.viewModel.state;
+    if (state.selectedTaskListId case final selected?) return selected;
+    for (final list in state.orderedTaskLists) {
+      if (!state.excludedTaskLists.contains(list.id)) return list.id;
+    }
+    return state.orderedTaskLists.firstOrNull?.id;
+  }
+
+  TaskDate? _defaultQuickAddDue() =>
+      switch (widget.viewModel.state.selectedSmartView) {
+        SmartView.focus || SmartView.missed => widget.viewModel.state.today,
+        SmartView.upcoming => resolveDateShortcut(
+          widget.viewModel.state.today,
+          DateShortcut.nextWeek,
+        ),
+        SmartView.unscheduled || SmartView.all || null => null,
+      };
+
+  void _refreshQuickAdd() => _quickAdd.refreshContext();
+
+  @override
+  void dispose() {
+    widget.viewModel.removeListener(_refreshQuickAdd);
+    _quickAdd.dispose();
+    _quickAddFocus.dispose();
+    super.dispose();
   }
 
   @override
@@ -108,6 +181,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                       builder: (context, constraints) => _ShellBody(
                         state: state,
                         viewModel: widget.viewModel,
+                        quickAdd: _quickAdd,
+                        quickAddFocus: _quickAddFocus,
                         wide: constraints.maxWidth >= 900,
                       ),
                     ),
@@ -207,11 +282,15 @@ final class _ShellBody extends StatelessWidget {
   const _ShellBody({
     required this.state,
     required this.viewModel,
+    required this.quickAdd,
+    required this.quickAddFocus,
     required this.wide,
   });
 
   final TasksViewState state;
   final TasksViewModel viewModel;
+  final QuickAddViewModel quickAdd;
+  final FocusNode quickAddFocus;
   final bool wide;
 
   @override
@@ -225,7 +304,12 @@ final class _ShellBody extends StatelessWidget {
     final detail = TaskDetailViewModel.fromTasks(viewModel);
     final body = !wide
         ? detail.state == null
-              ? _TaskCollection(state: state, viewModel: viewModel)
+              ? _TaskCollection(
+                  state: state,
+                  viewModel: viewModel,
+                  quickAdd: quickAdd,
+                  quickAddFocus: quickAddFocus,
+                )
               : TaskDetailsPane(viewModel: detail, compact: true)
         : Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -236,7 +320,12 @@ final class _ShellBody extends StatelessWidget {
               ),
               const VerticalDivider(width: 1),
               Expanded(
-                child: _TaskCollection(state: state, viewModel: viewModel),
+                child: _TaskCollection(
+                  state: state,
+                  viewModel: viewModel,
+                  quickAdd: quickAdd,
+                  quickAddFocus: quickAddFocus,
+                ),
               ),
               const VerticalDivider(width: 1),
               SizedBox(
@@ -419,10 +508,17 @@ final class _ListPreferenceMenu extends StatelessWidget {
 }
 
 final class _TaskCollection extends StatelessWidget {
-  const _TaskCollection({required this.state, required this.viewModel});
+  const _TaskCollection({
+    required this.state,
+    required this.viewModel,
+    required this.quickAdd,
+    required this.quickAddFocus,
+  });
 
   final TasksViewState state;
   final TasksViewModel viewModel;
+  final QuickAddViewModel quickAdd;
+  final FocusNode quickAddFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -535,6 +631,12 @@ final class _TaskCollection extends StatelessWidget {
                     icon: const Icon(Icons.delete_forever_outlined),
                   ),
                 ],
+              ),
+              const SizedBox(height: 14),
+              QuickAddBar(
+                viewModel: quickAdd,
+                lists: state.orderedTaskLists,
+                focusNode: quickAddFocus,
               ),
               const SizedBox(height: 4),
               Row(

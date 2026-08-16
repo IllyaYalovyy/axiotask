@@ -52,7 +52,8 @@ final class _HealthScreenshotSequenceState
       await output.create(recursive: true);
       for (var index = 0; index < _captureScenarios.length; index += 1) {
         await _settleFrames();
-        if (_captureScenarios[index].name.startsWith('smart-views-')) {
+        if (_captureScenarios[index].name.startsWith('smart-views-') ||
+            _captureScenarios[index].name.startsWith('quick-capture-')) {
           _viewModel.selectSmartView(SmartView.focus);
         }
         _viewModel.selectTask(const TaskId(11));
@@ -126,6 +127,10 @@ final class _HealthScreenshotSequenceState
         home: AdaptiveShell(
           key: ValueKey<String>(_captureScenarios[_index].name),
           viewModel: _viewModel,
+          initialQuickAddInput:
+              _captureScenarios[_index].name.startsWith('quick-capture-')
+              ? 'Prepare synthetic brief tomorrow'
+              : null,
           onHealthAction: (_) {},
         ),
       ),
@@ -366,6 +371,24 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
     health: _health(
       SyncHealthOutcome.pending,
       pendingReason: SyncPendingReason.verifying,
+    ),
+  ),
+  (
+    name: 'quick-capture-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'quick-capture-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
     ),
   ),
   (
