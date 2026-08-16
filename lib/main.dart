@@ -8,6 +8,7 @@ import 'src/app/composition/release_composition.dart';
 import 'src/app/connectivity.dart';
 import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
+import 'src/features/diagnostics/diagnostics_view.dart';
 
 export 'src/app/axiotask_app.dart';
 
@@ -26,6 +27,10 @@ Future<void> main() async {
   runApp(
     AxiotaskBootstrap(
       diagnostics: composition.diagnostics,
+      diagnosticsBuilder: (_) => ReleaseDiagnosticsHost(
+        history: composition.diagnosticHistory,
+        exporter: composition.diagnosticExporter,
+      ),
       openRuntime: () => TasksFeatureRuntime.open(
         composition,
         lifecycle: lifecycle,

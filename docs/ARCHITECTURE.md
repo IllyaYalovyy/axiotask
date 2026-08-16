@@ -60,6 +60,10 @@ delete normalizes selected hierarchy roots, records one account-scoped durable
 30-second group, and restores every root snapshot or none. Clear completed is a
 separate confirmed, non-Undoable list-scoped command whose pure selector omits
 any completed parent with an unfinished child before one immediate transaction.
+S29A/S29B add bounded observable release-safe and sensitive-development
+diagnostic products with separate persistence/export boundaries, live local
+viewing/search/copy/clear, unconditional credential redaction, and a
+development renderer imported only by the development entry point.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

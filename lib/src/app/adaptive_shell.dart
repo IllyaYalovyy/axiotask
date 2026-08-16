@@ -36,6 +36,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.initialBulkAddInput,
     this.initialSearchQuery,
     this.navigation,
+    this.diagnosticsBuilder,
     super.key,
   });
 
@@ -45,6 +46,7 @@ final class AdaptiveShell extends StatefulWidget {
   final String? initialBulkAddInput;
   final String? initialSearchQuery;
   final AppNavigationController? navigation;
+  final WidgetBuilder? diagnosticsBuilder;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -542,6 +544,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                             state.selectedTaskId == null &&
                             state.tasks.isNotEmpty,
                         onOpenNavigation: _navigation.openDrawer,
+                        diagnosticsBuilder: widget.diagnosticsBuilder,
                       ),
                       if (state.syncControlFailureMessage case final message?)
                         MaterialBanner(
@@ -720,6 +723,7 @@ final class _ApplicationHeader extends StatelessWidget {
     required this.showSearch,
     required this.onOpenNavigation,
     this.onHealthAction,
+    this.diagnosticsBuilder,
   });
 
   final SyncHealth health;
@@ -732,6 +736,7 @@ final class _ApplicationHeader extends StatelessWidget {
   final VoidCallback onShowShortcuts;
   final bool showSearch;
   final VoidCallback onOpenNavigation;
+  final WidgetBuilder? diagnosticsBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -845,7 +850,11 @@ final class _ApplicationHeader extends StatelessWidget {
             ],
           ),
         ),
-        SyncHealthHeader(health: health, onAction: onHealthAction),
+        SyncHealthHeader(
+          health: health,
+          onAction: onHealthAction,
+          diagnosticsBuilder: diagnosticsBuilder,
+        ),
       ],
     );
   }

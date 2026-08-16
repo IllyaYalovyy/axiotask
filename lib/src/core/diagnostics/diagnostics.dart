@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -63,6 +64,20 @@ final class DiagnosticEvent {
 
 abstract interface class DiagnosticSink {
   void record(DiagnosticEvent event);
+}
+
+abstract interface class DiagnosticClipboardPort {
+  Future<void> writeText(String value);
+}
+
+abstract interface class DiagnosticExportPort {
+  Future<DiagnosticExportReceipt> export(List<DiagnosticRecord> records);
+}
+
+final class DiagnosticExportReceipt {
+  const DiagnosticExportReceipt({required this.fileName});
+
+  final String fileName;
 }
 
 final class DiagnosticRecord {
@@ -170,6 +185,8 @@ final class DiagnosticRecord {
 abstract interface class DiagnosticHistory {
   List<DiagnosticRecord> get records;
 
+  Stream<List<DiagnosticRecord>> watchRecords();
+
   void append(DiagnosticRecord record);
 
   void clear();
@@ -188,26 +205,46 @@ final class InMemoryDiagnosticHistory implements DiagnosticHistory {
 
   final int maxRecords;
   final List<DiagnosticRecord> _records = <DiagnosticRecord>[];
+  final StreamController<List<DiagnosticRecord>> _changes =
+      StreamController<List<DiagnosticRecord>>.broadcast(sync: true);
   var _nextSequence = 1;
+  var _closed = false;
 
   @override
   List<DiagnosticRecord> get records =>
       List<DiagnosticRecord>.unmodifiable(_records);
 
   @override
+  Stream<List<DiagnosticRecord>> watchRecords() => _changes.stream;
+
+  @override
   void append(DiagnosticRecord record) {
+    _requireOpen();
     _records.add(record.withSequence(_nextSequence));
     _nextSequence += 1;
     _trimToBound(_records, maxRecords);
+    _emit();
   }
 
   @override
   void clear() {
+    _requireOpen();
     _records.clear();
+    _emit();
   }
 
   @override
-  void close() {}
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    unawaited(_changes.close());
+  }
+
+  void _emit() => _changes.add(records);
+
+  void _requireOpen() {
+    if (_closed) throw StateError('Diagnostic history is closed.');
+  }
 }
 
 final class PersistentDiagnosticHistory implements DiagnosticHistory {
@@ -254,6 +291,8 @@ final class PersistentDiagnosticHistory implements DiagnosticHistory {
   final DiagnosticProduct product;
   final int maxRecords;
   final List<DiagnosticRecord> _records;
+  final StreamController<List<DiagnosticRecord>> _changes =
+      StreamController<List<DiagnosticRecord>>.broadcast(sync: true);
   int _nextSequence;
   var _closed = false;
 
@@ -262,12 +301,16 @@ final class PersistentDiagnosticHistory implements DiagnosticHistory {
       List<DiagnosticRecord>.unmodifiable(_records);
 
   @override
+  Stream<List<DiagnosticRecord>> watchRecords() => _changes.stream;
+
+  @override
   void append(DiagnosticRecord record) {
     _requireOpen();
     _records.add(record.withSequence(_nextSequence));
     _nextSequence += 1;
     _trimToBound(_records, maxRecords);
     _persist();
+    _changes.add(records);
   }
 
   @override
@@ -275,11 +318,14 @@ final class PersistentDiagnosticHistory implements DiagnosticHistory {
     _requireOpen();
     _records.clear();
     _persist();
+    _changes.add(records);
   }
 
   @override
   void close() {
+    if (_closed) return;
     _closed = true;
+    unawaited(_changes.close());
   }
 
   void _persist() {

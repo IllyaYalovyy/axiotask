@@ -340,19 +340,36 @@ application-support file
 persists at most 500 safe records in `axiotask-diagnostics-safe.json`. Each
 version-1 record has a monotonic sequence, UTC timestamp, subsystem, event kind,
 stable code, operation, and bounded fields. Oldest-record cleanup happens on
-append and reopen. The full in-app viewer remains the S29B UI slice. The sink
-records
+append and reopen. S29B adds the in-app viewer. The sink records
 all application failures and the boundary/state-transition evidence needed to
 reproduce them, including test-account task content and detailed API/database
-context, without sampling or suppressing errors. When the later viewer slice is
-implemented, it is one interaction from sync details and supports live search,
-copy, explicit export, and clear. Its diagnostic file and future exports remain
-inside application support or ignored development storage, never the repository.
+context, without sampling or suppressing errors. The viewer is one interaction
+from the synchronization header and supports live search, copy-visible,
+explicit local JSON export, and clear. The development view continuously warns
+that the visible stream and exports contain private test-account data. Release
+and development exports use separate application-support subdirectories and
+receive a second unconditional credential-redaction pass.
 
 The normal release entry point constructs only the production-safe sink and has
-no runtime diagnostic-mode flag. Behavioral composition tests prove the
-separation. Credential and authorization material is redacted before either
-logging path in every build.
+no runtime diagnostic-mode flag or import of the development renderer.
+Behavioral composition tests prove the separation. Credential and authorization
+material is redacted before either logging path in every build.
+
+Focused behavior, native Linux, golden, and actual screenshot evidence is run
+with:
+
+```bash
+flutter test test/features/diagnostics/diagnostics_view_model_test.dart
+flutter test test/features/diagnostics/diagnostics_view_test.dart
+flutter test test/data/diagnostics/local_diagnostic_exporter_test.dart
+flutter test test/features/diagnostics/diagnostics_golden_test.dart
+flutter test integration_test/diagnostics_linux_test.dart -d linux
+./scripts/capture_linux_diagnostics_screenshots.sh
+```
+
+The screenshot command uses only in-memory synthetic records, writes beneath
+ignored `screenshots/actual/`, and opens no database, preferences, secure
+storage, OAuth configuration, or Google adapter.
 
 `lib/main.dart`, `lib/main_development.dart`, and `lib/main_test.dart` are the
 production-safe, sensitive-development, and synthetic-test roots respectively.

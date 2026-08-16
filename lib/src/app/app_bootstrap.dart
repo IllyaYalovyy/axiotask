@@ -13,11 +13,13 @@ final class AxiotaskBootstrap extends StatefulWidget {
   const AxiotaskBootstrap({
     required this.openRuntime,
     required this.diagnostics,
+    this.diagnosticsBuilder,
     super.key,
   });
 
   final AxiotaskRuntimeOpener openRuntime;
   final DiagnosticSink diagnostics;
+  final WidgetBuilder? diagnosticsBuilder;
 
   @override
   State<AxiotaskBootstrap> createState() => _AxiotaskBootstrapState();
@@ -123,7 +125,12 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
   @override
   Widget build(BuildContext context) {
     final runtime = _runtime;
-    if (runtime != null) return AxiotaskApp(viewModel: runtime.viewModel);
+    if (runtime != null) {
+      return AxiotaskApp(
+        viewModel: runtime.viewModel,
+        diagnosticsBuilder: widget.diagnosticsBuilder,
+      );
+    }
     return DatabaseRecoveryApp(
       opening: _opening,
       retryOpen: _opening ? null : _open,

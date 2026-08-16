@@ -447,6 +447,15 @@ access from sync details. Release-composition tests prove that this sensitive
 view and sink cannot be constructed or enabled by runtime state; the release
 Diagnostics view exposes only production-safe summaries.
 
+S29B implements this evidence in
+`test/features/diagnostics/{diagnostics_view_model,diagnostics_view}_test.dart`,
+`test/data/diagnostics/local_diagnostic_exporter_test.dart`, and the release/
+development composition cases. The native Linux integration repeats
+reachability, allowed private-context retention, credential exclusion,
+copy/export, and clear using only an in-memory history and temporary export
+directory. Curated release-light/development-dark goldens and the ignored
+actual desktop captures verify the persistent warning and product separation.
+
 Desktop and phone constraints are explicit fixtures. Widget tests never use the
 normal database or platform auth.
 

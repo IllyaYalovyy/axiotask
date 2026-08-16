@@ -3,10 +3,16 @@ import 'package:flutter/material.dart';
 import '../../../sync/health/sync_health.dart';
 
 final class SyncHealthHeader extends StatelessWidget {
-  const SyncHealthHeader({required this.health, this.onAction, super.key});
+  const SyncHealthHeader({
+    required this.health,
+    this.onAction,
+    this.diagnosticsBuilder,
+    super.key,
+  });
 
   final SyncHealth health;
   final ValueChanged<SyncHealthAction>? onAction;
+  final WidgetBuilder? diagnosticsBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +74,17 @@ final class SyncHealthHeader extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               _CountChip(counts: health.counts, foreground: visual.foreground),
+              if (diagnosticsBuilder != null) ...<Widget>[
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Open diagnostics',
+                  color: visual.foreground,
+                  onPressed: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(builder: diagnosticsBuilder!),
+                  ),
+                  icon: const Icon(Icons.receipt_long_outlined),
+                ),
+              ],
               if (actionLabel != null) ...<Widget>[
                 const SizedBox(width: 12),
                 OutlinedButton(

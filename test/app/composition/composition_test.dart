@@ -9,6 +9,9 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/auth/linux/linux_authorization.dart';
 import 'package:axiotask/src/data/google_tasks/http_service.dart';
+import 'package:axiotask/src/features/diagnostics/development_diagnostics_view.dart';
+import 'package:axiotask/src/features/diagnostics/diagnostics_view.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -44,6 +47,33 @@ void main() {
       final output = composition.diagnosticHistory.records.single.renderedText;
       expect(output, isNot(contains(taskCanary)));
       expect(output, isNot(contains('credential-canary')));
+    },
+  );
+
+  testWidgets(
+    'release diagnostic construction exposes no development renderer or warning',
+    (tester) async {
+      final composition = ReleaseComposition.create(
+        diagnosticExporter: const _DiagnosticExporter(),
+      );
+      addTearDown(composition.diagnosticHistory.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReleaseDiagnosticsHost(
+            history: composition.diagnosticHistory,
+            exporter: composition.diagnosticExporter,
+          ),
+        ),
+      );
+
+      expect(find.byType(ReleaseDiagnosticsView), findsOneWidget);
+      expect(find.byType(DevelopmentDiagnosticsView), findsNothing);
+      expect(find.textContaining('private test-account data'), findsNothing);
+      expect(
+        find.textContaining('Production-safe local history'),
+        findsOneWidget,
+      );
     },
   );
 
@@ -179,4 +209,13 @@ void main() {
       expect(restore, isA<Failed<AccountSubject>>());
     },
   );
+}
+
+final class _DiagnosticExporter implements DiagnosticExportPort {
+  const _DiagnosticExporter();
+
+  @override
+  Future<DiagnosticExportReceipt> export(
+    List<DiagnosticRecord> records,
+  ) async => const DiagnosticExportReceipt(fileName: 'synthetic.json');
 }

@@ -6,6 +6,7 @@ import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
+import '../../data/diagnostics/local_diagnostic_exporter.dart';
 import 'app_composition.dart';
 import 'linux_read_transport.dart';
 
@@ -16,11 +17,13 @@ final class ReleaseComposition implements AppComposition {
     required this.authorization,
     required this.diagnostics,
     required this.diagnosticHistory,
+    required this.diagnosticExporter,
     required this.accountGuard,
     required this.linuxReadConfiguration,
   });
 
   factory ReleaseComposition.create({
+    DiagnosticExportPort? diagnosticExporter,
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
   }) {
@@ -29,12 +32,15 @@ final class ReleaseComposition implements AppComposition {
     );
     return ReleaseComposition._fromHistory(
       history: history,
+      diagnosticExporter:
+          diagnosticExporter ?? const _UnavailableDiagnosticExporter(),
       linuxReadConfiguration: linuxReadConfiguration,
     );
   }
 
   factory ReleaseComposition._fromHistory({
     required DiagnosticHistory history,
+    required DiagnosticExportPort diagnosticExporter,
     required LinuxReadConfiguration linuxReadConfiguration,
   }) {
     return ReleaseComposition._(
@@ -43,6 +49,7 @@ final class ReleaseComposition implements AppComposition {
       authorization: const UnavailableAuthorization(),
       diagnostics: ProductionDiagnosticSink(history),
       diagnosticHistory: history,
+      diagnosticExporter: diagnosticExporter,
       accountGuard: const NormalAccountGuard(),
       linuxReadConfiguration: linuxReadConfiguration,
     );
@@ -61,6 +68,13 @@ final class ReleaseComposition implements AppComposition {
     );
     return ReleaseComposition._fromHistory(
       history: history,
+      diagnosticExporter: LocalDiagnosticExporter(
+        Directory(
+          '${file.parent.path}${Platform.pathSeparator}'
+          'axiotask-diagnostic-exports',
+        ),
+        product: DiagnosticProduct.releaseSafe,
+      ),
       linuxReadConfiguration: linuxReadConfiguration,
     );
   }
@@ -81,6 +95,8 @@ final class ReleaseComposition implements AppComposition {
   final ProductionDiagnosticSink diagnostics;
 
   final DiagnosticHistory diagnosticHistory;
+
+  final DiagnosticExportPort diagnosticExporter;
 
   @override
   final NormalAccountGuard accountGuard;
@@ -116,6 +132,16 @@ final class ReleaseComposition implements AppComposition {
       allowsRealGoogle: true,
     ),
   );
+}
+
+final class _UnavailableDiagnosticExporter implements DiagnosticExportPort {
+  const _UnavailableDiagnosticExporter();
+
+  @override
+  Future<DiagnosticExportReceipt> export(List<DiagnosticRecord> records) =>
+      Future<DiagnosticExportReceipt>.error(
+        StateError('Local diagnostic export is unavailable.'),
+      );
 }
 
 Future<File> _resolveDiagnosticFile(CompositionBoundary boundary) async {

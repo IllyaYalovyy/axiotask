@@ -6,6 +6,7 @@ import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
+import '../../data/diagnostics/local_diagnostic_exporter.dart';
 import 'app_composition.dart';
 import 'linux_read_transport.dart';
 
@@ -16,6 +17,7 @@ final class DevelopmentComposition implements AppComposition {
     required this.authorization,
     required this.diagnostics,
     required this.diagnosticHistory,
+    required this.diagnosticExporter,
     required this.accountGuard,
     required this.configuredAccountSubject,
     required this.linuxReadConfiguration,
@@ -23,6 +25,7 @@ final class DevelopmentComposition implements AppComposition {
 
   factory DevelopmentComposition.create({
     AccountSubject? expectedDedicatedSubject,
+    DiagnosticExportPort? diagnosticExporter,
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
   }) {
@@ -31,6 +34,8 @@ final class DevelopmentComposition implements AppComposition {
     );
     return DevelopmentComposition._fromHistory(
       history: history,
+      diagnosticExporter:
+          diagnosticExporter ?? const _UnavailableDiagnosticExporter(),
       expectedDedicatedSubject: expectedDedicatedSubject,
       linuxReadConfiguration: linuxReadConfiguration,
     );
@@ -38,6 +43,7 @@ final class DevelopmentComposition implements AppComposition {
 
   factory DevelopmentComposition._fromHistory({
     required DiagnosticHistory history,
+    required DiagnosticExportPort diagnosticExporter,
     required AccountSubject? expectedDedicatedSubject,
     required LinuxReadConfiguration linuxReadConfiguration,
   }) {
@@ -47,6 +53,7 @@ final class DevelopmentComposition implements AppComposition {
       authorization: const UnavailableAuthorization(),
       diagnostics: SensitiveDevelopmentDiagnosticSink(history),
       diagnosticHistory: history,
+      diagnosticExporter: diagnosticExporter,
       accountGuard: DedicatedAccountGuard(expectedDedicatedSubject),
       configuredAccountSubject: expectedDedicatedSubject,
       linuxReadConfiguration: linuxReadConfiguration,
@@ -67,6 +74,13 @@ final class DevelopmentComposition implements AppComposition {
     );
     return DevelopmentComposition._fromHistory(
       history: history,
+      diagnosticExporter: LocalDiagnosticExporter(
+        Directory(
+          '${file.parent.path}${Platform.pathSeparator}'
+          'axiotask-development-diagnostic-exports',
+        ),
+        product: DiagnosticProduct.sensitiveDevelopment,
+      ),
       expectedDedicatedSubject: expectedDedicatedSubject,
       linuxReadConfiguration: linuxReadConfiguration,
     );
@@ -88,6 +102,8 @@ final class DevelopmentComposition implements AppComposition {
   final SensitiveDevelopmentDiagnosticSink diagnostics;
 
   final DiagnosticHistory diagnosticHistory;
+
+  final DiagnosticExportPort diagnosticExporter;
 
   @override
   final DedicatedAccountGuard accountGuard;
@@ -124,6 +140,16 @@ final class DevelopmentComposition implements AppComposition {
       allowsRealGoogle: true,
     ),
   );
+}
+
+final class _UnavailableDiagnosticExporter implements DiagnosticExportPort {
+  const _UnavailableDiagnosticExporter();
+
+  @override
+  Future<DiagnosticExportReceipt> export(List<DiagnosticRecord> records) =>
+      Future<DiagnosticExportReceipt>.error(
+        StateError('Local diagnostic export is unavailable.'),
+      );
 }
 
 Future<File> _resolveDiagnosticFile(CompositionBoundary boundary) async {

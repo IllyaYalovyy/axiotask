@@ -301,7 +301,17 @@ task/API/storage context locally. Production diagnostics discard private fields.
 Both paths redact credential fields and recognizable authorization material,
 including bearer/refresh tokens and OAuth callback URLs, before storage. There
 is no telemetry, automatic upload, runtime sensitive-mode switch, or committed
-diagnostic output. Viewing/export/clear UI is intentionally deferred to S29B.
+diagnostic output. The receipt icon in the always-visible synchronization
+header opens Diagnostics in one interaction. Both compositions provide live
+search, copy-visible, explicit local JSON export, and clear. The development
+surface keeps a sensitive-data warning visible; the release entry point imports
+and constructs only the production-safe surface.
+
+Explicit exports are written beneath the same application-support boundary as
+their source history, in `axiotask-diagnostic-exports/` for release or
+`axiotask-development-diagnostic-exports/` for development. The UI reports only
+the created filename, not a machine-specific path. Export performs an additional
+credential-redaction pass and never uploads or opens the result automatically.
 
 ## Linux secure credential storage
 
@@ -485,6 +495,10 @@ flutter test test/app_smoke_test.dart
 flutter test test/core/failure_outcome_test.dart
 flutter test test/core/clock_randomness_test.dart
 flutter test test/core/diagnostics_test.dart
+flutter test test/data/diagnostics/local_diagnostic_exporter_test.dart
+flutter test test/features/diagnostics/diagnostics_view_model_test.dart
+flutter test test/features/diagnostics/diagnostics_view_test.dart
+flutter test test/features/diagnostics/diagnostics_golden_test.dart
 flutter test test/app/composition/composition_test.dart
 flutter test test/app/composition/isolation_test.dart
 flutter test test/data/database/app_database_test.dart
@@ -576,6 +590,7 @@ flutter test integration_test/bulk_capture_linux_test.dart -d linux
 flutter test integration_test/bulk_operations_linux_test.dart -d linux
 flutter test integration_test/search_navigation_linux_test.dart -d linux
 flutter test integration_test/desktop_drag_reorder_linux_test.dart -d linux
+flutter test integration_test/diagnostics_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -597,11 +612,19 @@ into the ignored `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh
+./scripts/capture_linux_diagnostics_screenshots.sh
 ```
 
 That command also captures `database-recovery.png` at the Linux runner's
 1280×720 size. The recovery image contains no path, exception, account
 identity, task content, or credential material.
+
+The diagnostics capture command writes `diagnostics-release-light.png` and
+`diagnostics-development-dark.png` at the Linux runner's 1280×720 size. Inspect
+both images: release must show safe summaries and redaction only; development
+must show the persistent warning, allowed synthetic private context, and the
+same credential redaction. The runner opens no database, OAuth configuration,
+secure storage, or Google connection.
 
 ## Native SQLite capability probe
 

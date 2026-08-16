@@ -10,6 +10,7 @@ import 'src/app/connectivity.dart';
 import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
 import 'src/data/auth/authorization.dart';
+import 'src/features/diagnostics/development_diagnostics_view.dart';
 
 const String _expectedSubject = String.fromEnvironment(
   'AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT',
@@ -35,7 +36,15 @@ Future<void> main() async {
     lifecycle: lifecycle,
     connectivity: connectivity,
   );
-  runApp(AxiotaskApp(viewModel: runtime.viewModel));
+  runApp(
+    AxiotaskApp(
+      viewModel: runtime.viewModel,
+      diagnosticsBuilder: (_) => DevelopmentDiagnosticsHost(
+        history: composition.diagnosticHistory,
+        exporter: composition.diagnosticExporter,
+      ),
+    ),
+  );
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(runtime.start());
   });
