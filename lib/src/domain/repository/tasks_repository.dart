@@ -23,3 +23,7 @@ abstract interface class TasksRepository {
 
   Future<Outcome<void>> undoTaskDueChange(UndoTaskDueChangeCommand command);
 }
+
+abstract interface class BulkTasksRepository {
+  Future<Outcome<List<TaskId>>> createTasks(BulkCreateTasksCommand command);
+}

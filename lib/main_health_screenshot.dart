@@ -53,12 +53,17 @@ final class _HealthScreenshotSequenceState
       for (var index = 0; index < _captureScenarios.length; index += 1) {
         await _settleFrames();
         if (_captureScenarios[index].name.startsWith('smart-views-') ||
-            _captureScenarios[index].name.startsWith('quick-capture-')) {
+            _captureScenarios[index].name.startsWith('quick-capture-') ||
+            _captureScenarios[index].name.startsWith('bulk-capture-')) {
           _viewModel.selectSmartView(SmartView.focus);
         }
         _viewModel.selectTask(const TaskId(11));
         await _settleFrames();
         final scenario = _captureScenarios[index];
+        if (scenario.name.contains('-result-')) {
+          _pressBulkAddSubmit();
+          await _settleFrames();
+        }
         if (scenario.name == 'delete-list-confirmation') {
           unawaited(
             showDialog<void>(
@@ -131,10 +136,30 @@ final class _HealthScreenshotSequenceState
               _captureScenarios[_index].name.startsWith('quick-capture-')
               ? 'Prepare synthetic brief tomorrow'
               : null,
+          initialBulkAddInput:
+              _captureScenarios[_index].name.startsWith('bulk-capture-')
+              ? 'Draft release notes\nReview accessibility\nVerify restart recovery'
+              : null,
           onHealthAction: (_) {},
         ),
       ),
     );
+  }
+
+  void _pressBulkAddSubmit() {
+    void visit(Element element) {
+      final widget = element.widget;
+      if (widget is FilledButton &&
+          widget.key == const Key('bulk-add-submit')) {
+        widget.onPressed?.call();
+        return;
+      }
+      element.visitChildren(visit);
+    }
+
+    final root = WidgetsBinding.instance.rootElement;
+    if (root == null) throw StateError('Screenshot element tree unavailable.');
+    visit(root);
   }
 }
 
@@ -170,7 +195,8 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
 );
 
-final class _ScreenshotTasksRepository implements TasksRepository {
+final class _ScreenshotTasksRepository
+    implements TasksRepository, BulkTasksRepository {
   const _ScreenshotTasksRepository(
     this.snapshot, {
     this.undos = const <TaskDeleteUndo>[],
@@ -184,6 +210,17 @@ final class _ScreenshotTasksRepository implements TasksRepository {
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
       Future.value(const Outcome<TaskId>.success(TaskId(900)));
+
+  @override
+  Future<Outcome<List<TaskId>>> createTasks(BulkCreateTasksCommand command) =>
+      Future.value(
+        Outcome<List<TaskId>>.success(
+          List<TaskId>.generate(
+            command.entries.length,
+            (index) => TaskId(910 + index),
+          ),
+        ),
+      );
 
   @override
   Future<Outcome<void>> apply(ExistingTaskCommand command) =>
@@ -389,6 +426,42 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
       SyncHealthOutcome.pending,
       pendingReason: SyncPendingReason.localChanges,
       counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'bulk-capture-preview-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
+    ),
+  ),
+  (
+    name: 'bulk-capture-preview-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
+    ),
+  ),
+  (
+    name: 'bulk-capture-result-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
+    ),
+  ),
+  (
+    name: 'bulk-capture-result-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
     ),
   ),
   (

@@ -1,5 +1,6 @@
 import '../../core/failure.dart';
 import '../model/tasks.dart';
+import '../policy/bulk_capture.dart';
 
 sealed class TaskCommand {
   const TaskCommand({required this.accountId});
@@ -24,6 +25,17 @@ final class CreateTaskCommand extends TaskCommand {
   final String? notes;
   final TaskStatus status;
   final TaskDate? due;
+}
+
+final class BulkCreateTasksCommand extends TaskCommand {
+  const BulkCreateTasksCommand({
+    required super.accountId,
+    required this.taskListId,
+    required this.entries,
+  });
+
+  final TaskListId taskListId;
+  final List<BulkCaptureEntry> entries;
 }
 
 sealed class ExistingTaskCommand extends TaskCommand {
@@ -211,6 +223,37 @@ Failure? validateTaskCommand(TaskCommand command) {
       impact: 'The task was not saved.',
       safeSummary: 'The task notes exceed the supported field bound.',
     );
+  }
+  return null;
+}
+
+Failure? validateBulkCreateTasksCommand(BulkCreateTasksCommand command) {
+  if (command.entries.isEmpty || command.entries.length > maxBulkCaptureTasks) {
+    return const Failure(
+      code: 'bulk_capture.invalid_count',
+      category: FailureCategory.internal,
+      operation: FailureOperation.write,
+      retry: RetryClassification.permanent,
+      impact: 'No tasks were saved.',
+      safeSummary: 'The bulk task count is outside the supported bound.',
+    );
+  }
+  for (final entry in command.entries) {
+    if (entry.title.trim().isEmpty ||
+        entry.title.length > maxBulkCaptureTitleCharacters ||
+        (entry.notes?.length ?? 0) > maxBulkCaptureNotesCharacters ||
+        containsUnsupportedBulkControlCharacters(entry.title) ||
+        (entry.notes != null &&
+            containsUnsupportedBulkControlCharacters(entry.notes!))) {
+      return const Failure(
+        code: 'bulk_capture.invalid_entry',
+        category: FailureCategory.internal,
+        operation: FailureOperation.write,
+        retry: RetryClassification.permanent,
+        impact: 'No tasks were saved.',
+        safeSummary: 'At least one bulk task is invalid.',
+      );
+    }
   }
   return null;
 }

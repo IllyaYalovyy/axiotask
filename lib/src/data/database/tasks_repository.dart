@@ -17,7 +17,8 @@ import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'due_change_dao.dart';
 
-final class DatabaseTasksRepository implements TasksRepository {
+final class DatabaseTasksRepository
+    implements TasksRepository, BulkTasksRepository {
   DatabaseTasksRepository(
     this._database, {
     Clock? clock,
@@ -83,6 +84,63 @@ final class DatabaseTasksRepository implements TasksRepository {
       return const Outcome<TaskId>.failure(_persistenceFailure);
     } on SqliteException {
       return const Outcome<TaskId>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<List<TaskId>>> createTasks(
+    BulkCreateTasksCommand command,
+  ) async {
+    final validation = validateBulkCreateTasksCommand(command);
+    if (validation != null) return Outcome<List<TaskId>>.failure(validation);
+    try {
+      final ids = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        await _requireTaskList(command.accountId, command.taskListId);
+        final created = <TaskId>[];
+        final modifiedAt = clock.now();
+        TaskId? previousTaskId;
+        for (final entry in command.entries) {
+          final taskId = await _cache.putTask(
+            accountId: command.accountId,
+            taskListId: command.taskListId,
+            parentTaskId: null,
+            remoteId: null,
+            title: entry.title,
+            notes: entry.notes,
+            status: TaskStatus.needsAction,
+            due: null,
+            position: 'local-pending',
+          );
+          await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+          await _desired.writeTaskPresent(
+            accountId: command.accountId,
+            taskId: taskId,
+            taskListId: command.taskListId,
+            parentTaskId: null,
+            previousTaskId: previousTaskId,
+            title: entry.title,
+            notes: entry.notes,
+            status: TaskStatus.needsAction,
+            due: null,
+            modifiedAt: modifiedAt,
+          );
+          await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+          created.add(taskId);
+          previousTaskId = taskId;
+        }
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return List<TaskId>.unmodifiable(created);
+      });
+      return Outcome<List<TaskId>>.success(ids);
+    } on _TaskCommandException catch (error) {
+      return Outcome<List<TaskId>>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<List<TaskId>>.failure(_persistenceFailure);
+    } on CacheInvariantException {
+      return const Outcome<List<TaskId>>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<List<TaskId>>.failure(_persistenceFailure);
     }
   }
 

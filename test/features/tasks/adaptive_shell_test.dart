@@ -647,6 +647,39 @@ void main() {
     expect(fixture.tasks.created.single.due, TaskDate(2026, 8, 15));
   });
 
+  testWidgets('bulk paste previews and acknowledges one repository command', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('bulk-add-open')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('bulk-add-input')),
+      'Synthetic alpha\nSynthetic beta',
+    );
+    await tester.pump();
+
+    expect(find.text('2 tasks ready'), findsOneWidget);
+    expect(find.text('Target: Synthetic inbox'), findsOneWidget);
+    expect(fixture.tasks.bulkCreated, isEmpty);
+    await tester.tap(find.byKey(const Key('bulk-add-submit')));
+    await tester.pumpAndSettle();
+
+    expect(fixture.tasks.bulkCreated.single.entries, hasLength(2));
+    expect(
+      find.text('2 tasks saved locally and waiting for Google.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('task content editor keeps text inert until one valid save', (
     tester,
   ) async {
@@ -907,7 +940,7 @@ final class _TaskListsRepository implements TaskListsRepository {
   }
 }
 
-final class _TasksRepository implements TasksRepository {
+final class _TasksRepository implements TasksRepository, BulkTasksRepository {
   late CachedTasksSnapshot snapshot;
   Future<Outcome<TaskId>> createResult = Future.value(
     const Outcome<TaskId>.success(TaskId(90)),
@@ -916,6 +949,7 @@ final class _TasksRepository implements TasksRepository {
     const Outcome<void>.success(null),
   );
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
+  final List<BulkCreateTasksCommand> bulkCreated = <BulkCreateTasksCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
   final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
   final dueUndoController =
@@ -929,6 +963,19 @@ final class _TasksRepository implements TasksRepository {
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
     created.add(command);
     return createResult;
+  }
+
+  @override
+  Future<Outcome<List<TaskId>>> createTasks(
+    BulkCreateTasksCommand command,
+  ) async {
+    bulkCreated.add(command);
+    return Outcome.success(
+      List<TaskId>.generate(
+        command.entries.length,
+        (index) => TaskId(100 + index),
+      ),
+    );
   }
 
   @override

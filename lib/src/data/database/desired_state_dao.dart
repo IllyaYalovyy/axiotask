@@ -1679,6 +1679,7 @@ final class DesiredStateDao {
     required TaskId taskId,
     required TaskListId taskListId,
     required TaskId? parentTaskId,
+    TaskId? previousTaskId,
     required String title,
     required String? notes,
     required TaskStatus status,
@@ -1711,6 +1712,7 @@ final class DesiredStateDao {
               dueEpochDay: Value<int?>(_epochDay(due)),
               desiredTaskListId: Value<int>(taskListId.value),
               desiredParentTaskId: Value<int?>(parentTaskId?.value),
+              desiredPreviousTaskId: Value<int?>(previousTaskId?.value),
               contentDirty: const Value<bool>(true),
               structureDirty: Value<bool>(base == null),
               generation: 1,
@@ -1751,6 +1753,18 @@ final class DesiredStateDao {
                   desiredStateId: id,
                   dependencyKind: 'parent_task',
                   dependsOnTaskId: Value<int>(parentTaskId.value),
+                ),
+              );
+        }
+        if (previousTaskId != null) {
+          await _database
+              .into(_database.desiredStateDependencyRows)
+              .insert(
+                DesiredStateDependencyRowsCompanion.insert(
+                  accountId: accountId.value,
+                  desiredStateId: id,
+                  dependencyKind: 'previous_task',
+                  dependsOnTaskId: Value<int>(previousTaskId.value),
                 ),
               );
         }

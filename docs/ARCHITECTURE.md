@@ -33,6 +33,10 @@ of Google's authoritative child completion cascade after a parent completes.
 S24A adds a pure terminal-date capture parser and a quick-add ViewModel that
 keeps the Google list, stripped title, and any interpreted date visible before
 delegating one create to the existing durable task repository boundary.
+S24B adds a bounded line/paragraph parser and bulk-capture ViewModel over one
+repository transaction; every accepted top-level task receives its ordinary
+desired create state and explicit predecessor dependency for ordered,
+per-resource publication.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

@@ -13,6 +13,10 @@ scenarios=(
   smart-views-dark
   quick-capture-light
   quick-capture-dark
+  bulk-capture-preview-light
+  bulk-capture-preview-dark
+  bulk-capture-result-light
+  bulk-capture-result-dark
   health-cached-pending
   health-partial-failed
   health-first-good

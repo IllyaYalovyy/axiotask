@@ -8,9 +8,12 @@ import '../domain/model/tasks.dart';
 import '../domain/policy/date_workflow.dart';
 import '../domain/policy/smart_views.dart';
 import '../domain/policy/subtask_progress.dart';
+import '../domain/repository/tasks_repository.dart';
+import '../features/tasks/bulk_add_view_model.dart';
 import '../features/tasks/quick_add_view_model.dart';
 import '../features/tasks/task_detail_view_model.dart';
 import '../features/tasks/tasks_view_model.dart';
+import '../features/tasks/widgets/bulk_add.dart';
 import '../features/tasks/widgets/quick_add.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
@@ -21,12 +24,14 @@ final class AdaptiveShell extends StatefulWidget {
     required this.viewModel,
     this.onHealthAction,
     this.initialQuickAddInput,
+    this.initialBulkAddInput,
     super.key,
   });
 
   final TasksViewModel viewModel;
   final ValueChanged<SyncHealthAction>? onHealthAction;
   final String? initialQuickAddInput;
+  final String? initialBulkAddInput;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -35,6 +40,7 @@ final class AdaptiveShell extends StatefulWidget {
 final class _AdaptiveShellState extends State<AdaptiveShell> {
   late QuickAddViewModel _quickAdd;
   final FocusNode _quickAddFocus = FocusNode(debugLabel: 'Quick add');
+  bool _openedInitialBulkAdd = false;
 
   @override
   void initState() {
@@ -48,6 +54,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       });
     }
     widget.viewModel.addListener(_refreshQuickAdd);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _maybeOpenInitialBulkAdd(),
+    );
   }
 
   @override
@@ -65,6 +74,10 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
         });
       }
       widget.viewModel.addListener(_refreshQuickAdd);
+      _openedInitialBulkAdd = false;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _maybeOpenInitialBulkAdd(),
+      );
     }
   }
 
@@ -103,7 +116,49 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
         SmartView.unscheduled || SmartView.all || null => null,
       };
 
-  void _refreshQuickAdd() => _quickAdd.refreshContext();
+  void _refreshQuickAdd() {
+    _quickAdd.refreshContext();
+    _maybeOpenInitialBulkAdd();
+  }
+
+  void _maybeOpenInitialBulkAdd() {
+    if (!mounted ||
+        _openedInitialBulkAdd ||
+        widget.initialBulkAddInput == null ||
+        widget.viewModel.state.orderedTaskLists.isEmpty) {
+      return;
+    }
+    _openedInitialBulkAdd = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_showBulkAdd(initialInput: widget.initialBulkAddInput));
+      }
+    });
+  }
+
+  Future<void> _showBulkAdd({String? initialInput}) async {
+    final repository = widget.viewModel.tasksRepository;
+    if (repository is! BulkTasksRepository) return;
+    final bulkRepository = repository as BulkTasksRepository;
+    final model = BulkAddViewModel(
+      accountId: widget.viewModel.accountId,
+      repository: bulkRepository,
+      lists: () => widget.viewModel.state.orderedTaskLists,
+      defaultTarget: _defaultQuickAddTarget,
+      localEditCommitted: widget.viewModel.localEditCommitted,
+    );
+    if (initialInput != null) model.setInput(initialInput);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !model.state.isSubmitting,
+      builder: (dialogContext) => BulkAddDialog(
+        viewModel: model,
+        lists: widget.viewModel.state.orderedTaskLists,
+        onClose: () => Navigator.of(dialogContext).pop(),
+      ),
+    );
+    model.dispose();
+  }
 
   @override
   void dispose() {
@@ -183,6 +238,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                         viewModel: widget.viewModel,
                         quickAdd: _quickAdd,
                         quickAddFocus: _quickAddFocus,
+                        openBulkAdd: () => _showBulkAdd(),
                         wide: constraints.maxWidth >= 900,
                       ),
                     ),
@@ -285,6 +341,7 @@ final class _ShellBody extends StatelessWidget {
     required this.quickAdd,
     required this.quickAddFocus,
     required this.wide,
+    required this.openBulkAdd,
   });
 
   final TasksViewState state;
@@ -292,6 +349,7 @@ final class _ShellBody extends StatelessWidget {
   final QuickAddViewModel quickAdd;
   final FocusNode quickAddFocus;
   final bool wide;
+  final VoidCallback openBulkAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -309,6 +367,7 @@ final class _ShellBody extends StatelessWidget {
                   viewModel: viewModel,
                   quickAdd: quickAdd,
                   quickAddFocus: quickAddFocus,
+                  openBulkAdd: openBulkAdd,
                 )
               : TaskDetailsPane(viewModel: detail, compact: true)
         : Row(
@@ -325,6 +384,7 @@ final class _ShellBody extends StatelessWidget {
                   viewModel: viewModel,
                   quickAdd: quickAdd,
                   quickAddFocus: quickAddFocus,
+                  openBulkAdd: openBulkAdd,
                 ),
               ),
               const VerticalDivider(width: 1),
@@ -513,12 +573,14 @@ final class _TaskCollection extends StatelessWidget {
     required this.viewModel,
     required this.quickAdd,
     required this.quickAddFocus,
+    required this.openBulkAdd,
   });
 
   final TasksViewState state;
   final TasksViewModel viewModel;
   final QuickAddViewModel quickAdd;
   final FocusNode quickAddFocus;
+  final VoidCallback openBulkAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -638,6 +700,18 @@ final class _TaskCollection extends StatelessWidget {
                 lists: state.orderedTaskLists,
                 focusNode: quickAddFocus,
               ),
+              if (viewModel.tasksRepository is BulkTasksRepository)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    key: const Key('bulk-add-open'),
+                    onPressed: state.orderedTaskLists.isNotEmpty
+                        ? openBulkAdd
+                        : null,
+                    icon: const Icon(Icons.content_paste_outlined),
+                    label: const Text('Paste multiple'),
+                  ),
+                ),
               const SizedBox(height: 4),
               Row(
                 children: <Widget>[

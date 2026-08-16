@@ -278,6 +278,13 @@ and reopens one temporary database before the ordinary create engine publishes
 the task. Curated and actual `quick-capture-{light,dark}.png` images use only
 fixed synthetic content and show the keyboard-focused preview.
 
+S24B adds no dependency, schema version, OAuth configuration, account access,
+or storage namespace. Bulk capture accepts at most 100 tasks and 1 MiB of text;
+each title remains bounded to 1024 characters and paragraph notes to 8192.
+Focused parser, SQLite, ViewModel, widget, and isolated Linux tests use only
+synthetic data and temporary files. Ignored actual preview/result captures use
+the synthetic screenshot composition and never read normal storage or Google.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

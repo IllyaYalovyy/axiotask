@@ -377,6 +377,18 @@ dismissal, target revalidation, persistence rollback, publication-after-commit,
 and duplicate-submit suppression. Adaptive-shell widget tests prove the title,
 Google list, and parsed or smart-view default date are visible before Enter.
 
+S24B adds `test/domain/bulk_capture_parser_test.dart` for trimmed non-empty line
+mode and blank-line-separated paragraph mode, where each paragraph's first line
+is its title and remaining lines are notes. It proves the 100-task, 1024-title,
+8192-note, and 1 MiB input bounds plus whole-preview rejection of malformed
+control characters. `test/data/database/bulk_capture_repository_test.dart`
+proves one all-or-none SQLite transaction, provisional-list and predecessor
+dependencies, injected rollback, invalid targets, and file restart. ViewModel
+and widget tests cover visible target/entries, mode changes, duplicate submit,
+rollback, and local-versus-Google result wording. The Linux integration restarts
+the database before an ordinary create run and proves one confirmed create, one
+exact rejected create, and one unattempted dependent create.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -506,6 +518,12 @@ S24A adds curated `quick_capture_light` / `quick_capture_dark` goldens at
 application scenarios at 1280×720. The reviewed captures show the focused
 single-line keyboard field, stripped title, visible Google list target, exact
 date chip with dismissal affordance, and non-green pending synchronization.
+
+S24B adds actual `bulk-capture-preview-{light,dark}` and
+`bulk-capture-result-{light,dark}` captures at 1280×720. They show the bounded
+three-entry preview, visible Google target, mode choice, non-green sync health,
+and the truthful post-transaction message that Google confirmation is pending.
+All content and identities are fixed synthetic values.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
