@@ -5,6 +5,7 @@ import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
+import 'package:axiotask/src/data/database/account_backup_repository.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
 import 'package:axiotask/src/data/database/read_sync_store.dart';
@@ -15,6 +16,7 @@ import 'package:axiotask/src/data/google_tasks/dto.dart';
 import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
+import 'package:axiotask/src/domain/backup/account_backup.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/bulk_operations.dart';
@@ -195,6 +197,84 @@ void main() {
       harness.clock.advance(const Duration(minutes: 1));
       await harness.run();
       expect(service.createLedger.length, confirmedCallCount);
+    },
+  );
+
+  test(
+    'PAR-DATA-002 restored desired state keeps remote partial success',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final service = _CreateInterceptService(backend);
+      final harness = await _CreateHarness.open(
+        remote: service,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+      final repository = DatabaseAccountBackupRepository(
+        harness.database,
+        clock: harness.clock,
+      );
+      final restored = await repository.restoreImport(
+        accountId: harness.accountId,
+        document: AccountBackupDocument(
+          format: accountBackupFormat,
+          version: accountBackupVersion,
+          privateDataWarning: accountBackupPrivateDataWarning,
+          exportedAt: startedAt.subtract(const Duration(days: 1)),
+          sourceGoogleSubject: subject.value,
+          lists: const <AccountBackupList>[
+            AccountBackupList(
+              key: 'list-000001',
+              googleId: null,
+              title: 'Restored list',
+              order: 0,
+            ),
+          ],
+          tasks: const <AccountBackupTask>[
+            AccountBackupTask(
+              key: 'task-000001',
+              googleId: null,
+              listKey: 'list-000001',
+              parentKey: null,
+              title: 'Rejected restored parent',
+              notes: null,
+              status: TaskStatus.needsAction,
+              due: null,
+              order: 0,
+            ),
+            AccountBackupTask(
+              key: 'task-000002',
+              googleId: null,
+              listKey: 'list-000001',
+              parentKey: 'task-000001',
+              title: 'Waiting restored child',
+              notes: null,
+              status: TaskStatus.needsAction,
+              due: null,
+              order: 0,
+            ),
+          ],
+        ),
+        readiness: AccountBackupImportReadiness.ready,
+        lastSuccessfulSyncAt: harness.clock.now(),
+      );
+      expect(restored.createdTaskCount, 2);
+      service.rejectFirstTask = true;
+
+      final report = await harness.run();
+      final snapshot = await harness.snapshot();
+
+      expect(report.outcome, SyncRunOutcome.failed);
+      expect(snapshot.taskLists.single.remoteId, isNotNull);
+      expect(snapshot.tasks.first.remoteId, isNull);
+      expect(snapshot.tasks.last.remoteId, isNull);
+      expect(service.createLedger, <String>[
+        'list:Restored list',
+        'task:Rejected restored parent',
+      ]);
     },
   );
 

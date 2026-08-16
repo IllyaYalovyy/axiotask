@@ -102,7 +102,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Export account backup'));
+      await tester.tap(find.byTooltip('Account backup'));
       await tester.pumpAndSettle();
       expect(find.textContaining('private Google Tasks data'), findsOneWidget);
       await tester.tap(find.text('Choose file and export'));
@@ -121,6 +121,123 @@ void main() {
       expect(encoded, isNot(contains('excluded-authorization-canary')));
     },
   );
+
+  testWidgets('PAR-DATA-002 previews and atomically accepts an empty restore', (
+    tester,
+  ) async {
+    final root = await Directory.systemTemp.createTemp(
+      'axiotask-s30b-linux-integration-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final database = await AppDatabase.openFile(
+      File('${root.path}/isolated.sqlite'),
+    );
+    addTearDown(database.close);
+    final clock = ManualClock(DateTime.utc(2026, 8, 16, 12));
+    final account = AccountId(
+      await database.createAccount('synthetic-restore-linux-subject'),
+    );
+    await database
+        .into(database.accountPreferenceRows)
+        .insert(
+          AccountPreferenceRowsCompanion.insert(
+            accountId: Value<int>(account.value),
+          ),
+        );
+    await database
+        .into(database.syncFactRows)
+        .insert(
+          SyncFactRowsCompanion.insert(
+            accountId: Value<int>(account.value),
+            lastSuccessfulSyncAt: Value<DateTime>(clock.now()),
+          ),
+        );
+    final source = File('${root.path}/restore.json');
+    await source.writeAsString(
+      const AccountBackupCodec().encode(
+        AccountBackupSnapshot(
+          sourceGoogleSubject: 'synthetic-restore-linux-subject',
+          lists: const <AccountBackupList>[
+            AccountBackupList(
+              key: 'list-000001',
+              googleId: 'absent-list',
+              title: 'Restored Linux list',
+              order: 0,
+            ),
+          ],
+          tasks: const <AccountBackupTask>[
+            AccountBackupTask(
+              key: 'task-000001',
+              googleId: 'absent-task',
+              listKey: 'list-000001',
+              parentKey: null,
+              title: 'Restored Linux task',
+              notes: 'Synthetic restore note',
+              status: TaskStatus.needsAction,
+              due: null,
+              order: 0,
+            ),
+          ],
+        ),
+        exportedAt: DateTime.utc(2026, 8, 15),
+      ),
+    );
+    final tasks = DatabaseTasksRepository(database, clock: clock);
+    final backup = DatabaseAccountBackupRepository(database, clock: clock);
+    final health = _GoodHealthRepository(clock.now());
+    final viewModel = TasksViewModel(
+      accountId: account,
+      tasksRepository: tasks,
+      syncHealthRepository: health,
+      clock: clock,
+    );
+    addTearDown(viewModel.dispose);
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      AxiotaskApp(
+        viewModel: viewModel,
+        accountBackupBuilder: (_) => AccountBackupHost(
+          accountId: account,
+          repository: backup,
+          restoreRepository: backup,
+          exporter: LocalAccountBackupExporter(
+            _Picker('${root.path}/unused-export.json'),
+          ),
+          importer: LocalAccountBackupImporter(_OpenPicker(source.path)),
+          syncHealthRepository: health,
+          clock: clock,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Account backup'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose backup to restore'));
+    await tester.pumpAndSettle();
+    expect(find.text('Restore preview'), findsOneWidget);
+    expect(find.textContaining('1 list and 1 task'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restore absent records'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Restore accepted locally'), findsOneWidget);
+    final snapshot = await tasks
+        .watchTasks(TasksQuery(accountId: account))
+        .first;
+    expect(snapshot.taskLists.single.title, 'Restored Linux list');
+    expect(snapshot.tasks.single.title, 'Restored Linux task');
+    expect(
+      await database.select(database.accountBackupImportManifestRows).get(),
+      hasLength(1),
+    );
+  });
 }
 
 final class _Picker implements AccountBackupSaveLocationPicker {
@@ -131,6 +248,31 @@ final class _Picker implements AccountBackupSaveLocationPicker {
   @override
   Future<String?> chooseSaveLocation({required String suggestedName}) async =>
       path;
+}
+
+final class _OpenPicker implements AccountBackupOpenLocationPicker {
+  const _OpenPicker(this.path);
+
+  final String path;
+
+  @override
+  Future<String?> chooseOpenLocation() async => path;
+}
+
+final class _GoodHealthRepository implements SyncHealthRepository {
+  const _GoodHealthRepository(this.at);
+
+  final DateTime at;
+
+  @override
+  Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(
+    SyncHealth(
+      outcome: SyncHealthOutcome.good,
+      counts: const SyncWorkCounts(),
+      lastSuccessfulSyncAt: at,
+      evaluatedAt: at,
+    ),
+  );
 }
 
 final class _PendingHealthRepository implements SyncHealthRepository {

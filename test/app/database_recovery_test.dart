@@ -173,6 +173,12 @@ final class _FakeRuntime implements AxiotaskRuntime {
   @override
   AccountBackupRepository? get accountBackupRepository => null;
 
+  @override
+  AccountBackupRestoreRepository? get accountBackupRestoreRepository => null;
+
+  @override
+  SyncHealthRepository? get syncHealthRepository => null;
+
   final StreamController<Object> _storageFailures =
       StreamController<Object>.broadcast();
 

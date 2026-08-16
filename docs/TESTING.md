@@ -36,6 +36,10 @@ S30A adds `test/domain/account_backup_codec_test.dart` for exact v1 supported
 field round-trip, deterministic encoding, strict version/field/value/bounds,
 hierarchy/reference/order validation, and structural exclusion of credentials,
 authorization, sync attempts, diagnostics, preferences, and raw rows.
+S30B adds `test/domain/account_backup_import_planner_test.dart` for
+same-subject authoritative-identity wins and cross-account non-matching. Codec
+and bounded file tests reject hostile structure, size, malformed JSON, and
+malformed UTF-8 before mutation.
 
 ### 2. Persistence tests
 
@@ -74,6 +78,10 @@ document-local identity, sidebar/sibling order, and hierarchy over real
 in-memory SQLite. `test/data/backup/local_account_backup_exporter_test.dart`
 uses a unique temporary directory for exact write, cancellation, failure, and
 sibling cleanup without a platform picker or normal storage.
+S30B extends them with freshness refusal, empty/mostly-empty restore,
+existing-wins preservation, dependency rows, manifest retry, and injected local
+rollback. The create-engine suite proves remote partial success stays confirmed
+while a failed restored dependency leaves its child waiting.
 
 No test path is obtained from the production application-data resolver.
 
@@ -473,6 +481,9 @@ account_backup_view}_test.dart`. They prove selected-account routing, explicit
 native-picker cancellation/failure, confirmation before
 the adapter opens, persistent private-data warning, and exact successful result
 counts without a normal filesystem or Google account.
+S30B adds validation-before-preview, freshness recheck, confirmation before the
+transaction, source mismatch/duplicate warnings, exact existing/create counts,
+and local-acceptance versus remote-publication copy.
 
 Desktop and phone constraints are explicit fixtures. Widget tests never use the
 normal database or platform auth.
@@ -514,6 +525,9 @@ repositories, enters the backup from the real application header, writes to an
 injected temporary destination, decodes the produced v1 file, and verifies
 seeded sync-run/authorization canaries are absent. It opens no OAuth,
 diagnostic, preference, secure-storage, normal database, or Google boundary.
+S30B adds a bounded temporary v1 document to the same application route,
+previews it against a fresh synthetic partition, and atomically creates ordinary
+desired state plus one manifest without opening normal or Google boundaries.
 
 S12B adds the Linux-only
 `integration_test/read_slice_linux_test.dart` application slice. It opens a
@@ -647,6 +661,10 @@ identifies the current selected Google account, exact v1 JSON contents and
 exclusions, and the persistent private-data warning before the file action. The
 result view retains that warning and reports only the synthetic filename plus
 exact list/task counts. Both use fixed in-memory synthetic data.
+S30B adds `account-restore-preview-light.png` and
+`account-restore-result-dark.png`, showing existing-wins counts, the
+cross-account/manifest duplicate limitation, and that locally accepted records
+still require Google publication. Both use fixed in-memory synthetic data.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
@@ -658,6 +676,10 @@ Real API tests are a separately invoked, explicit opt-in suite. They require a
 dedicated test account and ignored local configuration. If configuration is
 absent, the command exits as skipped/not configured; it never searches normal
 application credentials.
+The pinned-subject Google mutation probe includes S30B's empty-list smoke: one
+fresh in-memory partition restores a synthetic list/task, publishes it through
+the production engine, verifies returned identities and live read-back, then
+deletes the exact prefixed list and isolated credential bundle.
 
 Every run uses a unique, recognizable test prefix and a dedicated disposable
 list. Cleanup runs in `finally`, records leftovers without exposing content,

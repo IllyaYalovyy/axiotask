@@ -6,10 +6,19 @@ import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/outcome.dart';
 import '../../core/randomness.dart';
+import '../../domain/backup/account_backup.dart';
+import '../../domain/model/tasks.dart';
+import '../../sync/engine.dart';
+import '../../sync/run.dart';
 import '../auth/authorization.dart';
 import '../auth/linux/browser_flow.dart';
 import '../auth/linux/linux_authorization.dart';
 import '../auth/linux/secure_credentials.dart';
+import '../database/account_backup_repository.dart';
+import '../database/app_database.dart';
+import '../database/read_sync_store.dart';
+import '../database/sync_health_dao.dart';
+import '../database/tasks_repository.dart';
 import 'dto.dart';
 import 'http_service.dart';
 import 'mutation.dart';
@@ -43,6 +52,7 @@ final class GoogleTasksMutationProbeResult {
     required this.staleSourceDeleteStatus,
     required this.destinationTaskLiveAfterStaleDelete,
     required this.destinationTaskDeletedAfterStaleDelete,
+    required this.restoreImportEmptyList,
   });
 
   final bool notesNullClearing;
@@ -50,6 +60,7 @@ final class GoogleTasksMutationProbeResult {
   final int staleSourceDeleteStatus;
   final bool destinationTaskLiveAfterStaleDelete;
   final bool destinationTaskDeletedAfterStaleDelete;
+  final bool restoreImportEmptyList;
 
   Map<String, Object> toRecord() => <String, Object>{
     'status': 'passed',
@@ -61,6 +72,7 @@ final class GoogleTasksMutationProbeResult {
     'destinationTaskLiveAfterStaleDelete': destinationTaskLiveAfterStaleDelete,
     'destinationTaskDeletedAfterStaleDelete':
         destinationTaskDeletedAfterStaleDelete,
+    'restoreImportEmptyList': restoreImportEmptyList,
     'cleanupZeroMatchesVerified': true,
     'credentialCleanupVerified': true,
   };
@@ -153,7 +165,24 @@ Future<GoogleTasksMutationProbeResult> runGoogleTasksMutationProbe(
       ),
     );
     prefix = _probePrefix();
-    result = await _runOperations(service, prefix, createdLists);
+    final mutationResult = await _runOperations(service, prefix, createdLists);
+    final restoreImportEmptyList = await _runRestoreImportSmoke(
+      service: service,
+      authorization: auth,
+      subject: session.subject,
+      prefix: prefix,
+      createdLists: createdLists,
+    );
+    result = GoogleTasksMutationProbeResult(
+      notesNullClearing: mutationResult.notesNullClearing,
+      dueNullClearing: mutationResult.dueNullClearing,
+      staleSourceDeleteStatus: mutationResult.staleSourceDeleteStatus,
+      destinationTaskLiveAfterStaleDelete:
+          mutationResult.destinationTaskLiveAfterStaleDelete,
+      destinationTaskDeletedAfterStaleDelete:
+          mutationResult.destinationTaskDeletedAfterStaleDelete,
+      restoreImportEmptyList: restoreImportEmptyList,
+    );
   } catch (error, stackTrace) {
     primaryError = error;
     primaryStack = stackTrace;
@@ -322,7 +351,128 @@ Future<GoogleTasksMutationProbeResult> _runOperations(
     staleSourceDeleteStatus: staleStatus,
     destinationTaskLiveAfterStaleDelete: !destinationTask.deleted,
     destinationTaskDeletedAfterStaleDelete: destinationTask.deleted,
+    restoreImportEmptyList: false,
   );
+}
+
+Future<bool> _runRestoreImportSmoke({
+  required HttpGoogleTasksService service,
+  required LinuxAuthorization authorization,
+  required AccountSubject subject,
+  required String prefix,
+  required List<RemoteTaskListId> createdLists,
+}) async {
+  final database = AppDatabase.inMemory();
+  final clock = SystemClock();
+  final listTitle = '$prefix-restore';
+  try {
+    final accountId = AccountId(await database.createAccount(subject.value));
+    final initial = await SyncEngine(
+      store: DatabaseReadSyncStore(database),
+      googleTasks: service,
+      authorization: authorization,
+      clock: clock,
+      random: SecureRandomSource(),
+    ).run(SyncRunRequest(accountId: accountId));
+    if (initial.outcome != SyncRunOutcome.succeeded) {
+      throw StateError(
+        'restore smoke initial sync failed: ${initial.failure?.code}',
+      );
+    }
+    final facts = await SyncHealthDao(database).watchFacts(accountId).first;
+    final successAt = facts.lastSuccessfulSyncAt;
+    if (successAt == null) {
+      throw StateError('restore smoke did not record fresh sync evidence.');
+    }
+    final restored =
+        await DatabaseAccountBackupRepository(
+          database,
+          clock: clock,
+        ).restoreImport(
+          accountId: accountId,
+          document: AccountBackupDocument(
+            format: accountBackupFormat,
+            version: accountBackupVersion,
+            privateDataWarning: accountBackupPrivateDataWarning,
+            exportedAt: clock.now().toUtc(),
+            sourceGoogleSubject: subject.value,
+            lists: <AccountBackupList>[
+              AccountBackupList(
+                key: 'list-000001',
+                googleId: null,
+                title: listTitle,
+                order: 0,
+              ),
+            ],
+            tasks: <AccountBackupTask>[
+              AccountBackupTask(
+                key: 'task-000001',
+                googleId: null,
+                listKey: 'list-000001',
+                parentKey: null,
+                title: '$prefix-restored-task',
+                notes: 'synthetic restore smoke',
+                status: TaskStatus.needsAction,
+                due: null,
+                order: 0,
+              ),
+            ],
+          ),
+          readiness: AccountBackupImportReadiness.ready,
+          lastSuccessfulSyncAt: successAt,
+        );
+    if (restored.createdListCount != 1 || restored.createdTaskCount != 1) {
+      throw StateError('restore smoke local transaction had wrong counts.');
+    }
+    final published = await SyncEngine(
+      store: DatabaseReadSyncStore(database),
+      googleTasks: service,
+      authorization: authorization,
+      clock: clock,
+      random: SecureRandomSource(),
+    ).run(SyncRunRequest(accountId: accountId));
+    if (published.outcome != SyncRunOutcome.succeeded) {
+      throw StateError(
+        'restore smoke publication failed: ${published.failure?.code}',
+      );
+    }
+    final snapshot = await DatabaseTasksRepository(
+      database,
+    ).watchTasks(TasksQuery(accountId: accountId)).first;
+    final list = snapshot.taskLists.singleWhere(
+      (candidate) => candidate.title == listTitle,
+    );
+    final task = snapshot.tasks.singleWhere(
+      (candidate) => candidate.title == '$prefix-restored-task',
+    );
+    final listRemoteId = list.remoteId;
+    final taskRemoteId = task.remoteId;
+    if (listRemoteId == null || taskRemoteId == null) {
+      throw StateError('restore smoke did not bind returned Google IDs.');
+    }
+    createdLists.add(RemoteTaskListId(listRemoteId.value));
+    final readBack = await _findTask(
+      service,
+      RemoteTaskListId(listRemoteId.value),
+      RemoteTaskId(taskRemoteId.value),
+    );
+    if (readBack is! RemoteLiveTask ||
+        readBack.title != '$prefix-restored-task') {
+      throw StateError('restore smoke Google read-back did not match.');
+    }
+    return true;
+  } finally {
+    try {
+      final matching = (await _allTaskLists(
+        service,
+      )).where((list) => list.title == listTitle);
+      for (final list in matching) {
+        if (!createdLists.contains(list.id)) createdLists.add(list.id);
+      }
+    } finally {
+      await database.close();
+    }
+  }
 }
 
 LinuxAuthorization _createAuthorization({

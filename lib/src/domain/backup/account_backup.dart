@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 import '../model/tasks.dart';
 
 const String accountBackupFormat = 'axiotask.accountBackup';
@@ -127,6 +129,175 @@ final class AccountBackupFormatException implements Exception {
   String toString() => 'AccountBackupFormatException($code)';
 }
 
+final class AccountBackupTargetList {
+  const AccountBackupTargetList({required this.key, required this.googleId});
+
+  final TaskListId key;
+  final String? googleId;
+}
+
+final class AccountBackupTargetTask {
+  const AccountBackupTargetTask({
+    required this.key,
+    required this.googleId,
+    required this.listKey,
+    required this.parentKey,
+  });
+
+  final TaskId key;
+  final String? googleId;
+  final TaskListId listKey;
+  final TaskId? parentKey;
+}
+
+final class AccountBackupImportTarget {
+  const AccountBackupImportTarget({
+    required this.googleSubject,
+    required this.lists,
+    required this.tasks,
+  });
+
+  final String googleSubject;
+  final List<AccountBackupTargetList> lists;
+  final List<AccountBackupTargetTask> tasks;
+}
+
+final class AccountBackupImportPlan {
+  AccountBackupImportPlan({
+    required this.sourceAccountMatches,
+    required Map<String, TaskListId> existingLists,
+    required Map<String, TaskId> existingTasks,
+    required List<AccountBackupList> listsToCreate,
+    required List<AccountBackupTask> tasksToCreate,
+  }) : existingLists = Map<String, TaskListId>.unmodifiable(existingLists),
+       existingTasks = Map<String, TaskId>.unmodifiable(existingTasks),
+       listsToCreate = List<AccountBackupList>.unmodifiable(listsToCreate),
+       tasksToCreate = List<AccountBackupTask>.unmodifiable(tasksToCreate);
+
+  final bool sourceAccountMatches;
+  final Map<String, TaskListId> existingLists;
+  final Map<String, TaskId> existingTasks;
+  final List<AccountBackupList> listsToCreate;
+  final List<AccountBackupTask> tasksToCreate;
+
+  int get existingListCount => existingLists.length;
+  int get existingTaskCount => existingTasks.length;
+}
+
+enum AccountBackupImportReadiness {
+  ready,
+  syncStopped,
+  noAuthorization,
+  offline,
+  stale,
+  pending,
+}
+
+final class AccountBackupImportPreview {
+  const AccountBackupImportPreview({
+    required this.documentDigest,
+    required this.sourceAccountMatches,
+    required this.listCount,
+    required this.taskCount,
+    required this.listsToCreate,
+    required this.tasksToCreate,
+    required this.existingListCount,
+    required this.existingTaskCount,
+    required this.alreadyImported,
+  });
+
+  final String documentDigest;
+  final bool sourceAccountMatches;
+  final int listCount;
+  final int taskCount;
+  final int listsToCreate;
+  final int tasksToCreate;
+  final int existingListCount;
+  final int existingTaskCount;
+  final bool alreadyImported;
+}
+
+final class AccountBackupImportResult {
+  const AccountBackupImportResult({
+    required this.createdListCount,
+    required this.existingListCount,
+    required this.createdTaskCount,
+    required this.existingTaskCount,
+    required this.alreadyImported,
+  });
+
+  final int createdListCount;
+  final int existingListCount;
+  final int createdTaskCount;
+  final int existingTaskCount;
+  final bool alreadyImported;
+}
+
+final class AccountBackupImportException implements Exception {
+  const AccountBackupImportException(this.code);
+
+  final String code;
+
+  @override
+  String toString() => 'AccountBackupImportException($code)';
+}
+
+/// Matches only authoritative Google identity within the same Google subject.
+/// Content deliberately has no role in planning.
+final class AccountBackupImportPlanner {
+  const AccountBackupImportPlanner();
+
+  AccountBackupImportPlan plan({
+    required AccountBackupDocument document,
+    required AccountBackupImportTarget target,
+  }) {
+    final sameAccount = document.sourceGoogleSubject == target.googleSubject;
+    final targetListsByGoogleId = <String, TaskListId>{};
+    final targetTasksByGoogleId = <String, TaskId>{};
+    if (sameAccount) {
+      for (final list in target.lists) {
+        final googleId = list.googleId;
+        if (googleId != null) targetListsByGoogleId[googleId] = list.key;
+      }
+      for (final task in target.tasks) {
+        final googleId = task.googleId;
+        if (googleId != null) targetTasksByGoogleId[googleId] = task.key;
+      }
+    }
+    final existingLists = <String, TaskListId>{};
+    final listsToCreate = <AccountBackupList>[];
+    for (final list in document.lists) {
+      final existing = list.googleId == null
+          ? null
+          : targetListsByGoogleId[list.googleId!];
+      if (existing == null) {
+        listsToCreate.add(list);
+      } else {
+        existingLists[list.key] = existing;
+      }
+    }
+    final existingTasks = <String, TaskId>{};
+    final tasksToCreate = <AccountBackupTask>[];
+    for (final task in document.tasks) {
+      final existing = task.googleId == null
+          ? null
+          : targetTasksByGoogleId[task.googleId!];
+      if (existing == null) {
+        tasksToCreate.add(task);
+      } else {
+        existingTasks[task.key] = existing;
+      }
+    }
+    return AccountBackupImportPlan(
+      sourceAccountMatches: sameAccount,
+      existingLists: existingLists,
+      existingTasks: existingTasks,
+      listsToCreate: listsToCreate,
+      tasksToCreate: tasksToCreate,
+    );
+  }
+}
+
 final class AccountBackupCodec {
   const AccountBackupCodec();
 
@@ -197,6 +368,10 @@ final class AccountBackupCodec {
     _validate(document);
     return document;
   }
+
+  String fingerprint(AccountBackupDocument document) => sha256
+      .convert(utf8.encode(encode(document, exportedAt: document.exportedAt)))
+      .toString();
 }
 
 Map<String, Object?> _toJson(AccountBackupDocument document) =>

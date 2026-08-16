@@ -32,6 +32,7 @@ replaced with an empty cache.
 | `bulk_operation_members` | One account/task member per affected Google resource, pinned to the exact desired generation whose attempt lifecycle determines that member's durable result. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
+| `account_backup_import_manifests` | Account/document-digest receipt for one locally atomic restore, including source-match and exact created/existing counts. |
 
 The preference tables are exposed through the S22A typed application
 repository. List order/exclusion and per-view sort/completion filtering remain
@@ -229,6 +230,11 @@ collection renders rather than a separate SQL approximation.
 - SQLite foreign keys remain enabled and multi-row writes use explicit
   transactions. Failed transactions may re-emit an unchanged Drift snapshot,
   but cannot expose or retain partially written state.
+- Import validates the complete bounded v1 document before a write transaction.
+  The transaction rechecks fresh-sync facts, leaves matching same-subject Google
+  identities untouched, writes all absent provisional projections and ordered
+  desired states, recomputes counts, and inserts one unique
+  `(account_id, document_digest)` manifest or rolls back everything.
 
 OAuth tokens, DPoP keys, authorization headers, release diagnostics, and
 device-only preferences are not part of these cache/health/desired-state

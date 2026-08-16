@@ -65,8 +65,9 @@ diagnostic products with separate persistence/export boundaries, live local
 viewing/search/copy/clear, unconditional credential redaction, and a
 development renderer imported only by the development entry point.
 S30A adds a strict bounded v1 selected-account backup projection and native
-Fedora save surface. It preserves supported projected user data and offline
-acknowledgements while structurally excluding storage/sync/auth/diagnostic state.
+Fedora save surface. S30B adds bounded input validation, a fresh-sync gate,
+same-subject identity planning, one transactional restore with a durable
+per-partition manifest, and ordinary ordered desired-state publication.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
@@ -365,6 +366,17 @@ at most 64 MiB of UTF-8 JSON. Unknown fields or values fail export. The selected
 account's source subject and Google resource IDs are private identity evidence;
 credentials, authorization state, sync runs/attempts, diagnostics, device or
 relational preferences, and raw database rows have no encoder input fields.
+
+S30B decodes this exact v1 document before any mutation. A first restore
+requires current `SyncHealth.good` and transactionally rechecks the same durable
+success, stopped state, failures, incomplete scopes, retry latches, and
+unresolved counts. Google IDs match only when source and target subjects are
+equal. Matching rows remain unchanged; absent rows are provisional and do not
+carry the old Google ID. One transaction writes every projection,
+list/parent/previous dependency, desired state, count, and canonical-document
+SHA-256 manifest. A repeated document is a no-op in that partition even while
+publication is non-green. Cross-account import or deleted manifest history can
+create duplicates; content matching, overwrite, and deletion are forbidden.
 
 ## Authentication boundary
 

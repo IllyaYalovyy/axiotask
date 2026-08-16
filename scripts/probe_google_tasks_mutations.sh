@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+trap 'printf "Google Tasks mutation probe interrupted.\n" >&2; exit 130' INT TERM
+
 fail() {
   printf 'Google Tasks mutation probe failed: %s\n' "$1" >&2
   exit 1

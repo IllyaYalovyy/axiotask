@@ -50,6 +50,12 @@ Future<void> main() async {
                 FileSelectorAccountBackupSaveLocationPicker(),
               ),
               clock: composition.clock,
+              restoreRepository: runtime.accountBackupRestoreRepository,
+              importer: const LocalAccountBackupImporter(
+                FileSelectorAccountBackupOpenLocationPicker(),
+              ),
+              syncHealthRepository: runtime.syncHealthRepository,
+              importCommitted: runtime.viewModel.localEditCommitted,
             )
           : null,
       diagnosticsBuilder: (_) => DevelopmentDiagnosticsHost(

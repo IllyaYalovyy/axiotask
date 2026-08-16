@@ -30,13 +30,26 @@ Future<void> main() async {
     AxiotaskBootstrap(
       diagnostics: composition.diagnostics,
       accountBackupBuilder: Platform.isLinux
-          ? (_, accountId, repository) => AccountBackupHost(
+          ? (
+              _,
+              accountId,
+              repository,
+              restoreRepository,
+              healthRepository,
+              importCommitted,
+            ) => AccountBackupHost(
               accountId: accountId,
               repository: repository,
               exporter: const LocalAccountBackupExporter(
                 FileSelectorAccountBackupSaveLocationPicker(),
               ),
               clock: composition.clock,
+              restoreRepository: restoreRepository,
+              importer: const LocalAccountBackupImporter(
+                FileSelectorAccountBackupOpenLocationPicker(),
+              ),
+              syncHealthRepository: healthRepository,
+              importCommitted: importCommitted,
             )
           : null,
       diagnosticsBuilder: (_) => ReleaseDiagnosticsHost(

@@ -103,6 +103,13 @@ are tested. A task's Google web link is never confused with a user-authored URL.
 
 ## Error presentation
 
+Backup restore keeps the private-data warning visible, previews exact
+create/existing counts, and explains that existing Google identity wins while
+content is never matched. Stopped, unauthorized, offline, stale, or pending
+first imports explain that a fresh sync is required. Cross-account preview and
+result copy state the duplicate limitation and distinguish local acceptance
+from later Google publication.
+
 Errors answer three questions:
 
 1. What did not happen?

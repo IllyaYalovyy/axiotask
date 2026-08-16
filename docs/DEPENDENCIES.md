@@ -196,6 +196,11 @@ not expose that feature there. Replacing the package requires another reviewed
 native Fedora picker that passes the same cancel, failure, privacy-label, and
 atomic-write contract.
 
+S30B reuses `file_selector` 1.1.0 for the Fedora JSON open dialog and adds no
+dependency. The adapter checks file length, reads at most 64 MiB, rejects invalid
+UTF-8, reports only the filename, and treats cancellation as a non-error. The
+strict codec validates JSON/version/value/reference structure before restore.
+
 ## Deliberately not selected
 
 | Candidate | Reason |

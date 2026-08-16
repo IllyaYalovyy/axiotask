@@ -159,6 +159,14 @@ its field safe; explicitly credential-classified fields are dropped entirely.
 
 There is no telemetry, remote crash reporting, or automatic diagnostics upload.
 
+Backup import treats selected JSON as bounded untrusted private data. The file
+adapter reads no more than 64 MiB and rejects invalid UTF-8; the strict v1 codec
+rejects unknown fields, unsupported versions/values, invalid identity or
+hierarchy references, and excessive counts before a database write. Release
+errors expose no paths, subjects, remote IDs, task content, or raw JSON. A
+backup cannot supply credential, authorization, sync, diagnostic, preference,
+or database-row state to the restore transaction.
+
 ## Repository checks
 
 Before every commit:

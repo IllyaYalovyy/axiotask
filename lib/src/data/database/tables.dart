@@ -984,3 +984,47 @@ class ViewPreferenceRows extends Table {
     'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
   ];
 }
+
+class AccountBackupImportManifestRows extends Table {
+  @override
+  String get tableName => 'account_backup_import_manifests';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  TextColumn get documentDigest =>
+      text().check(documentDigest.length.equals(64))();
+
+  TextColumn get sourceGoogleSubject =>
+      text().check(sourceGoogleSubject.length.isBiggerThanValue(0))();
+
+  BoolColumn get sourceAccountMatches => boolean()();
+
+  DateTimeColumn get exportedAt => dateTime()();
+
+  IntColumn get createdListCount =>
+      integer().check(createdListCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get existingListCount =>
+      integer().check(existingListCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get createdTaskCount =>
+      integer().check(createdTaskCount.isBiggerOrEqualValue(0))();
+
+  IntColumn get existingTaskCount =>
+      integer().check(existingTaskCount.isBiggerOrEqualValue(0))();
+
+  DateTimeColumn get importedAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, documentDigest},
+    <Column<Object>>{accountId, id},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+  ];
+}

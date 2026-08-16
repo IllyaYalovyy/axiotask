@@ -7,7 +7,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'Google passes isolated optional-clear and stale-source DELETE probes',
+    'Google passes mutation contracts and restore import smoke',
     (tester) async {
       await tester.pumpWidget(
         probe.GoogleTasksMutationProbeApp(
@@ -30,6 +30,7 @@ void main() {
       );
       expect(find.text('notesNullClearing=true'), findsOneWidget);
       expect(find.text('dueNullClearing=true'), findsOneWidget);
+      expect(find.text('restoreImportEmptyList=true'), findsOneWidget);
       expect(find.text('cleanupZeroMatchesVerified=true'), findsOneWidget);
       expect(find.text('credentialCleanupVerified=true'), findsOneWidget);
     },

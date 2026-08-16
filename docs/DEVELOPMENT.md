@@ -344,6 +344,17 @@ use only in-memory synthetic data and write beneath ignored
 `screenshots/actual/`; inspect both at 1280×720. Android compiles the admitted
 plugin but has no claimed export picker in this desktop-first slice.
 
+S30B reuses the isolated picker boundary for import and adds the account-scoped
+manifest table to schema version 1. Codec/planner/file, real-SQLite rollback and
+restart, sync partial-success, ViewModel/widget, and Linux application tests use
+only synthetic documents and temporary paths. Ignored restore screenshots are
+in-memory. The separate real-Google smoke still requires the dedicated-subject
+guard and never uses normal credentials or account data.
+The existing opt-in mutation probe now supplies that smoke: after pinned-subject
+authorization it fresh-syncs an isolated in-memory partition, restores one
+synthetic list/task, publishes through `SyncEngine`, verifies Google read-back,
+and includes the created list in its exact prefix cleanup.
+
 ## Development versus release diagnostics
 
 The clearly named debug development entry point composes the sensitive local

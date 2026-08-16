@@ -114,6 +114,13 @@ document-local keys rather than SQLite IDs and excludes credentials,
 authorization, synchronization evidence, diagnostics, and preferences. The UI,
 native save dialog, and file identify the backup as private task data; a cancel
 writes nothing and a successful result reports only the filename and counts.
+The same surface restores a completely validated v1 file only after the target
+account reports a fresh successful sync. Matching Google identities within the
+same Google subject remain unchanged; content is never matched. One transaction
+creates every absent provisional record, ordinary desired state, and a durable
+document manifest, or creates none. A repeat is a no-op in that local account
+partition. Cross-account import or deleted manifest history cannot prevent
+duplicates, and the preview states that limitation.
 
 Search finds supported cached tasks by title or notes without crossing account
 or protected-data boundaries. A matching subtask is labeled beneath its parent
@@ -404,6 +411,9 @@ The S07 P7/P12-style probe is destructive only to uniquely prefixed disposable
 data in the pinned dedicated account. It creates two scratch lists, proves JSON
 `null` clearing for synthetic notes and due values, moves a synthetic task
 between those lists, and exercises DELETE through its stale source-list path.
+It also completes a fresh local sync, imports one synthetic list/task through
+the S30B transaction, publishes them through the normal sync engine, and reads
+them back from Google.
 It preserves that stale-path outcome as uncertain and performs a positive
 destination read-back. Cleanup deletes both scratch lists, confirms no matching
 prefix remains, deletes only the probe's separate secure-storage bundle, and
@@ -509,6 +519,7 @@ flutter test test/core/clock_randomness_test.dart
 flutter test test/core/diagnostics_test.dart
 flutter test test/data/diagnostics/local_diagnostic_exporter_test.dart
 flutter test test/domain/account_backup_codec_test.dart
+flutter test test/domain/account_backup_import_planner_test.dart
 flutter test test/data/database/account_backup_repository_test.dart
 flutter test test/data/backup/local_account_backup_exporter_test.dart
 flutter test test/features/backup/account_backup_view_model_test.dart
@@ -645,12 +656,13 @@ must show the persistent warning, allowed synthetic private context, and the
 same credential redaction. The runner opens no database, OAuth configuration,
 secure storage, or Google connection.
 
-The account-backup capture writes `account-backup-warning-light.png` and
-`account-backup-result-dark.png` at 1280×720. Inspect both: the selected-account
-scope, exact v1 contents/exclusions, persistent private-data warning, synthetic
-filename, and exact counts must remain visible. The runner uses only in-memory
-synthetic backup data and opens no database, preferences, credentials, OAuth
-configuration, diagnostics, or Google connection.
+The account-backup capture writes `account-backup-warning-light.png`,
+`account-backup-result-dark.png`, `account-restore-preview-light.png`, and
+`account-restore-result-dark.png` at 1280×720. Inspect all four: scope, exact v1
+contents/exclusions, private-data warning, source mismatch/duplicate limitation,
+existing-wins counts, and local acceptance versus Google publication must remain
+visible. The runner uses only in-memory synthetic data and opens no storage,
+credentials, OAuth configuration, diagnostics, or Google connection.
 
 ## Native SQLite capability probe
 

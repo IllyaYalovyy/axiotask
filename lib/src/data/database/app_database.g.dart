@@ -14097,6 +14097,727 @@ class ViewPreferenceRowsCompanion extends UpdateCompanion<ViewPreferenceRow> {
   }
 }
 
+class $AccountBackupImportManifestRowsTable
+    extends AccountBackupImportManifestRows
+    with
+        TableInfo<
+          $AccountBackupImportManifestRowsTable,
+          AccountBackupImportManifestRow
+        > {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AccountBackupImportManifestRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _documentDigestMeta = const VerificationMeta(
+    'documentDigest',
+  );
+  @override
+  late final GeneratedColumn<String> documentDigest = GeneratedColumn<String>(
+    'document_digest',
+    aliasedName,
+    false,
+    check: () => documentDigest.length.equals(64),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceGoogleSubjectMeta =
+      const VerificationMeta('sourceGoogleSubject');
+  @override
+  late final GeneratedColumn<String> sourceGoogleSubject =
+      GeneratedColumn<String>(
+        'source_google_subject',
+        aliasedName,
+        false,
+        check: () =>
+            ComparableExpr(sourceGoogleSubject.length).isBiggerThanValue(0),
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _sourceAccountMatchesMeta =
+      const VerificationMeta('sourceAccountMatches');
+  @override
+  late final GeneratedColumn<bool> sourceAccountMatches = GeneratedColumn<bool>(
+    'source_account_matches',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("source_account_matches" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _exportedAtMeta = const VerificationMeta(
+    'exportedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> exportedAt = GeneratedColumn<DateTime>(
+    'exported_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdListCountMeta = const VerificationMeta(
+    'createdListCount',
+  );
+  @override
+  late final GeneratedColumn<int> createdListCount = GeneratedColumn<int>(
+    'created_list_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(createdListCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _existingListCountMeta = const VerificationMeta(
+    'existingListCount',
+  );
+  @override
+  late final GeneratedColumn<int> existingListCount = GeneratedColumn<int>(
+    'existing_list_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(existingListCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdTaskCountMeta = const VerificationMeta(
+    'createdTaskCount',
+  );
+  @override
+  late final GeneratedColumn<int> createdTaskCount = GeneratedColumn<int>(
+    'created_task_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(createdTaskCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _existingTaskCountMeta = const VerificationMeta(
+    'existingTaskCount',
+  );
+  @override
+  late final GeneratedColumn<int> existingTaskCount = GeneratedColumn<int>(
+    'existing_task_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(existingTaskCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _importedAtMeta = const VerificationMeta(
+    'importedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> importedAt = GeneratedColumn<DateTime>(
+    'imported_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    documentDigest,
+    sourceGoogleSubject,
+    sourceAccountMatches,
+    exportedAt,
+    createdListCount,
+    existingListCount,
+    createdTaskCount,
+    existingTaskCount,
+    importedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'account_backup_import_manifests';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AccountBackupImportManifestRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('document_digest')) {
+      context.handle(
+        _documentDigestMeta,
+        documentDigest.isAcceptableOrUnknown(
+          data['document_digest']!,
+          _documentDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_documentDigestMeta);
+    }
+    if (data.containsKey('source_google_subject')) {
+      context.handle(
+        _sourceGoogleSubjectMeta,
+        sourceGoogleSubject.isAcceptableOrUnknown(
+          data['source_google_subject']!,
+          _sourceGoogleSubjectMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceGoogleSubjectMeta);
+    }
+    if (data.containsKey('source_account_matches')) {
+      context.handle(
+        _sourceAccountMatchesMeta,
+        sourceAccountMatches.isAcceptableOrUnknown(
+          data['source_account_matches']!,
+          _sourceAccountMatchesMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceAccountMatchesMeta);
+    }
+    if (data.containsKey('exported_at')) {
+      context.handle(
+        _exportedAtMeta,
+        exportedAt.isAcceptableOrUnknown(data['exported_at']!, _exportedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_exportedAtMeta);
+    }
+    if (data.containsKey('created_list_count')) {
+      context.handle(
+        _createdListCountMeta,
+        createdListCount.isAcceptableOrUnknown(
+          data['created_list_count']!,
+          _createdListCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_createdListCountMeta);
+    }
+    if (data.containsKey('existing_list_count')) {
+      context.handle(
+        _existingListCountMeta,
+        existingListCount.isAcceptableOrUnknown(
+          data['existing_list_count']!,
+          _existingListCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_existingListCountMeta);
+    }
+    if (data.containsKey('created_task_count')) {
+      context.handle(
+        _createdTaskCountMeta,
+        createdTaskCount.isAcceptableOrUnknown(
+          data['created_task_count']!,
+          _createdTaskCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_createdTaskCountMeta);
+    }
+    if (data.containsKey('existing_task_count')) {
+      context.handle(
+        _existingTaskCountMeta,
+        existingTaskCount.isAcceptableOrUnknown(
+          data['existing_task_count']!,
+          _existingTaskCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_existingTaskCountMeta);
+    }
+    if (data.containsKey('imported_at')) {
+      context.handle(
+        _importedAtMeta,
+        importedAt.isAcceptableOrUnknown(data['imported_at']!, _importedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_importedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, documentDigest},
+    {accountId, id},
+  ];
+  @override
+  AccountBackupImportManifestRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AccountBackupImportManifestRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      documentDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}document_digest'],
+      )!,
+      sourceGoogleSubject: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_google_subject'],
+      )!,
+      sourceAccountMatches: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}source_account_matches'],
+      )!,
+      exportedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}exported_at'],
+      )!,
+      createdListCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_list_count'],
+      )!,
+      existingListCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}existing_list_count'],
+      )!,
+      createdTaskCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_task_count'],
+      )!,
+      existingTaskCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}existing_task_count'],
+      )!,
+      importedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}imported_at'],
+      )!,
+    );
+  }
+
+  @override
+  $AccountBackupImportManifestRowsTable createAlias(String alias) {
+    return $AccountBackupImportManifestRowsTable(attachedDatabase, alias);
+  }
+}
+
+class AccountBackupImportManifestRow extends DataClass
+    implements Insertable<AccountBackupImportManifestRow> {
+  final int id;
+  final int accountId;
+  final String documentDigest;
+  final String sourceGoogleSubject;
+  final bool sourceAccountMatches;
+  final DateTime exportedAt;
+  final int createdListCount;
+  final int existingListCount;
+  final int createdTaskCount;
+  final int existingTaskCount;
+  final DateTime importedAt;
+  const AccountBackupImportManifestRow({
+    required this.id,
+    required this.accountId,
+    required this.documentDigest,
+    required this.sourceGoogleSubject,
+    required this.sourceAccountMatches,
+    required this.exportedAt,
+    required this.createdListCount,
+    required this.existingListCount,
+    required this.createdTaskCount,
+    required this.existingTaskCount,
+    required this.importedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['document_digest'] = Variable<String>(documentDigest);
+    map['source_google_subject'] = Variable<String>(sourceGoogleSubject);
+    map['source_account_matches'] = Variable<bool>(sourceAccountMatches);
+    map['exported_at'] = Variable<DateTime>(exportedAt);
+    map['created_list_count'] = Variable<int>(createdListCount);
+    map['existing_list_count'] = Variable<int>(existingListCount);
+    map['created_task_count'] = Variable<int>(createdTaskCount);
+    map['existing_task_count'] = Variable<int>(existingTaskCount);
+    map['imported_at'] = Variable<DateTime>(importedAt);
+    return map;
+  }
+
+  AccountBackupImportManifestRowsCompanion toCompanion(bool nullToAbsent) {
+    return AccountBackupImportManifestRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      documentDigest: Value(documentDigest),
+      sourceGoogleSubject: Value(sourceGoogleSubject),
+      sourceAccountMatches: Value(sourceAccountMatches),
+      exportedAt: Value(exportedAt),
+      createdListCount: Value(createdListCount),
+      existingListCount: Value(existingListCount),
+      createdTaskCount: Value(createdTaskCount),
+      existingTaskCount: Value(existingTaskCount),
+      importedAt: Value(importedAt),
+    );
+  }
+
+  factory AccountBackupImportManifestRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AccountBackupImportManifestRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      documentDigest: serializer.fromJson<String>(json['documentDigest']),
+      sourceGoogleSubject: serializer.fromJson<String>(
+        json['sourceGoogleSubject'],
+      ),
+      sourceAccountMatches: serializer.fromJson<bool>(
+        json['sourceAccountMatches'],
+      ),
+      exportedAt: serializer.fromJson<DateTime>(json['exportedAt']),
+      createdListCount: serializer.fromJson<int>(json['createdListCount']),
+      existingListCount: serializer.fromJson<int>(json['existingListCount']),
+      createdTaskCount: serializer.fromJson<int>(json['createdTaskCount']),
+      existingTaskCount: serializer.fromJson<int>(json['existingTaskCount']),
+      importedAt: serializer.fromJson<DateTime>(json['importedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'documentDigest': serializer.toJson<String>(documentDigest),
+      'sourceGoogleSubject': serializer.toJson<String>(sourceGoogleSubject),
+      'sourceAccountMatches': serializer.toJson<bool>(sourceAccountMatches),
+      'exportedAt': serializer.toJson<DateTime>(exportedAt),
+      'createdListCount': serializer.toJson<int>(createdListCount),
+      'existingListCount': serializer.toJson<int>(existingListCount),
+      'createdTaskCount': serializer.toJson<int>(createdTaskCount),
+      'existingTaskCount': serializer.toJson<int>(existingTaskCount),
+      'importedAt': serializer.toJson<DateTime>(importedAt),
+    };
+  }
+
+  AccountBackupImportManifestRow copyWith({
+    int? id,
+    int? accountId,
+    String? documentDigest,
+    String? sourceGoogleSubject,
+    bool? sourceAccountMatches,
+    DateTime? exportedAt,
+    int? createdListCount,
+    int? existingListCount,
+    int? createdTaskCount,
+    int? existingTaskCount,
+    DateTime? importedAt,
+  }) => AccountBackupImportManifestRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    documentDigest: documentDigest ?? this.documentDigest,
+    sourceGoogleSubject: sourceGoogleSubject ?? this.sourceGoogleSubject,
+    sourceAccountMatches: sourceAccountMatches ?? this.sourceAccountMatches,
+    exportedAt: exportedAt ?? this.exportedAt,
+    createdListCount: createdListCount ?? this.createdListCount,
+    existingListCount: existingListCount ?? this.existingListCount,
+    createdTaskCount: createdTaskCount ?? this.createdTaskCount,
+    existingTaskCount: existingTaskCount ?? this.existingTaskCount,
+    importedAt: importedAt ?? this.importedAt,
+  );
+  AccountBackupImportManifestRow copyWithCompanion(
+    AccountBackupImportManifestRowsCompanion data,
+  ) {
+    return AccountBackupImportManifestRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      documentDigest: data.documentDigest.present
+          ? data.documentDigest.value
+          : this.documentDigest,
+      sourceGoogleSubject: data.sourceGoogleSubject.present
+          ? data.sourceGoogleSubject.value
+          : this.sourceGoogleSubject,
+      sourceAccountMatches: data.sourceAccountMatches.present
+          ? data.sourceAccountMatches.value
+          : this.sourceAccountMatches,
+      exportedAt: data.exportedAt.present
+          ? data.exportedAt.value
+          : this.exportedAt,
+      createdListCount: data.createdListCount.present
+          ? data.createdListCount.value
+          : this.createdListCount,
+      existingListCount: data.existingListCount.present
+          ? data.existingListCount.value
+          : this.existingListCount,
+      createdTaskCount: data.createdTaskCount.present
+          ? data.createdTaskCount.value
+          : this.createdTaskCount,
+      existingTaskCount: data.existingTaskCount.present
+          ? data.existingTaskCount.value
+          : this.existingTaskCount,
+      importedAt: data.importedAt.present
+          ? data.importedAt.value
+          : this.importedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AccountBackupImportManifestRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('documentDigest: $documentDigest, ')
+          ..write('sourceGoogleSubject: $sourceGoogleSubject, ')
+          ..write('sourceAccountMatches: $sourceAccountMatches, ')
+          ..write('exportedAt: $exportedAt, ')
+          ..write('createdListCount: $createdListCount, ')
+          ..write('existingListCount: $existingListCount, ')
+          ..write('createdTaskCount: $createdTaskCount, ')
+          ..write('existingTaskCount: $existingTaskCount, ')
+          ..write('importedAt: $importedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    documentDigest,
+    sourceGoogleSubject,
+    sourceAccountMatches,
+    exportedAt,
+    createdListCount,
+    existingListCount,
+    createdTaskCount,
+    existingTaskCount,
+    importedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AccountBackupImportManifestRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.documentDigest == this.documentDigest &&
+          other.sourceGoogleSubject == this.sourceGoogleSubject &&
+          other.sourceAccountMatches == this.sourceAccountMatches &&
+          other.exportedAt == this.exportedAt &&
+          other.createdListCount == this.createdListCount &&
+          other.existingListCount == this.existingListCount &&
+          other.createdTaskCount == this.createdTaskCount &&
+          other.existingTaskCount == this.existingTaskCount &&
+          other.importedAt == this.importedAt);
+}
+
+class AccountBackupImportManifestRowsCompanion
+    extends UpdateCompanion<AccountBackupImportManifestRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<String> documentDigest;
+  final Value<String> sourceGoogleSubject;
+  final Value<bool> sourceAccountMatches;
+  final Value<DateTime> exportedAt;
+  final Value<int> createdListCount;
+  final Value<int> existingListCount;
+  final Value<int> createdTaskCount;
+  final Value<int> existingTaskCount;
+  final Value<DateTime> importedAt;
+  const AccountBackupImportManifestRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.documentDigest = const Value.absent(),
+    this.sourceGoogleSubject = const Value.absent(),
+    this.sourceAccountMatches = const Value.absent(),
+    this.exportedAt = const Value.absent(),
+    this.createdListCount = const Value.absent(),
+    this.existingListCount = const Value.absent(),
+    this.createdTaskCount = const Value.absent(),
+    this.existingTaskCount = const Value.absent(),
+    this.importedAt = const Value.absent(),
+  });
+  AccountBackupImportManifestRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required String documentDigest,
+    required String sourceGoogleSubject,
+    required bool sourceAccountMatches,
+    required DateTime exportedAt,
+    required int createdListCount,
+    required int existingListCount,
+    required int createdTaskCount,
+    required int existingTaskCount,
+    required DateTime importedAt,
+  }) : accountId = Value(accountId),
+       documentDigest = Value(documentDigest),
+       sourceGoogleSubject = Value(sourceGoogleSubject),
+       sourceAccountMatches = Value(sourceAccountMatches),
+       exportedAt = Value(exportedAt),
+       createdListCount = Value(createdListCount),
+       existingListCount = Value(existingListCount),
+       createdTaskCount = Value(createdTaskCount),
+       existingTaskCount = Value(existingTaskCount),
+       importedAt = Value(importedAt);
+  static Insertable<AccountBackupImportManifestRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<String>? documentDigest,
+    Expression<String>? sourceGoogleSubject,
+    Expression<bool>? sourceAccountMatches,
+    Expression<DateTime>? exportedAt,
+    Expression<int>? createdListCount,
+    Expression<int>? existingListCount,
+    Expression<int>? createdTaskCount,
+    Expression<int>? existingTaskCount,
+    Expression<DateTime>? importedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (documentDigest != null) 'document_digest': documentDigest,
+      if (sourceGoogleSubject != null)
+        'source_google_subject': sourceGoogleSubject,
+      if (sourceAccountMatches != null)
+        'source_account_matches': sourceAccountMatches,
+      if (exportedAt != null) 'exported_at': exportedAt,
+      if (createdListCount != null) 'created_list_count': createdListCount,
+      if (existingListCount != null) 'existing_list_count': existingListCount,
+      if (createdTaskCount != null) 'created_task_count': createdTaskCount,
+      if (existingTaskCount != null) 'existing_task_count': existingTaskCount,
+      if (importedAt != null) 'imported_at': importedAt,
+    });
+  }
+
+  AccountBackupImportManifestRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<String>? documentDigest,
+    Value<String>? sourceGoogleSubject,
+    Value<bool>? sourceAccountMatches,
+    Value<DateTime>? exportedAt,
+    Value<int>? createdListCount,
+    Value<int>? existingListCount,
+    Value<int>? createdTaskCount,
+    Value<int>? existingTaskCount,
+    Value<DateTime>? importedAt,
+  }) {
+    return AccountBackupImportManifestRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      documentDigest: documentDigest ?? this.documentDigest,
+      sourceGoogleSubject: sourceGoogleSubject ?? this.sourceGoogleSubject,
+      sourceAccountMatches: sourceAccountMatches ?? this.sourceAccountMatches,
+      exportedAt: exportedAt ?? this.exportedAt,
+      createdListCount: createdListCount ?? this.createdListCount,
+      existingListCount: existingListCount ?? this.existingListCount,
+      createdTaskCount: createdTaskCount ?? this.createdTaskCount,
+      existingTaskCount: existingTaskCount ?? this.existingTaskCount,
+      importedAt: importedAt ?? this.importedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (documentDigest.present) {
+      map['document_digest'] = Variable<String>(documentDigest.value);
+    }
+    if (sourceGoogleSubject.present) {
+      map['source_google_subject'] = Variable<String>(
+        sourceGoogleSubject.value,
+      );
+    }
+    if (sourceAccountMatches.present) {
+      map['source_account_matches'] = Variable<bool>(
+        sourceAccountMatches.value,
+      );
+    }
+    if (exportedAt.present) {
+      map['exported_at'] = Variable<DateTime>(exportedAt.value);
+    }
+    if (createdListCount.present) {
+      map['created_list_count'] = Variable<int>(createdListCount.value);
+    }
+    if (existingListCount.present) {
+      map['existing_list_count'] = Variable<int>(existingListCount.value);
+    }
+    if (createdTaskCount.present) {
+      map['created_task_count'] = Variable<int>(createdTaskCount.value);
+    }
+    if (existingTaskCount.present) {
+      map['existing_task_count'] = Variable<int>(existingTaskCount.value);
+    }
+    if (importedAt.present) {
+      map['imported_at'] = Variable<DateTime>(importedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AccountBackupImportManifestRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('documentDigest: $documentDigest, ')
+          ..write('sourceGoogleSubject: $sourceGoogleSubject, ')
+          ..write('sourceAccountMatches: $sourceAccountMatches, ')
+          ..write('exportedAt: $exportedAt, ')
+          ..write('createdListCount: $createdListCount, ')
+          ..write('existingListCount: $existingListCount, ')
+          ..write('createdTaskCount: $createdTaskCount, ')
+          ..write('existingTaskCount: $existingTaskCount, ')
+          ..write('importedAt: $importedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -14140,6 +14861,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $TaskListPreferenceRowsTable(this);
   late final $ViewPreferenceRowsTable viewPreferenceRows =
       $ViewPreferenceRowsTable(this);
+  late final $AccountBackupImportManifestRowsTable
+  accountBackupImportManifestRows = $AccountBackupImportManifestRowsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -14166,6 +14889,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
+    accountBackupImportManifestRows,
   ];
 }
 
@@ -20916,6 +21640,351 @@ typedef $$ViewPreferenceRowsTableProcessedTableManager =
       ViewPreferenceRow,
       PrefetchHooks Function()
     >;
+typedef $$AccountBackupImportManifestRowsTableCreateCompanionBuilder =
+    AccountBackupImportManifestRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required String documentDigest,
+      required String sourceGoogleSubject,
+      required bool sourceAccountMatches,
+      required DateTime exportedAt,
+      required int createdListCount,
+      required int existingListCount,
+      required int createdTaskCount,
+      required int existingTaskCount,
+      required DateTime importedAt,
+    });
+typedef $$AccountBackupImportManifestRowsTableUpdateCompanionBuilder =
+    AccountBackupImportManifestRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<String> documentDigest,
+      Value<String> sourceGoogleSubject,
+      Value<bool> sourceAccountMatches,
+      Value<DateTime> exportedAt,
+      Value<int> createdListCount,
+      Value<int> existingListCount,
+      Value<int> createdTaskCount,
+      Value<int> existingTaskCount,
+      Value<DateTime> importedAt,
+    });
+
+class $$AccountBackupImportManifestRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $AccountBackupImportManifestRowsTable> {
+  $$AccountBackupImportManifestRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get documentDigest => $composableBuilder(
+    column: $table.documentDigest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceGoogleSubject => $composableBuilder(
+    column: $table.sourceGoogleSubject,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get sourceAccountMatches => $composableBuilder(
+    column: $table.sourceAccountMatches,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get exportedAt => $composableBuilder(
+    column: $table.exportedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdListCount => $composableBuilder(
+    column: $table.createdListCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get existingListCount => $composableBuilder(
+    column: $table.existingListCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdTaskCount => $composableBuilder(
+    column: $table.createdTaskCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get existingTaskCount => $composableBuilder(
+    column: $table.existingTaskCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get importedAt => $composableBuilder(
+    column: $table.importedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$AccountBackupImportManifestRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $AccountBackupImportManifestRowsTable> {
+  $$AccountBackupImportManifestRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get documentDigest => $composableBuilder(
+    column: $table.documentDigest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceGoogleSubject => $composableBuilder(
+    column: $table.sourceGoogleSubject,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get sourceAccountMatches => $composableBuilder(
+    column: $table.sourceAccountMatches,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get exportedAt => $composableBuilder(
+    column: $table.exportedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdListCount => $composableBuilder(
+    column: $table.createdListCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get existingListCount => $composableBuilder(
+    column: $table.existingListCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdTaskCount => $composableBuilder(
+    column: $table.createdTaskCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get existingTaskCount => $composableBuilder(
+    column: $table.existingTaskCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get importedAt => $composableBuilder(
+    column: $table.importedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$AccountBackupImportManifestRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $AccountBackupImportManifestRowsTable> {
+  $$AccountBackupImportManifestRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get documentDigest => $composableBuilder(
+    column: $table.documentDigest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sourceGoogleSubject => $composableBuilder(
+    column: $table.sourceGoogleSubject,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get sourceAccountMatches => $composableBuilder(
+    column: $table.sourceAccountMatches,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get exportedAt => $composableBuilder(
+    column: $table.exportedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get createdListCount => $composableBuilder(
+    column: $table.createdListCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get existingListCount => $composableBuilder(
+    column: $table.existingListCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get createdTaskCount => $composableBuilder(
+    column: $table.createdTaskCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get existingTaskCount => $composableBuilder(
+    column: $table.existingTaskCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get importedAt => $composableBuilder(
+    column: $table.importedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$AccountBackupImportManifestRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AccountBackupImportManifestRowsTable,
+          AccountBackupImportManifestRow,
+          $$AccountBackupImportManifestRowsTableFilterComposer,
+          $$AccountBackupImportManifestRowsTableOrderingComposer,
+          $$AccountBackupImportManifestRowsTableAnnotationComposer,
+          $$AccountBackupImportManifestRowsTableCreateCompanionBuilder,
+          $$AccountBackupImportManifestRowsTableUpdateCompanionBuilder,
+          (
+            AccountBackupImportManifestRow,
+            BaseReferences<
+              _$AppDatabase,
+              $AccountBackupImportManifestRowsTable,
+              AccountBackupImportManifestRow
+            >,
+          ),
+          AccountBackupImportManifestRow,
+          PrefetchHooks Function()
+        > {
+  $$AccountBackupImportManifestRowsTableTableManager(
+    _$AppDatabase db,
+    $AccountBackupImportManifestRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AccountBackupImportManifestRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$AccountBackupImportManifestRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$AccountBackupImportManifestRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<String> documentDigest = const Value.absent(),
+                Value<String> sourceGoogleSubject = const Value.absent(),
+                Value<bool> sourceAccountMatches = const Value.absent(),
+                Value<DateTime> exportedAt = const Value.absent(),
+                Value<int> createdListCount = const Value.absent(),
+                Value<int> existingListCount = const Value.absent(),
+                Value<int> createdTaskCount = const Value.absent(),
+                Value<int> existingTaskCount = const Value.absent(),
+                Value<DateTime> importedAt = const Value.absent(),
+              }) => AccountBackupImportManifestRowsCompanion(
+                id: id,
+                accountId: accountId,
+                documentDigest: documentDigest,
+                sourceGoogleSubject: sourceGoogleSubject,
+                sourceAccountMatches: sourceAccountMatches,
+                exportedAt: exportedAt,
+                createdListCount: createdListCount,
+                existingListCount: existingListCount,
+                createdTaskCount: createdTaskCount,
+                existingTaskCount: existingTaskCount,
+                importedAt: importedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required String documentDigest,
+                required String sourceGoogleSubject,
+                required bool sourceAccountMatches,
+                required DateTime exportedAt,
+                required int createdListCount,
+                required int existingListCount,
+                required int createdTaskCount,
+                required int existingTaskCount,
+                required DateTime importedAt,
+              }) => AccountBackupImportManifestRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                documentDigest: documentDigest,
+                sourceGoogleSubject: sourceGoogleSubject,
+                sourceAccountMatches: sourceAccountMatches,
+                exportedAt: exportedAt,
+                createdListCount: createdListCount,
+                existingListCount: existingListCount,
+                createdTaskCount: createdTaskCount,
+                existingTaskCount: existingTaskCount,
+                importedAt: importedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$AccountBackupImportManifestRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AccountBackupImportManifestRowsTable,
+      AccountBackupImportManifestRow,
+      $$AccountBackupImportManifestRowsTableFilterComposer,
+      $$AccountBackupImportManifestRowsTableOrderingComposer,
+      $$AccountBackupImportManifestRowsTableAnnotationComposer,
+      $$AccountBackupImportManifestRowsTableCreateCompanionBuilder,
+      $$AccountBackupImportManifestRowsTableUpdateCompanionBuilder,
+      (
+        AccountBackupImportManifestRow,
+        BaseReferences<
+          _$AppDatabase,
+          $AccountBackupImportManifestRowsTable,
+          AccountBackupImportManifestRow
+        >,
+      ),
+      AccountBackupImportManifestRow,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -20987,4 +22056,10 @@ class $AppDatabaseManager {
       );
   $$ViewPreferenceRowsTableTableManager get viewPreferenceRows =>
       $$ViewPreferenceRowsTableTableManager(_db, _db.viewPreferenceRows);
+  $$AccountBackupImportManifestRowsTableTableManager
+  get accountBackupImportManifestRows =>
+      $$AccountBackupImportManifestRowsTableTableManager(
+        _db,
+        _db.accountBackupImportManifestRows,
+      );
 }

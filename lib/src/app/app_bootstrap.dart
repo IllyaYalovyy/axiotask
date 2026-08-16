@@ -6,6 +6,7 @@ import '../core/diagnostics/diagnostics.dart';
 import '../data/database/schema_verifier.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/account_backup_repository.dart';
+import '../sync/health/sync_health_repository.dart';
 import 'axiotask_app.dart';
 import 'tasks_feature_runtime.dart';
 
@@ -15,6 +16,9 @@ typedef AccountBackupPageBuilder =
       BuildContext context,
       AccountId accountId,
       AccountBackupRepository repository,
+      AccountBackupRestoreRepository restoreRepository,
+      SyncHealthRepository syncHealthRepository,
+      Future<void> Function()? importCommitted,
     );
 
 final class AxiotaskBootstrap extends StatefulWidget {
@@ -137,16 +141,24 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
     final runtime = _runtime;
     if (runtime != null) {
       final repository = runtime.accountBackupRepository;
+      final restoreRepository = runtime.accountBackupRestoreRepository;
+      final syncHealthRepository = runtime.syncHealthRepository;
       return AxiotaskApp(
         viewModel: runtime.viewModel,
         diagnosticsBuilder: widget.diagnosticsBuilder,
         accountBackupBuilder:
-            repository == null || widget.accountBackupBuilder == null
+            repository == null ||
+                restoreRepository == null ||
+                syncHealthRepository == null ||
+                widget.accountBackupBuilder == null
             ? null
             : (context) => widget.accountBackupBuilder!(
                 context,
                 runtime.viewModel.accountId,
                 repository,
+                restoreRepository,
+                syncHealthRepository,
+                runtime.viewModel.localEditCommitted,
               ),
       );
     }

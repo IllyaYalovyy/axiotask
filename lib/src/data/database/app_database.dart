@@ -31,6 +31,7 @@ part 'app_database.g.dart';
     SyncFactRows,
     TaskListPreferenceRows,
     ViewPreferenceRows,
+    AccountBackupImportManifestRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {

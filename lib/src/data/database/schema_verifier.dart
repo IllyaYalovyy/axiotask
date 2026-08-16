@@ -6,7 +6,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 const int currentDatabaseSchemaVersion = 1;
 const String expectedSchemaFingerprint =
-    'axiotask-schema-v1:account-cache-sync-health-retry-structure-delete-group-clear-due-undo-bulk-results-and-restart-runs';
+    'axiotask-schema-v1:account-cache-sync-health-retry-structure-delete-group-clear-due-undo-bulk-results-restart-runs-and-import-manifests';
 
 final class SchemaVerificationException implements Exception {
   const SchemaVerificationException(this.code);
@@ -142,6 +142,7 @@ const String _schemaContractQuery = '''
 ''';
 
 const List<String> _expectedTableNames = <String>[
+  'account_backup_import_manifests',
   'account_preferences',
   'accounts',
   'bulk_operation_members',
@@ -166,4 +167,4 @@ const List<String> _expectedTableNames = <String>[
 ];
 
 const String _expectedSchemaDigest =
-    '3f0fe9ac198119187d8ecfad350c592a827f65a1d542f14b7a78cb943f52febc';
+    '8d48cfbbc16326c4c2bad9325b4d5e2fdedd41d103bfee00b68f70d9ccb7a7c4';

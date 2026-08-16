@@ -7,6 +7,7 @@ import '../../data/backup/local_account_backup_exporter.dart';
 import '../../domain/backup/account_backup.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/repository/account_backup_repository.dart';
+import '../../sync/health/sync_health_repository.dart';
 import 'account_backup_view_model.dart';
 
 final class AccountBackupHost extends StatefulWidget {
@@ -15,6 +16,10 @@ final class AccountBackupHost extends StatefulWidget {
     required this.repository,
     required this.exporter,
     required this.clock,
+    this.restoreRepository,
+    this.importer,
+    this.syncHealthRepository,
+    this.importCommitted,
     super.key,
   });
 
@@ -22,6 +27,10 @@ final class AccountBackupHost extends StatefulWidget {
   final AccountBackupRepository repository;
   final AccountBackupExporter exporter;
   final Clock clock;
+  final AccountBackupRestoreRepository? restoreRepository;
+  final AccountBackupImporter? importer;
+  final SyncHealthRepository? syncHealthRepository;
+  final Future<void> Function()? importCommitted;
 
   @override
   State<AccountBackupHost> createState() => _AccountBackupHostState();
@@ -33,6 +42,10 @@ final class _AccountBackupHostState extends State<AccountBackupHost> {
     repository: widget.repository,
     exporter: widget.exporter,
     clock: widget.clock,
+    restoreRepository: widget.restoreRepository,
+    importer: widget.importer,
+    syncHealthRepository: widget.syncHealthRepository,
+    importCommitted: widget.importCommitted,
   );
 
   @override
@@ -47,9 +60,14 @@ final class _AccountBackupHostState extends State<AccountBackupHost> {
 }
 
 final class AccountBackupView extends StatefulWidget {
-  const AccountBackupView({required this.viewModel, super.key});
+  const AccountBackupView({
+    required this.viewModel,
+    this.scrollController,
+    super.key,
+  });
 
   final AccountBackupViewModel viewModel;
+  final ScrollController? scrollController;
 
   @override
   State<AccountBackupView> createState() => _AccountBackupViewState();
@@ -109,12 +127,13 @@ final class _AccountBackupViewState extends State<AccountBackupView> {
   Widget build(BuildContext context) {
     final state = widget.viewModel.state;
     return Scaffold(
-      appBar: AppBar(title: const Text('Export account backup')),
+      appBar: AppBar(title: const Text('Account backup')),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
             child: ListView(
+              controller: widget.scrollController,
               padding: const EdgeInsets.all(24),
               children: <Widget>[
                 Card(
@@ -211,6 +230,97 @@ final class _AccountBackupViewState extends State<AccountBackupView> {
                     label: const Text('Choose file and export'),
                   ),
                 ),
+                if (widget.viewModel.restoreRepository != null) ...<Widget>[
+                  const Divider(height: 48),
+                  Text(
+                    'Restore from backup',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'A fresh successful sync is required. Existing Google identities '
+                    'are never overwritten or deleted. Content is never used to find '
+                    'duplicates.',
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: state.isWorking
+                        ? null
+                        : widget.viewModel.chooseImport,
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: const Text('Choose backup to restore'),
+                  ),
+                ],
+                if (state.importPreview case final preview?) ...<Widget>[
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            preview.alreadyImported
+                                ? 'Backup already accepted'
+                                : 'Restore preview',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${state.importFileName}\n'
+                            '${_previewCounts(preview)}',
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            preview.sourceAccountMatches
+                                ? 'The source account matches this target account.'
+                                : 'The source account differs. Remote IDs cannot prevent '
+                                      'cross-account duplicates.',
+                            style: TextStyle(
+                              color: preview.sourceAccountMatches
+                                  ? null
+                                  : Theme.of(context).colorScheme.error,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Deleting local import history or importing into another '
+                            'account can create duplicates. Google publication may '
+                            'complete partially and will remain visible as pending or failed.',
+                          ),
+                          if (!preview.alreadyImported) ...<Widget>[
+                            const SizedBox(height: 16),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: FilledButton(
+                                onPressed: state.isWorking
+                                    ? null
+                                    : widget.viewModel.restore,
+                                child: const Text('Restore absent records'),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (state.importResult case final result?) ...<Widget>[
+                  const SizedBox(height: 16),
+                  _ResultCard(
+                    icon: Icons.restore,
+                    title: result.alreadyImported
+                        ? 'Backup was already restored'
+                        : 'Restore accepted locally',
+                    detail:
+                        '${_count(result.createdListCount, 'list')} and '
+                        '${_count(result.createdTaskCount, 'task')} recreated; '
+                        '${_count(result.existingListCount, 'existing list')} and '
+                        '${_count(result.existingTaskCount, 'existing task')} unchanged. '
+                        'Synchronization will publish the new records to Google.',
+                  ),
+                ],
               ],
             ),
           ),
@@ -219,6 +329,21 @@ final class _AccountBackupViewState extends State<AccountBackupView> {
     );
   }
 }
+
+String _count(int value, String singular) =>
+    '$value ${value == 1 ? singular : '${singular}s'}';
+
+String _previewCounts(AccountBackupImportPreview preview) =>
+    preview.alreadyImported
+    ? '${_count(preview.listsToCreate, 'list')} and '
+          '${_count(preview.tasksToCreate, 'task')} were recreated by the earlier restore. '
+          '${_count(preview.existingListCount, 'list')} and '
+          '${_count(preview.existingTaskCount, 'task')} remained unchanged.'
+    : '${_count(preview.listsToCreate, 'list')} and '
+          '${_count(preview.tasksToCreate, 'task')} will be recreated. '
+          '${_count(preview.existingListCount, 'list')} and '
+          '${_count(preview.existingTaskCount, 'task')} already exist and '
+          'will remain unchanged.';
 
 final class _ResultCard extends StatelessWidget {
   const _ResultCard({

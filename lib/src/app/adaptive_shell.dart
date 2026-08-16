@@ -795,7 +795,7 @@ final class _ApplicationHeader extends StatelessWidget {
               const SizedBox(width: 4),
               if (accountBackupBuilder case final builder?) ...<Widget>[
                 IconButton(
-                  tooltip: 'Export account backup',
+                  tooltip: 'Account backup',
                   onPressed: () => Navigator.of(
                     context,
                   ).push(MaterialPageRoute<void>(builder: builder)),

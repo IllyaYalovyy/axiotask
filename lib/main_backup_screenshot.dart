@@ -11,6 +11,8 @@ import 'src/domain/model/tasks.dart';
 import 'src/domain/repository/account_backup_repository.dart';
 import 'src/features/backup/account_backup_view.dart';
 import 'src/features/backup/account_backup_view_model.dart';
+import 'src/sync/health/sync_health.dart';
+import 'src/sync/health/sync_health_repository.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +30,8 @@ final class _AccountBackupScreenshotSequence extends StatefulWidget {
 final class _AccountBackupScreenshotSequenceState
     extends State<_AccountBackupScreenshotSequence> {
   final GlobalKey _boundaryKey = GlobalKey();
-  var _result = false;
+  final ScrollController _scrollController = ScrollController();
+  var _step = 0;
   late final AccountBackupViewModel _viewModel = _createViewModel();
 
   @override
@@ -42,6 +45,9 @@ final class _AccountBackupScreenshotSequenceState
     repository: const _Repository(),
     exporter: const _Exporter(),
     clock: ManualClock(DateTime.utc(2026, 8, 16, 12)),
+    restoreRepository: _RestoreRepository(),
+    importer: const _Importer(),
+    syncHealthRepository: const _HealthRepository(),
   );
 
   Future<void> _capture() async {
@@ -52,9 +58,23 @@ final class _AccountBackupScreenshotSequenceState
       await _write(output, 'account-backup-warning-light.png');
 
       await _viewModel.export();
-      setState(() => _result = true);
+      setState(() => _step = 1);
       await _settleFrames();
       await _write(output, 'account-backup-result-dark.png');
+
+      await _viewModel.chooseImport();
+      setState(() => _step = 2);
+      await _settleFrames();
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      await _settleFrames();
+      await _write(output, 'account-restore-preview-light.png');
+
+      await _viewModel.restore();
+      setState(() => _step = 3);
+      await _settleFrames();
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      await _settleFrames();
+      await _write(output, 'account-restore-result-dark.png');
       exit(0);
     } on Object catch (error) {
       stderr.writeln(
@@ -90,22 +110,111 @@ final class _AccountBackupScreenshotSequenceState
   Widget build(BuildContext context) => RepaintBoundary(
     key: _boundaryKey,
     child: MaterialApp(
-      key: ValueKey<bool>(_result),
+      key: ValueKey<int>(_step),
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: _result ? Brightness.dark : Brightness.light,
+        brightness: _step.isOdd ? Brightness.dark : Brightness.light,
         colorSchemeSeed: const Color(0xff315da8),
         useMaterial3: true,
       ),
-      home: AccountBackupView(viewModel: _viewModel),
+      home: AccountBackupView(
+        viewModel: _viewModel,
+        scrollController: _scrollController,
+      ),
     ),
   );
 
   @override
   void dispose() {
     _viewModel.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
+}
+
+final class _Importer implements AccountBackupImporter {
+  const _Importer();
+
+  @override
+  Future<AccountBackupOpenResult> open() async =>
+      AccountBackupOpenResult.opened(
+        fileName: 'axiotask-account-backup-v1-20260815.json',
+        contents: const AccountBackupCodec().encode(
+          AccountBackupSnapshot(
+            sourceGoogleSubject: 'different-synthetic-subject',
+            lists: const <AccountBackupList>[
+              AccountBackupList(
+                key: 'list-000001',
+                googleId: 'source-list',
+                title: 'Restored planning',
+                order: 0,
+              ),
+            ],
+            tasks: const <AccountBackupTask>[
+              AccountBackupTask(
+                key: 'task-000001',
+                googleId: 'source-task',
+                listKey: 'list-000001',
+                parentKey: null,
+                title: 'Synthetic restored task',
+                notes: 'Synthetic private restore preview',
+                status: TaskStatus.needsAction,
+                due: null,
+                order: 0,
+              ),
+            ],
+          ),
+          exportedAt: DateTime.utc(2026, 8, 15, 12),
+        ),
+      );
+}
+
+final class _RestoreRepository implements AccountBackupRestoreRepository {
+  @override
+  Future<AccountBackupImportPreview> previewImport({
+    required AccountId accountId,
+    required AccountBackupDocument document,
+    required AccountBackupImportReadiness readiness,
+    required DateTime? lastSuccessfulSyncAt,
+  }) async => const AccountBackupImportPreview(
+    documentDigest: 'synthetic-digest',
+    sourceAccountMatches: false,
+    listCount: 1,
+    taskCount: 1,
+    listsToCreate: 1,
+    tasksToCreate: 1,
+    existingListCount: 2,
+    existingTaskCount: 3,
+    alreadyImported: false,
+  );
+
+  @override
+  Future<AccountBackupImportResult> restoreImport({
+    required AccountId accountId,
+    required AccountBackupDocument document,
+    required AccountBackupImportReadiness readiness,
+    required DateTime? lastSuccessfulSyncAt,
+  }) async => const AccountBackupImportResult(
+    createdListCount: 1,
+    existingListCount: 2,
+    createdTaskCount: 1,
+    existingTaskCount: 3,
+    alreadyImported: false,
+  );
+}
+
+final class _HealthRepository implements SyncHealthRepository {
+  const _HealthRepository();
+
+  @override
+  Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(
+    SyncHealth(
+      outcome: SyncHealthOutcome.good,
+      counts: const SyncWorkCounts(),
+      lastSuccessfulSyncAt: DateTime.utc(2026, 8, 16, 12),
+      evaluatedAt: DateTime.utc(2026, 8, 16, 12),
+    ),
+  );
 }
 
 final class _Repository implements AccountBackupRepository {

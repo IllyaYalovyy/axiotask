@@ -116,6 +116,32 @@ void main() {
     expect(encoded, isNot(contains('database-row-canary')));
     expect(encoded, contains(accountBackupPrivateDataWarning));
   });
+
+  test('hostile credential and storage fields are rejected, not imported', () {
+    final valid =
+        jsonDecode(codec.encode(_snapshot(), exportedAt: exportedAt))
+            as Map<String, Object?>;
+    for (final field in const <String>[
+      'authorization',
+      'refreshToken',
+      'syncRuns',
+      'diagnostics',
+      'databaseRows',
+    ]) {
+      expect(
+        () => codec.decode(
+          jsonEncode(<String, Object?>{...valid, field: 'private-canary'}),
+        ),
+        throwsA(
+          isA<AccountBackupFormatException>().having(
+            (error) => error.code,
+            'code',
+            'unexpected_field',
+          ),
+        ),
+      );
+    }
+  });
 }
 
 AccountBackupSnapshot _snapshot() => AccountBackupSnapshot(

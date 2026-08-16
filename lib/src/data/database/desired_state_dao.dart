@@ -1608,6 +1608,7 @@ final class DesiredStateDao {
     required TaskListId taskListId,
     required String title,
     required DateTime modifiedAt,
+    bool recomputeCounts = true,
   }) async {
     final existing = await _taskListQuery(
       accountId,
@@ -1669,7 +1670,7 @@ final class DesiredStateDao {
             ),
           );
     }
-    await _recomputeCounts(accountId);
+    if (recomputeCounts) await _recomputeCounts(accountId);
     final stored = await _taskListQuery(accountId, taskListId).getSingle();
     return _mapTaskList(stored);
   }
@@ -1685,6 +1686,7 @@ final class DesiredStateDao {
     required TaskStatus status,
     required TaskDate? due,
     required DateTime modifiedAt,
+    bool recomputeCounts = true,
   }) async {
     final existing = await _taskQuery(accountId, taskId).getSingleOrNull();
     final sequence = await _nextCausalSequence(accountId);
@@ -1794,7 +1796,7 @@ final class DesiredStateDao {
             ),
           );
     }
-    await _recomputeCounts(accountId);
+    if (recomputeCounts) await _recomputeCounts(accountId);
     return _mapTask(await _taskQuery(accountId, taskId).getSingle());
   }
 

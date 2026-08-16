@@ -35,6 +35,10 @@ abstract interface class AxiotaskRuntime {
 
   AccountBackupRepository? get accountBackupRepository => null;
 
+  AccountBackupRestoreRepository? get accountBackupRestoreRepository => null;
+
+  SyncHealthRepository? get syncHealthRepository => null;
+
   Stream<Object> get fatalStorageFailures;
 
   Future<void> start();
@@ -51,6 +55,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.devicePreferences,
     required this.storageFailures,
     required this.accountBackupRepository,
+    required this.accountBackupRestoreRepository,
+    required this.syncHealthRepository,
   });
 
   @override
@@ -63,6 +69,12 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
 
   @override
   final AccountBackupRepository? accountBackupRepository;
+
+  @override
+  final AccountBackupRestoreRepository? accountBackupRestoreRepository;
+
+  @override
+  final SyncHealthRepository? syncHealthRepository;
 
   @override
   Stream<Object> get fatalStorageFailures => storageFailures.stream;
@@ -101,6 +113,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           devicePreferences: null,
           storageFailures: storageFailures,
           accountBackupRepository: null,
+          accountBackupRestoreRepository: null,
+          syncHealthRepository: null,
         );
       }
 
@@ -171,6 +185,10 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         relational: DriftRelationalPreferences(database),
         device: devicePreferences,
       );
+      final backupRepository = DatabaseAccountBackupRepository(
+        database,
+        clock: composition.clock,
+      );
       return TasksFeatureRuntime._(
         viewModel: TasksViewModel(
           accountId: accountId,
@@ -199,7 +217,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         transport: openedTransport,
         devicePreferences: devicePreferences,
         storageFailures: storageFailures,
-        accountBackupRepository: DatabaseAccountBackupRepository(database),
+        accountBackupRepository: backupRepository,
+        accountBackupRestoreRepository: backupRepository,
+        syncHealthRepository: healthRepository,
       );
     } on Object {
       await storageFailures.close();
