@@ -14,6 +14,7 @@ import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/schema_verifier.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/account_backup_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
@@ -168,6 +169,9 @@ final class _FakeRuntime implements AxiotaskRuntime {
 
   @override
   final TasksViewModel viewModel;
+
+  @override
+  AccountBackupRepository? get accountBackupRepository => null;
 
   final StreamController<Object> _storageFailures =
       StreamController<Object>.broadcast();

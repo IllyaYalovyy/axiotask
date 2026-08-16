@@ -4,22 +4,32 @@ import 'package:flutter/material.dart';
 
 import '../core/diagnostics/diagnostics.dart';
 import '../data/database/schema_verifier.dart';
+import '../domain/model/tasks.dart';
+import '../domain/repository/account_backup_repository.dart';
 import 'axiotask_app.dart';
 import 'tasks_feature_runtime.dart';
 
 typedef AxiotaskRuntimeOpener = Future<AxiotaskRuntime> Function();
+typedef AccountBackupPageBuilder =
+    Widget Function(
+      BuildContext context,
+      AccountId accountId,
+      AccountBackupRepository repository,
+    );
 
 final class AxiotaskBootstrap extends StatefulWidget {
   const AxiotaskBootstrap({
     required this.openRuntime,
     required this.diagnostics,
     this.diagnosticsBuilder,
+    this.accountBackupBuilder,
     super.key,
   });
 
   final AxiotaskRuntimeOpener openRuntime;
   final DiagnosticSink diagnostics;
   final WidgetBuilder? diagnosticsBuilder;
+  final AccountBackupPageBuilder? accountBackupBuilder;
 
   @override
   State<AxiotaskBootstrap> createState() => _AxiotaskBootstrapState();
@@ -126,9 +136,18 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
   Widget build(BuildContext context) {
     final runtime = _runtime;
     if (runtime != null) {
+      final repository = runtime.accountBackupRepository;
       return AxiotaskApp(
         viewModel: runtime.viewModel,
         diagnosticsBuilder: widget.diagnosticsBuilder,
+        accountBackupBuilder:
+            repository == null || widget.accountBackupBuilder == null
+            ? null
+            : (context) => widget.accountBackupBuilder!(
+                context,
+                runtime.viewModel.accountId,
+                repository,
+              ),
       );
     }
     return DatabaseRecoveryApp(

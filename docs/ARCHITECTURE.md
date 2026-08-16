@@ -64,6 +64,9 @@ S29A/S29B add bounded observable release-safe and sensitive-development
 diagnostic products with separate persistence/export boundaries, live local
 viewing/search/copy/clear, unconditional credential redaction, and a
 development renderer imported only by the development entry point.
+S30A adds a strict bounded v1 selected-account backup projection and native
+Fedora save surface. It preserves supported projected user data and offline
+acknowledgements while structurally excluding storage/sync/auth/diagnostic state.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
@@ -327,6 +330,41 @@ or the synchronization engine. The accepted
 [functional parity contract](FUNCTIONAL_PARITY.md#backupexport-and-restoreimport)
 defines the format boundary, existing-record-wins behavior, identity limits,
 durable import manifest, and local/remote failure semantics.
+
+S30A fixes the export half of that boundary as `axiotask.accountBackup` version
+1 JSON. The encoder accepts only a typed backup projection, never database,
+authorization, synchronization, diagnostic, or preference objects. Its exact
+top-level fields, in order, are:
+
+```json
+{
+  "format": "axiotask.accountBackup",
+  "version": 1,
+  "privateDataWarning": "This file contains private Google Tasks data. Store and share it carefully.",
+  "exportedAt": "2026-08-16T12:30:00.000Z",
+  "sourceAccount": {"googleSubject": "synthetic-subject"},
+  "lists": [],
+  "tasks": []
+}
+```
+
+Each list is `{key, googleId, title, order}`. Each task is `{key, googleId,
+listKey, parentKey, title, notes, status, due, order}`. `key`, `listKey`, and
+`parentKey` are deterministic document-local `list-NNNNNN` / `task-NNNNNN`
+references, not SQLite IDs. `googleId` is nullable for acknowledged provisional
+work. `status` is `needsAction` or `completed`; `due` is null or exact
+`YYYY-MM-DD`; `order` is a zero-based contiguous sibling/list order. Lists are
+written in sidebar order, then installation order; tasks are written as each
+ordered top-level row followed by its ordered direct children.
+
+Validation is strict before writing and on the produced JSON: exact fields and
+version, UTC export time, unique keys and Google IDs, referential integrity, one
+subtask level, contiguous order, 1024-character titles, 8192-character notes,
+1024-character Google identities, at most 1000 lists, at most 100000 tasks, and
+at most 64 MiB of UTF-8 JSON. Unknown fields or values fail export. The selected
+account's source subject and Google resource IDs are private identity evidence;
+credentials, authorization state, sync runs/attempts, diagnostics, device or
+relational preferences, and raw database rows have no encoder input fields.
 
 ## Authentication boundary
 

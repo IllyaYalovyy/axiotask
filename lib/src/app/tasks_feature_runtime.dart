@@ -4,6 +4,7 @@ import '../core/failure.dart';
 import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
 import '../data/connectivity/connectivity.dart';
+import '../data/database/account_backup_repository.dart';
 import '../data/database/app_database.dart';
 import '../data/database/delete_state_dao.dart';
 import '../data/database/production_database.dart';
@@ -18,6 +19,7 @@ import '../data/preferences/preferences_repository.dart';
 import '../data/preferences/relational_preferences.dart';
 import '../domain/commands/task_commands.dart';
 import '../domain/model/tasks.dart';
+import '../domain/repository/account_backup_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../sync/coordinator/sync_coordinator.dart';
@@ -30,6 +32,8 @@ import 'lifecycle.dart';
 
 abstract interface class AxiotaskRuntime {
   TasksViewModel get viewModel;
+
+  AccountBackupRepository? get accountBackupRepository => null;
 
   Stream<Object> get fatalStorageFailures;
 
@@ -46,6 +50,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.transport,
     required this.devicePreferences,
     required this.storageFailures,
+    required this.accountBackupRepository,
   });
 
   @override
@@ -55,6 +60,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
   final ReadSliceTransport? transport;
   final DevicePreferencesAdapter? devicePreferences;
   final StreamController<Object> storageFailures;
+
+  @override
+  final AccountBackupRepository? accountBackupRepository;
 
   @override
   Stream<Object> get fatalStorageFailures => storageFailures.stream;
@@ -92,6 +100,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           transport: null,
           devicePreferences: null,
           storageFailures: storageFailures,
+          accountBackupRepository: null,
         );
       }
 
@@ -190,6 +199,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         transport: openedTransport,
         devicePreferences: devicePreferences,
         storageFailures: storageFailures,
+        accountBackupRepository: DatabaseAccountBackupRepository(database),
       );
     } on Object {
       await storageFailures.close();

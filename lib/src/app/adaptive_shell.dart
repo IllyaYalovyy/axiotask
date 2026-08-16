@@ -37,6 +37,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.initialSearchQuery,
     this.navigation,
     this.diagnosticsBuilder,
+    this.accountBackupBuilder,
     super.key,
   });
 
@@ -47,6 +48,7 @@ final class AdaptiveShell extends StatefulWidget {
   final String? initialSearchQuery;
   final AppNavigationController? navigation;
   final WidgetBuilder? diagnosticsBuilder;
+  final WidgetBuilder? accountBackupBuilder;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -545,6 +547,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                             state.tasks.isNotEmpty,
                         onOpenNavigation: _navigation.openDrawer,
                         diagnosticsBuilder: widget.diagnosticsBuilder,
+                        accountBackupBuilder: widget.accountBackupBuilder,
                       ),
                       if (state.syncControlFailureMessage case final message?)
                         MaterialBanner(
@@ -724,6 +727,7 @@ final class _ApplicationHeader extends StatelessWidget {
     required this.onOpenNavigation,
     this.onHealthAction,
     this.diagnosticsBuilder,
+    this.accountBackupBuilder,
   });
 
   final SyncHealth health;
@@ -737,6 +741,7 @@ final class _ApplicationHeader extends StatelessWidget {
   final bool showSearch;
   final VoidCallback onOpenNavigation;
   final WidgetBuilder? diagnosticsBuilder;
+  final WidgetBuilder? accountBackupBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -788,6 +793,16 @@ final class _ApplicationHeader extends StatelessWidget {
                 icon: const Icon(Icons.keyboard_outlined),
               ),
               const SizedBox(width: 4),
+              if (accountBackupBuilder case final builder?) ...<Widget>[
+                IconButton(
+                  tooltip: 'Export account backup',
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute<void>(builder: builder)),
+                  icon: const Icon(Icons.save_alt_outlined),
+                ),
+                const SizedBox(width: 4),
+              ],
               if (compact)
                 IconButton(
                   tooltip: 'Refresh',

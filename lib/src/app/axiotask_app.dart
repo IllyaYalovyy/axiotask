@@ -7,11 +7,13 @@ class AxiotaskApp extends StatelessWidget {
   const AxiotaskApp({
     required this.viewModel,
     this.diagnosticsBuilder,
+    this.accountBackupBuilder,
     super.key,
   });
 
   final TasksViewModel viewModel;
   final WidgetBuilder? diagnosticsBuilder;
+  final WidgetBuilder? accountBackupBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -22,6 +24,7 @@ class AxiotaskApp extends StatelessWidget {
       home: AdaptiveShell(
         viewModel: viewModel,
         diagnosticsBuilder: diagnosticsBuilder,
+        accountBackupBuilder: accountBackupBuilder,
       ),
     );
   }

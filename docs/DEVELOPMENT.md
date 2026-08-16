@@ -331,6 +331,19 @@ synthetic tasks and temporary SQLite files. The ignored screenshot runner adds
 Capture and inspect both 1280×720 images; neither scenario opens normal storage,
 credentials, OAuth configuration, diagnostics, or Google.
 
+S30A locks `file_selector` 1.1.0 for the Fedora native save-location dialog and
+adds no schema or storage namespace. The account backup repository reads only
+the selected account's supported projected lists/tasks, including durable
+offline acknowledgements, and creates document-local keys rather than exposing
+SQLite IDs. The strict codec validates the produced bounded v1 JSON before the
+picker opens. Focused tests use in-memory or unique temporary SQLite/filesystem
+roots, and the isolated Linux integration seeds sync/authorization canaries to
+prove those rows cannot enter the export. Actual
+`account-backup-warning-light.png` and `account-backup-result-dark.png` captures
+use only in-memory synthetic data and write beneath ignored
+`screenshots/actual/`; inspect both at 1280×720. Android compiles the admitted
+plugin but has no claimed export picker in this desktop-first slice.
+
 ## Development versus release diagnostics
 
 The clearly named debug development entry point composes the sensitive local

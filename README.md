@@ -106,6 +106,15 @@ the selected Google list: it has no Undo, deletes eligible completed subtrees
 immediately, and preserves every completed parent that still has an unfinished
 child.
 
+Fedora users can export the current Google account's supported projected lists
+and tasks from the header save action. The strict `axiotask.accountBackup`
+version-1 JSON preserves acknowledged offline edits, Google identity when
+available, hierarchy, manual order, completion, notes, and due dates. It uses
+document-local keys rather than SQLite IDs and excludes credentials,
+authorization, synchronization evidence, diagnostics, and preferences. The UI,
+native save dialog, and file identify the backup as private task data; a cancel
+writes nothing and a successful result reports only the filename and counts.
+
 Search finds supported cached tasks by title or notes without crossing account
 or protected-data boundaries. A matching subtask is labeled beneath its parent
 and opens that parent detail context. Pointer and keyboard activation share the
@@ -190,6 +199,9 @@ synchronization settings remain in SQLite.
 `connectivity_plus` 7.3.1 observes Linux NetworkManager only for no-route and
 may-have-returned scheduling hints; an available interface never proves Google
 reachability or healthy sync.
+`file_selector` 1.1.0 supplies the Fedora native account-backup save dialog
+behind an injected adapter. Android save-dialog behavior is not claimed by this
+desktop-first slice.
 Linux secure storage requires an active Secret Service in the user session;
 GNOME normally supplies it through `gnome-keyring`.
 
@@ -496,6 +508,11 @@ flutter test test/core/failure_outcome_test.dart
 flutter test test/core/clock_randomness_test.dart
 flutter test test/core/diagnostics_test.dart
 flutter test test/data/diagnostics/local_diagnostic_exporter_test.dart
+flutter test test/domain/account_backup_codec_test.dart
+flutter test test/data/database/account_backup_repository_test.dart
+flutter test test/data/backup/local_account_backup_exporter_test.dart
+flutter test test/features/backup/account_backup_view_model_test.dart
+flutter test test/features/backup/account_backup_view_test.dart
 flutter test test/features/diagnostics/diagnostics_view_model_test.dart
 flutter test test/features/diagnostics/diagnostics_view_test.dart
 flutter test test/features/diagnostics/diagnostics_golden_test.dart
@@ -591,6 +608,7 @@ flutter test integration_test/bulk_operations_linux_test.dart -d linux
 flutter test integration_test/search_navigation_linux_test.dart -d linux
 flutter test integration_test/desktop_drag_reorder_linux_test.dart -d linux
 flutter test integration_test/diagnostics_linux_test.dart -d linux
+flutter test integration_test/account_backup_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -613,6 +631,7 @@ into the ignored `screenshots/actual/` directory, then inspect each PNG:
 ```bash
 ./scripts/capture_linux_health_screenshots.sh
 ./scripts/capture_linux_diagnostics_screenshots.sh
+./scripts/capture_linux_account_backup_screenshots.sh
 ```
 
 That command also captures `database-recovery.png` at the Linux runner's
@@ -625,6 +644,13 @@ both images: release must show safe summaries and redaction only; development
 must show the persistent warning, allowed synthetic private context, and the
 same credential redaction. The runner opens no database, OAuth configuration,
 secure storage, or Google connection.
+
+The account-backup capture writes `account-backup-warning-light.png` and
+`account-backup-result-dark.png` at 1280×720. Inspect both: the selected-account
+scope, exact v1 contents/exclusions, persistent private-data warning, synthetic
+filename, and exact counts must remain visible. The runner uses only in-memory
+synthetic backup data and opens no database, preferences, credentials, OAuth
+configuration, diagnostics, or Google connection.
 
 ## Native SQLite capability probe
 

@@ -19,6 +19,7 @@ added merely because it appears in this design.
 | `url_launcher` | System-browser OAuth on Linux, recurrence escape hatch, and safe external links | Accepted, with an application wrapper and fake for tests. Only validated schemes are launched. |
 | `path_provider` | Correct per-platform application support and temporary paths | Accepted at the storage composition boundary; tests inject paths/connections. It may arrive through Drift but direct use is declared when APIs are imported directly. |
 | `shared_preferences` | Small device-local presentation settings that need no relational integrity | Use only the current `SharedPreferencesAsync` API behind `PreferencesRepository`. Never store sync-critical, account-scoped, relational, or irreplaceable data because the package does not guarantee critical-write durability. |
+| `file_selector` | Native user-selected backup file destinations on Fedora | Accepted for the S30A Fedora export surface. Use the Flutter-team package behind the backup save-location port; cancellation is not failure, the confirm label identifies a private backup, and normal tests inject paths. Android save-location support is not claimed by this desktop-first slice. |
 
 ## Planned development dependencies
 
@@ -179,6 +180,22 @@ is why removal is straightforward: another asynchronous device-presentation
 adapter can replace it behind the same narrow contract without migrating or
 touching task, account, or synchronization state.
 
+## Admitted for S30A account backup export
+
+S30A locks Flutter-team `file_selector` 1.1.0 and its resolved Linux 0.9.4
+implementation under BSD-3-Clause. It supplies the native Fedora save-location
+dialog that Flutter/Dart core APIs do not provide. The adapter requests a JSON
+destination with the confirm label “Export private backup”; a cancellation
+returns an explicit non-error result. The selected path stays inside the
+adapter, which writes through a flushed sibling and reports only the filename.
+Repository, codec, ViewModel, widget, and application tests inject a temporary
+path or fake picker and cannot open normal storage. The Linux native integration
+and debug bundle compile with the plugin; the Android debug build also compiles,
+but this slice does not claim an Android save dialog because the package does
+not expose that feature there. Replacing the package requires another reviewed
+native Fedora picker that passes the same cancel, failure, privacy-label, and
+atomic-write contract.
+
 ## Deliberately not selected
 
 | Candidate | Reason |
@@ -219,3 +236,4 @@ Primary references:
 - [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage)
 - [`connectivity_plus`](https://pub.dev/packages/connectivity_plus)
 - [`shared_preferences`](https://pub.dev/packages/shared_preferences)
+- [`file_selector`](https://pub.dev/packages/file_selector)

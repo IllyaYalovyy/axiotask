@@ -32,6 +32,11 @@ Fast Dart tests cover immutable domain models and policies:
 
 These tests use no Flutter binding, files, plugins, or network.
 
+S30A adds `test/domain/account_backup_codec_test.dart` for exact v1 supported
+field round-trip, deterministic encoding, strict version/field/value/bounds,
+hierarchy/reference/order validation, and structural exclusion of credentials,
+authorization, sync attempts, diagnostics, preferences, and raw rows.
+
 ### 2. Persistence tests
 
 Each DAO and multi-row operation is tested against real SQLite through Drift,
@@ -62,6 +67,13 @@ or query settings through device storage nor changes synchronization settings.
 `integration_test/preferences_native_smoke_test.dart` uses one isolated
 namespace, verifies the actual `SharedPreferencesAsync` plugin after adapter
 reconstruction, and removes only its three exact synthetic keys.
+
+S30A adds `test/data/database/account_backup_repository_test.dart` for
+selected-account isolation, projected acknowledged-offline edits,
+document-local identity, sidebar/sibling order, and hierarchy over real
+in-memory SQLite. `test/data/backup/local_account_backup_exporter_test.dart`
+uses a unique temporary directory for exact write, cancellation, failure, and
+sibling cleanup without a platform picker or normal storage.
 
 No test path is obtained from the production application-data resolver.
 
@@ -456,6 +468,12 @@ copy/export, and clear using only an in-memory history and temporary export
 directory. Curated release-light/development-dark goldens and the ignored
 actual desktop captures verify the persistent warning and product separation.
 
+S30A adds `test/features/backup/{account_backup_view_model,
+account_backup_view}_test.dart`. They prove selected-account routing, explicit
+native-picker cancellation/failure, confirmation before
+the adapter opens, persistent private-data warning, and exact successful result
+counts without a normal filesystem or Google account.
+
 Desktop and phone constraints are explicit fixtures. Widget tests never use the
 normal database or platform auth.
 
@@ -488,6 +506,14 @@ isolated database and stateful fake. Core workflows run on Fedora and Android:
 
 Plugin-specific tests run separately where a real platform implementation is
 required.
+
+S30A implements the export half in
+`integration_test/account_backup_linux_test.dart`. It uses one unique temporary
+SQLite file, acknowledges a provisional list/task through the production
+repositories, enters the backup from the real application header, writes to an
+injected temporary destination, decodes the produced v1 file, and verifies
+seeded sync-run/authorization canaries are absent. It opens no OAuth,
+diagnostic, preference, secure-storage, normal database, or Google boundary.
 
 S12B adds the Linux-only
 `integration_test/read_slice_linux_test.dart` application slice. It opens a
@@ -614,6 +640,13 @@ captures at 1280×720. The reviewed group image shows one selected-count banner
 and one “Undo all” action; the Clear image states that the action has no Undo
 and that the unsafe completed parent is retained. Both use fixed synthetic
 content only.
+
+S30A adds actual `account-backup-warning-light.png` and
+`account-backup-result-dark.png` Fedora captures at 1280×720. The warning view
+identifies the current selected Google account, exact v1 JSON contents and
+exclusions, and the persistent private-data warning before the file action. The
+result view retains that warning and reports only the synthetic filename plus
+exact list/task counts. Both use fixed in-memory synthetic data.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

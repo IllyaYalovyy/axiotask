@@ -8,6 +8,8 @@ import 'src/app/composition/release_composition.dart';
 import 'src/app/connectivity.dart';
 import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
+import 'src/data/backup/local_account_backup_exporter.dart';
+import 'src/features/backup/account_backup_view.dart';
 import 'src/features/diagnostics/diagnostics_view.dart';
 
 export 'src/app/axiotask_app.dart';
@@ -27,6 +29,16 @@ Future<void> main() async {
   runApp(
     AxiotaskBootstrap(
       diagnostics: composition.diagnostics,
+      accountBackupBuilder: Platform.isLinux
+          ? (_, accountId, repository) => AccountBackupHost(
+              accountId: accountId,
+              repository: repository,
+              exporter: const LocalAccountBackupExporter(
+                FileSelectorAccountBackupSaveLocationPicker(),
+              ),
+              clock: composition.clock,
+            )
+          : null,
       diagnosticsBuilder: (_) => ReleaseDiagnosticsHost(
         history: composition.diagnosticHistory,
         exporter: composition.diagnosticExporter,

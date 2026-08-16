@@ -8,6 +8,8 @@ import 'src/app/composition/test_composition.dart';
 import 'src/app/connectivity.dart';
 import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
+import 'src/data/backup/local_account_backup_exporter.dart';
+import 'src/features/backup/account_backup_view.dart';
 
 const String _instanceId = String.fromEnvironment(
   'AXIOTASK_TEST_INSTANCE',
@@ -26,7 +28,22 @@ Future<void> main() async {
     lifecycle: lifecycle,
     connectivity: connectivity,
   );
-  runApp(AxiotaskApp(viewModel: runtime.viewModel));
+  runApp(
+    AxiotaskApp(
+      viewModel: runtime.viewModel,
+      accountBackupBuilder:
+          Platform.isLinux && runtime.accountBackupRepository != null
+          ? (_) => AccountBackupHost(
+              accountId: runtime.viewModel.accountId,
+              repository: runtime.accountBackupRepository!,
+              exporter: const LocalAccountBackupExporter(
+                FileSelectorAccountBackupSaveLocationPicker(),
+              ),
+              clock: composition.clock,
+            )
+          : null,
+    ),
+  );
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(runtime.start());
   });

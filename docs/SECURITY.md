@@ -76,6 +76,12 @@ must receive a separate reviewed lifecycle design before implementation.
   Export clearly identifies that the resulting file contains task data. Import
   validates the entire input before mutation, preserves account isolation, and
   cannot bypass the durable Google synchronization pipeline.
+- Version-1 account export accepts only the typed supported projection and
+  repeats the exact warning “This file contains private Google Tasks data.
+  Store and share it carefully.” in the document and export UI. The save dialog
+  identifies a private backup. Credentials, authorization state, sync evidence,
+  diagnostics, preferences, and raw storage rows are structurally unavailable
+  to the encoder.
 - An unreadable/corrupt database and its WAL/SHM companions are preserved in
   place; they are not automatically quarantined, rewritten, or replaced with
   an empty cache. Validation operates on a private temporary copy that is
