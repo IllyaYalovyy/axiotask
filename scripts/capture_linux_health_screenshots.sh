@@ -29,4 +29,6 @@ for scenario in "${scenarios[@]}"; do
     --dart-define="AXIOTASK_SCREENSHOT_SCENARIO=$scenario"
 done
 
+flutter run -d linux --debug -t lib/main_database_recovery_screenshot.dart
+
 printf 'Synthetic Linux screenshots written beneath screenshots/actual/.\n'

@@ -1,9 +1,8 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 
-import 'src/app/axiotask_app.dart';
+import 'src/app/app_bootstrap.dart';
 import 'src/app/composition/linux_read_transport.dart';
 import 'src/app/composition/release_composition.dart';
 import 'src/app/connectivity.dart';
@@ -24,13 +23,14 @@ Future<void> main() async {
   final connectivity = Platform.isLinux
       ? await LinuxConnectivityBridge.open()
       : null;
-  final runtime = await TasksFeatureRuntime.open(
-    composition,
-    lifecycle: lifecycle,
-    connectivity: connectivity,
+  runApp(
+    AxiotaskBootstrap(
+      diagnostics: composition.diagnostics,
+      openRuntime: () => TasksFeatureRuntime.open(
+        composition,
+        lifecycle: lifecycle,
+        connectivity: connectivity,
+      ),
+    ),
   );
-  runApp(AxiotaskApp(viewModel: runtime.viewModel));
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(runtime.start());
-  });
 }

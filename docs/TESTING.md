@@ -321,6 +321,19 @@ committed page survives while completeness and last success remain false. The
 production application-support path resolver stays in its Flutter composition
 adapter so the headless child cannot discover normal application storage.
 
+S21B adds `test/sync/process_death_recovery_test.dart` as the complete
+file-backed `F-STORE` qualification. Separate pure-Dart children pause at local
+commit, durable run begin, mutation claim, each create-acknowledgement write,
+partial-operation, page publication, finalization, and recovery-transaction
+boundaries; the parent sends `SIGKILL` and independently reopens the real
+SQLite file. `test/data/database/file_database_test.dart` separately covers
+unavailable, malformed, schema, foreign-key integrity, and corrupt opens while
+checking that main/WAL/SHM bytes remain preserved. App recovery widget tests
+prove repeated Retry Open, safe diagnostics, no empty-account substitution,
+and transition to recovery if a running sync can no longer revalidate storage.
+The mid-run persistence test proves no second Google request or mutation begins
+after that loss.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests

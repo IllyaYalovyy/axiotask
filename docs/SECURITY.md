@@ -76,8 +76,10 @@ must receive a separate reviewed lifecycle design before implementation.
   Export clearly identifies that the resulting file contains task data. Import
   validates the entire input before mutation, preserves account isolation, and
   cannot bypass the durable Google synchronization pipeline.
-- An unreadable/corrupt database is preserved or quarantined; it is not silently
-  overwritten with an empty cache.
+- An unreadable/corrupt database and its WAL/SHM companions are preserved in
+  place; they are not automatically quarantined, rewritten, or replaced with
+  an empty cache. Validation operates on a private temporary copy that is
+  removed immediately after the check.
 - Tests and screenshot modes use separate temporary roots and synthetic data.
 
 ## Configuration

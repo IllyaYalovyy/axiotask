@@ -226,6 +226,15 @@ idempotent. Focused recovery and reopen checks use only temporary or in-memory
 SQLite with synthetic subjects and no Google, credential, normal-storage, or
 exit-callback dependency.
 
+S21B adds no dependency, OAuth configuration, account access, or storage
+namespace. Its child-process suite signals named durable boundaries, is killed
+with `SIGKILL`, and is reopened by the parent against a unique temporary SQLite
+file. Failed database validation reads a temporary copy of the complete
+main/WAL/SHM set so SQLite cannot rewrite production shared-memory metadata.
+The originals are never deleted, moved, quarantined, or replaced. The isolated
+Linux recovery capture writes only the ignored synthetic
+`screenshots/actual/database-recovery.png` file.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

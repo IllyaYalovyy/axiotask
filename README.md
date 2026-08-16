@@ -50,7 +50,13 @@ atomically marks abandoned runs interrupted, converts every claimed mutation to
 operation-specific uncertainty, retains partial-page checkpoints and newer
 desired generations, and restores one verification obligation before Google
 work. Repeating recovery is idempotent, and a late finalizer cannot overwrite a
-newer run or advance last verified success.
+newer run or advance last verified success. Database startup validates a
+temporary copy of an existing main/WAL/SHM set before opening the originals.
+Open, schema, integrity, or initial-read failure preserves those files,
+constructs no Google transport, and shows Tasks unavailable instead of an
+empty account. Retry Open repeats the same non-destructive validation. If
+storage becomes unreadable during synchronization, no later Google operation
+starts and the same recovery surface replaces the task UI.
 The task detail pane can create a direct subtask,
 promote a child, demote a leaf, reorder siblings, or move a stable task/subtree
 between Google lists. Structure changes commit durably, survive restart, and
@@ -440,6 +446,8 @@ flutter test test/sync/reconciliation/structure_policy_test.dart
 flutter test test/sync/structure_reconciliation_multi_host_test.dart
 flutter test test/sync/delete_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
+flutter test test/sync/process_death_recovery_test.dart
+flutter test test/sync/persistence_failure_recovery_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart
 flutter test test/sync/auth/sync_authorization_recovery_test.dart
 flutter test test/sync/auth/sync_reauthorization_coordinator_test.dart
@@ -447,6 +455,7 @@ flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
+flutter test test/app/database_recovery_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
@@ -481,6 +490,10 @@ protected-depth failure, into the ignored
 ```bash
 ./scripts/capture_linux_health_screenshots.sh
 ```
+
+That command also captures `database-recovery.png` at the Linux runner's
+1280×720 size. The recovery image contains no path, exception, account
+identity, task content, or credential material.
 
 ## Native SQLite capability probe
 

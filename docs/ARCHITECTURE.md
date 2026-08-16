@@ -14,8 +14,10 @@ read-back/replay rules recover uncertain non-create mutations through S20B
 without generic replay or false acknowledgement. Transactional, idempotent
 startup recovery now interrupts abandoned runs, converts claimed mutations to
 uncertainty, preserves newer generations and durable latches, and rejects stale
-finalizers through S21A. Android
-lifecycle control and other later mutations remain later slices.**
+finalizers through S21A. Real-process qualification and non-destructive
+database recovery preserve main/WAL/SHM files, stop Google work when storage is
+unsafe, and present Retry Open instead of invented empty data through S21B.
+Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed

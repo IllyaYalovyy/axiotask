@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -188,6 +189,59 @@ void main() {
     );
 
     expect(file.readAsBytesSync(), corruptBytes);
+  });
+
+  test(
+    'CRS-012 rejects foreign-key corruption without replacing the file',
+    () async {
+      final file = File('${temporaryRoot.path}/foreign-key-corrupt.sqlite');
+      final original = await AppDatabase.openFile(file);
+      await original.createAccount('synthetic-preserved-account');
+      await original.close();
+      final corrupt = sqlite.sqlite3.open(file.path)
+        ..execute('PRAGMA foreign_keys = OFF')
+        ..execute(
+          'INSERT INTO account_preferences '
+          '(account_id, sync_enabled, next_local_causal_sequence) '
+          'VALUES (999, 1, 1)',
+        );
+      corrupt.close();
+      final before = file.readAsBytesSync();
+
+      expect(
+        AppDatabase.openFile(file),
+        throwsA(
+          isA<SchemaVerificationException>().having(
+            (error) => error.code,
+            'code',
+            'foreign_key_check_failed',
+          ),
+        ),
+      );
+
+      expect(file.readAsBytesSync(), before);
+    },
+  );
+
+  test('CRS-012 failed open preserves main, WAL, and SHM companions', () async {
+    final file = File('${temporaryRoot.path}/companions.sqlite');
+    final mainBytes = Uint8List.fromList(utf8.encode('synthetic-corrupt-main'));
+    final walBytes = Uint8List.fromList(utf8.encode('synthetic-preserved-wal'));
+    final shmBytes = Uint8List.fromList(utf8.encode('synthetic-preserved-shm'));
+    final wal = File('${file.path}-wal');
+    final shm = File('${file.path}-shm');
+    file.writeAsBytesSync(mainBytes, flush: true);
+    wal.writeAsBytesSync(walBytes, flush: true);
+    shm.writeAsBytesSync(shmBytes, flush: true);
+
+    expect(
+      AppDatabase.openFile(file),
+      throwsA(isA<SchemaVerificationException>()),
+    );
+
+    expect(file.readAsBytesSync(), mainBytes);
+    expect(wal.readAsBytesSync(), walBytes);
+    expect(shm.readAsBytesSync(), shmBytes);
   });
 
   test('fails when the database parent path is unavailable', () async {

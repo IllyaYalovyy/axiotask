@@ -22,9 +22,25 @@ void verifyExistingDatabaseFile(File file) {
     return;
   }
 
+  final verificationDirectory = Directory.systemTemp.createTempSync(
+    'axiotask-database-verification-',
+  );
+  final verificationFile = File(
+    '${verificationDirectory.path}${Platform.pathSeparator}database.sqlite',
+  );
   sqlite.Database? database;
   try {
-    database = sqlite.sqlite3.open(file.path, mode: sqlite.OpenMode.readOnly);
+    file.copySync(verificationFile.path);
+    for (final suffix in const <String>['-wal', '-shm']) {
+      final companion = File('${file.path}$suffix');
+      if (companion.existsSync()) {
+        companion.copySync('${verificationFile.path}$suffix');
+      }
+    }
+    database = sqlite.sqlite3.open(
+      verificationFile.path,
+      mode: sqlite.OpenMode.readOnly,
+    );
     _verifyRawDatabase(database);
   } on SchemaVerificationException {
     rethrow;
@@ -32,6 +48,9 @@ void verifyExistingDatabaseFile(File file) {
     throw const SchemaVerificationException('database_unreadable');
   } finally {
     database?.close();
+    if (verificationDirectory.existsSync()) {
+      verificationDirectory.deleteSync(recursive: true);
+    }
   }
 }
 

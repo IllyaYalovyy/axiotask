@@ -146,6 +146,14 @@ application adapter and device-only preferences remain the S22A slice.
   changes nothing. Success/failure finalization requires the same run to remain
   active, so an older finalizer cannot alter last success, current failure, or
   checkpoint authority after a newer run begins.
+- S21B validates an existing database against a private temporary copy of its
+  main file and any WAL/SHM companions before opening the originals.
+  Validation/open/read failure leaves every original in place and prevents
+  account projection, editing, transport construction, and synchronization.
+  Retry Open repeats validation against the same originals. Killed-process
+  tests qualify local commit, claim, acknowledgement, partial page/operation,
+  finalization, and recovery-transaction boundaries against real file-backed
+  SQLite rather than exception-only simulation.
 - S15B confirms an eligible pending content generation without a mutation only
   when the complete current scope proves Google already holds the exact desired
   title or task snapshot. Otherwise, unchanged confirmed bases allow immutable

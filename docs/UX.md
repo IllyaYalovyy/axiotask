@@ -92,6 +92,12 @@ Errors answer three questions:
 2. Is the user's work safe?
 3. What can the user do now?
 
+If task storage cannot be opened or becomes unreadable, the normal task shell
+is replaced rather than populated with an invented empty account. The recovery
+surface says that saved data remains in place, that editing and Google sync are
+stopped, exposes only a safe diagnostic code, and offers Retry Open. It never
+renders a filesystem path, raw exception, account identity, or task content.
+
 Transient, already-retrying conditions stay calm but visible in sync details.
 Persistent failures affecting freshness or durability appear near the affected
 workflow and in global health. The release product shows safe diagnostic codes

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../core/failure.dart';
 import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
@@ -23,18 +25,34 @@ import '../sync/run.dart';
 import 'composition/app_composition.dart';
 import 'lifecycle.dart';
 
-final class TasksFeatureRuntime {
+abstract interface class AxiotaskRuntime {
+  TasksViewModel get viewModel;
+
+  Stream<Object> get fatalStorageFailures;
+
+  Future<void> start();
+
+  Future<void> close();
+}
+
+final class TasksFeatureRuntime implements AxiotaskRuntime {
   const TasksFeatureRuntime._({
     required this.viewModel,
     required this.database,
     required this.coordinator,
     required this.transport,
+    required this.storageFailures,
   });
 
+  @override
   final TasksViewModel viewModel;
   final AppDatabase database;
   final SyncCoordinator? coordinator;
   final ReadSliceTransport? transport;
+  final StreamController<Object> storageFailures;
+
+  @override
+  Stream<Object> get fatalStorageFailures => storageFailures.stream;
 
   static Future<TasksFeatureRuntime> open(
     AppComposition composition, {
@@ -45,106 +63,131 @@ final class TasksFeatureRuntime {
     final database =
         injectedDatabase ??
         await openProductionDatabase(composition.boundary.storage.databaseName);
-    var accounts = await database.allAccounts();
-    final configuredSubject = composition.configuredAccountSubject;
-    if (accounts.isEmpty && configuredSubject != null) {
-      await database.createAccount(configuredSubject.value);
-      accounts = await database.allAccounts();
-    }
-    if (accounts.isEmpty) {
-      return TasksFeatureRuntime._(
-        viewModel: TasksViewModel(
-          accountId: const AccountId(1),
-          tasksRepository: const _EmptyTasksRepository(),
-          syncHealthRepository: _NoAuthorizationHealthRepository(
-            composition.clock.now(),
-          ),
-        ),
-        database: database,
-        coordinator: null,
-        transport: null,
-      );
-    }
-
-    final accountId = AccountId(accounts.first.id);
-    final subject = AccountSubject(accounts.first.googleSubject);
-    await DeleteStateDao(database).cleanupExpiredTaskDeletes(
-      accountId: accountId,
-      now: composition.clock.now().toUtc(),
-    );
-    final transport = await composition.createReadTransport(subject);
-    final syncStore = DatabaseReadSyncStore(database);
-    final coordinator = SyncCoordinator(
-      accountId: accountId,
-      authorization: transport.authorization,
-      clock: composition.clock,
-      scheduler: composition.scheduler,
-      random: composition.randomness,
-      settings: DatabaseSyncSettingsRepository(database),
-      retryStore: syncStore,
-      reauthorizationStore: syncStore,
-      taskDeleteEligibility: _DatabaseTaskDeleteEligibilityStore(database),
-      lifecycle: lifecycle,
-      connectivity: connectivity,
-      run: (request) =>
-          SyncEngine(
-            store: syncStore,
-            googleTasks: transport.googleTasks,
-            authorization: transport.authorization,
-            clock: composition.clock,
-            scheduler: composition.scheduler,
-            random: composition.randomness,
-            retryObserver: request.retryObserver,
-            control: request.control,
-            diagnostics: composition.diagnostics,
-          ).run(
-            SyncRunRequest(
-              accountId: accountId,
-              deadline: request.deadline,
-              triggers: request.triggers
-                  .map((trigger) => trigger.value)
-                  .toSet(),
+    ReadSliceTransport? transport;
+    final storageFailures = StreamController<Object>.broadcast();
+    try {
+      var accounts = await database.allAccounts();
+      final configuredSubject = composition.configuredAccountSubject;
+      if (accounts.isEmpty && configuredSubject != null) {
+        await database.createAccount(configuredSubject.value);
+        accounts = await database.allAccounts();
+      }
+      if (accounts.isEmpty) {
+        return TasksFeatureRuntime._(
+          viewModel: TasksViewModel(
+            accountId: const AccountId(1),
+            tasksRepository: const _EmptyTasksRepository(),
+            syncHealthRepository: _NoAuthorizationHealthRepository(
+              composition.clock.now(),
             ),
           ),
-    );
-    final healthRepository = DatabaseSyncHealthRepository(
-      dao: SyncHealthDao(database),
-      clock: composition.clock,
-      runtime: coordinator,
-    );
-    return TasksFeatureRuntime._(
-      viewModel: TasksViewModel(
-        accountId: accountId,
-        tasksRepository: DatabaseTasksRepository(
-          database,
-          clock: composition.clock,
-        ),
-        taskListsRepository: DatabaseTaskListsRepository(
           database: database,
-          clock: composition.clock,
+          coordinator: null,
+          transport: null,
+          storageFailures: storageFailures,
+        );
+      }
+
+      final accountId = AccountId(accounts.first.id);
+      final subject = AccountSubject(accounts.first.googleSubject);
+      await DeleteStateDao(database).cleanupExpiredTaskDeletes(
+        accountId: accountId,
+        now: composition.clock.now().toUtc(),
+      );
+      final openedTransport = await composition.createReadTransport(subject);
+      transport = openedTransport;
+      final syncStore = DatabaseReadSyncStore(database);
+      final coordinator = SyncCoordinator(
+        accountId: accountId,
+        authorization: openedTransport.authorization,
+        clock: composition.clock,
+        scheduler: composition.scheduler,
+        random: composition.randomness,
+        settings: DatabaseSyncSettingsRepository(database),
+        retryStore: syncStore,
+        reauthorizationStore: syncStore,
+        taskDeleteEligibility: _DatabaseTaskDeleteEligibilityStore(database),
+        lifecycle: lifecycle,
+        connectivity: connectivity,
+        run: (request) async {
+          try {
+            return await SyncEngine(
+              store: syncStore,
+              googleTasks: openedTransport.googleTasks,
+              authorization: openedTransport.authorization,
+              clock: composition.clock,
+              scheduler: composition.scheduler,
+              random: composition.randomness,
+              retryObserver: request.retryObserver,
+              control: request.control,
+              diagnostics: composition.diagnostics,
+            ).run(
+              SyncRunRequest(
+                accountId: accountId,
+                deadline: request.deadline,
+                triggers: request.triggers
+                    .map((trigger) => trigger.value)
+                    .toSet(),
+              ),
+            );
+          } on Object catch (error) {
+            try {
+              await database.schemaFingerprint();
+            } on Object {
+              storageFailures.add(error);
+            }
+            rethrow;
+          }
+        },
+      );
+      final healthRepository = DatabaseSyncHealthRepository(
+        dao: SyncHealthDao(database),
+        clock: composition.clock,
+        runtime: coordinator,
+      );
+      return TasksFeatureRuntime._(
+        viewModel: TasksViewModel(
+          accountId: accountId,
+          tasksRepository: DatabaseTasksRepository(
+            database,
+            clock: composition.clock,
+          ),
+          taskListsRepository: DatabaseTaskListsRepository(
+            database: database,
+            clock: composition.clock,
+          ),
+          syncHealthRepository: healthRepository,
+          localEditCommitted: coordinator.localEditCommitted,
+          taskDeleteCommitted: coordinator.taskDeleteCommitted,
+          refreshRequested: coordinator.refresh,
+          retryRequested: coordinator.retry,
+          reauthorizeRequested: coordinator.reauthorize,
+          stopSyncRequested: coordinator.stop,
+          resumeSyncRequested: coordinator.resume,
         ),
-        syncHealthRepository: healthRepository,
-        localEditCommitted: coordinator.localEditCommitted,
-        taskDeleteCommitted: coordinator.taskDeleteCommitted,
-        refreshRequested: coordinator.refresh,
-        retryRequested: coordinator.retry,
-        reauthorizeRequested: coordinator.reauthorize,
-        stopSyncRequested: coordinator.stop,
-        resumeSyncRequested: coordinator.resume,
-      ),
-      database: database,
-      coordinator: coordinator,
-      transport: transport,
-    );
+        database: database,
+        coordinator: coordinator,
+        transport: openedTransport,
+        storageFailures: storageFailures,
+      );
+    } on Object {
+      await storageFailures.close();
+      await transport?.close();
+      await database.close();
+      rethrow;
+    }
   }
 
+  @override
   Future<void> start() => coordinator?.start() ?? Future<void>.value();
 
+  @override
   Future<void> close() async {
     viewModel.dispose();
     await coordinator?.close();
     await transport?.close();
     await database.close();
+    await storageFailures.close();
   }
 }
 
