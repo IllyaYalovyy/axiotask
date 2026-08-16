@@ -310,6 +310,17 @@ unique temporary SQLite file. The screenshot entry adds ignored
 `drag-preview-light.png` and `drag-failure-dark.png` Fedora captures with only
 fixed synthetic tasks and identities.
 
+S28A adds no dependency, OAuth configuration, Google-account access, or storage
+namespace. It extends schema version 1 with account-scoped `bulk_operations`
+and `bulk_operation_members` tables; generated Drift code and the schema digest
+must remain fresh. Focused domain/store/sync/ViewModel/widget/golden tests and
+`integration_test/bulk_operations_linux_test.dart` use only synthetic data and
+unique temporary SQLite files. The ignored screenshot runner adds
+`bulk-operation-selection-light.png`, `bulk-operation-result-dark.png`, and
+`bulk-operation-confirmation-light.png`; inspect all three 1280×720 images
+after capture. No scenario opens normal storage, credentials, OAuth
+configuration, diagnostics, or Google.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

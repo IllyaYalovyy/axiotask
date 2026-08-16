@@ -10571,6 +10571,897 @@ class TaskDueChangeSnapshotRowsCompanion
   }
 }
 
+class $BulkOperationRowsTable extends BulkOperationRows
+    with TableInfo<$BulkOperationRowsTable, BulkOperationRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $BulkOperationRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    check: () => kind.isIn(const <String>['complete', 'reschedule', 'move']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _selectedCountMeta = const VerificationMeta(
+    'selectedCount',
+  );
+  @override
+  late final GeneratedColumn<int> selectedCount = GeneratedColumn<int>(
+    'selected_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(selectedCount).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _affectedCountMeta = const VerificationMeta(
+    'affectedCount',
+  );
+  @override
+  late final GeneratedColumn<int> affectedCount = GeneratedColumn<int>(
+    'affected_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(affectedCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    kind,
+    selectedCount,
+    affectedCount,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'bulk_operations';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<BulkOperationRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('selected_count')) {
+      context.handle(
+        _selectedCountMeta,
+        selectedCount.isAcceptableOrUnknown(
+          data['selected_count']!,
+          _selectedCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_selectedCountMeta);
+    }
+    if (data.containsKey('affected_count')) {
+      context.handle(
+        _affectedCountMeta,
+        affectedCount.isAcceptableOrUnknown(
+          data['affected_count']!,
+          _affectedCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_affectedCountMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId},
+    {accountId, id},
+  ];
+  @override
+  BulkOperationRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return BulkOperationRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      selectedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}selected_count'],
+      )!,
+      affectedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}affected_count'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $BulkOperationRowsTable createAlias(String alias) {
+    return $BulkOperationRowsTable(attachedDatabase, alias);
+  }
+}
+
+class BulkOperationRow extends DataClass
+    implements Insertable<BulkOperationRow> {
+  final int id;
+  final int accountId;
+  final String kind;
+  final int selectedCount;
+  final int affectedCount;
+  final DateTime createdAt;
+  const BulkOperationRow({
+    required this.id,
+    required this.accountId,
+    required this.kind,
+    required this.selectedCount,
+    required this.affectedCount,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['kind'] = Variable<String>(kind);
+    map['selected_count'] = Variable<int>(selectedCount);
+    map['affected_count'] = Variable<int>(affectedCount);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  BulkOperationRowsCompanion toCompanion(bool nullToAbsent) {
+    return BulkOperationRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      kind: Value(kind),
+      selectedCount: Value(selectedCount),
+      affectedCount: Value(affectedCount),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory BulkOperationRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return BulkOperationRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      selectedCount: serializer.fromJson<int>(json['selectedCount']),
+      affectedCount: serializer.fromJson<int>(json['affectedCount']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'kind': serializer.toJson<String>(kind),
+      'selectedCount': serializer.toJson<int>(selectedCount),
+      'affectedCount': serializer.toJson<int>(affectedCount),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  BulkOperationRow copyWith({
+    int? id,
+    int? accountId,
+    String? kind,
+    int? selectedCount,
+    int? affectedCount,
+    DateTime? createdAt,
+  }) => BulkOperationRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    kind: kind ?? this.kind,
+    selectedCount: selectedCount ?? this.selectedCount,
+    affectedCount: affectedCount ?? this.affectedCount,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  BulkOperationRow copyWithCompanion(BulkOperationRowsCompanion data) {
+    return BulkOperationRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      selectedCount: data.selectedCount.present
+          ? data.selectedCount.value
+          : this.selectedCount,
+      affectedCount: data.affectedCount.present
+          ? data.affectedCount.value
+          : this.affectedCount,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('BulkOperationRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('kind: $kind, ')
+          ..write('selectedCount: $selectedCount, ')
+          ..write('affectedCount: $affectedCount, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, accountId, kind, selectedCount, affectedCount, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is BulkOperationRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.kind == this.kind &&
+          other.selectedCount == this.selectedCount &&
+          other.affectedCount == this.affectedCount &&
+          other.createdAt == this.createdAt);
+}
+
+class BulkOperationRowsCompanion extends UpdateCompanion<BulkOperationRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<String> kind;
+  final Value<int> selectedCount;
+  final Value<int> affectedCount;
+  final Value<DateTime> createdAt;
+  const BulkOperationRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.selectedCount = const Value.absent(),
+    this.affectedCount = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  BulkOperationRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required String kind,
+    required int selectedCount,
+    required int affectedCount,
+    required DateTime createdAt,
+  }) : accountId = Value(accountId),
+       kind = Value(kind),
+       selectedCount = Value(selectedCount),
+       affectedCount = Value(affectedCount),
+       createdAt = Value(createdAt);
+  static Insertable<BulkOperationRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<String>? kind,
+    Expression<int>? selectedCount,
+    Expression<int>? affectedCount,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (kind != null) 'kind': kind,
+      if (selectedCount != null) 'selected_count': selectedCount,
+      if (affectedCount != null) 'affected_count': affectedCount,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  BulkOperationRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<String>? kind,
+    Value<int>? selectedCount,
+    Value<int>? affectedCount,
+    Value<DateTime>? createdAt,
+  }) {
+    return BulkOperationRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      kind: kind ?? this.kind,
+      selectedCount: selectedCount ?? this.selectedCount,
+      affectedCount: affectedCount ?? this.affectedCount,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (selectedCount.present) {
+      map['selected_count'] = Variable<int>(selectedCount.value);
+    }
+    if (affectedCount.present) {
+      map['affected_count'] = Variable<int>(affectedCount.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('BulkOperationRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('kind: $kind, ')
+          ..write('selectedCount: $selectedCount, ')
+          ..write('affectedCount: $affectedCount, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $BulkOperationMemberRowsTable extends BulkOperationMemberRows
+    with TableInfo<$BulkOperationMemberRowsTable, BulkOperationMemberRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $BulkOperationMemberRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operationIdMeta = const VerificationMeta(
+    'operationId',
+  );
+  @override
+  late final GeneratedColumn<int> operationId = GeneratedColumn<int>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _taskIdMeta = const VerificationMeta('taskId');
+  @override
+  late final GeneratedColumn<int> taskId = GeneratedColumn<int>(
+    'task_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _desiredStateIdMeta = const VerificationMeta(
+    'desiredStateId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredStateId = GeneratedColumn<int>(
+    'desired_state_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _generationMeta = const VerificationMeta(
+    'generation',
+  );
+  @override
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(generation).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _outcomeMeta = const VerificationMeta(
+    'outcome',
+  );
+  @override
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+    'outcome',
+    aliasedName,
+    false,
+    check: () => outcome.isIn(const <String>['confirmed', 'pending', 'failed']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    operationId,
+    taskId,
+    desiredStateId,
+    generation,
+    outcome,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'bulk_operation_members';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<BulkOperationMemberRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('operation_id')) {
+      context.handle(
+        _operationIdMeta,
+        operationId.isAcceptableOrUnknown(
+          data['operation_id']!,
+          _operationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('task_id')) {
+      context.handle(
+        _taskIdMeta,
+        taskId.isAcceptableOrUnknown(data['task_id']!, _taskIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_taskIdMeta);
+    }
+    if (data.containsKey('desired_state_id')) {
+      context.handle(
+        _desiredStateIdMeta,
+        desiredStateId.isAcceptableOrUnknown(
+          data['desired_state_id']!,
+          _desiredStateIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredStateIdMeta);
+    }
+    if (data.containsKey('generation')) {
+      context.handle(
+        _generationMeta,
+        generation.isAcceptableOrUnknown(data['generation']!, _generationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_generationMeta);
+    }
+    if (data.containsKey('outcome')) {
+      context.handle(
+        _outcomeMeta,
+        outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_outcomeMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, operationId, taskId},
+  ];
+  @override
+  BulkOperationMemberRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return BulkOperationMemberRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      operationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}operation_id'],
+      )!,
+      taskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}task_id'],
+      )!,
+      desiredStateId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_state_id'],
+      )!,
+      generation: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}generation'],
+      )!,
+      outcome: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}outcome'],
+      )!,
+    );
+  }
+
+  @override
+  $BulkOperationMemberRowsTable createAlias(String alias) {
+    return $BulkOperationMemberRowsTable(attachedDatabase, alias);
+  }
+}
+
+class BulkOperationMemberRow extends DataClass
+    implements Insertable<BulkOperationMemberRow> {
+  final int id;
+  final int accountId;
+  final int operationId;
+  final int taskId;
+  final int desiredStateId;
+  final int generation;
+  final String outcome;
+  const BulkOperationMemberRow({
+    required this.id,
+    required this.accountId,
+    required this.operationId,
+    required this.taskId,
+    required this.desiredStateId,
+    required this.generation,
+    required this.outcome,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['operation_id'] = Variable<int>(operationId);
+    map['task_id'] = Variable<int>(taskId);
+    map['desired_state_id'] = Variable<int>(desiredStateId);
+    map['generation'] = Variable<int>(generation);
+    map['outcome'] = Variable<String>(outcome);
+    return map;
+  }
+
+  BulkOperationMemberRowsCompanion toCompanion(bool nullToAbsent) {
+    return BulkOperationMemberRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      operationId: Value(operationId),
+      taskId: Value(taskId),
+      desiredStateId: Value(desiredStateId),
+      generation: Value(generation),
+      outcome: Value(outcome),
+    );
+  }
+
+  factory BulkOperationMemberRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return BulkOperationMemberRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      operationId: serializer.fromJson<int>(json['operationId']),
+      taskId: serializer.fromJson<int>(json['taskId']),
+      desiredStateId: serializer.fromJson<int>(json['desiredStateId']),
+      generation: serializer.fromJson<int>(json['generation']),
+      outcome: serializer.fromJson<String>(json['outcome']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'operationId': serializer.toJson<int>(operationId),
+      'taskId': serializer.toJson<int>(taskId),
+      'desiredStateId': serializer.toJson<int>(desiredStateId),
+      'generation': serializer.toJson<int>(generation),
+      'outcome': serializer.toJson<String>(outcome),
+    };
+  }
+
+  BulkOperationMemberRow copyWith({
+    int? id,
+    int? accountId,
+    int? operationId,
+    int? taskId,
+    int? desiredStateId,
+    int? generation,
+    String? outcome,
+  }) => BulkOperationMemberRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    operationId: operationId ?? this.operationId,
+    taskId: taskId ?? this.taskId,
+    desiredStateId: desiredStateId ?? this.desiredStateId,
+    generation: generation ?? this.generation,
+    outcome: outcome ?? this.outcome,
+  );
+  BulkOperationMemberRow copyWithCompanion(
+    BulkOperationMemberRowsCompanion data,
+  ) {
+    return BulkOperationMemberRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      operationId: data.operationId.present
+          ? data.operationId.value
+          : this.operationId,
+      taskId: data.taskId.present ? data.taskId.value : this.taskId,
+      desiredStateId: data.desiredStateId.present
+          ? data.desiredStateId.value
+          : this.desiredStateId,
+      generation: data.generation.present
+          ? data.generation.value
+          : this.generation,
+      outcome: data.outcome.present ? data.outcome.value : this.outcome,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('BulkOperationMemberRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('operationId: $operationId, ')
+          ..write('taskId: $taskId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('generation: $generation, ')
+          ..write('outcome: $outcome')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    operationId,
+    taskId,
+    desiredStateId,
+    generation,
+    outcome,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is BulkOperationMemberRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.operationId == this.operationId &&
+          other.taskId == this.taskId &&
+          other.desiredStateId == this.desiredStateId &&
+          other.generation == this.generation &&
+          other.outcome == this.outcome);
+}
+
+class BulkOperationMemberRowsCompanion
+    extends UpdateCompanion<BulkOperationMemberRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> operationId;
+  final Value<int> taskId;
+  final Value<int> desiredStateId;
+  final Value<int> generation;
+  final Value<String> outcome;
+  const BulkOperationMemberRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.operationId = const Value.absent(),
+    this.taskId = const Value.absent(),
+    this.desiredStateId = const Value.absent(),
+    this.generation = const Value.absent(),
+    this.outcome = const Value.absent(),
+  });
+  BulkOperationMemberRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int operationId,
+    required int taskId,
+    required int desiredStateId,
+    required int generation,
+    required String outcome,
+  }) : accountId = Value(accountId),
+       operationId = Value(operationId),
+       taskId = Value(taskId),
+       desiredStateId = Value(desiredStateId),
+       generation = Value(generation),
+       outcome = Value(outcome);
+  static Insertable<BulkOperationMemberRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? operationId,
+    Expression<int>? taskId,
+    Expression<int>? desiredStateId,
+    Expression<int>? generation,
+    Expression<String>? outcome,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (operationId != null) 'operation_id': operationId,
+      if (taskId != null) 'task_id': taskId,
+      if (desiredStateId != null) 'desired_state_id': desiredStateId,
+      if (generation != null) 'generation': generation,
+      if (outcome != null) 'outcome': outcome,
+    });
+  }
+
+  BulkOperationMemberRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? operationId,
+    Value<int>? taskId,
+    Value<int>? desiredStateId,
+    Value<int>? generation,
+    Value<String>? outcome,
+  }) {
+    return BulkOperationMemberRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      operationId: operationId ?? this.operationId,
+      taskId: taskId ?? this.taskId,
+      desiredStateId: desiredStateId ?? this.desiredStateId,
+      generation: generation ?? this.generation,
+      outcome: outcome ?? this.outcome,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (operationId.present) {
+      map['operation_id'] = Variable<int>(operationId.value);
+    }
+    if (taskId.present) {
+      map['task_id'] = Variable<int>(taskId.value);
+    }
+    if (desiredStateId.present) {
+      map['desired_state_id'] = Variable<int>(desiredStateId.value);
+    }
+    if (generation.present) {
+      map['generation'] = Variable<int>(generation.value);
+    }
+    if (outcome.present) {
+      map['outcome'] = Variable<String>(outcome.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('BulkOperationMemberRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('operationId: $operationId, ')
+          ..write('taskId: $taskId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('generation: $generation, ')
+          ..write('outcome: $outcome')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $SyncFactRowsTable extends SyncFactRows
     with TableInfo<$SyncFactRowsTable, SyncFactRow> {
   @override
@@ -12655,6 +13546,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $TaskDueChangeGroupRowsTable(this);
   late final $TaskDueChangeSnapshotRowsTable taskDueChangeSnapshotRows =
       $TaskDueChangeSnapshotRowsTable(this);
+  late final $BulkOperationRowsTable bulkOperationRows =
+      $BulkOperationRowsTable(this);
+  late final $BulkOperationMemberRowsTable bulkOperationMemberRows =
+      $BulkOperationMemberRowsTable(this);
   late final $SyncFactRowsTable syncFactRows = $SyncFactRowsTable(this);
   late final $TaskListPreferenceRowsTable taskListPreferenceRows =
       $TaskListPreferenceRowsTable(this);
@@ -12680,6 +13575,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     taskDeleteSnapshotRows,
     taskDueChangeGroupRows,
     taskDueChangeSnapshotRows,
+    bulkOperationRows,
+    bulkOperationMemberRows,
     syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
@@ -17712,6 +18609,493 @@ typedef $$TaskDueChangeSnapshotRowsTableProcessedTableManager =
       TaskDueChangeSnapshotRow,
       PrefetchHooks Function()
     >;
+typedef $$BulkOperationRowsTableCreateCompanionBuilder =
+    BulkOperationRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required String kind,
+      required int selectedCount,
+      required int affectedCount,
+      required DateTime createdAt,
+    });
+typedef $$BulkOperationRowsTableUpdateCompanionBuilder =
+    BulkOperationRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<String> kind,
+      Value<int> selectedCount,
+      Value<int> affectedCount,
+      Value<DateTime> createdAt,
+    });
+
+class $$BulkOperationRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $BulkOperationRowsTable> {
+  $$BulkOperationRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get affectedCount => $composableBuilder(
+    column: $table.affectedCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$BulkOperationRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $BulkOperationRowsTable> {
+  $$BulkOperationRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get affectedCount => $composableBuilder(
+    column: $table.affectedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$BulkOperationRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $BulkOperationRowsTable> {
+  $$BulkOperationRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get affectedCount => $composableBuilder(
+    column: $table.affectedCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$BulkOperationRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $BulkOperationRowsTable,
+          BulkOperationRow,
+          $$BulkOperationRowsTableFilterComposer,
+          $$BulkOperationRowsTableOrderingComposer,
+          $$BulkOperationRowsTableAnnotationComposer,
+          $$BulkOperationRowsTableCreateCompanionBuilder,
+          $$BulkOperationRowsTableUpdateCompanionBuilder,
+          (
+            BulkOperationRow,
+            BaseReferences<
+              _$AppDatabase,
+              $BulkOperationRowsTable,
+              BulkOperationRow
+            >,
+          ),
+          BulkOperationRow,
+          PrefetchHooks Function()
+        > {
+  $$BulkOperationRowsTableTableManager(
+    _$AppDatabase db,
+    $BulkOperationRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$BulkOperationRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$BulkOperationRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$BulkOperationRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<int> selectedCount = const Value.absent(),
+                Value<int> affectedCount = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => BulkOperationRowsCompanion(
+                id: id,
+                accountId: accountId,
+                kind: kind,
+                selectedCount: selectedCount,
+                affectedCount: affectedCount,
+                createdAt: createdAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required String kind,
+                required int selectedCount,
+                required int affectedCount,
+                required DateTime createdAt,
+              }) => BulkOperationRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                kind: kind,
+                selectedCount: selectedCount,
+                affectedCount: affectedCount,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$BulkOperationRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $BulkOperationRowsTable,
+      BulkOperationRow,
+      $$BulkOperationRowsTableFilterComposer,
+      $$BulkOperationRowsTableOrderingComposer,
+      $$BulkOperationRowsTableAnnotationComposer,
+      $$BulkOperationRowsTableCreateCompanionBuilder,
+      $$BulkOperationRowsTableUpdateCompanionBuilder,
+      (
+        BulkOperationRow,
+        BaseReferences<
+          _$AppDatabase,
+          $BulkOperationRowsTable,
+          BulkOperationRow
+        >,
+      ),
+      BulkOperationRow,
+      PrefetchHooks Function()
+    >;
+typedef $$BulkOperationMemberRowsTableCreateCompanionBuilder =
+    BulkOperationMemberRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int operationId,
+      required int taskId,
+      required int desiredStateId,
+      required int generation,
+      required String outcome,
+    });
+typedef $$BulkOperationMemberRowsTableUpdateCompanionBuilder =
+    BulkOperationMemberRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> operationId,
+      Value<int> taskId,
+      Value<int> desiredStateId,
+      Value<int> generation,
+      Value<String> outcome,
+    });
+
+class $$BulkOperationMemberRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $BulkOperationMemberRowsTable> {
+  $$BulkOperationMemberRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$BulkOperationMemberRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $BulkOperationMemberRowsTable> {
+  $$BulkOperationMemberRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$BulkOperationMemberRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $BulkOperationMemberRowsTable> {
+  $$BulkOperationMemberRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get taskId =>
+      $composableBuilder(column: $table.taskId, builder: (column) => column);
+
+  GeneratedColumn<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get outcome =>
+      $composableBuilder(column: $table.outcome, builder: (column) => column);
+}
+
+class $$BulkOperationMemberRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $BulkOperationMemberRowsTable,
+          BulkOperationMemberRow,
+          $$BulkOperationMemberRowsTableFilterComposer,
+          $$BulkOperationMemberRowsTableOrderingComposer,
+          $$BulkOperationMemberRowsTableAnnotationComposer,
+          $$BulkOperationMemberRowsTableCreateCompanionBuilder,
+          $$BulkOperationMemberRowsTableUpdateCompanionBuilder,
+          (
+            BulkOperationMemberRow,
+            BaseReferences<
+              _$AppDatabase,
+              $BulkOperationMemberRowsTable,
+              BulkOperationMemberRow
+            >,
+          ),
+          BulkOperationMemberRow,
+          PrefetchHooks Function()
+        > {
+  $$BulkOperationMemberRowsTableTableManager(
+    _$AppDatabase db,
+    $BulkOperationMemberRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$BulkOperationMemberRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$BulkOperationMemberRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$BulkOperationMemberRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> operationId = const Value.absent(),
+                Value<int> taskId = const Value.absent(),
+                Value<int> desiredStateId = const Value.absent(),
+                Value<int> generation = const Value.absent(),
+                Value<String> outcome = const Value.absent(),
+              }) => BulkOperationMemberRowsCompanion(
+                id: id,
+                accountId: accountId,
+                operationId: operationId,
+                taskId: taskId,
+                desiredStateId: desiredStateId,
+                generation: generation,
+                outcome: outcome,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int operationId,
+                required int taskId,
+                required int desiredStateId,
+                required int generation,
+                required String outcome,
+              }) => BulkOperationMemberRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                operationId: operationId,
+                taskId: taskId,
+                desiredStateId: desiredStateId,
+                generation: generation,
+                outcome: outcome,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$BulkOperationMemberRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $BulkOperationMemberRowsTable,
+      BulkOperationMemberRow,
+      $$BulkOperationMemberRowsTableFilterComposer,
+      $$BulkOperationMemberRowsTableOrderingComposer,
+      $$BulkOperationMemberRowsTableAnnotationComposer,
+      $$BulkOperationMemberRowsTableCreateCompanionBuilder,
+      $$BulkOperationMemberRowsTableUpdateCompanionBuilder,
+      (
+        BulkOperationMemberRow,
+        BaseReferences<
+          _$AppDatabase,
+          $BulkOperationMemberRowsTable,
+          BulkOperationMemberRow
+        >,
+      ),
+      BulkOperationMemberRow,
+      PrefetchHooks Function()
+    >;
 typedef $$SyncFactRowsTableCreateCompanionBuilder =
     SyncFactRowsCompanion Function({
       Value<int> accountId,
@@ -18706,6 +20090,13 @@ class $AppDatabaseManager {
       $$TaskDueChangeSnapshotRowsTableTableManager(
         _db,
         _db.taskDueChangeSnapshotRows,
+      );
+  $$BulkOperationRowsTableTableManager get bulkOperationRows =>
+      $$BulkOperationRowsTableTableManager(_db, _db.bulkOperationRows);
+  $$BulkOperationMemberRowsTableTableManager get bulkOperationMemberRows =>
+      $$BulkOperationMemberRowsTableTableManager(
+        _db,
+        _db.bulkOperationMemberRows,
       );
   $$SyncFactRowsTableTableManager get syncFactRows =>
       $$SyncFactRowsTableTableManager(_db, _db.syncFactRows);

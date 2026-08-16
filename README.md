@@ -94,6 +94,14 @@ is invalid. One SQLite transaction acknowledges all tasks or none; each task
 then follows ordinary ordered Google create publication with honest pending or
 failed sync health.
 
+The desktop collection supports transient multi-select complete, reschedule,
+and cross-list move. It validates the entire selection and acknowledges every
+affected local projection/desired generation in one transaction or none. A
+durable result reports exact confirmed, pending, and failed Google-resource
+counts across restart; confirmed remote successes are never rolled back. A
+parent plus selected child is one independent MOVE, while due consistency still
+records every affected row. Bulk delete and Clear completed remain later work.
+
 Search finds supported cached tasks by title or notes without crossing account
 or protected-data boundaries. A matching subtask is labeled beneath its parent
 and opens that parent detail context. Pointer and keyboard activation share the
@@ -532,6 +540,9 @@ flutter test test/domain/bulk_capture_parser_test.dart
 flutter test test/data/database/bulk_capture_repository_test.dart
 flutter test test/features/tasks/bulk_add_view_model_test.dart
 flutter test test/features/tasks/bulk_add_widget_test.dart
+flutter test test/domain/bulk_task_operations_test.dart
+flutter test test/data/database/bulk_task_operations_repository_test.dart
+flutter test test/features/tasks/bulk_operations_view_model_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
 flutter test test/support/fake_lifecycle_test.dart
@@ -555,6 +566,7 @@ flutter test integration_test/smart_views_restart_linux_test.dart -d linux
 flutter test integration_test/task_details_linux_test.dart -d linux
 flutter test integration_test/quick_capture_linux_test.dart -d linux
 flutter test integration_test/bulk_capture_linux_test.dart -d linux
+flutter test integration_test/bulk_operations_linux_test.dart -d linux
 flutter test integration_test/search_navigation_linux_test.dart -d linux
 flutter test integration_test/desktop_drag_reorder_linux_test.dart -d linux
 ./scripts/check_generated.sh
@@ -572,7 +584,8 @@ states, plus keyboard-focused light/dark quick-capture previews and validated
 light/dark bulk-capture preview/result states and title/notes search with child
 parent context, plus Fedora desktop interactions at 1024×720 light and
 1280×720 dark, plus an in-progress light drag preview and dark canonical
-drag-failure recovery, into the ignored
+drag-failure recovery, plus bulk-operation selection, exact result, and local
+confirmation states, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

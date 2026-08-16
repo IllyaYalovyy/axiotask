@@ -16,6 +16,7 @@ import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
+import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/run.dart';
@@ -259,6 +260,75 @@ void main() {
       harness.clock.advance(const Duration(minutes: 1));
       await harness.run();
       expect(remote.updateLedger, hasLength(callsAfterPartial));
+    },
+  );
+
+  test(
+    'PAR-BULK-002 exact independent remote outcomes update the durable summary',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axiotask-bulk-outcomes-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/isolated.sqlite');
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UpdateInterceptService(backend)..rejectFirstPatch = true;
+      var harness = await _UpdateHarness.openFile(
+        file: file,
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(() => harness.close());
+      final seeded = await harness.seedRemote(
+        listTitle: 'Bulk outcome list',
+        taskTitle: 'Rejected bulk task',
+      );
+      final secondRemote = await harness.seedTask(
+        seeded.listRemoteId,
+        title: 'Confirmed bulk task',
+      );
+      await harness.run();
+      final secondTaskId = (await harness.snapshot()).tasks
+          .singleWhere((task) => task.remoteId?.value == secondRemote.id.value)
+          .id;
+      final repository = DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      );
+
+      final local = await repository.applyBulk(
+        BulkCompleteTasksCommand(
+          accountId: harness.accountId,
+          taskIds: <TaskId>{seeded.taskId, secondTaskId},
+        ),
+      );
+      expect(
+        (local as Success<BulkOperationReceipt>).value.summary.pendingCount,
+        2,
+      );
+
+      final report = await harness.run();
+      final clock = harness.clock;
+      await harness.close();
+      harness = await _UpdateHarness.reopen(
+        file: file,
+        remote: remote,
+        subject: subject,
+        clock: clock,
+      );
+      final summary = await DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      ).watchLatestBulkOperation(harness.accountId).first;
+
+      expect(report.outcome, SyncRunOutcome.failed);
+      expect(summary?.selectedCount, 2);
+      expect(summary?.affectedCount, 2);
+      expect(summary?.confirmedCount, 1);
+      expect(summary?.pendingCount, 0);
+      expect(summary?.failedCount, 1);
     },
   );
 

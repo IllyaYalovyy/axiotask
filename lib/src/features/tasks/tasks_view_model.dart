@@ -6,6 +6,7 @@ import '../../core/clock.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
+import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/policy/date_workflow.dart';
@@ -32,6 +33,8 @@ final class TasksViewState {
     this.isListCommandPending = false,
     this.isTaskCommandPending = false,
     this.isPreferenceCommandPending = false,
+    this.isBulkCommandPending = false,
+    this.bulkSelectedTaskIds = const <TaskId>{},
     this.selectedSmartView,
     this.selectedTaskListId,
     this.selectedTaskId,
@@ -40,6 +43,8 @@ final class TasksViewState {
     this.listCommandFailureMessage,
     this.taskCommandFailureMessage,
     this.preferenceFailureMessage,
+    this.bulkCommandFailureMessage,
+    this.latestBulkOperation,
   });
 
   final bool isLoading;
@@ -56,6 +61,8 @@ final class TasksViewState {
   final bool isListCommandPending;
   final bool isTaskCommandPending;
   final bool isPreferenceCommandPending;
+  final bool isBulkCommandPending;
+  final Set<TaskId> bulkSelectedTaskIds;
   final SmartView? selectedSmartView;
   final TaskListId? selectedTaskListId;
   final TaskId? selectedTaskId;
@@ -64,6 +71,10 @@ final class TasksViewState {
   final String? listCommandFailureMessage;
   final String? taskCommandFailureMessage;
   final String? preferenceFailureMessage;
+  final String? bulkCommandFailureMessage;
+  final BulkOperationSummary? latestBulkOperation;
+
+  bool get isBulkSelectionActive => bulkSelectedTaskIds.isNotEmpty;
 
   TaskView get selectedView => switch (selectedSmartView) {
     final value? => SmartTaskView(value),
@@ -142,6 +153,8 @@ final class TasksViewState {
     bool? isListCommandPending,
     bool? isTaskCommandPending,
     bool? isPreferenceCommandPending,
+    bool? isBulkCommandPending,
+    Set<TaskId>? bulkSelectedTaskIds,
     Object? selectedSmartView = _notProvided,
     Object? selectedTaskListId = _notProvided,
     Object? selectedTaskId = _notProvided,
@@ -150,6 +163,8 @@ final class TasksViewState {
     Object? listCommandFailureMessage = _notProvided,
     Object? taskCommandFailureMessage = _notProvided,
     Object? preferenceFailureMessage = _notProvided,
+    Object? bulkCommandFailureMessage = _notProvided,
+    Object? latestBulkOperation = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -166,6 +181,8 @@ final class TasksViewState {
     isTaskCommandPending: isTaskCommandPending ?? this.isTaskCommandPending,
     isPreferenceCommandPending:
         isPreferenceCommandPending ?? this.isPreferenceCommandPending,
+    isBulkCommandPending: isBulkCommandPending ?? this.isBulkCommandPending,
+    bulkSelectedTaskIds: bulkSelectedTaskIds ?? this.bulkSelectedTaskIds,
     selectedSmartView: identical(selectedSmartView, _notProvided)
         ? this.selectedSmartView
         : selectedSmartView as SmartView?,
@@ -193,6 +210,13 @@ final class TasksViewState {
     preferenceFailureMessage: identical(preferenceFailureMessage, _notProvided)
         ? this.preferenceFailureMessage
         : preferenceFailureMessage as String?,
+    bulkCommandFailureMessage:
+        identical(bulkCommandFailureMessage, _notProvided)
+        ? this.bulkCommandFailureMessage
+        : bulkCommandFailureMessage as String?,
+    latestBulkOperation: identical(latestBulkOperation, _notProvided)
+        ? this.latestBulkOperation
+        : latestBulkOperation as BulkOperationSummary?,
   );
 }
 
@@ -223,6 +247,7 @@ final class TasksViewModel extends ChangeNotifier {
          isListCommandPending: false,
          isTaskCommandPending: false,
          isPreferenceCommandPending: false,
+         isBulkCommandPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          taskDeleteUndos: const <TaskDeleteUndo>[],
@@ -260,12 +285,14 @@ final class TasksViewModel extends ChangeNotifier {
   _listPreferencesSubscription;
   StreamSubscription<Map<ViewKey, ViewPreferences>>?
   _viewPreferencesSubscription;
+  StreamSubscription<BulkOperationSummary?>? _bulkOperationSubscription;
   bool _started = false;
   Future<void>? _refreshInFlight;
   Future<void>? _syncControlInFlight;
   Future<void>? _listCommandInFlight;
   Future<void>? _taskCommandInFlight;
   Future<void>? _preferenceCommandInFlight;
+  Future<void>? _bulkCommandInFlight;
   ScheduledTimer? _calendarTimer;
 
   TasksViewState get state => _state;
@@ -295,6 +322,13 @@ final class TasksViewModel extends ChangeNotifier {
     _viewPreferencesSubscription = preferencesRepository
         ?.watchAllViewPreferences(accountId)
         .listen(_acceptViewPreferences, onError: _acceptPreferenceReadError);
+    final repository = tasksRepository;
+    if (repository is BulkTaskOperationsRepository) {
+      final bulkRepository = repository as BulkTaskOperationsRepository;
+      _bulkOperationSubscription = bulkRepository
+          .watchLatestBulkOperation(accountId)
+          .listen(_acceptBulkOperation, onError: _acceptBulkOperationError);
+    }
   }
 
   void _scheduleNextCalendarBoundary() {
@@ -315,6 +349,7 @@ final class TasksViewModel extends ChangeNotifier {
         selectedSmartView: smartView,
         selectedTaskListId: null,
         selectedTaskId: null,
+        bulkSelectedTaskIds: const <TaskId>{},
       ),
     );
   }
@@ -326,6 +361,7 @@ final class TasksViewModel extends ChangeNotifier {
         selectedSmartView: null,
         selectedTaskListId: taskListId,
         selectedTaskId: null,
+        bulkSelectedTaskIds: const <TaskId>{},
       ),
     );
   }
@@ -399,6 +435,39 @@ final class TasksViewModel extends ChangeNotifier {
 
   void clearTaskSelection() {
     _replaceState(_state.copyWith(selectedTaskId: null));
+  }
+
+  void beginBulkSelection(TaskId taskId) {
+    if (!_state.visibleTasks.any((task) => task.id == taskId)) return;
+    _replaceState(
+      _state.copyWith(
+        bulkSelectedTaskIds: Set<TaskId>.unmodifiable(<TaskId>{taskId}),
+        selectedTaskId: null,
+        bulkCommandFailureMessage: null,
+      ),
+    );
+  }
+
+  void toggleBulkSelection(TaskId taskId) {
+    if (!_state.visibleTasks.any((task) => task.id == taskId)) return;
+    final selected = Set<TaskId>.of(_state.bulkSelectedTaskIds);
+    if (!selected.add(taskId)) selected.remove(taskId);
+    _replaceState(
+      _state.copyWith(
+        bulkSelectedTaskIds: Set<TaskId>.unmodifiable(selected),
+        bulkCommandFailureMessage: null,
+      ),
+    );
+  }
+
+  void clearBulkSelection() {
+    if (_state.bulkSelectedTaskIds.isEmpty) return;
+    _replaceState(
+      _state.copyWith(
+        bulkSelectedTaskIds: const <TaskId>{},
+        bulkCommandFailureMessage: null,
+      ),
+    );
   }
 
   void backFromTaskDetail() {
@@ -562,6 +631,80 @@ final class TasksViewModel extends ChangeNotifier {
       ),
     ),
   );
+
+  Future<void> completeBulkSelection() => _performBulkCommand(
+    BulkCompleteTasksCommand(
+      accountId: accountId,
+      taskIds: Set<TaskId>.unmodifiable(_state.bulkSelectedTaskIds),
+    ),
+  );
+
+  Future<void> rescheduleBulkSelection(TaskDate? due) => _performBulkCommand(
+    BulkRescheduleTasksCommand(
+      accountId: accountId,
+      taskIds: Set<TaskId>.unmodifiable(_state.bulkSelectedTaskIds),
+      due: due,
+    ),
+  );
+
+  Future<void> rescheduleBulkSelectionShortcut(DateShortcut shortcut) =>
+      rescheduleBulkSelection(resolveDateShortcut(_state.today, shortcut));
+
+  Future<void> moveBulkSelection(TaskListId destinationTaskListId) =>
+      _performBulkCommand(
+        BulkMoveTasksCommand(
+          accountId: accountId,
+          taskIds: Set<TaskId>.unmodifiable(_state.bulkSelectedTaskIds),
+          destinationTaskListId: destinationTaskListId,
+        ),
+      );
+
+  Future<void> _performBulkCommand(BulkExistingTaskCommand command) {
+    final existing = _bulkCommandInFlight;
+    if (existing != null) return existing;
+    final taskRepository = tasksRepository;
+    if (taskRepository is! BulkTaskOperationsRepository) {
+      return Future<void>.value();
+    }
+    final repository = taskRepository as BulkTaskOperationsRepository;
+    final operation = _runBulkCommand(repository, command);
+    _bulkCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runBulkCommand(
+    BulkTaskOperationsRepository repository,
+    BulkExistingTaskCommand command,
+  ) async {
+    _replaceState(
+      _state.copyWith(
+        isBulkCommandPending: true,
+        bulkCommandFailureMessage: null,
+      ),
+    );
+    try {
+      final result = await repository.applyBulk(command);
+      switch (result) {
+        case Success<BulkOperationReceipt>(:final value):
+          _replaceState(
+            _state.copyWith(
+              bulkSelectedTaskIds: const <TaskId>{},
+              latestBulkOperation: value.summary,
+            ),
+          );
+          await localEditCommitted?.call();
+        case Failed<BulkOperationReceipt>():
+          _replaceState(
+            _state.copyWith(
+              bulkCommandFailureMessage: 'No selected tasks were changed.',
+            ),
+          );
+      }
+    } finally {
+      _bulkCommandInFlight = null;
+      _replaceState(_state.copyWith(isBulkCommandPending: false));
+    }
+  }
 
   Future<void> deleteTask(TaskId taskId) => _performTaskCommand(
     () => tasksRepository.deleteTask(
@@ -763,6 +906,9 @@ final class TasksViewModel extends ChangeNotifier {
     final selectedTask = snapshot.tasks.any((value) => value.id == currentTask)
         ? currentTask
         : null;
+    final retainedBulkSelection = _state.bulkSelectedTaskIds
+        .where((id) => snapshot.tasks.any((task) => task.id == id))
+        .toSet();
     _replaceState(
       _state.copyWith(
         isLoading: false,
@@ -770,6 +916,7 @@ final class TasksViewModel extends ChangeNotifier {
         tasks: List<CachedTask>.unmodifiable(snapshot.tasks),
         selectedTaskListId: selectedList,
         selectedTaskId: selectedTask,
+        bulkSelectedTaskIds: Set<TaskId>.unmodifiable(retainedBulkSelection),
         failureMessage: null,
       ),
     );
@@ -787,6 +934,19 @@ final class TasksViewModel extends ChangeNotifier {
     _replaceState(
       _state.copyWith(
         viewPreferences: Map<ViewKey, ViewPreferences>.unmodifiable(values),
+      ),
+    );
+  }
+
+  void _acceptBulkOperation(BulkOperationSummary? value) {
+    _replaceState(_state.copyWith(latestBulkOperation: value));
+  }
+
+  void _acceptBulkOperationError(Object _) {
+    _replaceState(
+      _state.copyWith(
+        bulkCommandFailureMessage:
+            'Bulk Google result counts could not be read safely.',
       ),
     );
   }
@@ -859,6 +1019,7 @@ final class TasksViewModel extends ChangeNotifier {
     final taskDueChangeUndoSubscription = _taskDueChangeUndoSubscription;
     final listPreferencesSubscription = _listPreferencesSubscription;
     final viewPreferencesSubscription = _viewPreferencesSubscription;
+    final bulkOperationSubscription = _bulkOperationSubscription;
     if (tasksSubscription != null) unawaited(tasksSubscription.cancel());
     if (healthSubscription != null) unawaited(healthSubscription.cancel());
     if (taskDeleteUndoSubscription != null) {
@@ -872,6 +1033,9 @@ final class TasksViewModel extends ChangeNotifier {
     }
     if (viewPreferencesSubscription != null) {
       unawaited(viewPreferencesSubscription.cancel());
+    }
+    if (bulkOperationSubscription != null) {
+      unawaited(bulkOperationSubscription.cancel());
     }
     _calendarTimer?.cancel();
     super.dispose();

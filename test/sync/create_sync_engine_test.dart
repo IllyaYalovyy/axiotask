@@ -17,6 +17,7 @@ import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
+import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/run.dart';
@@ -194,6 +195,56 @@ void main() {
       harness.clock.advance(const Duration(minutes: 1));
       await harness.run();
       expect(service.createLedger.length, confirmedCallCount);
+    },
+  );
+
+  test(
+    'PAR-BULK-002 failed parent publication leaves its bulk child waiting',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final service = _CreateInterceptService(backend);
+      final harness = await _CreateHarness.open(
+        remote: service,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final list = await harness.createList('Bulk dependency list');
+      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+      final parent = await harness.createTask(list, 'Rejected bulk parent');
+      final child = await harness.createTask(
+        list,
+        'Waiting bulk child',
+        parentTaskId: parent,
+      );
+      final repository = DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      );
+      final accepted = await repository.applyBulk(
+        BulkCompleteTasksCommand(
+          accountId: harness.accountId,
+          taskIds: <TaskId>{parent, child},
+        ),
+      );
+      expect(
+        (accepted as Success<BulkOperationReceipt>).value.summary.pendingCount,
+        2,
+      );
+      service.rejectFirstTask = true;
+
+      final report = await harness.run();
+      final summary = await repository
+          .watchLatestBulkOperation(harness.accountId)
+          .first;
+
+      expect(report.outcome, SyncRunOutcome.failed);
+      expect(service.createLedger.last, 'task:Rejected bulk parent');
+      expect(service.createLedger, isNot(contains('task:Waiting bulk child')));
+      expect(summary?.confirmedCount, 0);
+      expect(summary?.pendingCount, 1);
+      expect(summary?.failedCount, 1);
     },
   );
 
@@ -1107,11 +1158,13 @@ final class _CreateInterceptService implements GoogleTasksService {
   final FakeGoogleTasksService delegate;
   final List<String> createLedger = <String>[];
   bool rejectFirstList = false;
+  bool rejectFirstTask = false;
   bool uncertainNextTaskAfterCommit = false;
   int uncertainTaskResponsesAfterCommit = 0;
   int uncertainListResponsesAfterCommit = 0;
   Future<Object?> Function()? afterNextTaskCommit;
   var _listCalls = 0;
+  var _taskCalls = 0;
 
   @override
   Future<Outcome<RemotePage<RemoteTaskList>>> listTaskLists({
@@ -1153,6 +1206,10 @@ final class _CreateInterceptService implements GoogleTasksService {
     CreateTaskOperation operation,
   ) async {
     createLedger.add('task:${operation.title}');
+    _taskCalls += 1;
+    if (rejectFirstTask && _taskCalls == 1) {
+      return const RejectedMutation<RemoteTask>(_rejectedCreateError);
+    }
     final result = await delegate.createTask(operation);
     final callback = afterNextTaskCommit;
     afterNextTaskCommit = null;

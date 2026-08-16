@@ -400,6 +400,17 @@ isolated Linux integration tests exercise Navigator-driven system back and
 verify that a child result opens its supported parent while protected and
 cross-account rows remain absent.
 
+S28A adds `test/domain/bulk_task_operations_test.dart` for mixed-hierarchy due
+and MOVE normalization, and
+`test/data/database/bulk_task_operations_repository_test.dart` for every
+selection/destination/synchronizability rejection, desired-write rollback, one
+desired/member row per affected resource, and file restart. Create/update sync
+engine cases prove exact independent success/failure/dependency accounting.
+ViewModel and adaptive-shell tests cover transient selection, duplicate-safe
+dispatch, failure retention, complete confirmation, reschedule/move routes,
+result copy, and platform back. The isolated Linux integration commits two
+tasks together and reopens the database before asserting all exact counts.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -561,6 +572,14 @@ temporary SQLite database. Curated `drag_preview_light` and
 `drag_failure_dark` goldens plus matching actual Fedora captures show an
 in-progress placement preview and a truthful failed state with canonical row
 order restored. All identities and content are synthetic.
+
+S28A adds curated `bulk_selection_light`, `bulk_result_dark`, and
+`bulk_confirmation_light` desktop goldens at 1280×800 plus matching ignored
+`bulk-operation-{selection-light,result-dark,confirmation-light}` Fedora
+captures at 1280×720. The reviewed images show two selected rows, visible
+non-destructive commands, explicit all-or-none local confirmation, exact
+confirmed/pending/failed Google-resource counts, and truthful non-green sync
+health using only fixed synthetic data.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

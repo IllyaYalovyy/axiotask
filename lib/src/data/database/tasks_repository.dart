@@ -7,35 +7,319 @@ import '../../core/clock.dart';
 import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
+import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/bulk_task_operations.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/hierarchy_policy.dart';
 import '../../domain/repository/tasks_repository.dart';
 import 'app_database.dart';
+import 'bulk_operation_dao.dart';
 import 'cache_dao.dart';
 import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'due_change_dao.dart';
 
 final class DatabaseTasksRepository
-    implements TasksRepository, BulkTasksRepository {
+    implements
+        TasksRepository,
+        BulkTasksRepository,
+        BulkTaskOperationsRepository {
   DatabaseTasksRepository(
     this._database, {
     Clock? clock,
     this.transactionControl,
   }) : clock = clock ?? SystemClock(),
        _cache = CacheDao(_database),
+       _bulkOperations = BulkOperationDao(_database),
        _desired = DesiredStateDao(_database),
        _deletes = DeleteStateDao(_database),
        _dueChanges = DueChangeDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
+  final BulkOperationDao _bulkOperations;
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
   final DueChangeDao _dueChanges;
   final Clock clock;
   final DesiredStateTransactionControl? transactionControl;
+
+  @override
+  Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
+      _bulkOperations.watchLatest(accountId);
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> applyBulk(
+    BulkExistingTaskCommand command,
+  ) async {
+    final validation = validateBulkTaskCommand(command);
+    if (validation != null) {
+      return Outcome<BulkOperationReceipt>.failure(validation);
+    }
+    try {
+      final receipt = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final selected = await _requireBulkTasks(command);
+        return switch (command) {
+          BulkCompleteTasksCommand() => _completeBulk(command, selected),
+          BulkRescheduleTasksCommand() => _rescheduleBulk(command, selected),
+          BulkMoveTasksCommand() => _moveBulk(command, selected),
+        };
+      });
+      return Outcome<BulkOperationReceipt>.success(receipt);
+    } on _TaskCommandException catch (error) {
+      return Outcome<BulkOperationReceipt>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    } on DesiredStateInvariantException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    }
+  }
+
+  Future<List<TaskCacheRow>> _requireBulkTasks(
+    BulkExistingTaskCommand command,
+  ) async {
+    final ids = command.taskIds.map((id) => id.value).toList(growable: false);
+    final rows =
+        await (_database.select(_database.taskCacheRows)
+              ..where((row) => row.id.isIn(ids))
+              ..orderBy(<OrderingTerm Function($TaskCacheRowsTable)>[
+                (row) => OrderingTerm.asc(row.id),
+              ]))
+            .get();
+    if (rows.length != ids.length) {
+      throw const _TaskCommandException(_bulkSelectionFailure);
+    }
+    for (final row in rows) {
+      if (row.accountId != command.accountId.value ||
+          row.projection != CacheProjection.supported.name) {
+        throw const _TaskCommandException(_bulkSelectionFailure);
+      }
+      if (row.remoteId == null &&
+          !_isUnresolved(
+            (await _desired.readTask(command.accountId, TaskId(row.id)))?.state,
+          )) {
+        throw const _TaskCommandException(_unsynchronizableTaskFailure);
+      }
+    }
+    return rows;
+  }
+
+  Future<BulkOperationReceipt> _completeBulk(
+    BulkCompleteTasksCommand command,
+    List<TaskCacheRow> selected,
+  ) async {
+    final changed = selected
+        .where((row) => _taskStatus(row.status) != TaskStatus.completed)
+        .toList(growable: false);
+    for (final row in changed) {
+      await (_database.update(_database.taskCacheRows)..where(
+            (task) =>
+                task.accountId.equals(command.accountId.value) &
+                task.id.equals(row.id),
+          ))
+          .write(
+            const TaskCacheRowsCompanion(status: Value<String>('completed')),
+          );
+    }
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    final members = <BulkOperationMemberInput>[];
+    final modifiedAt = clock.now();
+    for (final row in changed) {
+      final desired = await _desired.writeTaskPresent(
+        accountId: command.accountId,
+        taskId: TaskId(row.id),
+        taskListId: TaskListId(row.taskListId),
+        parentTaskId: row.parentTaskId == null
+            ? null
+            : TaskId(row.parentTaskId!),
+        title: row.title,
+        notes: row.notes,
+        status: TaskStatus.completed,
+        due: _taskDate(row.dueEpochDay),
+        modifiedAt: modifiedAt,
+      );
+      members.add(
+        BulkOperationMemberInput(taskId: TaskId(row.id), desired: desired),
+      );
+      await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+    }
+    return _finishBulk(
+      accountId: command.accountId,
+      kind: BulkOperationKind.complete,
+      selectedCount: selected.length,
+      members: members,
+      createdAt: modifiedAt,
+    );
+  }
+
+  Future<BulkOperationReceipt> _rescheduleBulk(
+    BulkRescheduleTasksCommand command,
+    List<TaskCacheRow> selected,
+  ) async {
+    final allRows =
+        await (_database.select(_database.taskCacheRows)..where(
+              (row) =>
+                  row.accountId.equals(command.accountId.value) &
+                  row.projection.equals(CacheProjection.supported.name),
+            ))
+            .get();
+    final changes = planBulkDueChanges(
+      tasks: allRows.map(_cachedTask),
+      selectedTaskIds: command.taskIds,
+      selectedDue: command.due,
+    );
+    final byId = <TaskId, TaskCacheRow>{
+      for (final row in allRows) TaskId(row.id): row,
+    };
+    for (final change in changes) {
+      final row = byId[change.taskId]!;
+      if (row.remoteId == null &&
+          !_isUnresolved(
+            (await _desired.readTask(command.accountId, change.taskId))?.state,
+          )) {
+        throw const _TaskCommandException(_unsynchronizableTaskFailure);
+      }
+    }
+    for (final change in changes) {
+      await (_database.update(_database.taskCacheRows)..where(
+            (row) =>
+                row.accountId.equals(command.accountId.value) &
+                row.id.equals(change.taskId.value),
+          ))
+          .write(
+            TaskCacheRowsCompanion(
+              dueEpochDay: Value<int?>(_epochDay(change.after)),
+            ),
+          );
+    }
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    final members = <BulkOperationMemberInput>[];
+    final modifiedAt = clock.now();
+    for (final change in changes) {
+      final row = byId[change.taskId]!;
+      final desired = await _desired.writeTaskPresent(
+        accountId: command.accountId,
+        taskId: change.taskId,
+        taskListId: TaskListId(row.taskListId),
+        parentTaskId: row.parentTaskId == null
+            ? null
+            : TaskId(row.parentTaskId!),
+        title: row.title,
+        notes: row.notes,
+        status: _taskStatus(row.status),
+        due: change.after,
+        modifiedAt: modifiedAt,
+      );
+      members.add(
+        BulkOperationMemberInput(taskId: change.taskId, desired: desired),
+      );
+      await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+    }
+    return _finishBulk(
+      accountId: command.accountId,
+      kind: BulkOperationKind.reschedule,
+      selectedCount: selected.length,
+      members: members,
+      createdAt: modifiedAt,
+    );
+  }
+
+  Future<BulkOperationReceipt> _moveBulk(
+    BulkMoveTasksCommand command,
+    List<TaskCacheRow> selected,
+  ) async {
+    await _requireTaskList(command.accountId, command.destinationTaskListId);
+    final roots =
+        selectBulkMoveRoots(
+              tasks: selected.map(_cachedTask),
+              selectedTaskIds: command.taskIds,
+            )
+            .where(
+              (task) =>
+                  task.taskListId != command.destinationTaskListId ||
+                  task.parentTaskId != null,
+            )
+            .toList(growable: false);
+    for (final root in roots) {
+      if (root.taskListId != command.destinationTaskListId) {
+        await _database.customUpdate(
+          '''
+          UPDATE tasks
+          SET task_list_id = ?1,
+              parent_task_id = CASE WHEN id = ?2 THEN NULL ELSE ?2 END
+          WHERE account_id = ?3
+            AND (id = ?2 OR parent_task_id = ?2)
+          ''',
+          variables: <Variable<Object>>[
+            Variable<int>(command.destinationTaskListId.value),
+            Variable<int>(root.id.value),
+            Variable<int>(command.accountId.value),
+          ],
+          updates: <TableInfo<Table, Object?>>{_database.taskCacheRows},
+        );
+      } else {
+        await (_database.update(_database.taskCacheRows)..where(
+              (row) =>
+                  row.accountId.equals(command.accountId.value) &
+                  row.id.equals(root.id.value),
+            ))
+            .write(
+              const TaskCacheRowsCompanion(parentTaskId: Value<int?>(null)),
+            );
+      }
+    }
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    final members = <BulkOperationMemberInput>[];
+    final modifiedAt = clock.now();
+    for (final root in roots) {
+      final desired = await _desired.writeTaskStructure(
+        accountId: command.accountId,
+        taskId: root.id,
+        taskListId: command.destinationTaskListId,
+        parentTaskId: null,
+        previousTaskId: null,
+        title: root.title,
+        notes: root.notes,
+        status: root.status,
+        due: root.due,
+        modifiedAt: modifiedAt,
+      );
+      members.add(BulkOperationMemberInput(taskId: root.id, desired: desired));
+      await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+    }
+    return _finishBulk(
+      accountId: command.accountId,
+      kind: BulkOperationKind.move,
+      selectedCount: selected.length,
+      members: members,
+      createdAt: modifiedAt,
+    );
+  }
+
+  Future<BulkOperationReceipt> _finishBulk({
+    required AccountId accountId,
+    required BulkOperationKind kind,
+    required int selectedCount,
+    required List<BulkOperationMemberInput> members,
+    required DateTime createdAt,
+  }) async {
+    final summary = await _bulkOperations.replaceLatest(
+      accountId: accountId,
+      kind: kind,
+      selectedCount: selectedCount,
+      members: members,
+      createdAt: createdAt,
+    );
+    await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+    return BulkOperationReceipt(
+      summary: summary,
+      taskIds: members.map((member) => member.taskId).toList(growable: false),
+    );
+  }
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) async {
@@ -1228,6 +1512,15 @@ const Failure _persistenceFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'The task was not saved.',
   safeSummary: 'The task transaction did not commit.',
+);
+
+const Failure _bulkSelectionFailure = Failure(
+  code: 'bulk_tasks.invalid_selection',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'No tasks were changed.',
+  safeSummary: 'At least one selected task is unavailable or out of scope.',
 );
 
 const Failure _dueChangePersistenceFailure = Failure(

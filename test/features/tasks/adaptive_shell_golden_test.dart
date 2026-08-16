@@ -5,6 +5,7 @@ import 'package:axiotask/src/app/adaptive_shell.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
+import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
@@ -328,6 +329,94 @@ void main() {
       matchesGoldenFile('../../goldens/linux/drag_failure_dark.png'),
     );
   });
+
+  for (final scenario in <(String, Brightness, BulkOperationSummary?)>[
+    ('selection_light', Brightness.light, null),
+    ('result_dark', Brightness.dark, _bulkGoldenSummary),
+  ]) {
+    testWidgets('Linux bulk ${scenario.$1}', (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: _BulkGoldenTasksRepository(summary: scenario.$3),
+        syncHealthRepository: _GoldenHealthRepository(
+          _health(
+            SyncHealthOutcome.pending,
+            pendingReason: SyncPendingReason.localChanges,
+            counts: const SyncWorkCounts(pending: 2),
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: scenario.$2,
+            colorSchemeSeed: const Color(0xff315da8),
+            fontFamily: 'GoldenRoboto',
+            useMaterial3: true,
+          ),
+          home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+        ),
+      );
+      await tester.pump();
+      if (scenario.$3 == null) {
+        viewModel.beginBulkSelection(const TaskId(11));
+        viewModel.toggleBulkSelection(const TaskId(13));
+        await tester.pump();
+      }
+
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile('../../goldens/linux/bulk_${scenario.$1}.png'),
+      );
+    });
+  }
+
+  testWidgets('Linux bulk confirmation light', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: const _BulkGoldenTasksRepository(),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.localChanges,
+          counts: const SyncWorkCounts(pending: 2),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+      ),
+    );
+    await tester.pump();
+    viewModel.beginBulkSelection(const TaskId(11));
+    viewModel.toggleBulkSelection(const TaskId(13));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('bulk-complete-open')));
+    await tester.pumpAndSettle();
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('../../goldens/linux/bulk_confirmation_light.png'),
+    );
+  });
 }
 
 Future<void> _loadFlutterRoboto() async {
@@ -491,6 +580,76 @@ final class _GoldenHealthRepository implements SyncHealthRepository {
   @override
   Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(health);
 }
+
+final class _BulkGoldenTasksRepository
+    implements TasksRepository, BulkTaskOperationsRepository {
+  const _BulkGoldenTasksRepository({this.summary});
+
+  final BulkOperationSummary? summary;
+  static const _delegate = _GoldenTasksRepository(showCompletedTask: true);
+
+  @override
+  Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
+      Stream.value(summary);
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> applyBulk(
+    BulkExistingTaskCommand command,
+  ) async => Outcome.success(
+    BulkOperationReceipt(
+      summary: _bulkGoldenSummary,
+      taskIds: command.taskIds.toList(growable: false),
+    ),
+  );
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      _delegate.apply(command);
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      _delegate.createTask(command);
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(DeleteTaskCommand command) =>
+      _delegate.deleteTask(command);
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(SetTaskDueCommand command) =>
+      _delegate.setTaskDue(command);
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) =>
+      _delegate.undoTaskDelete(command);
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(UndoTaskDueChangeCommand command) =>
+      _delegate.undoTaskDueChange(command);
+
+  @override
+  Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
+      _delegate.watchTasks(query);
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      _delegate.watchUndoableTaskDeletes(accountId);
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => _delegate.watchUndoableTaskDueChanges(accountId);
+}
+
+final _bulkGoldenSummary = BulkOperationSummary(
+  operationId: 28,
+  kind: BulkOperationKind.move,
+  selectedCount: 3,
+  affectedCount: 2,
+  confirmedCount: 1,
+  pendingCount: 0,
+  failedCount: 1,
+  createdAt: DateTime.utc(2026, 8, 16, 14),
+);
 
 SyncHealth _health(
   SyncHealthOutcome outcome, {

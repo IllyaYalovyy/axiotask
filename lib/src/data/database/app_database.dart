@@ -25,6 +25,8 @@ part 'app_database.g.dart';
     TaskDeleteSnapshotRows,
     TaskDueChangeGroupRows,
     TaskDueChangeSnapshotRows,
+    BulkOperationRows,
+    BulkOperationMemberRows,
     SyncFactRows,
     TaskListPreferenceRows,
     ViewPreferenceRows,

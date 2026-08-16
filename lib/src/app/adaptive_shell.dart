@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/search/supported_task_search_repository.dart';
+import '../domain/model/bulk_operations.dart';
 import '../domain/model/preferences.dart';
 import '../domain/model/search.dart';
 import '../domain/model/tasks.dart';
@@ -179,12 +180,27 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     _quickAdd.refreshContext();
     _maybeOpenInitialBulkAdd();
     _syncDetailRoute();
+    _syncSelectionRoute();
     final focused = _focusedTaskId;
     if (focused != null &&
         !widget.viewModel.state.visibleProjection.rows.any(
           (row) => row.task.id == focused,
         )) {
       _focusedTaskId = null;
+    }
+  }
+
+  void _syncSelectionRoute() {
+    if (_suppressNavigationSync) return;
+    final selected = widget.viewModel.state.bulkSelectedTaskIds;
+    final routed = _navigation.state.selectedTaskIds;
+    final matches =
+        selected.length == routed.length && selected.every(routed.contains);
+    if (matches) return;
+    if (selected.isEmpty) {
+      _navigation.clearSelection();
+    } else {
+      _navigation.beginSelection(selected);
     }
   }
 
@@ -261,10 +277,13 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       widget.viewModel.backFromTaskDetail();
       final selected = widget.viewModel.state.selectedTaskId;
       if (selected != null) _navigation.openTaskDetail(selected);
+    } else if (route is TaskSelectionRoute) {
+      widget.viewModel.clearBulkSelection();
     }
     _suppressNavigationSync = false;
     if (route is SearchRoute ||
         route is DrawerRoute ||
+        route is TaskSelectionRoute ||
         route is TaskDetailRoute) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _taskCollectionKey.currentState?.focusSelectedOrFirst();
@@ -485,139 +504,155 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
-      autofocus: true,
-      onKeyEvent: _handleDesktopKeyEvent,
-      child: Scaffold(
-        body: SafeArea(
-          child: AnimatedBuilder(
-            animation: widget.viewModel,
-            builder: (context, _) {
-              final state = widget.viewModel.state;
-              return AppNavigationScope(
-                controller: _navigation,
-                child: Column(
-                  children: <Widget>[
-                    _ApplicationHeader(
-                      health: state.health,
-                      onHealthAction: state.isSyncControlPending
-                          ? null
-                          : widget.onHealthAction ??
-                                (action) => unawaited(
-                                  widget.viewModel.handleSyncHealthAction(
-                                    action,
-                                  ),
-                                ),
-                      isRefreshing: state.isRefreshing,
-                      isSyncControlPending: state.isSyncControlPending,
-                      onRefresh: widget.viewModel.refresh,
-                      onStopSync: widget.viewModel.stopSync,
-                      onSearch: _navigation.openSearch,
-                      onShowShortcuts: _showShortcutReference,
-                      showSearch:
-                          state.selectedTaskId == null &&
-                          state.tasks.isNotEmpty,
-                      onOpenNavigation: _navigation.openDrawer,
-                    ),
-                    if (state.syncControlFailureMessage case final message?)
-                      MaterialBanner(
-                        content: Text(message),
-                        actions: const <Widget>[SizedBox.shrink()],
-                      ),
-                    if (state.listCommandFailureMessage case final message?)
-                      MaterialBanner(
-                        content: Text(message),
-                        actions: const <Widget>[SizedBox.shrink()],
-                      ),
-                    if (state.taskCommandFailureMessage case final message?)
-                      MaterialBanner(
-                        content: Text(message),
-                        actions: const <Widget>[SizedBox.shrink()],
-                      ),
-                    if (state.preferenceFailureMessage case final message?)
-                      MaterialBanner(
-                        content: Text(message),
-                        actions: const <Widget>[SizedBox.shrink()],
-                      ),
-                    if (state.taskDeleteUndos.firstOrNull case final undo?)
-                      MaterialBanner(
-                        leading: const Icon(Icons.delete_outline),
-                        content: Text('“${undo.title}” deleted'),
-                        actions: <Widget>[
-                          TextButton(
-                            onPressed: state.isTaskCommandPending
-                                ? null
-                                : () => unawaited(
-                                    widget.viewModel.undoTaskDelete(
-                                      undo.taskId,
+    return PopScope<Object?>(
+      canPop: !_navigation.state.canHandlePredictiveBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleBack();
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: _handleDesktopKeyEvent,
+        child: Scaffold(
+          body: SafeArea(
+            child: AnimatedBuilder(
+              animation: widget.viewModel,
+              builder: (context, _) {
+                final state = widget.viewModel.state;
+                return AppNavigationScope(
+                  controller: _navigation,
+                  child: Column(
+                    children: <Widget>[
+                      _ApplicationHeader(
+                        health: state.health,
+                        onHealthAction: state.isSyncControlPending
+                            ? null
+                            : widget.onHealthAction ??
+                                  (action) => unawaited(
+                                    widget.viewModel.handleSyncHealthAction(
+                                      action,
                                     ),
                                   ),
-                            child: const Text('Undo'),
-                          ),
-                        ],
+                        isRefreshing: state.isRefreshing,
+                        isSyncControlPending: state.isSyncControlPending,
+                        onRefresh: widget.viewModel.refresh,
+                        onStopSync: widget.viewModel.stopSync,
+                        onSearch: _navigation.openSearch,
+                        onShowShortcuts: _showShortcutReference,
+                        showSearch:
+                            state.selectedTaskId == null &&
+                            state.tasks.isNotEmpty,
+                        onOpenNavigation: _navigation.openDrawer,
                       ),
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final wide = constraints.maxWidth >= 1000;
-                          final pages = <Page<Object?>>[
-                            _surfacePage(const CollectionRoute()),
-                            for (final route in _navigation.state.routes.skip(
-                              1,
-                            ))
-                              _surfacePage(route),
-                          ];
-                          final visibleRoute = _navigation.state.routes.reversed
-                              .firstWhere(
-                                (route) =>
-                                    route is SearchRoute ||
-                                    route is TaskDetailRoute ||
-                                    route is DrawerRoute ||
-                                    route is CollectionRoute,
-                              );
-                          final visible = switch (visibleRoute) {
-                            SearchRoute() => SearchOverlay(
-                              viewModel: _search,
-                              onOpenResult: _openSearchResult,
-                              onClose: _handleBack,
+                      if (state.syncControlFailureMessage case final message?)
+                        MaterialBanner(
+                          content: Text(message),
+                          actions: const <Widget>[SizedBox.shrink()],
+                        ),
+                      if (state.listCommandFailureMessage case final message?)
+                        MaterialBanner(
+                          content: Text(message),
+                          actions: const <Widget>[SizedBox.shrink()],
+                        ),
+                      if (state.taskCommandFailureMessage case final message?)
+                        MaterialBanner(
+                          content: Text(message),
+                          actions: const <Widget>[SizedBox.shrink()],
+                        ),
+                      if (state.preferenceFailureMessage case final message?)
+                        MaterialBanner(
+                          content: Text(message),
+                          actions: const <Widget>[SizedBox.shrink()],
+                        ),
+                      if (state.bulkCommandFailureMessage case final message?)
+                        MaterialBanner(
+                          content: Text(message),
+                          actions: const <Widget>[SizedBox.shrink()],
+                        ),
+                      if (state.latestBulkOperation case final summary?)
+                        _BulkOperationResultBanner(summary: summary),
+                      if (state.taskDeleteUndos.firstOrNull case final undo?)
+                        MaterialBanner(
+                          leading: const Icon(Icons.delete_outline),
+                          content: Text('“${undo.title}” deleted'),
+                          actions: <Widget>[
+                            TextButton(
+                              onPressed: state.isTaskCommandPending
+                                  ? null
+                                  : () => unawaited(
+                                      widget.viewModel.undoTaskDelete(
+                                        undo.taskId,
+                                      ),
+                                    ),
+                              child: const Text('Undo'),
                             ),
-                            DrawerRoute() => _ListNavigation(
-                              state: state,
-                              viewModel: widget.viewModel,
-                              onSelected: _handleBack,
-                            ),
-                            CollectionRoute() ||
-                            TaskDetailRoute() => _shellBody(state, wide),
-                            _ => throw StateError('unsupported_visual_route'),
-                          };
-                          return NavigatorPopHandler<Object?>(
-                            onPopWithResult: (_) =>
-                                _surfaceNavigatorKey.currentState?.maybePop(),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: <Widget>[
-                                visible,
-                                Offstage(
-                                  offstage: true,
-                                  child: ExcludeFocus(
-                                    child: Navigator(
-                                      key: _surfaceNavigatorKey,
-                                      requestFocus: false,
-                                      pages: pages,
-                                      onDidRemovePage: _pageRemoved,
+                          ],
+                        ),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final wide = constraints.maxWidth >= 1000;
+                            final pages = <Page<Object?>>[
+                              _surfacePage(const CollectionRoute()),
+                              for (final route in _navigation.state.routes.skip(
+                                1,
+                              ))
+                                _surfacePage(route),
+                            ];
+                            final visibleRoute = _navigation
+                                .state
+                                .routes
+                                .reversed
+                                .firstWhere(
+                                  (route) =>
+                                      route is SearchRoute ||
+                                      route is TaskDetailRoute ||
+                                      route is DrawerRoute ||
+                                      route is CollectionRoute,
+                                );
+                            final visible = switch (visibleRoute) {
+                              SearchRoute() => SearchOverlay(
+                                viewModel: _search,
+                                onOpenResult: _openSearchResult,
+                                onClose: _handleBack,
+                              ),
+                              DrawerRoute() => _ListNavigation(
+                                state: state,
+                                viewModel: widget.viewModel,
+                                onSelected: _handleBack,
+                              ),
+                              CollectionRoute() ||
+                              TaskDetailRoute() => _shellBody(state, wide),
+                              _ => throw StateError('unsupported_visual_route'),
+                            };
+                            return NavigatorPopHandler<Object?>(
+                              onPopWithResult: (_) =>
+                                  _surfaceNavigatorKey.currentState?.maybePop(),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: <Widget>[
+                                  visible,
+                                  Offstage(
+                                    offstage: true,
+                                    child: ExcludeFocus(
+                                      child: Navigator(
+                                        key: _surfaceNavigatorKey,
+                                        requestFocus: false,
+                                        pages: pages,
+                                        onDidRemovePage: _pageRemoved,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            },
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -986,6 +1021,205 @@ final class _DesktopPaneFocus extends StatelessWidget {
       ),
     ),
   );
+}
+
+final class _BulkActionBar extends StatelessWidget {
+  const _BulkActionBar({required this.state, required this.viewModel});
+
+  final TasksViewState state;
+  final TasksViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = state.bulkSelectedTaskIds.length;
+    final enabled = !state.isBulkCommandPending;
+    return Material(
+      key: const Key('bulk-action-bar'),
+      color: Theme.of(context).colorScheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            Semantics(
+              liveRegion: true,
+              label: '$count tasks selected',
+              child: Text('$count selected'),
+            ),
+            FilledButton.icon(
+              key: const Key('bulk-complete-open'),
+              onPressed: enabled
+                  ? () => unawaited(
+                      _showBulkCompleteConfirmation(context, viewModel),
+                    )
+                  : null,
+              icon: const Icon(Icons.check_circle_outline),
+              label: const Text('Complete'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('bulk-reschedule-open'),
+              onPressed: enabled
+                  ? () => unawaited(_showBulkDateDialog(context, viewModel))
+                  : null,
+              icon: const Icon(Icons.event_outlined),
+              label: const Text('Reschedule'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('bulk-move-open'),
+              onPressed: enabled && state.orderedTaskLists.isNotEmpty
+                  ? () => unawaited(
+                      _showBulkMoveDialog(
+                        context,
+                        viewModel,
+                        state.orderedTaskLists,
+                      ),
+                    )
+                  : null,
+              icon: const Icon(Icons.drive_file_move_outline),
+              label: const Text('Move'),
+            ),
+            IconButton(
+              key: const Key('bulk-selection-close'),
+              tooltip: 'Exit task selection',
+              onPressed: enabled ? viewModel.clearBulkSelection : null,
+              icon: const Icon(Icons.close),
+            ),
+            if (state.isBulkCommandPending)
+              const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _BulkOperationResultBanner extends StatelessWidget {
+  const _BulkOperationResultBanner({required this.summary});
+
+  final BulkOperationSummary summary;
+
+  @override
+  Widget build(BuildContext context) => MaterialBanner(
+    key: const Key('bulk-operation-result'),
+    leading: Icon(summary.failedCount == 0 ? Icons.sync : Icons.sync_problem),
+    content: Semantics(
+      liveRegion: true,
+      label:
+          '${summary.confirmedCount} confirmed, '
+          '${summary.pendingCount} pending, ${summary.failedCount} failed',
+      child: Text(
+        '${_bulkKindLabel(summary.kind)}: '
+        '${summary.confirmedCount} confirmed • '
+        '${summary.pendingCount} pending • '
+        '${summary.failedCount} failed '
+        '(${summary.affectedCount} Google ${summary.affectedCount == 1 ? 'update' : 'updates'} '
+        'from ${summary.selectedCount} selected)',
+      ),
+    ),
+    actions: const <Widget>[SizedBox.shrink()],
+  );
+}
+
+String _bulkKindLabel(BulkOperationKind kind) => switch (kind) {
+  BulkOperationKind.complete => 'Bulk complete',
+  BulkOperationKind.reschedule => 'Bulk reschedule',
+  BulkOperationKind.move => 'Bulk move',
+};
+
+Future<void> _showBulkCompleteConfirmation(
+  BuildContext context,
+  TasksViewModel viewModel,
+) async {
+  final count = viewModel.state.bulkSelectedTaskIds.length;
+  final confirmed = await showAppDialog<bool>(
+    context: context,
+    kind: AppDialogKind.confirmation,
+    builder: (dialogContext) => AlertDialog(
+      key: const Key('bulk-complete-confirmation'),
+      title: Text('Complete $count ${count == 1 ? 'task' : 'tasks'}?'),
+      content: const Text(
+        'Every selected local change will commit together. Google confirms '
+        'each task independently.',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('bulk-complete-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Complete tasks'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true) await viewModel.completeBulkSelection();
+}
+
+Future<void> _showBulkDateDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+) async {
+  final shortcut = await showAppDialog<DateShortcut>(
+    context: context,
+    kind: AppDialogKind.date,
+    builder: (dialogContext) => SimpleDialog(
+      key: const Key('bulk-reschedule-dialog'),
+      title: Text(
+        'Reschedule ${viewModel.state.bulkSelectedTaskIds.length} selected',
+      ),
+      children: <Widget>[
+        for (final value in DateShortcut.values)
+          SimpleDialogOption(
+            key: Key('bulk-reschedule-${value.name}'),
+            onPressed: () => Navigator.of(dialogContext).pop(value),
+            child: Text(switch (value) {
+              DateShortcut.today => 'Today',
+              DateShortcut.tomorrow => 'Tomorrow',
+              DateShortcut.nextWeek => 'Next week',
+              DateShortcut.nextMonth => 'Next month',
+              DateShortcut.clear => 'Clear date',
+            }),
+          ),
+      ],
+    ),
+  );
+  if (shortcut != null) {
+    await viewModel.rescheduleBulkSelectionShortcut(shortcut);
+  }
+}
+
+Future<void> _showBulkMoveDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  List<CachedTaskList> lists,
+) async {
+  final destination = await showAppDialog<TaskListId>(
+    context: context,
+    kind: AppDialogKind.confirmation,
+    builder: (dialogContext) => SimpleDialog(
+      key: const Key('bulk-move-dialog'),
+      title: Text(
+        'Move ${viewModel.state.bulkSelectedTaskIds.length} selected',
+      ),
+      children: <Widget>[
+        for (final list in lists)
+          SimpleDialogOption(
+            key: Key('bulk-move-list-${list.id.value}'),
+            onPressed: () => Navigator.of(dialogContext).pop(list.id),
+            child: Text(list.title),
+          ),
+      ],
+    ),
+  );
+  if (destination != null) await viewModel.moveBulkSelection(destination);
 }
 
 final class _ListNavigation extends StatelessWidget {
@@ -1391,6 +1625,17 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                       ),
                     ),
                   ],
+                  if (viewModel.tasksRepository
+                          is BulkTaskOperationsRepository &&
+                      tasks.isNotEmpty)
+                    OutlinedButton.icon(
+                      key: const Key('bulk-select-open'),
+                      onPressed: state.isBulkSelectionActive
+                          ? null
+                          : () => viewModel.beginBulkSelection(tasks.first.id),
+                      icon: const Icon(Icons.library_add_check_outlined),
+                      label: const Text('Select tasks'),
+                    ),
                   IconButton(
                     tooltip: 'Create task',
                     onPressed:
@@ -1444,6 +1689,10 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 ],
               ),
               const SizedBox(height: 14),
+              if (state.isBulkSelectionActive) ...<Widget>[
+                _BulkActionBar(state: state, viewModel: viewModel),
+                const SizedBox(height: 12),
+              ],
               QuickAddBar(
                 viewModel: quickAdd,
                 lists: state.orderedTaskLists,
@@ -1546,7 +1795,15 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                       canMove: state.orderedTaskLists.any(
                         (list) => list.id != task.taskListId,
                       ),
-                      enabled: !state.isTaskCommandPending,
+                      enabled:
+                          !state.isTaskCommandPending &&
+                          !state.isBulkCommandPending,
+                      selectionMode: state.isBulkSelectionActive,
+                      bulkSelected: state.bulkSelectedTaskIds.contains(task.id),
+                      onSelectionToggle: () =>
+                          viewModel.toggleBulkSelection(task.id),
+                      onBeginSelection: () =>
+                          viewModel.beginBulkSelection(task.id),
                       selected: task.id == state.selectedTaskId,
                       subtitle: <String>[
                         if (task.due != null) 'Due ${task.due}',
@@ -1598,6 +1855,10 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.canMove,
     required this.subtitle,
     required this.enabled,
+    required this.selectionMode,
+    required this.bulkSelected,
+    required this.onSelectionToggle,
+    required this.onBeginSelection,
     required this.selected,
     required this.canonicalSiblings,
     required this.manualOrderEnabled,
@@ -1618,6 +1879,10 @@ final class _DesktopTaskRow extends StatefulWidget {
   final bool canMove;
   final String subtitle;
   final bool enabled;
+  final bool selectionMode;
+  final bool bulkSelected;
+  final VoidCallback onSelectionToggle;
+  final VoidCallback onBeginSelection;
   final bool selected;
   final List<CachedTask> canonicalSiblings;
   final bool manualOrderEnabled;
@@ -1725,56 +1990,68 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
   Widget _tile(CachedTask task) => ListTile(
     selected: widget.selected || widget.focusNode.hasFocus,
     contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-    leading: IconButton(
-      tooltip: task.status == TaskStatus.completed
-          ? 'Reopen task'
-          : 'Complete task',
-      onPressed: widget.enabled
-          ? () => widget.onAction(DesktopTaskAction.toggleCompletion)
-          : null,
-      icon: Icon(
-        task.status == TaskStatus.completed
-            ? Icons.check_circle
-            : Icons.radio_button_unchecked,
-      ),
-    ),
+    leading: widget.selectionMode
+        ? Checkbox(
+            key: Key('bulk-select-task-${task.id.value}'),
+            value: widget.bulkSelected,
+            onChanged: widget.enabled
+                ? (_) => widget.onSelectionToggle()
+                : null,
+          )
+        : IconButton(
+            tooltip: task.status == TaskStatus.completed
+                ? 'Reopen task'
+                : 'Complete task',
+            onPressed: widget.enabled
+                ? () => widget.onAction(DesktopTaskAction.toggleCompletion)
+                : null,
+            icon: Icon(
+              task.status == TaskStatus.completed
+                  ? Icons.check_circle
+                  : Icons.radio_button_unchecked,
+            ),
+          ),
     title: Text(task.title),
     subtitle: Text(widget.subtitle),
-    trailing: SizedBox(
-      width: 100,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: <Widget>[
-          AnimatedOpacity(
-            opacity: _hovered || widget.focusNode.hasFocus ? 1 : 0,
-            duration: const Duration(milliseconds: 120),
-            child: IgnorePointer(
-              ignoring: !_hovered && !widget.focusNode.hasFocus,
-              child: IconButton(
-                tooltip: 'Open ${task.title}',
-                onPressed: widget.enabled
-                    ? () => widget.onAction(DesktopTaskAction.open)
-                    : null,
-                icon: const Icon(Icons.open_in_new),
-              ),
+    trailing: widget.selectionMode
+        ? null
+        : SizedBox(
+            width: 100,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                AnimatedOpacity(
+                  opacity: _hovered || widget.focusNode.hasFocus ? 1 : 0,
+                  duration: const Duration(milliseconds: 120),
+                  child: IgnorePointer(
+                    ignoring: !_hovered && !widget.focusNode.hasFocus,
+                    child: IconButton(
+                      tooltip: 'Open ${task.title}',
+                      onPressed: widget.enabled
+                          ? () => widget.onAction(DesktopTaskAction.open)
+                          : null,
+                      icon: const Icon(Icons.open_in_new),
+                    ),
+                  ),
+                ),
+                Semantics(
+                  button: true,
+                  label: 'Task actions for ${task.title}',
+                  child: PopupMenuButton<DesktopTaskAction>(
+                    tooltip: 'Task actions for ${task.title}',
+                    enabled: widget.enabled,
+                    onSelected: widget.onAction,
+                    itemBuilder: (_) =>
+                        _taskActionMenuItems(task, canMove: widget.canMove),
+                  ),
+                ),
+              ],
             ),
           ),
-          Semantics(
-            button: true,
-            label: 'Task actions for ${task.title}',
-            child: PopupMenuButton<DesktopTaskAction>(
-              tooltip: 'Task actions for ${task.title}',
-              enabled: widget.enabled,
-              onSelected: widget.onAction,
-              itemBuilder: (_) =>
-                  _taskActionMenuItems(task, canMove: widget.canMove),
-            ),
-          ),
-        ],
-      ),
-    ),
     onTap: widget.enabled
-        ? () => widget.onAction(DesktopTaskAction.open)
+        ? widget.selectionMode
+              ? widget.onSelectionToggle
+              : () => widget.onAction(DesktopTaskAction.open)
         : null,
   );
 
@@ -1783,8 +2060,10 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
     final task = widget.task;
     final tile = GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTapDown: (details) =>
-          unawaited(_showContextMenu(details.globalPosition)),
+      onLongPress: widget.enabled ? widget.onBeginSelection : null,
+      onSecondaryTapDown: (details) => widget.selectionMode
+          ? null
+          : unawaited(_showContextMenu(details.globalPosition)),
       child: _tile(task),
     );
     final draggable = Semantics(
@@ -1793,7 +2072,7 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
           'Move buttons are available in task details.',
       child: _DesktopPointerDraggable<DesktopTaskDragPayload>(
         data: DesktopTaskDragPayload.fromTask(task),
-        maxSimultaneousDrags: widget.enabled ? 1 : 0,
+        maxSimultaneousDrags: widget.enabled && !widget.selectionMode ? 1 : 0,
         dragAnchorStrategy: pointerDragAnchorStrategy,
         feedback: Material(
           elevation: 8,

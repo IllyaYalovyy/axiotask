@@ -1,5 +1,6 @@
 import '../../core/outcome.dart';
 import '../commands/task_commands.dart';
+import '../model/bulk_operations.dart';
 import '../model/tasks.dart';
 
 abstract interface class TasksRepository {
@@ -26,4 +27,12 @@ abstract interface class TasksRepository {
 
 abstract interface class BulkTasksRepository {
   Future<Outcome<List<TaskId>>> createTasks(BulkCreateTasksCommand command);
+}
+
+abstract interface class BulkTaskOperationsRepository {
+  Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId);
+
+  Future<Outcome<BulkOperationReceipt>> applyBulk(
+    BulkExistingTaskCommand command,
+  );
 }

@@ -5,6 +5,9 @@ repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository_root"
 
 scenarios=(
+  bulk-operation-selection-light
+  bulk-operation-result-dark
+  bulk-operation-confirmation-light
   drag-preview-light
   drag-failure-dark
   desktop-interactions-1024-light

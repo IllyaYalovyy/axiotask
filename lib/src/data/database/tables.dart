@@ -545,6 +545,72 @@ class TaskDueChangeSnapshotRows extends Table {
   ];
 }
 
+class BulkOperationRows extends Table {
+  @override
+  String get tableName => 'bulk_operations';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  TextColumn get kind => text().check(
+    kind.isIn(const <String>['complete', 'reschedule', 'move']),
+  )();
+
+  IntColumn get selectedCount =>
+      integer().check(selectedCount.isBiggerThanValue(0))();
+
+  IntColumn get affectedCount =>
+      integer().check(affectedCount.isBiggerOrEqualValue(0))();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId},
+    <Column<Object>>{accountId, id},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'CHECK (affected_count <= selected_count OR kind = \'reschedule\')',
+  ];
+}
+
+class BulkOperationMemberRows extends Table {
+  @override
+  String get tableName => 'bulk_operation_members';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get operationId => integer()();
+
+  IntColumn get taskId => integer()();
+
+  IntColumn get desiredStateId => integer()();
+
+  IntColumn get generation =>
+      integer().check(generation.isBiggerThanValue(0))();
+
+  TextColumn get outcome => text().check(
+    outcome.isIn(const <String>['confirmed', 'pending', 'failed']),
+  )();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, operationId, taskId},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id, operation_id) '
+        'REFERENCES bulk_operations(account_id, id) ON DELETE CASCADE',
+  ];
+}
+
 class DesiredStateDependencyRows extends Table {
   @override
   String get tableName => 'desired_state_dependencies';

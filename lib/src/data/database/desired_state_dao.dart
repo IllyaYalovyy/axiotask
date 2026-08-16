@@ -2654,6 +2654,61 @@ final class DesiredStateDao {
         failedCount: Value<int>(count(DesiredStateLifecycle.failed)),
       ),
     );
+    await _database.customUpdate(
+      '''
+      UPDATE bulk_operation_members AS member
+      SET outcome = CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM desired_state_attempts attempt
+          WHERE attempt.account_id = member.account_id
+            AND attempt.desired_state_id = member.desired_state_id
+            AND attempt.generation = member.generation
+        ) THEN CASE (
+          SELECT attempt.state
+          FROM desired_state_attempts attempt
+          WHERE attempt.account_id = member.account_id
+            AND attempt.desired_state_id = member.desired_state_id
+            AND attempt.generation = member.generation
+          ORDER BY attempt.id DESC
+          LIMIT 1
+        )
+          WHEN 'confirmed' THEN 'confirmed'
+          WHEN 'failed' THEN 'failed'
+          WHEN 'superseded' THEN 'failed'
+          ELSE 'pending'
+        END
+        WHEN EXISTS (
+          SELECT 1
+          FROM desired_states desired
+          WHERE desired.account_id = member.account_id
+            AND desired.id = member.desired_state_id
+            AND desired.generation = member.generation
+        ) THEN CASE (
+          SELECT desired.state
+          FROM desired_states desired
+          WHERE desired.account_id = member.account_id
+            AND desired.id = member.desired_state_id
+        )
+          WHEN 'confirmed' THEN 'confirmed'
+          WHEN 'failed' THEN 'failed'
+          WHEN 'superseded' THEN 'failed'
+          ELSE 'pending'
+        END
+        WHEN EXISTS (
+          SELECT 1
+          FROM desired_states desired
+          WHERE desired.account_id = member.account_id
+            AND desired.id = member.desired_state_id
+            AND desired.generation > member.generation
+        ) THEN 'failed'
+        ELSE member.outcome
+      END
+      WHERE member.account_id = ?1
+      ''',
+      variables: <Variable<Object>>[Variable<int>(accountId.value)],
+      updates: <TableInfo<Table, Object?>>{_database.bulkOperationMemberRows},
+    );
   }
 
   Future<bool> _listScopeComplete(AccountId accountId, String runId) async =>

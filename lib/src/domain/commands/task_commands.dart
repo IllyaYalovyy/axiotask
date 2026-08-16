@@ -38,6 +38,42 @@ final class BulkCreateTasksCommand extends TaskCommand {
   final List<BulkCaptureEntry> entries;
 }
 
+sealed class BulkExistingTaskCommand extends TaskCommand {
+  const BulkExistingTaskCommand({
+    required super.accountId,
+    required this.taskIds,
+  });
+
+  final Set<TaskId> taskIds;
+}
+
+final class BulkCompleteTasksCommand extends BulkExistingTaskCommand {
+  const BulkCompleteTasksCommand({
+    required super.accountId,
+    required super.taskIds,
+  });
+}
+
+final class BulkRescheduleTasksCommand extends BulkExistingTaskCommand {
+  const BulkRescheduleTasksCommand({
+    required super.accountId,
+    required super.taskIds,
+    required this.due,
+  });
+
+  final TaskDate? due;
+}
+
+final class BulkMoveTasksCommand extends BulkExistingTaskCommand {
+  const BulkMoveTasksCommand({
+    required super.accountId,
+    required super.taskIds,
+    required this.destinationTaskListId,
+  });
+
+  final TaskListId destinationTaskListId;
+}
+
 sealed class ExistingTaskCommand extends TaskCommand {
   const ExistingTaskCommand({required super.accountId, required this.taskId});
 
@@ -254,6 +290,20 @@ Failure? validateBulkCreateTasksCommand(BulkCreateTasksCommand command) {
         safeSummary: 'At least one bulk task is invalid.',
       );
     }
+  }
+  return null;
+}
+
+Failure? validateBulkTaskCommand(BulkExistingTaskCommand command) {
+  if (command.taskIds.isEmpty) {
+    return const Failure(
+      code: 'bulk_tasks.empty_selection',
+      category: FailureCategory.internal,
+      operation: FailureOperation.write,
+      retry: RetryClassification.permanent,
+      impact: 'No tasks were changed.',
+      safeSummary: 'A bulk task command requires a non-empty selection.',
+    );
   }
   return null;
 }

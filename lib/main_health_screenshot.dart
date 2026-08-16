@@ -12,6 +12,7 @@ import 'src/core/failure.dart';
 import 'src/core/outcome.dart';
 import 'src/domain/commands/task_commands.dart';
 import 'src/domain/commands/task_list_commands.dart';
+import 'src/domain/model/bulk_operations.dart';
 import 'src/domain/model/preferences.dart';
 import 'src/domain/model/tasks.dart';
 import 'src/domain/policy/smart_views.dart';
@@ -53,19 +54,29 @@ final class _HealthScreenshotSequenceState
       final output = Directory('screenshots/actual');
       await output.create(recursive: true);
       for (var index = 0; index < _captureScenarios.length; index += 1) {
+        final scenario = _captureScenarios[index];
         await _settleFrames();
-        if (_captureScenarios[index].name.startsWith('smart-views-') ||
-            _captureScenarios[index].name.startsWith('quick-capture-') ||
-            _captureScenarios[index].name.startsWith('bulk-capture-')) {
+        if (scenario.name.startsWith('smart-views-') ||
+            scenario.name.startsWith('quick-capture-') ||
+            scenario.name.startsWith('bulk-capture-') ||
+            scenario.name.startsWith('bulk-operation-')) {
           _viewModel.selectSmartView(SmartView.focus);
         }
-        if (!_captureScenarios[index].name.startsWith('search-results-')) {
+        if (scenario.name == 'bulk-operation-selection-light' ||
+            scenario.name == 'bulk-operation-confirmation-light') {
+          _viewModel.beginBulkSelection(const TaskId(11));
+          _viewModel.toggleBulkSelection(const TaskId(13));
+        } else if (!scenario.name.startsWith('search-results-') &&
+            scenario.name != 'bulk-operation-result-dark') {
           _viewModel.selectTask(const TaskId(11));
         }
         await _settleFrames();
-        final scenario = _captureScenarios[index];
         if (scenario.name.contains('-result-')) {
           _pressBulkAddSubmit();
+          await _settleFrames();
+        }
+        if (scenario.name == 'bulk-operation-confirmation-light') {
+          _pressButton(const Key('bulk-complete-open'));
           await _settleFrames();
         }
         if (scenario.name == 'delete-list-confirmation') {
@@ -237,10 +248,13 @@ final class _HealthScreenshotSequenceState
   }
 
   void _pressBulkAddSubmit() {
+    _pressButton(const Key('bulk-add-submit'));
+  }
+
+  void _pressButton(Key key) {
     void visit(Element element) {
       final widget = element.widget;
-      if (widget is FilledButton &&
-          widget.key == const Key('bulk-add-submit')) {
+      if (widget is ButtonStyleButton && widget.key == key) {
         widget.onPressed?.call();
         return;
       }
@@ -257,6 +271,9 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   accountId: const AccountId(1),
   tasksRepository: _ScreenshotTasksRepository(
     scenario.snapshot,
+    bulkSummary: scenario.name == 'bulk-operation-result-dark'
+        ? _bulkScreenshotSummary
+        : null,
     failMoves: scenario.name == 'drag-failure-dark',
     undos: scenario.name == 'delete-undo'
         ? <TaskDeleteUndo>[
@@ -287,18 +304,37 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
 );
 
 final class _ScreenshotTasksRepository
-    implements TasksRepository, BulkTasksRepository {
+    implements
+        TasksRepository,
+        BulkTasksRepository,
+        BulkTaskOperationsRepository {
   const _ScreenshotTasksRepository(
     this.snapshot, {
     this.undos = const <TaskDeleteUndo>[],
     this.dueUndos = const <TaskDueChangeUndo>[],
     this.failMoves = false,
+    this.bulkSummary,
   });
 
   final CachedTasksSnapshot snapshot;
   final List<TaskDeleteUndo> undos;
   final List<TaskDueChangeUndo> dueUndos;
   final bool failMoves;
+  final BulkOperationSummary? bulkSummary;
+
+  @override
+  Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
+      Stream.value(bulkSummary);
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> applyBulk(
+    BulkExistingTaskCommand command,
+  ) async => Outcome.success(
+    BulkOperationReceipt(
+      summary: _bulkScreenshotSummary,
+      taskIds: command.taskIds.toList(growable: false),
+    ),
+  );
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
@@ -463,6 +499,34 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'bulk-operation-selection-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'bulk-operation-result-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.remoteFailure,
+      action: SyncHealthAction.retry,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'bulk-operation-confirmation-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
   (
     name: 'drag-preview-light',
     snapshot: _smartViewsSnapshot,
@@ -877,6 +941,17 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
     ),
   ),
 ];
+
+final _bulkScreenshotSummary = BulkOperationSummary(
+  operationId: 28,
+  kind: BulkOperationKind.move,
+  selectedCount: 3,
+  affectedCount: 2,
+  confirmedCount: 1,
+  pendingCount: 0,
+  failedCount: 1,
+  createdAt: DateTime.utc(2026, 8, 16, 14),
+);
 
 const _requestedScenario = String.fromEnvironment(
   'AXIOTASK_SCREENSHOT_SCENARIO',

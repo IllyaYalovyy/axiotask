@@ -27,6 +27,8 @@ replaced with an empty cache.
 | `task_delete_snapshots` | Account-scoped bounded task/subtree snapshots preserving stable local/remote identity and supported content until Undo expiry; cleanup strips content while retaining minimal deletion/scope evidence. |
 | `task_due_change_groups` | The one currently available account-scoped grouped due Undo, with edited task, exact snapshot count, propagation direction, and durable acknowledgement time. |
 | `task_due_change_snapshots` | Account/task-owned prior date-only values for every row in the accepted due cascade; deleting a group cascades only to its snapshots. |
+| `bulk_operations` | The latest durable non-destructive bulk result per account: operation kind, selected/affected counts, exact confirmed/pending/failed counts, and acknowledgement time. |
+| `bulk_operation_members` | One account/task member per affected Google resource, pinned to the exact desired generation whose attempt lifecycle determines that member's durable result. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -107,6 +109,17 @@ collection renders rather than a separate SQL approximation.
   restores every prior date plus desired state atomically; a missing or partial
   group changes nothing. Group/snapshots survive restart and never assign a date
   to an undated related row or propagate a clear.
+- Non-destructive bulk complete, reschedule, and move validate the entire
+  selection, affected due cascade, destination, and synchronizability before
+  one transaction changes any projection. The transaction writes at most one
+  desired row and one bulk member per affected resource. Selecting a parent and
+  its child for a cross-list move records only the independent parent Google
+  MOVE while preserving the subtree. The latest result survives restart:
+  matching confirmed generations count as confirmed; unresolved
+  pending/in-flight/uncertain generations count as pending; conclusive failure,
+  supersession, or local replacement before dispatch counts as failed. These
+  counts always sum to the affected-resource count and never rewrite confirmed
+  remote successes.
 - Promote, demote, reorder, and cross-list move commands validate the complete
   direct subtree and `previous` anchor before one transaction changes the
   projection and coalesced structure facet. Desired rows and immutable attempts

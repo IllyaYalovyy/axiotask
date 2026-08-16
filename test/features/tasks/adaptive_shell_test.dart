@@ -7,6 +7,7 @@ import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
+import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/policy/smart_views.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
@@ -1436,6 +1437,124 @@ void main() {
       expect(tester.takeException(), isNull, reason: 'desktop width $width');
     }
   });
+
+  testWidgets(
+    'bulk selection, confirmation, exact result, and back share route state',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      final navigation = AppNavigationController();
+      addTearDown(fixture.dispose);
+      addTearDown(navigation.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AdaptiveShell(
+            viewModel: fixture.viewModel,
+            navigation: navigation,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('bulk-select-open')));
+      await tester.pump();
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, {const TaskId(11)});
+      expect(
+        navigation.state.predictiveBackRoute,
+        TaskSelectionRoute({const TaskId(11)}),
+      );
+      await tester.tap(find.byKey(const Key('bulk-select-task-13')));
+      await tester.pump();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('bulk-complete-open')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('bulk-complete-confirmation')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.bulkApplied, isEmpty);
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, hasLength(2));
+
+      await tester.tap(find.byKey(const Key('bulk-complete-open')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('bulk-complete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(fixture.tasks.bulkApplied, hasLength(1));
+      expect(fixture.tasks.bulkApplied.single, isA<BulkCompleteTasksCommand>());
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+      expect(navigation.state.canHandlePredictiveBack, isFalse);
+      expect(
+        find.text(
+          'Bulk complete: 1 confirmed • 1 pending • 0 failed '
+          '(2 Google updates from 2 selected)',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('bulk-select-open')));
+      await tester.pump();
+      expect(
+        navigation.state.predictiveBackRoute,
+        TaskSelectionRoute({const TaskId(11)}),
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+      expect(find.byKey(const Key('bulk-action-bar')), findsNothing);
+    },
+  );
+
+  testWidgets('bulk reschedule and move dialogs dispatch validated commands', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('bulk-select-open')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('bulk-reschedule-open')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('bulk-reschedule-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('bulk-reschedule-tomorrow')));
+    await tester.pumpAndSettle();
+    final reschedule = fixture.tasks.bulkApplied.single;
+    expect(reschedule, isA<BulkRescheduleTasksCommand>());
+    expect(
+      (reschedule as BulkRescheduleTasksCommand).due,
+      TaskDate(2026, 8, 16),
+    );
+
+    await tester.tap(find.byKey(const Key('bulk-select-open')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('bulk-move-open')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('bulk-move-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('bulk-move-list-8')));
+    await tester.pumpAndSettle();
+    expect(fixture.tasks.bulkApplied, hasLength(2));
+    final move = fixture.tasks.bulkApplied.last;
+    expect(move, isA<BulkMoveTasksCommand>());
+    expect(
+      (move as BulkMoveTasksCommand).destinationTaskListId,
+      const TaskListId(8),
+    );
+  });
 }
 
 final class _ShellFixture {
@@ -1502,7 +1621,11 @@ final class _TaskListsRepository implements TaskListsRepository {
   }
 }
 
-final class _TasksRepository implements TasksRepository, BulkTasksRepository {
+final class _TasksRepository
+    implements
+        TasksRepository,
+        BulkTasksRepository,
+        BulkTaskOperationsRepository {
   late CachedTasksSnapshot snapshot;
   Future<Outcome<TaskId>> createResult = Future.value(
     const Outcome<TaskId>.success(TaskId(90)),
@@ -1520,6 +1643,7 @@ final class _TasksRepository implements TasksRepository, BulkTasksRepository {
   final List<UndoTaskDueChangeCommand> dueUndos = <UndoTaskDueChangeCommand>[];
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
   final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
+  final List<BulkExistingTaskCommand> bulkApplied = <BulkExistingTaskCommand>[];
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
@@ -1593,6 +1717,34 @@ final class _TasksRepository implements TasksRepository, BulkTasksRepository {
     undone.add(command);
     return const Outcome<void>.success(null);
   }
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> applyBulk(
+    BulkExistingTaskCommand command,
+  ) async {
+    bulkApplied.add(command);
+    final summary = BulkOperationSummary(
+      operationId: 41,
+      kind: switch (command) {
+        BulkCompleteTasksCommand() => BulkOperationKind.complete,
+        BulkRescheduleTasksCommand() => BulkOperationKind.reschedule,
+        BulkMoveTasksCommand() => BulkOperationKind.move,
+      },
+      selectedCount: command.taskIds.length,
+      affectedCount: command.taskIds.length,
+      confirmedCount: 1,
+      pendingCount: command.taskIds.length - 1,
+      failedCount: 0,
+      createdAt: DateTime.utc(2026, 8, 15, 12),
+    );
+    return Outcome.success(
+      BulkOperationReceipt(summary: summary, taskIds: command.taskIds.toList()),
+    );
+  }
+
+  @override
+  Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
+      const Stream<BulkOperationSummary?>.empty();
 }
 
 final class _HealthRepository implements SyncHealthRepository {

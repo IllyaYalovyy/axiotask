@@ -50,6 +50,11 @@ drag adapter that converts row/list drop geometry into those same stable-ID
 structure commands. Drag preview state never replaces repository projection;
 cancel, invalid drop, command failure, and later Google-canonical recovery
 therefore cannot leave a separate visual ordering policy behind.
+S28A adds transient collection-scoped multi-selection and validated bulk
+complete, reschedule, and move commands. One SQLite transaction acknowledges
+all affected local rows and exact desired generations or none; durable member
+rows then project each independent Google attempt as confirmed, pending, or
+failed across restart without rolling back confirmed remote work.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
