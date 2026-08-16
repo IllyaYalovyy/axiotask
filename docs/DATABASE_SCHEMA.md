@@ -235,6 +235,12 @@ collection renders rather than a separate SQL approximation.
   identities untouched, writes all absent provisional projections and ordered
   desired states, recomputes counts, and inserts one unique
   `(account_id, document_digest)` manifest or rolls back everything.
+- Reset Local Data selects one existing account, deletes that account row, and
+  reinserts the same `(id, google_subject)` inside one transaction. Foreign-key
+  cascades discard every account-owned cache, base, desired state/attempt,
+  run/fact, Undo, relational preference, bulk result, and import manifest. A
+  failure before commit restores the complete prior partition; other account
+  rows and every device-only preference are outside the operation.
 
 OAuth tokens, DPoP keys, authorization headers, release diagnostics, and
 device-only preferences are not part of these cache/health/desired-state

@@ -10,6 +10,8 @@ import 'src/app/lifecycle.dart';
 import 'src/app/tasks_feature_runtime.dart';
 import 'src/data/backup/local_account_backup_exporter.dart';
 import 'src/features/backup/account_backup_view.dart';
+import 'src/features/recovery/local_data_recovery_view.dart';
+import 'src/features/recovery/local_data_recovery_view_model.dart';
 
 const String _instanceId = String.fromEnvironment(
   'AXIOTASK_TEST_INSTANCE',
@@ -48,6 +50,17 @@ Future<void> main() async {
               importCommitted: runtime.viewModel.localEditCommitted,
             )
           : null,
+      localDataRecoveryBuilder:
+          runtime.localDataRecoveryService == null ||
+              runtime.syncHealthRepository == null
+          ? null
+          : (_) => LocalDataRecoveryHost(
+              viewModel: LocalDataRecoveryViewModel(
+                accountId: runtime.viewModel.accountId,
+                recovery: runtime.localDataRecoveryService!,
+                healthRepository: runtime.syncHealthRepository!,
+              ),
+            ),
     ),
   );
   WidgetsBinding.instance.addPostFrameCallback((_) {

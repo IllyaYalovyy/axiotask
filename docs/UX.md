@@ -122,6 +122,14 @@ surface says that saved data remains in place, that editing and Google sync are
 stopped, exposes only a safe diagnostic code, and offers Retry Open. It never
 renders a filesystem path, raw exception, account identity, or task content.
 
+Local data recovery is separately reachable from the application header. Its
+preview names aggregate cache, pending/uncertain, Undo, preference, sync, and
+import counts without exposing an account identity. Confirmation states that
+already-sent uncertain mutations cannot be recalled and that authorization and
+device preferences remain. After commit it says “Rebuilt from Google” only for
+Good health; an unavailable rebuild instead says the cache is empty and sync is
+not healthy.
+
 Transient, already-retrying conditions stay calm but visible in sync details.
 Persistent failures affecting freshness or durability appear near the affected
 workflow and in global health. The release product shows safe diagnostic codes

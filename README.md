@@ -57,6 +57,13 @@ constructs no Google transport, and shows Tasks unavailable instead of an
 empty account. Retry Open repeats the same non-destructive validation. If
 storage becomes unreadable during synchronization, no later Google operation
 starts and the same recovery surface replaces the task UI.
+The header also exposes Local data recovery for a readable selected account.
+It previews every discarded class and requires explicit Reset and rebuild
+confirmation. The coordinator cancels and drains active synchronization before
+one rollback-safe partition transaction; authorization, device preferences,
+and other accounts remain. A successful full Google rebuild is the only reset
+outcome labeled healthy, while unavailable Google leaves the empty cache
+visibly Failed. Retry Open remains non-destructive and never invokes reset.
 The responsive desktop task detail pane reads and edits long multiline notes
 as untrusted plain text, preserves null, intentionally empty, and Unicode
 content, and shows completed/total progress for direct children. It provides
@@ -520,6 +527,11 @@ flutter test test/core/diagnostics_test.dart
 flutter test test/data/diagnostics/local_diagnostic_exporter_test.dart
 flutter test test/domain/account_backup_codec_test.dart
 flutter test test/domain/account_backup_import_planner_test.dart
+flutter test test/domain/local_data_recovery_service_test.dart
+flutter test test/data/database/account_partition_reset_store_test.dart
+flutter test test/features/recovery/local_data_recovery_view_model_test.dart
+flutter test test/features/recovery/local_data_recovery_view_test.dart
+flutter test test/features/recovery/local_data_recovery_golden_test.dart
 flutter test test/data/database/account_backup_repository_test.dart
 flutter test test/data/backup/local_account_backup_exporter_test.dart
 flutter test test/features/backup/account_backup_view_model_test.dart
@@ -620,6 +632,7 @@ flutter test integration_test/search_navigation_linux_test.dart -d linux
 flutter test integration_test/desktop_drag_reorder_linux_test.dart -d linux
 flutter test integration_test/diagnostics_linux_test.dart -d linux
 flutter test integration_test/account_backup_linux_test.dart -d linux
+flutter test integration_test/local_data_recovery_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -643,6 +656,7 @@ into the ignored `screenshots/actual/` directory, then inspect each PNG:
 ./scripts/capture_linux_health_screenshots.sh
 ./scripts/capture_linux_diagnostics_screenshots.sh
 ./scripts/capture_linux_account_backup_screenshots.sh
+./scripts/capture_linux_local_data_recovery_screenshots.sh
 ```
 
 That command also captures `database-recovery.png` at the Linux runner's
@@ -663,6 +677,14 @@ contents/exclusions, private-data warning, source mismatch/duplicate limitation,
 existing-wins counts, and local acceptance versus Google publication must remain
 visible. The runner uses only in-memory synthetic data and opens no storage,
 credentials, OAuth configuration, diagnostics, or Google connection.
+
+The local-data-recovery capture writes
+`local-data-reset-warning-light.png`, `local-data-reset-rebuilt-light.png`, and
+`local-data-reset-failed-dark.png` at 1280×720. Inspect all three for the
+destructive class list, already-sent limitation, preserved authorization/device
+preferences, Good-only rebuilt claim, and visibly failed empty-cache outcome.
+It uses in-memory synthetic state and opens no database, preference, credential,
+OAuth, diagnostic, or Google boundary.
 
 ## Native SQLite capability probe
 

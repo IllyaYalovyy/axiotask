@@ -87,6 +87,11 @@ must receive a separate reviewed lifecycle design before implementation.
   an empty cache. Validation operates on a private temporary copy that is
   removed immediately after the check.
 - Tests and screenshot modes use separate temporary roots and synthetic data.
+- Reset Local Data is an explicit selected-account action with a destructive
+  warning. It deletes no credential or device-preference key and cannot target
+  another account partition. Development/test reset additionally requires the
+  exact isolated database boundary and dedicated account guard; a missing or
+  mismatched subject fails before the transaction.
 
 ## Configuration
 

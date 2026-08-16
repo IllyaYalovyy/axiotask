@@ -40,6 +40,8 @@ S30B adds `test/domain/account_backup_import_planner_test.dart` for
 same-subject authoritative-identity wins and cross-account non-matching. Codec
 and bounded file tests reject hostile structure, size, malformed JSON, and
 malformed UTF-8 before mutation.
+S31 adds `test/domain/local_data_recovery_service_test.dart` for exact preview
+confirmation/account binding and reset/rebuild ordering.
 
 ### 2. Persistence tests
 
@@ -82,6 +84,12 @@ S30B extends them with freshness refusal, empty/mostly-empty restore,
 existing-wins preservation, dependency rows, manifest retry, and injected local
 rollback. The create-engine suite proves remote partial success stays confirmed
 while a failed restored dependency leaves its child waiting.
+S31 adds `test/data/database/account_partition_reset_store_test.dart`. It seeds
+every account-owned table class, proves one selected partition is empty after
+reset while another remains, repeats reset, injects failure before commit, and
+keeps device-only preferences untouched. Coordinator tests cancel an active
+request, wait for its conservative interruption state, and permit exactly one
+post-commit full rebuild.
 
 No test path is obtained from the production application-data resolver.
 
@@ -484,6 +492,9 @@ counts without a normal filesystem or Google account.
 S30B adds validation-before-preview, freshness recheck, confirmation before the
 transaction, source mismatch/duplicate warnings, exact existing/create counts,
 and local-acceptance versus remote-publication copy.
+S31 adds `test/features/recovery/` ViewModel/widget evidence for destructive
+warning/cancel/confirm, transaction failure, and Good-only rebuilt copy versus
+a visibly failed empty cache.
 
 Desktop and phone constraints are explicit fixtures. Widget tests never use the
 normal database or platform auth.
@@ -499,6 +510,9 @@ reauthorization required.
 Goldens complement behavior assertions; they do not replace them. A changed
 golden is reviewed visually before acceptance and is never bulk-regenerated as
 a way to clear failures.
+
+S31 adds curated 1280×720 `local-data-reset-warning-light`,
+`local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 
 ### 9. Application integration tests
 
@@ -528,6 +542,11 @@ diagnostic, preference, secure-storage, normal database, or Google boundary.
 S30B adds a bounded temporary v1 document to the same application route,
 previews it against a fresh synthetic partition, and atomically creates ordinary
 desired state plus one manifest without opening normal or Google boundaries.
+S31 adds `integration_test/local_data_recovery_linux_test.dart` over one unique
+temporary production SQLite file. It enters recovery from the real header,
+confirms the warning, preserves the other account, verifies synthetic Google
+reconstruction, and separately proves unavailable Google leaves an empty
+selected cache under Failed health.
 
 S12B adds the Linux-only
 `integration_test/read_slice_linux_test.dart` application slice. It opens a
@@ -665,6 +684,11 @@ S30B adds `account-restore-preview-light.png` and
 `account-restore-result-dark.png`, showing existing-wins counts, the
 cross-account/manifest duplicate limitation, and that locally accepted records
 still require Google publication. Both use fixed in-memory synthetic data.
+S31 adds `local-data-reset-warning-light.png`,
+`local-data-reset-rebuilt-light.png`, and `local-data-reset-failed-dark.png` at
+1280×720. The inspected warning names every discarded class and the
+already-sent limitation; result captures distinguish verified Good rebuild
+from an empty, non-green failed cache. All content is fixed and synthetic.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

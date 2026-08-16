@@ -38,6 +38,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.navigation,
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
     super.key,
   });
 
@@ -49,6 +50,7 @@ final class AdaptiveShell extends StatefulWidget {
   final AppNavigationController? navigation;
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -548,6 +550,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                         onOpenNavigation: _navigation.openDrawer,
                         diagnosticsBuilder: widget.diagnosticsBuilder,
                         accountBackupBuilder: widget.accountBackupBuilder,
+                        localDataRecoveryBuilder:
+                            widget.localDataRecoveryBuilder,
                       ),
                       if (state.syncControlFailureMessage case final message?)
                         MaterialBanner(
@@ -728,6 +732,7 @@ final class _ApplicationHeader extends StatelessWidget {
     this.onHealthAction,
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
   });
 
   final SyncHealth health;
@@ -742,6 +747,7 @@ final class _ApplicationHeader extends StatelessWidget {
   final VoidCallback onOpenNavigation;
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -800,6 +806,16 @@ final class _ApplicationHeader extends StatelessWidget {
                     context,
                   ).push(MaterialPageRoute<void>(builder: builder)),
                   icon: const Icon(Icons.save_alt_outlined),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (localDataRecoveryBuilder case final builder?) ...<Widget>[
+                IconButton(
+                  tooltip: 'Local data recovery',
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute<void>(builder: builder)),
+                  icon: const Icon(Icons.settings_backup_restore),
                 ),
                 const SizedBox(width: 4),
               ],

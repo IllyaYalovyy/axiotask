@@ -355,6 +355,17 @@ authorization it fresh-syncs an isolated in-memory partition, restores one
 synthetic list/task, publishes through `SyncEngine`, verifies Google read-back,
 and includes the created list in its exact prefix cleanup.
 
+S31 adds no dependency, schema version, OAuth configuration, credential action,
+or normal-storage test access. Reset tests enumerate every account-owned table,
+inject rollback before commit, preserve a second partition, and keep device
+preferences outside SQLite. Coordinator barriers prove an active run is
+cancelled and drained before reset and only the post-commit rebuild can start.
+The development/test adapter accepts only the explicitly named isolated
+database boundary and dedicated subject guard. The Linux integration uses one
+temporary file and synthetic Google reconstruction; the ignored screenshot
+runner writes only
+`local-data-reset-{warning-light,rebuilt-light,failed-dark}.png`.
+
 ## Development versus release diagnostics
 
 The clearly named debug development entry point composes the sensitive local

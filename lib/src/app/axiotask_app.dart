@@ -8,12 +8,14 @@ class AxiotaskApp extends StatelessWidget {
     required this.viewModel,
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
     super.key,
   });
 
   final TasksViewModel viewModel;
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +27,7 @@ class AxiotaskApp extends StatelessWidget {
         viewModel: viewModel,
         diagnosticsBuilder: diagnosticsBuilder,
         accountBackupBuilder: accountBackupBuilder,
+        localDataRecoveryBuilder: localDataRecoveryBuilder,
       ),
     );
   }

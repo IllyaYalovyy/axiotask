@@ -5,6 +5,7 @@ import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
 import '../data/connectivity/connectivity.dart';
 import '../data/database/account_backup_repository.dart';
+import '../data/database/account_partition_reset_store.dart';
 import '../data/database/app_database.dart';
 import '../data/database/delete_state_dao.dart';
 import '../data/database/production_database.dart';
@@ -19,6 +20,7 @@ import '../data/preferences/preferences_repository.dart';
 import '../data/preferences/relational_preferences.dart';
 import '../domain/commands/task_commands.dart';
 import '../domain/model/tasks.dart';
+import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/tasks/tasks_view_model.dart';
@@ -28,6 +30,7 @@ import '../sync/health/sync_health.dart';
 import '../sync/health/sync_health_repository.dart';
 import '../sync/run.dart';
 import 'composition/app_composition.dart';
+import 'composition/local_data_reset_isolation.dart';
 import 'lifecycle.dart';
 
 abstract interface class AxiotaskRuntime {
@@ -38,6 +41,8 @@ abstract interface class AxiotaskRuntime {
   AccountBackupRestoreRepository? get accountBackupRestoreRepository => null;
 
   SyncHealthRepository? get syncHealthRepository => null;
+
+  LocalDataRecoveryService? get localDataRecoveryService => null;
 
   Stream<Object> get fatalStorageFailures;
 
@@ -57,6 +62,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.accountBackupRepository,
     required this.accountBackupRestoreRepository,
     required this.syncHealthRepository,
+    required this.localDataRecoveryService,
   });
 
   @override
@@ -75,6 +81,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
 
   @override
   final SyncHealthRepository? syncHealthRepository;
+
+  @override
+  final LocalDataRecoveryService? localDataRecoveryService;
 
   @override
   Stream<Object> get fatalStorageFailures => storageFailures.stream;
@@ -115,6 +124,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           accountBackupRepository: null,
           accountBackupRestoreRepository: null,
           syncHealthRepository: null,
+          localDataRecoveryService: null,
         );
       }
 
@@ -189,6 +199,17 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         database,
         clock: composition.clock,
       );
+      final partitionResetStore = DatabaseAccountPartitionResetStore(database);
+      final resetStore =
+          composition.boundary.profile == CompositionProfile.release
+          ? partitionResetStore
+          : DevelopmentIsolatedLocalDataResetStore(
+              delegate: partitionResetStore,
+              boundary: composition.boundary,
+              explicitDatabaseName: composition.boundary.storage.databaseName,
+              accountGuard: composition.accountGuard,
+              subject: subject,
+            );
       return TasksFeatureRuntime._(
         viewModel: TasksViewModel(
           accountId: accountId,
@@ -220,6 +241,10 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         accountBackupRepository: backupRepository,
         accountBackupRestoreRepository: backupRepository,
         syncHealthRepository: healthRepository,
+        localDataRecoveryService: LocalDataRecoveryService(
+          store: resetStore,
+          synchronization: coordinator,
+        ),
       );
     } on Object {
       await storageFailures.close();

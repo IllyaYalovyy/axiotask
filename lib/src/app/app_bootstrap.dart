@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../core/diagnostics/diagnostics.dart';
 import '../data/database/schema_verifier.dart';
 import '../domain/model/tasks.dart';
+import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
 import '../sync/health/sync_health_repository.dart';
 import 'axiotask_app.dart';
@@ -20,6 +21,13 @@ typedef AccountBackupPageBuilder =
       SyncHealthRepository syncHealthRepository,
       Future<void> Function()? importCommitted,
     );
+typedef LocalDataRecoveryPageBuilder =
+    Widget Function(
+      BuildContext context,
+      AccountId accountId,
+      LocalDataRecoveryService recovery,
+      SyncHealthRepository syncHealthRepository,
+    );
 
 final class AxiotaskBootstrap extends StatefulWidget {
   const AxiotaskBootstrap({
@@ -27,6 +35,7 @@ final class AxiotaskBootstrap extends StatefulWidget {
     required this.diagnostics,
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
     super.key,
   });
 
@@ -34,6 +43,7 @@ final class AxiotaskBootstrap extends StatefulWidget {
   final DiagnosticSink diagnostics;
   final WidgetBuilder? diagnosticsBuilder;
   final AccountBackupPageBuilder? accountBackupBuilder;
+  final LocalDataRecoveryPageBuilder? localDataRecoveryBuilder;
 
   @override
   State<AxiotaskBootstrap> createState() => _AxiotaskBootstrapState();
@@ -143,6 +153,7 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
       final repository = runtime.accountBackupRepository;
       final restoreRepository = runtime.accountBackupRestoreRepository;
       final syncHealthRepository = runtime.syncHealthRepository;
+      final localDataRecoveryService = runtime.localDataRecoveryService;
       return AxiotaskApp(
         viewModel: runtime.viewModel,
         diagnosticsBuilder: widget.diagnosticsBuilder,
@@ -159,6 +170,17 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
                 restoreRepository,
                 syncHealthRepository,
                 runtime.viewModel.localEditCommitted,
+              ),
+        localDataRecoveryBuilder:
+            localDataRecoveryService == null ||
+                syncHealthRepository == null ||
+                widget.localDataRecoveryBuilder == null
+            ? null
+            : (context) => widget.localDataRecoveryBuilder!(
+                context,
+                runtime.viewModel.accountId,
+                localDataRecoveryService,
+                syncHealthRepository,
               ),
       );
     }

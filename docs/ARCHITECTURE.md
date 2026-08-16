@@ -67,7 +67,13 @@ development renderer imported only by the development entry point.
 S30A adds a strict bounded v1 selected-account backup projection and native
 Fedora save surface. S30B adds bounded input validation, a fresh-sync gate,
 same-subject identity planning, one transactional restore with a durable
-per-partition manifest, and ordinary ordered desired-state publication.
+per-partition manifest, and ordinary ordered desired-state publication. S31
+adds an explicit selected-account reset service: the coordinator cancels and
+drains its active run, one cascading transaction recreates only the stable
+account/subject binding, and a full Google rebuild keeps health non-green until
+verified. Authorization and device-only preferences remain outside that
+transaction; development reset is guarded by the isolated composition boundary
+and dedicated subject.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
@@ -318,6 +324,14 @@ is versioned, verified on open, and receives migration tests before a released
 format changes. During early development an explicit destructive reset may be
 available, but startup never silently destroys an unreadable or inconsistent
 database.
+
+S31's Reset Local Data transaction deletes and recreates the selected account
+row with the same stable local key and Google subject. Audited cascading foreign
+keys therefore remove every current account-owned cache, base, desired-state,
+attempt, Undo, relational preference, sync-history, and import-manifest row in
+one rollback-safe boundary while leaving other accounts independent. The
+coordinator owns cancellation and serialization before this transaction and
+schedules the rebuild only after commit.
 
 ## Import and export boundary
 

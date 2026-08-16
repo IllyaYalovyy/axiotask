@@ -1,9 +1,12 @@
 import 'package:axiotask/src/app/composition/app_composition.dart';
 import 'package:axiotask/src/app/composition/development_composition.dart';
+import 'package:axiotask/src/app/composition/local_data_reset_isolation.dart';
 import 'package:axiotask/src/app/composition/release_composition.dart';
 import 'package:axiotask/src/app/composition/test_composition.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
+import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/recovery/local_data_recovery.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -127,6 +130,71 @@ void main() {
       isA<Failed<void>>(),
     );
   });
+
+  test(
+    'development destructive reset requires exact isolated root and subject',
+    () async {
+      final development = DevelopmentComposition.create(
+        expectedDedicatedSubject: const AccountSubject('dedicated-subject'),
+      );
+      final delegate = _ResetStore();
+      final isolated = DevelopmentIsolatedLocalDataResetStore(
+        delegate: delegate,
+        boundary: development.boundary,
+        explicitDatabaseName: development.boundary.storage.databaseName,
+        accountGuard: development.accountGuard,
+        subject: const AccountSubject('dedicated-subject'),
+      );
+
+      await isolated.resetPartition(const AccountId(1));
+      expect(delegate.resetCalls, 1);
+
+      expect(
+        () => DevelopmentIsolatedLocalDataResetStore(
+          delegate: delegate,
+          boundary: ReleaseComposition.create().boundary,
+          explicitDatabaseName: development.boundary.storage.databaseName,
+          accountGuard: development.accountGuard,
+          subject: const AccountSubject('dedicated-subject'),
+        ),
+        throwsA(isA<LocalDataRecoveryException>()),
+      );
+
+      final wrongSubject = DevelopmentIsolatedLocalDataResetStore(
+        delegate: delegate,
+        boundary: development.boundary,
+        explicitDatabaseName: development.boundary.storage.databaseName,
+        accountGuard: development.accountGuard,
+        subject: const AccountSubject('normal-subject'),
+      );
+      await expectLater(
+        wrongSubject.resetPartition(const AccountId(1)),
+        throwsA(isA<LocalDataRecoveryException>()),
+      );
+      expect(delegate.resetCalls, 1);
+    },
+  );
+}
+
+final class _ResetStore implements LocalDataResetStore {
+  var resetCalls = 0;
+
+  @override
+  Future<LocalDataResetPreview> preview(AccountId accountId) async =>
+      LocalDataResetPreview(
+        accountId: accountId,
+        cachedListCount: 0,
+        cachedTaskCount: 0,
+        pendingChangeCount: 0,
+        uncertainChangeCount: 0,
+        undoRecordCount: 0,
+        accountPreferenceCount: 0,
+        syncHistoryCount: 0,
+        importManifestCount: 0,
+      );
+
+  @override
+  Future<void> resetPartition(AccountId accountId) async => resetCalls += 1;
 }
 
 final class _PartitionedProbeStore {

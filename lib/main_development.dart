@@ -13,6 +13,8 @@ import 'src/data/auth/authorization.dart';
 import 'src/data/backup/local_account_backup_exporter.dart';
 import 'src/features/backup/account_backup_view.dart';
 import 'src/features/diagnostics/development_diagnostics_view.dart';
+import 'src/features/recovery/local_data_recovery_view.dart';
+import 'src/features/recovery/local_data_recovery_view_model.dart';
 
 const String _expectedSubject = String.fromEnvironment(
   'AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT',
@@ -58,6 +60,17 @@ Future<void> main() async {
               importCommitted: runtime.viewModel.localEditCommitted,
             )
           : null,
+      localDataRecoveryBuilder:
+          runtime.localDataRecoveryService == null ||
+              runtime.syncHealthRepository == null
+          ? null
+          : (_) => LocalDataRecoveryHost(
+              viewModel: LocalDataRecoveryViewModel(
+                accountId: runtime.viewModel.accountId,
+                recovery: runtime.localDataRecoveryService!,
+                healthRepository: runtime.syncHealthRepository!,
+              ),
+            ),
       diagnosticsBuilder: (_) => DevelopmentDiagnosticsHost(
         history: composition.diagnosticHistory,
         exporter: composition.diagnosticExporter,

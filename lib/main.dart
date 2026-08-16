@@ -11,6 +11,8 @@ import 'src/app/tasks_feature_runtime.dart';
 import 'src/data/backup/local_account_backup_exporter.dart';
 import 'src/features/backup/account_backup_view.dart';
 import 'src/features/diagnostics/diagnostics_view.dart';
+import 'src/features/recovery/local_data_recovery_view.dart';
+import 'src/features/recovery/local_data_recovery_view_model.dart';
 
 export 'src/app/axiotask_app.dart';
 
@@ -52,6 +54,14 @@ Future<void> main() async {
               importCommitted: importCommitted,
             )
           : null,
+      localDataRecoveryBuilder: (_, accountId, recovery, healthRepository) =>
+          LocalDataRecoveryHost(
+            viewModel: LocalDataRecoveryViewModel(
+              accountId: accountId,
+              recovery: recovery,
+              healthRepository: healthRepository,
+            ),
+          ),
       diagnosticsBuilder: (_) => ReleaseDiagnosticsHost(
         history: composition.diagnosticHistory,
         exporter: composition.diagnosticExporter,

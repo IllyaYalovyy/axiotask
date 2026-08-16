@@ -9,6 +9,7 @@ import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
 import '../../data/connectivity/connectivity.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/recovery/local_data_recovery.dart';
 import '../../domain/repository/sync_settings_repository.dart';
 import '../health/sync_health.dart';
 import '../health/sync_health_repository.dart';
@@ -32,6 +33,7 @@ enum SyncTrigger {
   reauthorization,
   retry,
   cadence,
+  localDataReset,
 }
 
 extension SyncTriggerValue on SyncTrigger {
@@ -46,6 +48,7 @@ extension SyncTriggerValue on SyncTrigger {
     SyncTrigger.reauthorization => 'reauthorization',
     SyncTrigger.retry => 'retry',
     SyncTrigger.cadence => 'cadence',
+    SyncTrigger.localDataReset => 'local_data_reset',
   };
 }
 
@@ -113,7 +116,8 @@ abstract interface class TaskDeleteEligibilityStore {
 /// Trigger notifications are transient facts. Durable local work remains owned
 /// by repositories and is reread by the engine; this coordinator only merges
 /// requests, schedules exact monotonic boundaries, and projects runtime facts.
-final class SyncCoordinator implements SyncRuntimeFactsSource {
+final class SyncCoordinator
+    implements SyncRuntimeFactsSource, LocalDataResetSynchronization {
   SyncCoordinator({
     required this.accountId,
     required this.authorization,
@@ -181,9 +185,11 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   bool? _syncEnabled;
   bool _stopRequested = false;
   bool _shutdownRequested = false;
+  bool _localDataResetRequested = false;
   Future<void>? _settingsOperation;
   Future<void>? _manualRetryOperation;
   Future<void>? _reauthorizationOperation;
+  Future<void>? _localDataResetOperation;
   RetryEpisode? _retryEpisode;
   bool _reauthorizationRequired = false;
   bool _started = false;
@@ -250,6 +256,111 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   Future<void> refresh() async {
     await _refreshTaskDeleteEligibility();
     await _requestImmediate(SyncTrigger.refresh);
+  }
+
+  @override
+  Future<void> serializeResetAndRebuild(Future<void> Function() reset) {
+    _requireOpen();
+    final existing = _localDataResetOperation;
+    if (existing != null) return existing;
+    final operation = _serializeResetAndRebuild(reset);
+    _localDataResetOperation = operation;
+    void clearOperation() {
+      if (identical(_localDataResetOperation, operation)) {
+        _localDataResetOperation = null;
+      }
+    }
+
+    unawaited(
+      operation.then<void>(
+        (_) => clearOperation(),
+        onError: (Object _, StackTrace _) {
+          clearOperation();
+        },
+      ),
+    );
+    return operation;
+  }
+
+  Future<void> _serializeResetAndRebuild(Future<void> Function() reset) async {
+    _localDataResetRequested = true;
+    _activeGeneration += 1;
+    _pendingTriggers.clear();
+    _followUpTriggers.clear();
+    _cancelScheduledWork();
+    _activeControl?.requestCancellation(
+      failure: const Failure(
+        code: 'sync.local_data_reset_requested',
+        category: FailureCategory.persistence,
+        operation: FailureOperation.synchronize,
+        retry: RetryClassification.permanent,
+        impact: 'The active synchronization run was stopped for local reset.',
+        safeSummary: 'Synchronization stopped before local data reset.',
+      ),
+    );
+    try {
+      await _settleConcurrentControlOperations();
+      final activeDrain = _drain;
+      if (activeDrain != null) await activeDrain;
+      await reset();
+      _syncEnabled = true;
+      _stopRequested = false;
+      _shutdownRequested = false;
+      _reauthorizationRequired = false;
+      _retryEpisode = null;
+      _emit(
+        _with(
+          authorization: _authorizationFact(authorization.currentState),
+          activity: SyncActivity.verifying,
+          verificationRequired: true,
+          clearFailure: true,
+        ),
+      );
+    } on Object {
+      _emit(
+        _with(
+          activity: SyncActivity.idle,
+          verificationRequired: false,
+          detectedFailureReason: SyncFailureReason.applicationFailure,
+          diagnosticCode: 'sync.local_data_reset_failed',
+          failureAction: SyncHealthAction.retry,
+        ),
+      );
+      rethrow;
+    } finally {
+      _localDataResetRequested = false;
+    }
+    await _requestImmediate(SyncTrigger.localDataReset);
+  }
+
+  Future<void> _settleConcurrentControlOperations() async {
+    final operations = <Future<void>>[
+      ?_lifecycleOperation,
+      ?_settingsOperation,
+      ?_manualRetryOperation,
+      ?_reauthorizationOperation,
+    ];
+    for (final operation in operations) {
+      try {
+        await operation;
+      } on Object {
+        // Its durable/safe failure state remains until the reset commits.
+      }
+    }
+  }
+
+  void _cancelScheduledWork() {
+    _localEditTimer?.cancel();
+    _localEditTimer = null;
+    _localEditBurstStartedAt = null;
+    _cadenceTimer?.cancel();
+    _cadenceTimer = null;
+    _deleteEligibilityTimer?.cancel();
+    _deleteEligibilityTimer = null;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _retryExhaustionTimer?.cancel();
+    _retryExhaustionTimer = null;
   }
 
   Future<void> retry() {
@@ -409,7 +520,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     if (_syncEnabled != true ||
         _reauthorizationRequired ||
         _stopRequested ||
-        _shutdownRequested) {
+        _shutdownRequested ||
+        _localDataResetRequested) {
       return whenIdle;
     }
     if (_activeControl != null) {
@@ -455,7 +567,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   Future<void> _drainRuns(Completer<void> completer) async {
     try {
       while (_pendingTriggers.isNotEmpty && !_closed) {
-        if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+        if (_syncEnabled != true ||
+            _stopRequested ||
+            _shutdownRequested ||
+            _localDataResetRequested) {
           _pendingTriggers.clear();
           break;
         }
