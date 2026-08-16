@@ -59,9 +59,12 @@ storage becomes unreadable during synchronization, no later Google operation
 starts and the same recovery surface replaces the task UI.
 The responsive desktop task detail pane reads and edits long multiline notes
 as untrusted plain text, preserves null, intentionally empty, and Unicode
-content, and shows completed/total progress for direct children. It can create,
-edit, delete, promote, demote, or reorder a direct subtask, or move a stable
-task/subtree between Google lists. Narrow desktop details provide explicit
+content, and shows completed/total progress for direct children. It provides
+complete/reopen actions, effective-date provenance, clamped local-calendar
+shortcuts, exact date selection, clear, and one restart-durable Undo for every
+accepted related-task due cascade. It can create, edit, delete, promote, demote,
+or reorder a direct subtask, or move a stable task/subtree between Google lists.
+Narrow desktop details provide explicit
 Back/Escape behavior, while the wide layout keeps the detail pane visible.
 Every action routes through the shared durable task commands. Structure changes
 commit durably, survive restart, and
@@ -460,6 +463,8 @@ flutter test test/data/preferences/preferences_repository_test.dart
 flutter test test/domain/effective_due_test.dart
 flutter test test/domain/smart_views_test.dart
 flutter test test/domain/subtask_progress_test.dart
+flutter test test/domain/date_workflow_policy_test.dart
+flutter test test/data/database/due_cascade_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
@@ -515,8 +520,8 @@ no-authorization with Reauthorize and preserved cached/unresolved work, pending
 provisional list and task creates, stopped list/task content edits, active Stop,
 stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
 protected-depth failure, fixed-time light/dark smart views, and long-content
-light/dark task details into the ignored `screenshots/actual/` directory, then
-inspect each PNG:
+light/dark task details plus effective-date/completion/durable-Undo workflow
+states into the ignored `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh

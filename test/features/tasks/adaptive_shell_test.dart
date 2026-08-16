@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
+import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
+import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
@@ -134,7 +136,9 @@ void main() {
 
     await tester.tap(find.text('Cached parent'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Add subtask'));
+    final addSubtask = find.widgetWithText(OutlinedButton, 'Add subtask');
+    await tester.ensureVisible(addSubtask);
+    await tester.tap(addSubtask);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'New child');
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
@@ -579,31 +583,94 @@ void main() {
       (widget) =>
           widget is TextField && widget.decoration?.labelText == 'Notes',
     );
-    final dueField = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField &&
-          widget.decoration?.labelText == 'Due date (YYYY-MM-DD)',
-    );
     await tester.enterText(titleField, 'Edited title');
     await tester.enterText(notesField, '空 🌍\nsecond line');
-    await tester.enterText(dueField, '2026-02-30');
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pump();
     expect(fixture.tasks.applied, isEmpty, reason: 'editor text is transient');
-    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pump();
-    expect(find.text('Use a valid YYYY-MM-DD date.'), findsOneWidget);
-    expect(fixture.tasks.applied, isEmpty);
-
-    await tester.enterText(dueField, '2026-08-20');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
     final command = fixture.tasks.applied.single as UpdateTaskContentCommand;
     expect(command.taskId, const TaskId(11));
     expect(command.title, 'Edited title');
     expect(command.notes, '空 🌍\nsecond line');
-    expect(command.due, TaskDate(2026, 8, 20));
+    expect(command.due, TaskDate(2026, 8, 16));
   });
+
+  testWidgets(
+    'task detail routes completion, date shortcut, custom date, and durable Undo',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pump();
+
+      expect(find.text('2026-08-16'), findsWidgets);
+      await tester.tap(find.byTooltip('Complete selected task'));
+      await tester.pump();
+      final completion =
+          fixture.tasks.applied.single as SetTaskCompletionCommand;
+      expect(completion.taskId, const TaskId(11));
+      expect(completion.status, TaskStatus.completed);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Date'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Today'));
+      await tester.pump();
+      expect(fixture.tasks.dueChanges.single.taskId, const TaskId(11));
+      expect(fixture.tasks.dueChanges.single.due, TaskDate(2026, 8, 15));
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Choose date'));
+      await tester.pumpAndSettle();
+      final dueField = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.labelText == 'Due date (YYYY-MM-DD)',
+      );
+      await tester.enterText(dueField, '2026-02-30');
+      await tester.tap(find.widgetWithText(FilledButton, 'Set date'));
+      await tester.pump();
+      expect(find.text('Use a valid YYYY-MM-DD date.'), findsOneWidget);
+      await tester.enterText(dueField, '2026-08-20');
+      await tester.tap(find.widgetWithText(FilledButton, 'Set date'));
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.dueChanges.last.due, TaskDate(2026, 8, 20));
+
+      fixture.tasks.dueUndoController.add(<TaskDueChangeUndo>[
+        TaskDueChangeUndo(
+          groupId: 41,
+          editedTaskId: const TaskId(11),
+          editedTaskTitle: 'Cached parent',
+          cascadedCount: 1,
+          cascadedParent: false,
+          createdAt: DateTime.utc(2026, 8, 15, 12),
+        ),
+      ]);
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.taskDueChangeUndos, hasLength(1));
+      expect(
+        TaskDetailViewModel.fromTasks(
+          fixture.viewModel,
+        ).state?.dueChangeUndo?.groupId,
+        41,
+      );
+      expect(find.text('Date changed for 2 related tasks'), findsOneWidget);
+      final undo = find.widgetWithText(TextButton, 'Undo due changes');
+      await tester.ensureVisible(undo);
+      await tester.tap(undo);
+      await tester.pump();
+      expect(fixture.tasks.dueUndos.single.groupId, 41);
+    },
+  );
 
   testWidgets('completion control sends one status command', (tester) async {
     final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
@@ -696,6 +763,7 @@ final class _ShellFixture {
     Future<void> Function()? resumeSyncRequested,
     TaskListsRepository? taskListsRepository,
     CachedTasksSnapshot? snapshot,
+    Clock? clock,
   }) : tasks = _TasksRepository(),
        healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
@@ -706,6 +774,7 @@ final class _ShellFixture {
       refreshRequested: refreshRequested,
       stopSyncRequested: stopSyncRequested,
       resumeSyncRequested: resumeSyncRequested,
+      clock: clock,
     );
     tasks.snapshot = snapshot ?? _snapshot;
     healthRepository.health = health;
@@ -761,6 +830,10 @@ final class _TasksRepository implements TasksRepository {
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
   final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
+  final dueUndoController =
+      StreamController<List<TaskDueChangeUndo>>.broadcast();
+  final List<SetTaskDueCommand> dueChanges = <SetTaskDueCommand>[];
+  final List<UndoTaskDueChangeCommand> dueUndos = <UndoTaskDueChangeCommand>[];
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
   final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
 
@@ -783,6 +856,27 @@ final class _TasksRepository implements TasksRepository {
   @override
   Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
       undoController.stream;
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => dueUndoController.stream;
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async {
+    dueChanges.add(command);
+    return const Outcome.success(TaskDueChangeReceipt(undo: null));
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async {
+    dueUndos.add(command);
+    return const Outcome.success(null);
+  }
 
   @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(

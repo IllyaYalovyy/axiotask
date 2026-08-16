@@ -9767,6 +9767,810 @@ class TaskDeleteSnapshotRowsCompanion
   }
 }
 
+class $TaskDueChangeGroupRowsTable extends TaskDueChangeGroupRows
+    with TableInfo<$TaskDueChangeGroupRowsTable, TaskDueChangeGroupRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TaskDueChangeGroupRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _editedTaskIdMeta = const VerificationMeta(
+    'editedTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> editedTaskId = GeneratedColumn<int>(
+    'edited_task_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _snapshotCountMeta = const VerificationMeta(
+    'snapshotCount',
+  );
+  @override
+  late final GeneratedColumn<int> snapshotCount = GeneratedColumn<int>(
+    'snapshot_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(snapshotCount).isBiggerThanValue(1),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _cascadedParentMeta = const VerificationMeta(
+    'cascadedParent',
+  );
+  @override
+  late final GeneratedColumn<bool> cascadedParent = GeneratedColumn<bool>(
+    'cascaded_parent',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("cascaded_parent" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    editedTaskId,
+    snapshotCount,
+    cascadedParent,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'task_due_change_groups';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TaskDueChangeGroupRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('edited_task_id')) {
+      context.handle(
+        _editedTaskIdMeta,
+        editedTaskId.isAcceptableOrUnknown(
+          data['edited_task_id']!,
+          _editedTaskIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_editedTaskIdMeta);
+    }
+    if (data.containsKey('snapshot_count')) {
+      context.handle(
+        _snapshotCountMeta,
+        snapshotCount.isAcceptableOrUnknown(
+          data['snapshot_count']!,
+          _snapshotCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_snapshotCountMeta);
+    }
+    if (data.containsKey('cascaded_parent')) {
+      context.handle(
+        _cascadedParentMeta,
+        cascadedParent.isAcceptableOrUnknown(
+          data['cascaded_parent']!,
+          _cascadedParentMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_cascadedParentMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, id},
+    {accountId},
+  ];
+  @override
+  TaskDueChangeGroupRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TaskDueChangeGroupRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      editedTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}edited_task_id'],
+      )!,
+      snapshotCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}snapshot_count'],
+      )!,
+      cascadedParent: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}cascaded_parent'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TaskDueChangeGroupRowsTable createAlias(String alias) {
+    return $TaskDueChangeGroupRowsTable(attachedDatabase, alias);
+  }
+}
+
+class TaskDueChangeGroupRow extends DataClass
+    implements Insertable<TaskDueChangeGroupRow> {
+  final int id;
+  final int accountId;
+  final int editedTaskId;
+  final int snapshotCount;
+  final bool cascadedParent;
+  final DateTime createdAt;
+  const TaskDueChangeGroupRow({
+    required this.id,
+    required this.accountId,
+    required this.editedTaskId,
+    required this.snapshotCount,
+    required this.cascadedParent,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['edited_task_id'] = Variable<int>(editedTaskId);
+    map['snapshot_count'] = Variable<int>(snapshotCount);
+    map['cascaded_parent'] = Variable<bool>(cascadedParent);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  TaskDueChangeGroupRowsCompanion toCompanion(bool nullToAbsent) {
+    return TaskDueChangeGroupRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      editedTaskId: Value(editedTaskId),
+      snapshotCount: Value(snapshotCount),
+      cascadedParent: Value(cascadedParent),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory TaskDueChangeGroupRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TaskDueChangeGroupRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      editedTaskId: serializer.fromJson<int>(json['editedTaskId']),
+      snapshotCount: serializer.fromJson<int>(json['snapshotCount']),
+      cascadedParent: serializer.fromJson<bool>(json['cascadedParent']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'editedTaskId': serializer.toJson<int>(editedTaskId),
+      'snapshotCount': serializer.toJson<int>(snapshotCount),
+      'cascadedParent': serializer.toJson<bool>(cascadedParent),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  TaskDueChangeGroupRow copyWith({
+    int? id,
+    int? accountId,
+    int? editedTaskId,
+    int? snapshotCount,
+    bool? cascadedParent,
+    DateTime? createdAt,
+  }) => TaskDueChangeGroupRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    editedTaskId: editedTaskId ?? this.editedTaskId,
+    snapshotCount: snapshotCount ?? this.snapshotCount,
+    cascadedParent: cascadedParent ?? this.cascadedParent,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  TaskDueChangeGroupRow copyWithCompanion(
+    TaskDueChangeGroupRowsCompanion data,
+  ) {
+    return TaskDueChangeGroupRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      editedTaskId: data.editedTaskId.present
+          ? data.editedTaskId.value
+          : this.editedTaskId,
+      snapshotCount: data.snapshotCount.present
+          ? data.snapshotCount.value
+          : this.snapshotCount,
+      cascadedParent: data.cascadedParent.present
+          ? data.cascadedParent.value
+          : this.cascadedParent,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDueChangeGroupRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('editedTaskId: $editedTaskId, ')
+          ..write('snapshotCount: $snapshotCount, ')
+          ..write('cascadedParent: $cascadedParent, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    editedTaskId,
+    snapshotCount,
+    cascadedParent,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TaskDueChangeGroupRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.editedTaskId == this.editedTaskId &&
+          other.snapshotCount == this.snapshotCount &&
+          other.cascadedParent == this.cascadedParent &&
+          other.createdAt == this.createdAt);
+}
+
+class TaskDueChangeGroupRowsCompanion
+    extends UpdateCompanion<TaskDueChangeGroupRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> editedTaskId;
+  final Value<int> snapshotCount;
+  final Value<bool> cascadedParent;
+  final Value<DateTime> createdAt;
+  const TaskDueChangeGroupRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.editedTaskId = const Value.absent(),
+    this.snapshotCount = const Value.absent(),
+    this.cascadedParent = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  TaskDueChangeGroupRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int editedTaskId,
+    required int snapshotCount,
+    required bool cascadedParent,
+    required DateTime createdAt,
+  }) : accountId = Value(accountId),
+       editedTaskId = Value(editedTaskId),
+       snapshotCount = Value(snapshotCount),
+       cascadedParent = Value(cascadedParent),
+       createdAt = Value(createdAt);
+  static Insertable<TaskDueChangeGroupRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? editedTaskId,
+    Expression<int>? snapshotCount,
+    Expression<bool>? cascadedParent,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (editedTaskId != null) 'edited_task_id': editedTaskId,
+      if (snapshotCount != null) 'snapshot_count': snapshotCount,
+      if (cascadedParent != null) 'cascaded_parent': cascadedParent,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  TaskDueChangeGroupRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? editedTaskId,
+    Value<int>? snapshotCount,
+    Value<bool>? cascadedParent,
+    Value<DateTime>? createdAt,
+  }) {
+    return TaskDueChangeGroupRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      editedTaskId: editedTaskId ?? this.editedTaskId,
+      snapshotCount: snapshotCount ?? this.snapshotCount,
+      cascadedParent: cascadedParent ?? this.cascadedParent,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (editedTaskId.present) {
+      map['edited_task_id'] = Variable<int>(editedTaskId.value);
+    }
+    if (snapshotCount.present) {
+      map['snapshot_count'] = Variable<int>(snapshotCount.value);
+    }
+    if (cascadedParent.present) {
+      map['cascaded_parent'] = Variable<bool>(cascadedParent.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDueChangeGroupRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('editedTaskId: $editedTaskId, ')
+          ..write('snapshotCount: $snapshotCount, ')
+          ..write('cascadedParent: $cascadedParent, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TaskDueChangeSnapshotRowsTable extends TaskDueChangeSnapshotRows
+    with TableInfo<$TaskDueChangeSnapshotRowsTable, TaskDueChangeSnapshotRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TaskDueChangeSnapshotRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _groupIdMeta = const VerificationMeta(
+    'groupId',
+  );
+  @override
+  late final GeneratedColumn<int> groupId = GeneratedColumn<int>(
+    'group_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _taskIdMeta = const VerificationMeta('taskId');
+  @override
+  late final GeneratedColumn<int> taskId = GeneratedColumn<int>(
+    'task_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _priorDueEpochDayMeta = const VerificationMeta(
+    'priorDueEpochDay',
+  );
+  @override
+  late final GeneratedColumn<int> priorDueEpochDay = GeneratedColumn<int>(
+    'prior_due_epoch_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    groupId,
+    taskId,
+    priorDueEpochDay,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'task_due_change_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TaskDueChangeSnapshotRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('group_id')) {
+      context.handle(
+        _groupIdMeta,
+        groupId.isAcceptableOrUnknown(data['group_id']!, _groupIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_groupIdMeta);
+    }
+    if (data.containsKey('task_id')) {
+      context.handle(
+        _taskIdMeta,
+        taskId.isAcceptableOrUnknown(data['task_id']!, _taskIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_taskIdMeta);
+    }
+    if (data.containsKey('prior_due_epoch_day')) {
+      context.handle(
+        _priorDueEpochDayMeta,
+        priorDueEpochDay.isAcceptableOrUnknown(
+          data['prior_due_epoch_day']!,
+          _priorDueEpochDayMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, groupId, taskId},
+  ];
+  @override
+  TaskDueChangeSnapshotRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TaskDueChangeSnapshotRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      groupId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}group_id'],
+      )!,
+      taskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}task_id'],
+      )!,
+      priorDueEpochDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}prior_due_epoch_day'],
+      ),
+    );
+  }
+
+  @override
+  $TaskDueChangeSnapshotRowsTable createAlias(String alias) {
+    return $TaskDueChangeSnapshotRowsTable(attachedDatabase, alias);
+  }
+}
+
+class TaskDueChangeSnapshotRow extends DataClass
+    implements Insertable<TaskDueChangeSnapshotRow> {
+  final int id;
+  final int accountId;
+  final int groupId;
+  final int taskId;
+  final int? priorDueEpochDay;
+  const TaskDueChangeSnapshotRow({
+    required this.id,
+    required this.accountId,
+    required this.groupId,
+    required this.taskId,
+    this.priorDueEpochDay,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['group_id'] = Variable<int>(groupId);
+    map['task_id'] = Variable<int>(taskId);
+    if (!nullToAbsent || priorDueEpochDay != null) {
+      map['prior_due_epoch_day'] = Variable<int>(priorDueEpochDay);
+    }
+    return map;
+  }
+
+  TaskDueChangeSnapshotRowsCompanion toCompanion(bool nullToAbsent) {
+    return TaskDueChangeSnapshotRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      groupId: Value(groupId),
+      taskId: Value(taskId),
+      priorDueEpochDay: priorDueEpochDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(priorDueEpochDay),
+    );
+  }
+
+  factory TaskDueChangeSnapshotRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TaskDueChangeSnapshotRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      groupId: serializer.fromJson<int>(json['groupId']),
+      taskId: serializer.fromJson<int>(json['taskId']),
+      priorDueEpochDay: serializer.fromJson<int?>(json['priorDueEpochDay']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'groupId': serializer.toJson<int>(groupId),
+      'taskId': serializer.toJson<int>(taskId),
+      'priorDueEpochDay': serializer.toJson<int?>(priorDueEpochDay),
+    };
+  }
+
+  TaskDueChangeSnapshotRow copyWith({
+    int? id,
+    int? accountId,
+    int? groupId,
+    int? taskId,
+    Value<int?> priorDueEpochDay = const Value.absent(),
+  }) => TaskDueChangeSnapshotRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    groupId: groupId ?? this.groupId,
+    taskId: taskId ?? this.taskId,
+    priorDueEpochDay: priorDueEpochDay.present
+        ? priorDueEpochDay.value
+        : this.priorDueEpochDay,
+  );
+  TaskDueChangeSnapshotRow copyWithCompanion(
+    TaskDueChangeSnapshotRowsCompanion data,
+  ) {
+    return TaskDueChangeSnapshotRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      groupId: data.groupId.present ? data.groupId.value : this.groupId,
+      taskId: data.taskId.present ? data.taskId.value : this.taskId,
+      priorDueEpochDay: data.priorDueEpochDay.present
+          ? data.priorDueEpochDay.value
+          : this.priorDueEpochDay,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDueChangeSnapshotRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('groupId: $groupId, ')
+          ..write('taskId: $taskId, ')
+          ..write('priorDueEpochDay: $priorDueEpochDay')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, accountId, groupId, taskId, priorDueEpochDay);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TaskDueChangeSnapshotRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.groupId == this.groupId &&
+          other.taskId == this.taskId &&
+          other.priorDueEpochDay == this.priorDueEpochDay);
+}
+
+class TaskDueChangeSnapshotRowsCompanion
+    extends UpdateCompanion<TaskDueChangeSnapshotRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> groupId;
+  final Value<int> taskId;
+  final Value<int?> priorDueEpochDay;
+  const TaskDueChangeSnapshotRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.groupId = const Value.absent(),
+    this.taskId = const Value.absent(),
+    this.priorDueEpochDay = const Value.absent(),
+  });
+  TaskDueChangeSnapshotRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int groupId,
+    required int taskId,
+    this.priorDueEpochDay = const Value.absent(),
+  }) : accountId = Value(accountId),
+       groupId = Value(groupId),
+       taskId = Value(taskId);
+  static Insertable<TaskDueChangeSnapshotRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? groupId,
+    Expression<int>? taskId,
+    Expression<int>? priorDueEpochDay,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (groupId != null) 'group_id': groupId,
+      if (taskId != null) 'task_id': taskId,
+      if (priorDueEpochDay != null) 'prior_due_epoch_day': priorDueEpochDay,
+    });
+  }
+
+  TaskDueChangeSnapshotRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? groupId,
+    Value<int>? taskId,
+    Value<int?>? priorDueEpochDay,
+  }) {
+    return TaskDueChangeSnapshotRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      groupId: groupId ?? this.groupId,
+      taskId: taskId ?? this.taskId,
+      priorDueEpochDay: priorDueEpochDay ?? this.priorDueEpochDay,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (groupId.present) {
+      map['group_id'] = Variable<int>(groupId.value);
+    }
+    if (taskId.present) {
+      map['task_id'] = Variable<int>(taskId.value);
+    }
+    if (priorDueEpochDay.present) {
+      map['prior_due_epoch_day'] = Variable<int>(priorDueEpochDay.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDueChangeSnapshotRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('groupId: $groupId, ')
+          ..write('taskId: $taskId, ')
+          ..write('priorDueEpochDay: $priorDueEpochDay')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $SyncFactRowsTable extends SyncFactRows
     with TableInfo<$SyncFactRowsTable, SyncFactRow> {
   @override
@@ -11847,6 +12651,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $TaskDeleteTombstoneRowsTable(this);
   late final $TaskDeleteSnapshotRowsTable taskDeleteSnapshotRows =
       $TaskDeleteSnapshotRowsTable(this);
+  late final $TaskDueChangeGroupRowsTable taskDueChangeGroupRows =
+      $TaskDueChangeGroupRowsTable(this);
+  late final $TaskDueChangeSnapshotRowsTable taskDueChangeSnapshotRows =
+      $TaskDueChangeSnapshotRowsTable(this);
   late final $SyncFactRowsTable syncFactRows = $SyncFactRowsTable(this);
   late final $TaskListPreferenceRowsTable taskListPreferenceRows =
       $TaskListPreferenceRowsTable(this);
@@ -11870,6 +12678,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     syncRunRows,
     taskDeleteTombstoneRows,
     taskDeleteSnapshotRows,
+    taskDueChangeGroupRows,
+    taskDueChangeSnapshotRows,
     syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
@@ -16449,6 +17259,459 @@ typedef $$TaskDeleteSnapshotRowsTableProcessedTableManager =
       TaskDeleteSnapshotRow,
       PrefetchHooks Function()
     >;
+typedef $$TaskDueChangeGroupRowsTableCreateCompanionBuilder =
+    TaskDueChangeGroupRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int editedTaskId,
+      required int snapshotCount,
+      required bool cascadedParent,
+      required DateTime createdAt,
+    });
+typedef $$TaskDueChangeGroupRowsTableUpdateCompanionBuilder =
+    TaskDueChangeGroupRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> editedTaskId,
+      Value<int> snapshotCount,
+      Value<bool> cascadedParent,
+      Value<DateTime> createdAt,
+    });
+
+class $$TaskDueChangeGroupRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeGroupRowsTable> {
+  $$TaskDueChangeGroupRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get editedTaskId => $composableBuilder(
+    column: $table.editedTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get cascadedParent => $composableBuilder(
+    column: $table.cascadedParent,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TaskDueChangeGroupRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeGroupRowsTable> {
+  $$TaskDueChangeGroupRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get editedTaskId => $composableBuilder(
+    column: $table.editedTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get cascadedParent => $composableBuilder(
+    column: $table.cascadedParent,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TaskDueChangeGroupRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeGroupRowsTable> {
+  $$TaskDueChangeGroupRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get editedTaskId => $composableBuilder(
+    column: $table.editedTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get cascadedParent => $composableBuilder(
+    column: $table.cascadedParent,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$TaskDueChangeGroupRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TaskDueChangeGroupRowsTable,
+          TaskDueChangeGroupRow,
+          $$TaskDueChangeGroupRowsTableFilterComposer,
+          $$TaskDueChangeGroupRowsTableOrderingComposer,
+          $$TaskDueChangeGroupRowsTableAnnotationComposer,
+          $$TaskDueChangeGroupRowsTableCreateCompanionBuilder,
+          $$TaskDueChangeGroupRowsTableUpdateCompanionBuilder,
+          (
+            TaskDueChangeGroupRow,
+            BaseReferences<
+              _$AppDatabase,
+              $TaskDueChangeGroupRowsTable,
+              TaskDueChangeGroupRow
+            >,
+          ),
+          TaskDueChangeGroupRow,
+          PrefetchHooks Function()
+        > {
+  $$TaskDueChangeGroupRowsTableTableManager(
+    _$AppDatabase db,
+    $TaskDueChangeGroupRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TaskDueChangeGroupRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$TaskDueChangeGroupRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$TaskDueChangeGroupRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> editedTaskId = const Value.absent(),
+                Value<int> snapshotCount = const Value.absent(),
+                Value<bool> cascadedParent = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => TaskDueChangeGroupRowsCompanion(
+                id: id,
+                accountId: accountId,
+                editedTaskId: editedTaskId,
+                snapshotCount: snapshotCount,
+                cascadedParent: cascadedParent,
+                createdAt: createdAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int editedTaskId,
+                required int snapshotCount,
+                required bool cascadedParent,
+                required DateTime createdAt,
+              }) => TaskDueChangeGroupRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                editedTaskId: editedTaskId,
+                snapshotCount: snapshotCount,
+                cascadedParent: cascadedParent,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TaskDueChangeGroupRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TaskDueChangeGroupRowsTable,
+      TaskDueChangeGroupRow,
+      $$TaskDueChangeGroupRowsTableFilterComposer,
+      $$TaskDueChangeGroupRowsTableOrderingComposer,
+      $$TaskDueChangeGroupRowsTableAnnotationComposer,
+      $$TaskDueChangeGroupRowsTableCreateCompanionBuilder,
+      $$TaskDueChangeGroupRowsTableUpdateCompanionBuilder,
+      (
+        TaskDueChangeGroupRow,
+        BaseReferences<
+          _$AppDatabase,
+          $TaskDueChangeGroupRowsTable,
+          TaskDueChangeGroupRow
+        >,
+      ),
+      TaskDueChangeGroupRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TaskDueChangeSnapshotRowsTableCreateCompanionBuilder =
+    TaskDueChangeSnapshotRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int groupId,
+      required int taskId,
+      Value<int?> priorDueEpochDay,
+    });
+typedef $$TaskDueChangeSnapshotRowsTableUpdateCompanionBuilder =
+    TaskDueChangeSnapshotRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> groupId,
+      Value<int> taskId,
+      Value<int?> priorDueEpochDay,
+    });
+
+class $$TaskDueChangeSnapshotRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeSnapshotRowsTable> {
+  $$TaskDueChangeSnapshotRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get groupId => $composableBuilder(
+    column: $table.groupId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get priorDueEpochDay => $composableBuilder(
+    column: $table.priorDueEpochDay,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TaskDueChangeSnapshotRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeSnapshotRowsTable> {
+  $$TaskDueChangeSnapshotRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get groupId => $composableBuilder(
+    column: $table.groupId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get priorDueEpochDay => $composableBuilder(
+    column: $table.priorDueEpochDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TaskDueChangeSnapshotRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TaskDueChangeSnapshotRowsTable> {
+  $$TaskDueChangeSnapshotRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get groupId =>
+      $composableBuilder(column: $table.groupId, builder: (column) => column);
+
+  GeneratedColumn<int> get taskId =>
+      $composableBuilder(column: $table.taskId, builder: (column) => column);
+
+  GeneratedColumn<int> get priorDueEpochDay => $composableBuilder(
+    column: $table.priorDueEpochDay,
+    builder: (column) => column,
+  );
+}
+
+class $$TaskDueChangeSnapshotRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TaskDueChangeSnapshotRowsTable,
+          TaskDueChangeSnapshotRow,
+          $$TaskDueChangeSnapshotRowsTableFilterComposer,
+          $$TaskDueChangeSnapshotRowsTableOrderingComposer,
+          $$TaskDueChangeSnapshotRowsTableAnnotationComposer,
+          $$TaskDueChangeSnapshotRowsTableCreateCompanionBuilder,
+          $$TaskDueChangeSnapshotRowsTableUpdateCompanionBuilder,
+          (
+            TaskDueChangeSnapshotRow,
+            BaseReferences<
+              _$AppDatabase,
+              $TaskDueChangeSnapshotRowsTable,
+              TaskDueChangeSnapshotRow
+            >,
+          ),
+          TaskDueChangeSnapshotRow,
+          PrefetchHooks Function()
+        > {
+  $$TaskDueChangeSnapshotRowsTableTableManager(
+    _$AppDatabase db,
+    $TaskDueChangeSnapshotRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TaskDueChangeSnapshotRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$TaskDueChangeSnapshotRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$TaskDueChangeSnapshotRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> groupId = const Value.absent(),
+                Value<int> taskId = const Value.absent(),
+                Value<int?> priorDueEpochDay = const Value.absent(),
+              }) => TaskDueChangeSnapshotRowsCompanion(
+                id: id,
+                accountId: accountId,
+                groupId: groupId,
+                taskId: taskId,
+                priorDueEpochDay: priorDueEpochDay,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int groupId,
+                required int taskId,
+                Value<int?> priorDueEpochDay = const Value.absent(),
+              }) => TaskDueChangeSnapshotRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                groupId: groupId,
+                taskId: taskId,
+                priorDueEpochDay: priorDueEpochDay,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TaskDueChangeSnapshotRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TaskDueChangeSnapshotRowsTable,
+      TaskDueChangeSnapshotRow,
+      $$TaskDueChangeSnapshotRowsTableFilterComposer,
+      $$TaskDueChangeSnapshotRowsTableOrderingComposer,
+      $$TaskDueChangeSnapshotRowsTableAnnotationComposer,
+      $$TaskDueChangeSnapshotRowsTableCreateCompanionBuilder,
+      $$TaskDueChangeSnapshotRowsTableUpdateCompanionBuilder,
+      (
+        TaskDueChangeSnapshotRow,
+        BaseReferences<
+          _$AppDatabase,
+          $TaskDueChangeSnapshotRowsTable,
+          TaskDueChangeSnapshotRow
+        >,
+      ),
+      TaskDueChangeSnapshotRow,
+      PrefetchHooks Function()
+    >;
 typedef $$SyncFactRowsTableCreateCompanionBuilder =
     SyncFactRowsCompanion Function({
       Value<int> accountId,
@@ -17433,6 +18696,16 @@ class $AppDatabaseManager {
       $$TaskDeleteSnapshotRowsTableTableManager(
         _db,
         _db.taskDeleteSnapshotRows,
+      );
+  $$TaskDueChangeGroupRowsTableTableManager get taskDueChangeGroupRows =>
+      $$TaskDueChangeGroupRowsTableTableManager(
+        _db,
+        _db.taskDueChangeGroupRows,
+      );
+  $$TaskDueChangeSnapshotRowsTableTableManager get taskDueChangeSnapshotRows =>
+      $$TaskDueChangeSnapshotRowsTableTableManager(
+        _db,
+        _db.taskDueChangeSnapshotRows,
       );
   $$SyncFactRowsTableTableManager get syncFactRows =>
       $$SyncFactRowsTableTableManager(_db, _db.syncFactRows);

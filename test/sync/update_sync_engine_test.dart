@@ -1255,6 +1255,53 @@ void main() {
   );
 
   test(
+    'REC-004/P8 parent completion publishes Google-cascaded child state in the same run',
+    () async {
+      final remote = FakeGoogleTasksService();
+      addTearDown(remote.close);
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Parent completion list',
+        taskTitle: 'Open parent',
+      );
+      final child = await harness.seedTask(
+        seeded.listRemoteId,
+        title: 'Open child',
+        parentId: seeded.taskRemoteId,
+      );
+      await harness.run();
+
+      await harness.updateTask(
+        seeded.taskId,
+        title: 'Open parent',
+        notes: null,
+        status: TaskStatus.completed,
+        due: null,
+      );
+      final report = await harness.run();
+      final snapshot = await harness.snapshot();
+      final projectedChild = snapshot.tasks.singleWhere(
+        (task) => task.remoteId?.value == child.id.value,
+      );
+
+      expect(report.outcome, SyncRunOutcome.succeeded);
+      expect(projectedChild.status, TaskStatus.completed);
+      expect(
+        remote.calls
+            .where((call) => call.operation == FakeGoogleTasksMethod.listTasks)
+            .length,
+        greaterThanOrEqualTo(2),
+        reason: 'the post-mutation read must observe Google cascade state',
+      );
+    },
+  );
+
+  test(
     'REC-011/REC-012 cross-list MOVE preserves a subtree and adopts canonical order',
     () async {
       final remote = FakeGoogleTasksService();

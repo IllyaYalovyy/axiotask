@@ -51,6 +51,7 @@ void main() {
       title: 'Linux detail parent',
       position: '1',
       notes: 'Original synthetic notes',
+      due: TaskDate(2026, 8, 10),
     );
     final firstChild = await _putTask(
       cache,
@@ -59,6 +60,7 @@ void main() {
       remoteId: 'synthetic-detail-child-a',
       title: 'Linux child A',
       position: '2',
+      due: TaskDate(2026, 8, 5),
     );
     final secondChild = await _putTask(
       cache,
@@ -68,6 +70,7 @@ void main() {
       title: 'Linux child B',
       position: '3',
       status: TaskStatus.completed,
+      due: TaskDate(2026, 8, 1),
     );
     var repository = DatabaseTasksRepository(database, clock: clock);
     for (final child in <TaskId>[firstChild, secondChild]) {
@@ -94,11 +97,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Linux child A'), findsNothing);
-    expect(find.text('1 of 2 subtasks complete'), findsOneWidget);
+    expect(find.text('Linux detail parent'), findsOneWidget);
+    expect(find.textContaining('1 of 2 subtasks complete'), findsOneWidget);
     await tester.tap(find.text('Linux detail parent'));
     await tester.pump();
     expect(find.text('Linux child A'), findsOneWidget);
     expect(find.text('Linux child B'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Complete selected task'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Reopen selected task'), findsOneWidget);
+    await tester.tap(find.byTooltip('Reopen selected task'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Complete selected task'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Edit task content'));
     await tester.pumpAndSettle();
@@ -116,7 +127,22 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
     expect(find.text('Created Linux child'), findsOneWidget);
-    expect(find.text('1 of 3 subtasks complete'), findsNWidgets(2));
+    expect(find.textContaining('1 of 3 subtasks complete'), findsNWidgets(2));
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Next week'));
+    await tester.pumpAndSettle();
+    expect(find.text('Date changed for 3 related tasks'), findsOneWidget);
+    expect(
+      (await repository.watchTasks(TasksQuery(accountId: account)).first).tasks
+          .where(
+            (task) =>
+                <TaskId>{parent, firstChild, secondChild}.contains(task.id),
+          )
+          .map((task) => task.due),
+      everyElement(TaskDate(2026, 8, 22)),
+    );
 
     viewModel.dispose();
     await database.close();
@@ -136,7 +162,29 @@ void main() {
 
     expect(find.text('離線ノート 🌍\nsecond exact line'), findsOneWidget);
     expect(find.text('Created Linux child'), findsOneWidget);
-    expect(find.text('1 of 3 subtasks complete'), findsNWidgets(2));
+    expect(find.textContaining('1 of 3 subtasks complete'), findsNWidgets(2));
+    expect(find.text('Date changed for 3 related tasks'), findsOneWidget);
+
+    final undo = find.widgetWithText(TextButton, 'Undo due changes');
+    await tester.ensureVisible(undo);
+    await tester.tap(undo);
+    await tester.pumpAndSettle();
+    expect(find.text('Date changed for 3 related tasks'), findsNothing);
+    final restored =
+        (await repository.watchTasks(TasksQuery(accountId: account)).first)
+            .tasks;
+    expect(
+      restored.singleWhere((task) => task.id == parent).due,
+      TaskDate(2026, 8, 10),
+    );
+    expect(
+      restored.singleWhere((task) => task.id == firstChild).due,
+      TaskDate(2026, 8, 5),
+    );
+    expect(
+      restored.singleWhere((task) => task.id == secondChild).due,
+      TaskDate(2026, 8, 1),
+    );
   });
 }
 
@@ -167,6 +215,7 @@ Future<TaskId> _putTask(
   required String position,
   String? notes,
   TaskStatus status = TaskStatus.needsAction,
+  TaskDate? due,
 }) async {
   final task = await cache.putTask(
     accountId: account,
@@ -175,6 +224,7 @@ Future<TaskId> _putTask(
     title: title,
     notes: notes,
     status: status,
+    due: due,
     position: position,
   );
   await cache.putTaskRemoteBase(
@@ -187,6 +237,7 @@ Future<TaskId> _putTask(
     title: title,
     notes: notes,
     status: status,
+    due: due,
     position: position,
     etag: 'etag-$remoteId',
   );

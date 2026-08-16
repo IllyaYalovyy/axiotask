@@ -26,6 +26,10 @@ those typed preferences; ViewModels reuse the same projection for rows and
 counts. S23A adds a detail-specific immutable projection over the same task
 repository state, a shared direct-child progress policy, and responsive desktop
 detail widgets whose mutations all use the existing domain command boundary.
+S23B adds one date policy for local shortcuts and edited-row-wins propagation,
+transactional due-cascade snapshots with restart-durable grouped Undo, detail
+completion/date actions and effective-date provenance, plus same-run publication
+of Google's authoritative child completion cascade after a parent completes.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

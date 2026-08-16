@@ -283,6 +283,21 @@ final class _GoldenTasksRepository implements TasksRepository {
       Stream<List<TaskDeleteUndo>>.value(undos);
 
   @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => Stream.value(const <TaskDueChangeUndo>[]);
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async => const Outcome.success(TaskDueChangeReceipt(undo: null));
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async => const Outcome.success(null);
+
+  @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(
     DeleteTaskCommand command,
   ) async => Outcome<TaskDeleteReceipt>.success(

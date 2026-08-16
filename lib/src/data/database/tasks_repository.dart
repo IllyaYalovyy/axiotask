@@ -8,12 +8,14 @@ import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/hierarchy_policy.dart';
 import '../../domain/repository/tasks_repository.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
 import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
+import 'due_change_dao.dart';
 
 final class DatabaseTasksRepository implements TasksRepository {
   DatabaseTasksRepository(
@@ -23,12 +25,14 @@ final class DatabaseTasksRepository implements TasksRepository {
   }) : clock = clock ?? SystemClock(),
        _cache = CacheDao(_database),
        _desired = DesiredStateDao(_database),
-       _deletes = DeleteStateDao(_database);
+       _deletes = DeleteStateDao(_database),
+       _dueChanges = DueChangeDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
+  final DueChangeDao _dueChanges;
   final Clock clock;
   final DesiredStateTransactionControl? transactionControl;
 
@@ -86,6 +90,14 @@ final class DatabaseTasksRepository implements TasksRepository {
   Future<Outcome<void>> apply(ExistingTaskCommand command) async {
     final validation = validateTaskCommand(command);
     if (validation != null) return Outcome<void>.failure(validation);
+    if (command is SetTaskDueCommand) {
+      return switch (await setTaskDue(command)) {
+        Success<TaskDueChangeReceipt>() => const Outcome<void>.success(null),
+        Failed<TaskDueChangeReceipt>(:final failure) => Outcome<void>.failure(
+          failure,
+        ),
+      };
+    }
     if (command is PromoteTaskCommand ||
         command is DemoteTaskCommand ||
         command is MoveTaskCommand) {
@@ -167,6 +179,214 @@ final class DatabaseTasksRepository implements TasksRepository {
       return const Outcome<void>.success(null);
     } on _TaskCommandException catch (error) {
       return Outcome<void>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async {
+    try {
+      final receipt = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final target =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(command.accountId.value) &
+                      row.id.equals(command.taskId.value) &
+                      row.projection.equals(CacheProjection.supported.name),
+                ))
+                .getSingleOrNull();
+        if (target == null) {
+          throw const _TaskCommandException(_taskNotFoundFailure);
+        }
+        if (target.remoteId == null &&
+            !_isUnresolved(
+              (await _desired.readTask(
+                command.accountId,
+                command.taskId,
+              ))?.state,
+            )) {
+          throw const _TaskCommandException(_unsynchronizableTaskFailure);
+        }
+        final rows =
+            await (_database.select(_database.taskCacheRows)
+                  ..where(
+                    (row) =>
+                        row.accountId.equals(command.accountId.value) &
+                        row.taskListId.equals(target.taskListId) &
+                        row.projection.equals(CacheProjection.supported.name),
+                  )
+                  ..orderBy(<OrderingTerm Function($TaskCacheRowsTable)>[
+                    (row) => OrderingTerm.asc(row.id),
+                  ]))
+                .get();
+        final tasks = rows.map(_cachedTask).toList(growable: false);
+        final plan = planDueCascade(
+          tasks: tasks,
+          editedTaskId: command.taskId,
+          selectedDue: command.due,
+        );
+        if (plan.changes.isEmpty) {
+          return const TaskDueChangeReceipt(undo: null);
+        }
+        final rowsById = <TaskId, TaskCacheRow>{
+          for (final row in rows) TaskId(row.id): row,
+        };
+        for (final change in plan.changes) {
+          final row = rowsById[change.taskId];
+          if (row == null) {
+            throw const DueChangeStateException('due_change_task_missing');
+          }
+          if (row.remoteId == null &&
+              !_isUnresolved(
+                (await _desired.readTask(
+                  command.accountId,
+                  change.taskId,
+                ))?.state,
+              )) {
+            throw const _TaskCommandException(_unsynchronizableTaskFailure);
+          }
+        }
+        await _dueChanges.clearAvailable(command.accountId);
+        for (final change in plan.changes) {
+          await (_database.update(_database.taskCacheRows)..where(
+                (row) =>
+                    row.accountId.equals(command.accountId.value) &
+                    row.id.equals(change.taskId.value),
+              ))
+              .write(
+                TaskCacheRowsCompanion(
+                  dueEpochDay: Value<int?>(_epochDay(change.after)),
+                ),
+              );
+        }
+        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        final modifiedAt = clock.now();
+        for (final change in plan.changes) {
+          final row = rowsById[change.taskId];
+          if (row == null) {
+            throw const DueChangeStateException('due_change_task_missing');
+          }
+          await _desired.writeTaskPresent(
+            accountId: command.accountId,
+            taskId: change.taskId,
+            taskListId: TaskListId(row.taskListId),
+            parentTaskId: row.parentTaskId == null
+                ? null
+                : TaskId(row.parentTaskId!),
+            title: row.title,
+            notes: row.notes,
+            status: _taskStatus(row.status),
+            due: change.after,
+            modifiedAt: modifiedAt,
+          );
+        }
+        final undo = plan.cascadedCount == 0
+            ? null
+            : await _dueChanges.create(
+                accountId: command.accountId,
+                editedTask: _cachedTask(target),
+                plan: plan,
+                createdAt: modifiedAt,
+              );
+        await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return TaskDueChangeReceipt(undo: undo);
+      });
+      return Outcome<TaskDueChangeReceipt>.success(receipt);
+    } on _TaskCommandException catch (error) {
+      return Outcome<TaskDueChangeReceipt>.failure(error.failure);
+    } on DueChangeStateException {
+      return const Outcome<TaskDueChangeReceipt>.failure(
+        _dueChangePersistenceFailure,
+      );
+    } on DesiredStatePersistenceException {
+      return const Outcome<TaskDueChangeReceipt>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<TaskDueChangeReceipt>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async {
+    try {
+      await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final group = await _dueChanges.readGroup(
+          command.accountId,
+          command.groupId,
+        );
+        if (group == null) {
+          throw const DueChangeStateException('due_change_undo_unavailable');
+        }
+        final snapshots = await _dueChanges.readSnapshots(
+          command.accountId,
+          command.groupId,
+        );
+        if (snapshots.length != group.snapshotCount) {
+          throw const DueChangeStateException('due_change_snapshot_incomplete');
+        }
+        final rows = <TaskId, TaskCacheRow>{};
+        for (final snapshot in snapshots) {
+          final row =
+              await (_database.select(_database.taskCacheRows)..where(
+                    (row) =>
+                        row.accountId.equals(command.accountId.value) &
+                        row.id.equals(snapshot.taskId.value) &
+                        row.projection.equals(CacheProjection.supported.name),
+                  ))
+                  .getSingleOrNull();
+          if (row == null) {
+            throw const DueChangeStateException('due_change_task_missing');
+          }
+          rows[snapshot.taskId] = row;
+        }
+        for (final snapshot in snapshots) {
+          await (_database.update(_database.taskCacheRows)..where(
+                (row) =>
+                    row.accountId.equals(command.accountId.value) &
+                    row.id.equals(snapshot.taskId.value),
+              ))
+              .write(
+                TaskCacheRowsCompanion(
+                  dueEpochDay: Value<int?>(_epochDay(snapshot.priorDue)),
+                ),
+              );
+        }
+        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        final modifiedAt = clock.now();
+        for (final snapshot in snapshots) {
+          final row = rows[snapshot.taskId]!;
+          await _desired.writeTaskPresent(
+            accountId: command.accountId,
+            taskId: snapshot.taskId,
+            taskListId: TaskListId(row.taskListId),
+            parentTaskId: row.parentTaskId == null
+                ? null
+                : TaskId(row.parentTaskId!),
+            title: row.title,
+            notes: row.notes,
+            status: _taskStatus(row.status),
+            due: snapshot.priorDue,
+            modifiedAt: modifiedAt,
+          );
+        }
+        await _dueChanges.deleteGroup(command.accountId, command.groupId);
+        await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+      });
+      return const Outcome<void>.success(null);
+    } on _TaskCommandException catch (error) {
+      return Outcome<void>.failure(error.failure);
+    } on DueChangeStateException catch (error) {
+      return Outcome<void>.failure(_dueChangeFailure(error.code));
     } on DesiredStatePersistenceException {
       return const Outcome<void>.failure(_persistenceFailure);
     } on SqliteException {
@@ -549,6 +769,11 @@ final class DatabaseTasksRepository implements TasksRepository {
   @override
   Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
       _deletes.watchAvailableTaskUndos(accountId);
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => _dueChanges.watchAvailable(accountId);
 
   Future<void> _requireAccount(AccountId accountId) async {
     final account = await (_database.select(
@@ -945,6 +1170,24 @@ const Failure _persistenceFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'The task was not saved.',
   safeSummary: 'The task transaction did not commit.',
+);
+
+const Failure _dueChangePersistenceFailure = Failure(
+  code: 'task.due_change_persistence_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The due-date group was not saved.',
+  safeSummary: 'The grouped due-date transaction did not commit.',
+);
+
+Failure _dueChangeFailure(String code) => Failure(
+  code: 'task.$code',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The grouped due-date Undo was not applied.',
+  safeSummary: 'The durable due-date Undo group is unavailable.',
 );
 
 Failure _deleteFailure(String code) => switch (code) {

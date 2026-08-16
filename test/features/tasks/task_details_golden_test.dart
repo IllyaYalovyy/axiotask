@@ -153,12 +153,27 @@ final class _TasksRepository implements TasksRepository {
       Stream.value(const <TaskDeleteUndo>[]);
 
   @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => Stream.value(const <TaskDueChangeUndo>[]);
+
+  @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) async =>
       const Outcome<TaskId>.success(TaskId(90));
 
   @override
   Future<Outcome<void>> apply(ExistingTaskCommand command) async =>
       const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async => const Outcome.success(TaskDueChangeReceipt(undo: null));
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async => const Outcome.success(null);
 
   @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(

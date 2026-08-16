@@ -146,6 +146,18 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
             ),
           ]
         : const <TaskDeleteUndo>[],
+    dueUndos: scenario.name.startsWith('task-workflows-')
+        ? <TaskDueChangeUndo>[
+            TaskDueChangeUndo(
+              groupId: 41,
+              editedTaskId: const TaskId(11),
+              editedTaskTitle: 'Plan the synthetic release',
+              cascadedCount: 2,
+              cascadedParent: false,
+              createdAt: DateTime.utc(2026, 8, 15, 12),
+            ),
+          ]
+        : const <TaskDueChangeUndo>[],
   ),
   taskListsRepository: const _ScreenshotTaskListsRepository(),
   preferencesRepository: const _ScreenshotPreferencesRepository(),
@@ -157,10 +169,12 @@ final class _ScreenshotTasksRepository implements TasksRepository {
   const _ScreenshotTasksRepository(
     this.snapshot, {
     this.undos = const <TaskDeleteUndo>[],
+    this.dueUndos = const <TaskDueChangeUndo>[],
   });
 
   final CachedTasksSnapshot snapshot;
   final List<TaskDeleteUndo> undos;
+  final List<TaskDueChangeUndo> dueUndos;
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
@@ -179,6 +193,11 @@ final class _ScreenshotTasksRepository implements TasksRepository {
       Stream<List<TaskDeleteUndo>>.value(undos);
 
   @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => Stream<List<TaskDueChangeUndo>>.value(dueUndos);
+
+  @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(
     DeleteTaskCommand command,
   ) async => Outcome<TaskDeleteReceipt>.success(
@@ -186,8 +205,20 @@ final class _ScreenshotTasksRepository implements TasksRepository {
   );
 
   @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async => const Outcome<TaskDueChangeReceipt>.success(
+    TaskDueChangeReceipt(undo: null),
+  );
+
+  @override
   Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async =>
       const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async => const Outcome<void>.success(null);
 }
 
 final class _ScreenshotTaskListsRepository implements TaskListsRepository {
@@ -301,6 +332,24 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
       SyncHealthOutcome.pending,
       pendingReason: SyncPendingReason.localChanges,
       counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'task-workflows-light',
+    snapshot: _taskWorkflowsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
+    ),
+  ),
+  (
+    name: 'task-workflows-dark',
+    snapshot: _taskWorkflowsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 3),
     ),
   ),
   (
@@ -668,6 +717,54 @@ final _taskDetailsSnapshot = CachedTasksSnapshot(
       notes: null,
       status: TaskStatus.needsAction,
       due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _taskWorkflowsSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-workflow-list'),
+      title: 'Synthetic workflow review',
+    ),
+  ],
+  tasks: <CachedTask>[
+    CachedTask(
+      id: const TaskId(11),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: null,
+      remoteId: const TaskRemoteId('synthetic-workflow-parent'),
+      title: 'Plan the synthetic release',
+      notes: 'Completion and dates use durable Google-bound commands.',
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 8, 20),
+    ),
+    CachedTask(
+      id: const TaskId(12),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: const TaskId(11),
+      remoteId: const TaskRemoteId('synthetic-workflow-child-open'),
+      title: 'Review the effective date',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 8, 15),
+    ),
+    CachedTask(
+      id: const TaskId(13),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: const TaskId(11),
+      remoteId: const TaskRemoteId('synthetic-workflow-child-complete'),
+      title: 'Verify Google completion authority',
+      notes: null,
+      status: TaskStatus.completed,
+      due: TaskDate(2026, 8, 18),
     ),
   ],
   completeness: CacheCompleteness.complete,

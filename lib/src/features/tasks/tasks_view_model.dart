@@ -8,6 +8,7 @@ import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
 import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/smart_views.dart';
 import '../../domain/repository/preferences_repository.dart';
 import '../../domain/repository/task_lists_repository.dart';
@@ -22,6 +23,7 @@ final class TasksViewState {
     required this.taskLists,
     required this.tasks,
     required this.taskDeleteUndos,
+    required this.taskDueChangeUndos,
     required this.health,
     required this.today,
     this.listPreferences = const <TaskListId, ListPreferences>{},
@@ -45,6 +47,7 @@ final class TasksViewState {
   final List<CachedTaskList> taskLists;
   final List<CachedTask> tasks;
   final List<TaskDeleteUndo> taskDeleteUndos;
+  final List<TaskDueChangeUndo> taskDueChangeUndos;
   final SyncHealth health;
   final TaskDate today;
   final Map<TaskListId, ListPreferences> listPreferences;
@@ -130,6 +133,7 @@ final class TasksViewState {
     List<CachedTaskList>? taskLists,
     List<CachedTask>? tasks,
     List<TaskDeleteUndo>? taskDeleteUndos,
+    List<TaskDueChangeUndo>? taskDueChangeUndos,
     SyncHealth? health,
     TaskDate? today,
     Map<TaskListId, ListPreferences>? listPreferences,
@@ -152,6 +156,7 @@ final class TasksViewState {
     taskLists: taskLists ?? this.taskLists,
     tasks: tasks ?? this.tasks,
     taskDeleteUndos: taskDeleteUndos ?? this.taskDeleteUndos,
+    taskDueChangeUndos: taskDueChangeUndos ?? this.taskDueChangeUndos,
     health: health ?? this.health,
     today: today ?? this.today,
     listPreferences: listPreferences ?? this.listPreferences,
@@ -221,6 +226,7 @@ final class TasksViewModel extends ChangeNotifier {
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          taskDeleteUndos: const <TaskDeleteUndo>[],
+         taskDueChangeUndos: const <TaskDueChangeUndo>[],
          health: SyncHealth(
            outcome: SyncHealthOutcome.pending,
            pendingReason: SyncPendingReason.checkingAuthorization,
@@ -249,6 +255,7 @@ final class TasksViewModel extends ChangeNotifier {
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
   StreamSubscription<List<TaskDeleteUndo>>? _taskDeleteUndoSubscription;
+  StreamSubscription<List<TaskDueChangeUndo>>? _taskDueChangeUndoSubscription;
   StreamSubscription<Map<TaskListId, ListPreferences>>?
   _listPreferencesSubscription;
   StreamSubscription<Map<ViewKey, ViewPreferences>>?
@@ -276,6 +283,12 @@ final class TasksViewModel extends ChangeNotifier {
     _taskDeleteUndoSubscription = tasksRepository
         .watchUndoableTaskDeletes(accountId)
         .listen(_acceptTaskDeleteUndos, onError: _acceptTaskDeleteUndoError);
+    _taskDueChangeUndoSubscription = tasksRepository
+        .watchUndoableTaskDueChanges(accountId)
+        .listen(
+          _acceptTaskDueChangeUndos,
+          onError: _acceptTaskDueChangeUndoError,
+        );
     _listPreferencesSubscription = preferencesRepository
         ?.watchAllListPreferences(accountId)
         .listen(_acceptListPreferences, onError: _acceptPreferenceReadError);
@@ -507,6 +520,15 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       );
 
+  Future<void> setTaskDue(TaskId taskId, TaskDate? due) => _performTaskCommand(
+    () => tasksRepository.setTaskDue(
+      SetTaskDueCommand(accountId: accountId, taskId: taskId, due: due),
+    ),
+  );
+
+  Future<void> setTaskDueShortcut(TaskId taskId, DateShortcut shortcut) =>
+      setTaskDue(taskId, resolveDateShortcut(_state.today, shortcut));
+
   Future<void> promoteTask(TaskId taskId) => _performTaskCommand(
     () => tasksRepository.apply(
       PromoteTaskCommand(accountId: accountId, taskId: taskId),
@@ -553,6 +575,12 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> undoTaskDelete(TaskId taskId) => _performTaskCommand(
     () => tasksRepository.undoTaskDelete(
       UndoTaskDeleteCommand(accountId: accountId, taskId: taskId),
+    ),
+  );
+
+  Future<void> undoTaskDueChange(int groupId) => _performTaskCommand(
+    () => tasksRepository.undoTaskDueChange(
+      UndoTaskDueChangeCommand(accountId: accountId, groupId: groupId),
     ),
   );
 
@@ -792,6 +820,23 @@ final class TasksViewModel extends ChangeNotifier {
     );
   }
 
+  void _acceptTaskDueChangeUndos(List<TaskDueChangeUndo> values) {
+    _replaceState(
+      _state.copyWith(
+        taskDueChangeUndos: List<TaskDueChangeUndo>.unmodifiable(values),
+      ),
+    );
+  }
+
+  void _acceptTaskDueChangeUndoError(Object _) {
+    _replaceState(
+      _state.copyWith(
+        taskCommandFailureMessage:
+            'Due-date Undo state could not be read safely.',
+      ),
+    );
+  }
+
   void _acceptRepositoryError(Object _) {
     _replaceState(
       _state.copyWith(
@@ -811,12 +856,16 @@ final class TasksViewModel extends ChangeNotifier {
     final tasksSubscription = _tasksSubscription;
     final healthSubscription = _healthSubscription;
     final taskDeleteUndoSubscription = _taskDeleteUndoSubscription;
+    final taskDueChangeUndoSubscription = _taskDueChangeUndoSubscription;
     final listPreferencesSubscription = _listPreferencesSubscription;
     final viewPreferencesSubscription = _viewPreferencesSubscription;
     if (tasksSubscription != null) unawaited(tasksSubscription.cancel());
     if (healthSubscription != null) unawaited(healthSubscription.cancel());
     if (taskDeleteUndoSubscription != null) {
       unawaited(taskDeleteUndoSubscription.cancel());
+    }
+    if (taskDueChangeUndoSubscription != null) {
+      unawaited(taskDueChangeUndoSubscription.cancel());
     }
     if (listPreferencesSubscription != null) {
       unawaited(listPreferencesSubscription.cancel());

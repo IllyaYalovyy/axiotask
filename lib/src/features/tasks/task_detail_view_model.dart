@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 
+import '../../domain/commands/task_commands.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/date_workflow.dart';
+import '../../domain/policy/effective_due.dart';
 import '../../domain/policy/subtask_progress.dart';
 import 'tasks_view_model.dart';
 
@@ -10,6 +13,8 @@ final class TaskDetailState {
     required this.parent,
     required this.children,
     required this.progress,
+    required this.effectiveDue,
+    required this.dueChangeUndo,
     required this.parentCandidates,
     required this.siblings,
     required this.destinationLists,
@@ -21,6 +26,8 @@ final class TaskDetailState {
   final CachedTask? parent;
   final List<CachedTask> children;
   final DirectChildProgress progress;
+  final EffectiveDue effectiveDue;
+  final TaskDueChangeUndo? dueChangeUndo;
   final List<CachedTask> parentCandidates;
   final List<CachedTask> siblings;
   final List<CachedTaskList> destinationLists;
@@ -72,6 +79,7 @@ final class TaskDetailViewModel implements Listenable {
               candidate.parentTaskId == task.parentTaskId,
         )
         .toList(growable: false);
+    final due = effectiveDueDates(source.tasks)[task.id]!;
     return TaskDetailState(
       task: task,
       parent: parent,
@@ -80,6 +88,8 @@ final class TaskDetailViewModel implements Listenable {
         parentTaskId: task.id,
         tasks: source.tasks,
       ),
+      effectiveDue: due,
+      dueChangeUndo: source.taskDueChangeUndos.firstOrNull,
       parentCandidates: List<CachedTask>.unmodifiable(parents),
       siblings: List<CachedTask>.unmodifiable(siblings),
       destinationLists: List<CachedTaskList>.unmodifiable(
@@ -106,14 +116,34 @@ final class TaskDetailViewModel implements Listenable {
     required CachedTask task,
     required String title,
     required String? notes,
-    required TaskDate? due,
   }) => _tasks.updateTaskContent(
     taskId: task.id,
     title: title,
     notes: notes,
     status: task.status,
-    due: due,
+    due: task.due,
   );
+
+  Future<void> toggleCompletion(TaskId taskId) {
+    final task = _tasks.state.tasks
+        .where((candidate) => candidate.id == taskId)
+        .firstOrNull;
+    if (task == null) return Future<void>.value();
+    return _tasks.setTaskCompletion(
+      taskId,
+      task.status == TaskStatus.completed
+          ? TaskStatus.needsAction
+          : TaskStatus.completed,
+    );
+  }
+
+  Future<void> setDue(TaskId taskId, TaskDate? due) =>
+      _tasks.setTaskDue(taskId, due);
+
+  Future<void> setDueShortcut(TaskId taskId, DateShortcut shortcut) =>
+      _tasks.setTaskDueShortcut(taskId, shortcut);
+
+  Future<void> undoDueChange(int groupId) => _tasks.undoTaskDueChange(groupId);
 
   Future<void> deleteTask(TaskId taskId) => _tasks.deleteTask(taskId);
 
@@ -167,6 +197,8 @@ final class TaskDetailViewModel implements Listenable {
       parent: detail.task,
       children: const <CachedTask>[],
       progress: const DirectChildProgress(completed: 0, total: 0),
+      effectiveDue: effectiveDueDates(<CachedTask>[child])[child.id]!,
+      dueChangeUndo: detail.dueChangeUndo,
       parentCandidates: const <CachedTask>[],
       siblings: detail.children,
       destinationLists: detail.destinationLists,

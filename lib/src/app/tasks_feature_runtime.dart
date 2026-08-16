@@ -230,6 +230,11 @@ final class _EmptyTasksRepository implements TasksRepository {
       const Stream<List<TaskDeleteUndo>>.empty();
 
   @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => const Stream<List<TaskDueChangeUndo>>.empty();
+
+  @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
       Future.value(const Outcome<TaskId>.failure(_noTaskAccountFailure));
 
@@ -244,7 +249,17 @@ final class _EmptyTasksRepository implements TasksRepository {
       );
 
   @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(SetTaskDueCommand command) =>
+      Future.value(
+        const Outcome<TaskDueChangeReceipt>.failure(_noTaskAccountFailure),
+      );
+
+  @override
   Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) =>
+      Future.value(const Outcome<void>.failure(_noTaskAccountFailure));
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(UndoTaskDueChangeCommand command) =>
       Future.value(const Outcome<void>.failure(_noTaskAccountFailure));
 }
 

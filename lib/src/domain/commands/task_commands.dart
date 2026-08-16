@@ -62,6 +62,15 @@ final class SetTaskDueCommand extends ExistingTaskCommand {
   final TaskDate? due;
 }
 
+final class UndoTaskDueChangeCommand extends TaskCommand {
+  const UndoTaskDueChangeCommand({
+    required super.accountId,
+    required this.groupId,
+  });
+
+  final int groupId;
+}
+
 final class SetTaskCompletionCommand extends ExistingTaskCommand {
   const SetTaskCompletionCommand({
     required super.accountId,
@@ -144,6 +153,30 @@ final class TaskDeleteUndo {
   final TaskId taskId;
   final String title;
   final DateTime notBefore;
+}
+
+final class TaskDueChangeReceipt {
+  const TaskDueChangeReceipt({required this.undo});
+
+  final TaskDueChangeUndo? undo;
+}
+
+final class TaskDueChangeUndo {
+  const TaskDueChangeUndo({
+    required this.groupId,
+    required this.editedTaskId,
+    required this.editedTaskTitle,
+    required this.cascadedCount,
+    required this.cascadedParent,
+    required this.createdAt,
+  });
+
+  final int groupId;
+  final TaskId editedTaskId;
+  final String editedTaskTitle;
+  final int cascadedCount;
+  final bool cascadedParent;
+  final DateTime createdAt;
 }
 
 Failure? validateTaskCommand(TaskCommand command) {

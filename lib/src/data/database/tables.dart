@@ -486,6 +486,65 @@ class TaskDeleteSnapshotRows extends Table {
   ];
 }
 
+class TaskDueChangeGroupRows extends Table {
+  @override
+  String get tableName => 'task_due_change_groups';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get editedTaskId => integer()();
+
+  IntColumn get snapshotCount =>
+      integer().check(snapshotCount.isBiggerThanValue(1))();
+
+  BoolColumn get cascadedParent => boolean()();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, id},
+    <Column<Object>>{accountId},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, edited_task_id) '
+        'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+  ];
+}
+
+class TaskDueChangeSnapshotRows extends Table {
+  @override
+  String get tableName => 'task_due_change_snapshots';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get groupId => integer()();
+
+  IntColumn get taskId => integer()();
+
+  IntColumn get priorDueEpochDay => integer().nullable()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, groupId, taskId},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id, group_id) '
+        'REFERENCES task_due_change_groups(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, task_id) '
+        'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+  ];
+}
+
 class DesiredStateDependencyRows extends Table {
   @override
   String get tableName => 'desired_state_dependencies';

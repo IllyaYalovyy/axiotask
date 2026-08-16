@@ -25,6 +25,8 @@ replaced with an empty cache.
 | `desired_state_attempts` | Immutable claimed generation/payload snapshots with present/deleted lifecycle, request identity, optional delete eligibility boundary, and durable lifecycle/failure, uncertainty, confirmation, or supersession evidence. A 412 may supersede one attempt and create a fresh attempt for the same desired generation after refetch/replan. |
 | `task_delete_tombstones` | One account/root-task durable Undo and deletion record, tied to the exact desired generation with its 30-second `not_before` boundary and snapshot-availability bit. |
 | `task_delete_snapshots` | Account-scoped bounded task/subtree snapshots preserving stable local/remote identity and supported content until Undo expiry; cleanup strips content while retaining minimal deletion/scope evidence. |
+| `task_due_change_groups` | The one currently available account-scoped grouped due Undo, with edited task, exact snapshot count, propagation direction, and durable acknowledgement time. |
+| `task_due_change_snapshots` | Account/task-owned prior date-only values for every row in the accepted due cascade; deleting a group cascades only to its snapshots. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -97,6 +99,14 @@ collection renders rather than a separate SQL approximation.
   desired content, causal generation, dependency rows, and unresolved counts in
   one transaction. Empty, cleared, Unicode, multiline, and date-only values are
   preserved; repeated edits retain the original confirmed base and local key.
+- A due action first computes the complete edited-row-wins plan. One transaction
+  updates every affected projection and coalesced whole-content desired state,
+  then replaces the account's prior available due Undo with a group whose exact
+  snapshot count covers the edited row and every propagated row. A group is
+  offered only when a related row changed. Undo validates the entire group and
+  restores every prior date plus desired state atomically; a missing or partial
+  group changes nothing. Group/snapshots survive restart and never assign a date
+  to an undated related row or propagate a clear.
 - Promote, demote, reorder, and cross-list move commands validate the complete
   direct subtree and `previous` anchor before one transaction changes the
   projection and coalesced structure facet. Desired rows and immutable attempts

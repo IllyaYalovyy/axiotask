@@ -56,6 +56,21 @@ final class _EmptyTasksRepository implements TasksRepository {
       const Stream<List<TaskDeleteUndo>>.empty();
 
   @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => const Stream.empty();
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async => const Outcome.success(TaskDueChangeReceipt(undo: null));
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async => const Outcome.success(null);
+
+  @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(
     DeleteTaskCommand command,
   ) async => Outcome<TaskDeleteReceipt>.success(

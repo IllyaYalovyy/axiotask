@@ -1153,6 +1153,20 @@ final class SyncEngine {
                     ),
                   ]);
                 }
+                if (claim.parentTaskId == null &&
+                    claim.status == TaskStatus.completed) {
+                  final cascadeReadFailure = await refetchTaskScope(
+                    taskListId: claim.taskListId,
+                    taskListRemoteId: claim.taskListRemoteId,
+                    reason: 'completion-cascade',
+                    expectedSubject: subject,
+                  );
+                  if (cascadeReadFailure != null) {
+                    firstFailure ??= cascadeReadFailure;
+                    stopOperations = true;
+                    break;
+                  }
+                }
               } on Object {
                 firstFailure ??= _updateAcknowledgementFailure;
                 stopOperations = true;

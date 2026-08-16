@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/policy/date_workflow.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
@@ -35,6 +37,8 @@ void main() {
       ]);
       expect(detail.state?.progress.completed, 1);
       expect(detail.state?.progress.total, 2);
+      expect(detail.state?.effectiveDue.effective, TaskDate(2026, 8, 16));
+      expect(detail.state?.effectiveDue.fromChildren, TaskDate(2026, 8, 16));
       expect(
         detail.state?.parentCandidates.map((task) => task.id),
         const <TaskId>[TaskId(14)],
@@ -64,7 +68,6 @@ void main() {
       task: _snapshot.tasks.first,
       title: 'Parent edited',
       notes: '空 🌍\nsecond line',
-      due: null,
     );
     final update = repository.applied
         .whereType<UpdateTaskContentCommand>()
@@ -89,6 +92,39 @@ void main() {
     detail.close();
     expect(tasks.state.selectedTaskId, isNull);
   });
+
+  test(
+    'completion and every date action use the shared command boundary',
+    () async {
+      final repository = _TasksRepository();
+      final tasks = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: repository,
+        syncHealthRepository: const _HealthRepository(),
+        clock: _FixedClock(),
+      );
+      addTearDown(tasks.dispose);
+      tasks.start();
+      repository.snapshots.add(_snapshot);
+      await pumpEventQueue();
+      tasks.selectTask(const TaskId(11));
+      final detail = TaskDetailViewModel.fromTasks(tasks);
+
+      await detail.toggleCompletion(const TaskId(11));
+      expect(
+        repository.applied.whereType<SetTaskCompletionCommand>().single.status,
+        TaskStatus.completed,
+      );
+
+      await detail.setDueShortcut(const TaskId(11), DateShortcut.nextMonth);
+      expect(repository.dueCommands.last.due, TaskDate(2026, 9, 15));
+      await detail.setDue(const TaskId(11), null);
+      expect(repository.dueCommands.last.due, isNull);
+
+      await detail.undoDueChange(72);
+      expect(repository.undoneDueGroups, <int>[72]);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {
@@ -96,6 +132,8 @@ final class _TasksRepository implements TasksRepository {
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
+  final List<SetTaskDueCommand> dueCommands = <SetTaskDueCommand>[];
+  final List<int> undoneDueGroups = <int>[];
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => snapshots.stream;
@@ -103,6 +141,11 @@ final class _TasksRepository implements TasksRepository {
   @override
   Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
       Stream.value(const <TaskDeleteUndo>[]);
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => Stream.value(const <TaskDueChangeUndo>[]);
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) async {
@@ -114,6 +157,16 @@ final class _TasksRepository implements TasksRepository {
   Future<Outcome<void>> apply(ExistingTaskCommand command) async {
     applied.add(command);
     return const Outcome<void>.success(null);
+  }
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async {
+    dueCommands.add(command);
+    return const Outcome<TaskDueChangeReceipt>.success(
+      TaskDueChangeReceipt(undo: null),
+    );
   }
 
   @override
@@ -129,6 +182,22 @@ final class _TasksRepository implements TasksRepository {
   @override
   Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async =>
       const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async {
+    undoneDueGroups.add(command.groupId);
+    return const Outcome<void>.success(null);
+  }
+}
+
+final class _FixedClock implements Clock {
+  @override
+  DateTime now() => DateTime(2026, 8, 15, 23, 30);
+
+  @override
+  Duration get monotonicElapsed => Duration.zero;
 }
 
 final class _HealthRepository implements SyncHealthRepository {
@@ -157,7 +226,7 @@ final _snapshot = CachedTasksSnapshot(
     ),
   ],
   tasks: <CachedTask>[
-    const CachedTask(
+    CachedTask(
       id: TaskId(11),
       accountId: AccountId(1),
       taskListId: TaskListId(7),
@@ -166,9 +235,9 @@ final _snapshot = CachedTasksSnapshot(
       title: 'Parent',
       notes: '',
       status: TaskStatus.needsAction,
-      due: null,
+      due: TaskDate(2026, 8, 20),
     ),
-    const CachedTask(
+    CachedTask(
       id: TaskId(12),
       accountId: AccountId(1),
       taskListId: TaskListId(7),
@@ -177,7 +246,7 @@ final _snapshot = CachedTasksSnapshot(
       title: 'First child',
       notes: null,
       status: TaskStatus.needsAction,
-      due: null,
+      due: TaskDate(2026, 8, 16),
     ),
     const CachedTask(
       id: TaskId(13),

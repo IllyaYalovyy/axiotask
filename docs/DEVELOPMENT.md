@@ -258,6 +258,16 @@ and ignored `task-details-{light,dark}.png` captures exercise the 1280-pixel
 Fedora layout without reading normal storage, preferences, credentials, or
 Google.
 
+S23B changes the exact version-1 schema contract by adding account-scoped due
+Undo groups/snapshots, but adds no dependency, OAuth configuration, account
+access, or storage namespace. Pure policy and real-SQLite tests use injected
+local dates, synthetic tasks, and temporary files to prove clamping, cascade
+rollback, and restart Undo. The isolated Linux detail integration exercises
+completion, date propagation, restart, and grouped Undo without starting sync.
+Ignored `task-workflows-{light,dark}.png` captures use fixed 2026-08-15 data and
+were reviewed at the Linux runner's 1280×720 size; they read no normal storage,
+preferences, credentials, OAuth configuration, or Google account.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

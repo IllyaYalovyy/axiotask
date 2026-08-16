@@ -360,6 +360,16 @@ is retained, navigation returns from child to parent, and create/edit/delete/
 reorder actions produce the existing shared domain commands rather than
 widget-owned mutations.
 
+S23B adds `test/domain/date_workflow_policy_test.dart` for local-calendar
+shortcuts, month-end clamping, clear, and edited-row-wins parent/child plans.
+`test/data/database/due_cascade_repository_test.dart` proves the related
+projection and desired states commit or roll back together, the exact Undo
+group survives file restart, completed children participate in the literal
+cascade, and Undo restores all rows or none. Detail ViewModel/widget tests prove
+completion and every date route share these repository commands. Update-engine
+coverage publishes Google's returned/refetched P8 child cascade in the same run
+and retains the existing impossible-child-reopen and Google-won policy evidence.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -441,6 +451,10 @@ direct-child progress, saves multiline Unicode notes, creates a direct child,
 and verifies the notes/children/progress after restart. Sync is stopped and no
 Google, credential store, normal database, or normal preferences are used.
 
+S23B extends that integration with complete/reopen, a fixed-local-date shortcut,
+multi-row due propagation, restart-visible grouped Undo, and exact restoration
+of all prior dates in the same isolated file-backed composition.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the
@@ -466,6 +480,12 @@ S23A adds curated long-content light/dark task-detail goldens at 1280×800 and
 matching actual `task-details-light` / `task-details-dark` application scenarios
 at 1280×720. They show plain multiline notes, parent-only collection rows,
 completed/total direct-child progress, and visible subtask management routes.
+
+S23B updates those curated detail goldens for the completion/date controls and
+adds actual `task-workflows-light` / `task-workflows-dark` scenarios at 1280×720.
+The reviewed captures show an explicit and inherited effective date, one
+completed child, non-green pending health, and restart-durable grouped Undo
+using only fixed synthetic content.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

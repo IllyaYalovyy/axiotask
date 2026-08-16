@@ -7,6 +7,8 @@ cd "$repository_root"
 scenarios=(
   task-details-light
   task-details-dark
+  task-workflows-light
+  task-workflows-dark
   smart-views-light
   smart-views-dark
   health-cached-pending

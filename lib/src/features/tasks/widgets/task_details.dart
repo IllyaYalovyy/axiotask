@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../domain/model/tasks.dart';
+import '../../../domain/policy/date_workflow.dart';
+import '../../../domain/policy/effective_due.dart';
 import '../../../domain/policy/subtask_progress.dart';
 import '../task_detail_view_model.dart';
 
@@ -93,6 +95,42 @@ final class TaskDetailsPane extends StatelessWidget {
               runSpacing: 8,
               children: <Widget>[
                 Tooltip(
+                  message: task.status == TaskStatus.completed
+                      ? 'Reopen selected task'
+                      : 'Complete selected task',
+                  child: FilledButton.icon(
+                    onPressed: state.isCommandPending
+                        ? null
+                        : () => unawaited(viewModel.toggleCompletion(task.id)),
+                    icon: Icon(
+                      task.status == TaskStatus.completed
+                          ? Icons.radio_button_unchecked
+                          : Icons.check,
+                    ),
+                    label: Text(
+                      task.status == TaskStatus.completed
+                          ? 'Reopen'
+                          : 'Complete',
+                    ),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 40),
+                    ),
+                    key: const Key('task-detail-completion-action'),
+                  ),
+                ),
+                _DateShortcutMenu(
+                  enabled: !state.isCommandPending,
+                  taskId: task.id,
+                  viewModel: viewModel,
+                ),
+                OutlinedButton.icon(
+                  onPressed: state.isCommandPending
+                      ? null
+                      : () => _showDateDialog(context, viewModel, task),
+                  icon: const Icon(Icons.calendar_month_outlined),
+                  label: const Text('Choose date'),
+                ),
+                Tooltip(
                   message: 'Edit task content',
                   child: OutlinedButton.icon(
                     onPressed: state.isCommandPending
@@ -117,8 +155,45 @@ final class TaskDetailsPane extends StatelessWidget {
             ),
             const SizedBox(height: 18),
             _DetailLabel(label: 'Status', value: _statusLabel(task.status)),
-            if (task.due != null)
-              _DetailLabel(label: 'Due', value: task.due.toString()),
+            _DetailLabel(
+              label: 'Due',
+              value: _effectiveDueLabel(state.effectiveDue),
+            ),
+            if (state.dueChangeUndo case final undo?) ...<Widget>[
+              const SizedBox(height: 4),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          const Icon(Icons.history),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Date changed for ${undo.cascadedCount + 1} related tasks',
+                            ),
+                          ),
+                        ],
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: state.isCommandPending
+                              ? null
+                              : () => unawaited(
+                                  viewModel.undoDueChange(undo.groupId),
+                                ),
+                          child: const Text('Undo due changes'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TaskNotesSection(notes: task.notes),
             if (state.children.isNotEmpty) ...<Widget>[
@@ -246,6 +321,44 @@ final class TaskNotesSection extends StatelessWidget {
   }
 }
 
+final class _DateShortcutMenu extends StatelessWidget {
+  const _DateShortcutMenu({
+    required this.enabled,
+    required this.taskId,
+    required this.viewModel,
+  });
+
+  final bool enabled;
+  final TaskId taskId;
+  final TaskDetailViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) => MenuAnchor(
+    menuChildren: <Widget>[
+      for (final entry in const <(DateShortcut, String)>[
+        (DateShortcut.today, 'Today'),
+        (DateShortcut.tomorrow, 'Tomorrow'),
+        (DateShortcut.nextWeek, 'Next week'),
+        (DateShortcut.nextMonth, 'Next month'),
+        (DateShortcut.clear, 'Clear date'),
+      ])
+        MenuItemButton(
+          onPressed: enabled
+              ? () => unawaited(viewModel.setDueShortcut(taskId, entry.$1))
+              : null,
+          child: Text(entry.$2),
+        ),
+    ],
+    builder: (context, controller, _) => OutlinedButton.icon(
+      onPressed: enabled
+          ? () => controller.isOpen ? controller.close() : controller.open()
+          : null,
+      icon: const Icon(Icons.event_outlined),
+      label: const Text('Date'),
+    ),
+  );
+}
+
 final class SubtaskProgressIndicator extends StatelessWidget {
   const SubtaskProgressIndicator({required this.progress, super.key});
 
@@ -287,15 +400,21 @@ final class SubtaskList extends StatelessWidget {
         ListTile(
           key: ValueKey<String>('subtask-${child.id.value}'),
           contentPadding: EdgeInsets.zero,
-          leading: Icon(
-            child.status == TaskStatus.completed
-                ? Icons.check_circle
-                : Icons.radio_button_unchecked,
+          leading: IconButton(
+            tooltip: child.status == TaskStatus.completed
+                ? 'Reopen ${child.title}'
+                : 'Complete ${child.title}',
+            onPressed: viewModel.state?.isCommandPending == true
+                ? null
+                : () => unawaited(viewModel.toggleCompletion(child.id)),
+            icon: Icon(
+              child.status == TaskStatus.completed
+                  ? Icons.check_circle
+                  : Icons.radio_button_unchecked,
+            ),
           ),
           title: Text(child.title),
-          subtitle: child.notes?.isNotEmpty == true
-              ? Text(child.notes!, maxLines: 1, overflow: TextOverflow.ellipsis)
-              : null,
+          subtitle: _subtaskSubtitle(child),
           trailing: PopupMenuButton<_SubtaskAction>(
             tooltip: 'Manage ${child.title}',
             enabled: viewModel.state?.isCommandPending != true,
@@ -436,32 +555,20 @@ final class _TaskContentDialog extends StatefulWidget {
 final class _TaskContentDialogState extends State<_TaskContentDialog> {
   late final _title = TextEditingController(text: widget.task.title);
   late final _notes = TextEditingController(text: widget.task.notes ?? '');
-  late final _due = TextEditingController(
-    text: widget.task.due?.toString() ?? '',
-  );
   late bool _clearNotes = widget.task.notes == null;
-  String? _dateError;
 
   @override
   void dispose() {
     _title.dispose();
     _notes.dispose();
-    _due.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
-    final due = _parseTaskDate(_due.text);
-    if (_due.text.trim().isNotEmpty && due == null) {
-      setState(() => _dateError = 'Use a valid YYYY-MM-DD date.');
-      return;
-    }
-    setState(() => _dateError = null);
     await widget.viewModel.saveContent(
       task: widget.task,
       title: _title.text,
       notes: _clearNotes ? null : _notes.text,
-      due: due,
     );
     if (mounted && widget.viewModel.state?.failureMessage == null) {
       Navigator.of(context).pop();
@@ -503,14 +610,6 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
                     ? null
                     : (value) => setState(() => _clearNotes = value ?? false),
               ),
-              TextField(
-                controller: _due,
-                decoration: InputDecoration(
-                  labelText: 'Due date (YYYY-MM-DD)',
-                  errorText: _dateError,
-                  helperText: 'Leave blank to clear the due date.',
-                ),
-              ),
             ],
           ),
         ),
@@ -532,6 +631,84 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Save'),
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _showDateDialog(
+  BuildContext context,
+  TaskDetailViewModel viewModel,
+  CachedTask task,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => _TaskDateDialog(viewModel: viewModel, task: task),
+);
+
+final class _TaskDateDialog extends StatefulWidget {
+  const _TaskDateDialog({required this.viewModel, required this.task});
+
+  final TaskDetailViewModel viewModel;
+  final CachedTask task;
+
+  @override
+  State<_TaskDateDialog> createState() => _TaskDateDialogState();
+}
+
+final class _TaskDateDialogState extends State<_TaskDateDialog> {
+  late final _due = TextEditingController(
+    text: widget.task.due?.toString() ?? '',
+  );
+  String? _dateError;
+
+  @override
+  void dispose() {
+    _due.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final due = _parseTaskDate(_due.text);
+    if (due == null) {
+      setState(() => _dateError = 'Use a valid YYYY-MM-DD date.');
+      return;
+    }
+    setState(() => _dateError = null);
+    await widget.viewModel.setDue(widget.task.id, due);
+    if (mounted && widget.viewModel.state?.failureMessage == null) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.viewModel,
+    builder: (context, _) => AlertDialog(
+      title: const Text('Choose due date'),
+      content: TextField(
+        controller: _due,
+        autofocus: true,
+        decoration: InputDecoration(
+          labelText: 'Due date (YYYY-MM-DD)',
+          errorText: _dateError,
+        ),
+        onSubmitted: widget.viewModel.state?.isCommandPending == true
+            ? null
+            : (_) => _submit(),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: widget.viewModel.state?.isCommandPending == true
+              ? null
+              : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: widget.viewModel.state?.isCommandPending == true
+              ? null
+              : _submit,
+          child: const Text('Set date'),
         ),
       ],
     ),
@@ -623,6 +800,26 @@ TaskDate? _parseTaskDate(String input) {
   } on ArgumentError {
     return null;
   }
+}
+
+Widget? _subtaskSubtitle(CachedTask child) {
+  final values = <String>[
+    if (child.due case final due?) 'Due $due',
+    if (child.notes case final notes? when notes.isNotEmpty) notes,
+  ];
+  if (values.isEmpty) return null;
+  return Text(values.join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis);
+}
+
+String _effectiveDueLabel(EffectiveDue due) {
+  final effective = due.effective;
+  if (effective == null) return 'No due date';
+  if (due.explicit == null) return '$effective (from a direct subtask)';
+  final inherited = due.fromChildren;
+  if (inherited != null && compareTaskDates(inherited, due.explicit!) < 0) {
+    return '$effective (earliest subtask; task date ${due.explicit})';
+  }
+  return effective.toString();
 }
 
 final class _DetailLabel extends StatelessWidget {

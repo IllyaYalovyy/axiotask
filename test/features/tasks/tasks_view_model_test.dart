@@ -346,6 +346,10 @@ final class _TasksRepository implements TasksRepository {
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
   final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
+  final dueUndoController =
+      StreamController<List<TaskDueChangeUndo>>.broadcast();
+  final List<SetTaskDueCommand> dueChanges = <SetTaskDueCommand>[];
+  final List<UndoTaskDueChangeCommand> dueUndos = <UndoTaskDueChangeCommand>[];
   Future<Outcome<TaskDeleteReceipt>> deleteResult = Future.value(
     Outcome<TaskDeleteReceipt>.success(
       TaskDeleteReceipt(
@@ -380,6 +384,27 @@ final class _TasksRepository implements TasksRepository {
   @override
   Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
       undoController.stream;
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => dueUndoController.stream;
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(
+    SetTaskDueCommand command,
+  ) async {
+    dueChanges.add(command);
+    return const Outcome.success(TaskDueChangeReceipt(undo: null));
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(
+    UndoTaskDueChangeCommand command,
+  ) async {
+    dueUndos.add(command);
+    return const Outcome.success(null);
+  }
 
   @override
   Future<Outcome<TaskDeleteReceipt>> deleteTask(DeleteTaskCommand command) {
