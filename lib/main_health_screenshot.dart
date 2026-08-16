@@ -57,7 +57,9 @@ final class _HealthScreenshotSequenceState
             _captureScenarios[index].name.startsWith('bulk-capture-')) {
           _viewModel.selectSmartView(SmartView.focus);
         }
-        _viewModel.selectTask(const TaskId(11));
+        if (!_captureScenarios[index].name.startsWith('search-results-')) {
+          _viewModel.selectTask(const TaskId(11));
+        }
         await _settleFrames();
         final scenario = _captureScenarios[index];
         if (scenario.name.contains('-result-')) {
@@ -139,6 +141,10 @@ final class _HealthScreenshotSequenceState
           initialBulkAddInput:
               _captureScenarios[_index].name.startsWith('bulk-capture-')
               ? 'Draft release notes\nReview accessibility\nVerify restart recovery'
+              : null,
+          initialSearchQuery:
+              _captureScenarios[_index].name.startsWith('search-results-')
+              ? 'inherited'
               : null,
           onHealthAction: (_) {},
         ),
@@ -358,6 +364,22 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'search-results-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
+    ),
+  ),
+  (
+    name: 'search-results-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
+    ),
+  ),
   (
     name: 'task-details-light',
     snapshot: _taskDetailsSnapshot,

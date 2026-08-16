@@ -389,6 +389,17 @@ rollback, and local-versus-Google result wording. The Linux integration restarts
 the database before an ordinary create run and proves one confirmed create, one
 exact rejected create, and one unattempted dependent create.
 
+S25 adds a repository suite that seeds real Drift/SQLite account partitions,
+supported and protected projections, parent/child rows, Unicode text, empty and
+long queries, and live cache updates. ViewModel and overlay tests cover stale
+query replacement, bounded keyboard selection, failure/empty states,
+accessibility context, and identical pointer/keyboard activation. The pure
+application navigation suite proves one ordered route stack for drawer, stable
+local-ID detail, selection, tracked dialogs, and search. Adaptive-shell and
+isolated Linux integration tests exercise Navigator-driven system back and
+verify that a child result opens its supported parent while protected and
+cross-account rows remain absent.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -524,6 +535,13 @@ S24B adds actual `bulk-capture-preview-{light,dark}` and
 three-entry preview, visible Google target, mode choice, non-green sync health,
 and the truthful post-transaction message that Google confirmation is pending.
 All content and identities are fixed synthetic values.
+
+S25 adds curated `search_results_{light,dark}` and
+`navigation_back_{light,dark}` goldens plus actual
+`search-results-{light,dark}` captures at 1280×720. The reviewed actual images
+show a focused title/notes query, non-green sync evidence, the matched subtask,
+its parent context and Google-list label, and the close/back affordance. The
+fixtures contain only fixed synthetic identities and task content.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

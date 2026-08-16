@@ -42,9 +42,15 @@ final class TaskDetailState {
 /// Projects task-detail state and routes every user action through the shared
 /// task command boundary owned by [TasksViewModel].
 final class TaskDetailViewModel implements Listenable {
-  TaskDetailViewModel.fromTasks(this._tasks);
+  TaskDetailViewModel.fromTasks(
+    this._tasks, {
+    this.navigateToTask,
+    this.navigateBack,
+  });
 
   final TasksViewModel _tasks;
+  final ValueChanged<TaskId>? navigateToTask;
+  final VoidCallback? navigateBack;
   TaskDetailState? get state => _project(_tasks.state);
 
   @override
@@ -229,9 +235,23 @@ final class TaskDetailViewModel implements Listenable {
     );
   }
 
-  void select(TaskId taskId) => _tasks.selectTask(taskId);
+  void select(TaskId taskId) {
+    final navigate = navigateToTask;
+    if (navigate != null) {
+      navigate(taskId);
+    } else {
+      _tasks.selectTask(taskId);
+    }
+  }
 
-  void back() => _tasks.backFromTaskDetail();
+  void back() {
+    final navigate = navigateBack;
+    if (navigate != null) {
+      navigate();
+    } else {
+      _tasks.backFromTaskDetail();
+    }
+  }
 
   void close() => _tasks.clearTaskSelection();
 }

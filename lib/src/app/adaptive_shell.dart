@@ -3,12 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/search/supported_task_search_repository.dart';
 import '../domain/model/preferences.dart';
+import '../domain/model/search.dart';
 import '../domain/model/tasks.dart';
 import '../domain/policy/date_workflow.dart';
 import '../domain/policy/smart_views.dart';
 import '../domain/policy/subtask_progress.dart';
 import '../domain/repository/tasks_repository.dart';
+import '../features/search/search_overlay.dart';
+import '../features/search/search_view_model.dart';
 import '../features/tasks/bulk_add_view_model.dart';
 import '../features/tasks/quick_add_view_model.dart';
 import '../features/tasks/task_detail_view_model.dart';
@@ -18,6 +22,7 @@ import '../features/tasks/widgets/quick_add.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
 import '../sync/health/sync_health.dart';
+import 'navigation_state.dart';
 
 final class AdaptiveShell extends StatefulWidget {
   const AdaptiveShell({
@@ -25,6 +30,8 @@ final class AdaptiveShell extends StatefulWidget {
     this.onHealthAction,
     this.initialQuickAddInput,
     this.initialBulkAddInput,
+    this.initialSearchQuery,
+    this.navigation,
     super.key,
   });
 
@@ -32,6 +39,8 @@ final class AdaptiveShell extends StatefulWidget {
   final ValueChanged<SyncHealthAction>? onHealthAction;
   final String? initialQuickAddInput;
   final String? initialBulkAddInput;
+  final String? initialSearchQuery;
+  final AppNavigationController? navigation;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -39,21 +48,32 @@ final class AdaptiveShell extends StatefulWidget {
 
 final class _AdaptiveShellState extends State<AdaptiveShell> {
   late QuickAddViewModel _quickAdd;
+  late SearchViewModel _search;
+  late AppNavigationController _navigation;
+  late bool _ownsNavigation;
+  final GlobalKey<NavigatorState> _surfaceNavigatorKey =
+      GlobalKey<NavigatorState>();
   final FocusNode _quickAddFocus = FocusNode(debugLabel: 'Quick add');
   bool _openedInitialBulkAdd = false;
+  bool _suppressNavigationSync = false;
 
   @override
   void initState() {
     super.initState();
     widget.viewModel.start();
+    _ownsNavigation = widget.navigation == null;
+    _navigation = widget.navigation ?? AppNavigationController();
+    _navigation.addListener(_navigationChanged);
     _quickAdd = _createQuickAdd();
+    _search = _createSearch();
+    _openInitialSearch();
     if (widget.initialQuickAddInput case final input?) {
       _quickAdd.setInput(input);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _quickAddFocus.requestFocus();
       });
     }
-    widget.viewModel.addListener(_refreshQuickAdd);
+    widget.viewModel.addListener(_viewModelChanged);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _maybeOpenInitialBulkAdd(),
     );
@@ -63,22 +83,47 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   void didUpdateWidget(covariant AdaptiveShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.viewModel != widget.viewModel) {
-      oldWidget.viewModel.removeListener(_refreshQuickAdd);
+      oldWidget.viewModel.removeListener(_viewModelChanged);
       _quickAdd.dispose();
+      _search.dispose();
       widget.viewModel.start();
       _quickAdd = _createQuickAdd();
+      _search = _createSearch();
+      _openInitialSearch();
       if (widget.initialQuickAddInput case final input?) {
         _quickAdd.setInput(input);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _quickAddFocus.requestFocus();
         });
       }
-      widget.viewModel.addListener(_refreshQuickAdd);
+      widget.viewModel.addListener(_viewModelChanged);
       _openedInitialBulkAdd = false;
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _maybeOpenInitialBulkAdd(),
       );
     }
+    if (oldWidget.navigation != widget.navigation) {
+      _navigation.removeListener(_navigationChanged);
+      if (_ownsNavigation) _navigation.dispose();
+      _ownsNavigation = widget.navigation == null;
+      _navigation = widget.navigation ?? AppNavigationController();
+      _navigation.addListener(_navigationChanged);
+      _syncDetailRoute();
+    }
+  }
+
+  SearchViewModel _createSearch() => SearchViewModel(
+    accountId: widget.viewModel.accountId,
+    repository: SupportedTaskSearchRepository(widget.viewModel.tasksRepository),
+  );
+
+  void _openInitialSearch() {
+    final query = widget.initialSearchQuery;
+    if (query == null) return;
+    _search.setQuery(query);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _navigation.openSearch();
+    });
   }
 
   QuickAddViewModel _createQuickAdd() => QuickAddViewModel(
@@ -116,9 +161,62 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
         SmartView.unscheduled || SmartView.all || null => null,
       };
 
-  void _refreshQuickAdd() {
+  void _viewModelChanged() {
     _quickAdd.refreshContext();
     _maybeOpenInitialBulkAdd();
+    _syncDetailRoute();
+  }
+
+  void _navigationChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _syncDetailRoute() {
+    if (_suppressNavigationSync) return;
+    final selected = widget.viewModel.state.selectedTaskId;
+    final current = _navigation.state.routes
+        .whereType<TaskDetailRoute>()
+        .lastOrNull
+        ?.taskId;
+    if (selected == null && current != null) {
+      _navigation.closeTaskDetail();
+    } else if (selected != null && selected != current) {
+      _navigation.openTaskDetail(selected);
+    }
+  }
+
+  void _openTask(TaskId taskId) {
+    _suppressNavigationSync = true;
+    widget.viewModel.selectTask(taskId);
+    _navigation.openTaskDetail(taskId);
+    _suppressNavigationSync = false;
+  }
+
+  void _openSearchResult(TaskSearchResult result) {
+    _suppressNavigationSync = true;
+    _navigation.removeRoute(const SearchRoute());
+    widget.viewModel.selectTask(result.parent.id);
+    _navigation.openTaskDetail(result.parent.id);
+    _suppressNavigationSync = false;
+  }
+
+  void _handleBack() {
+    final route = _navigation.currentRoute;
+    _suppressNavigationSync = true;
+    _navigation.back();
+    if (route is TaskDetailRoute) {
+      widget.viewModel.backFromTaskDetail();
+      final selected = widget.viewModel.state.selectedTaskId;
+      if (selected != null) _navigation.openTaskDetail(selected);
+    }
+    _suppressNavigationSync = false;
+  }
+
+  void _pageRemoved(Page<Object?> page) {
+    final key = page.key;
+    if (key is ValueKey<AppRoute> && _navigation.currentRoute == key.value) {
+      _handleBack();
+    }
   }
 
   void _maybeOpenInitialBulkAdd() {
@@ -148,8 +246,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       localEditCommitted: widget.viewModel.localEditCommitted,
     );
     if (initialInput != null) model.setInput(initialInput);
-    await showDialog<void>(
+    await showAppDialog<void>(
       context: context,
+      kind: AppDialogKind.bulkCapture,
       barrierDismissible: !model.state.isSubmitting,
       builder: (dialogContext) => BulkAddDialog(
         viewModel: model,
@@ -162,8 +261,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 
   @override
   void dispose() {
-    widget.viewModel.removeListener(_refreshQuickAdd);
+    widget.viewModel.removeListener(_viewModelChanged);
+    _navigation.removeListener(_navigationChanged);
+    if (_ownsNavigation) _navigation.dispose();
     _quickAdd.dispose();
+    _search.dispose();
     _quickAddFocus.dispose();
     super.dispose();
   }
@@ -176,11 +278,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
           animation: widget.viewModel,
           builder: (context, _) {
             final state = widget.viewModel.state;
-            return PopScope(
-              canPop: state.selectedTaskId == null,
-              onPopInvokedWithResult: (didPop, _) {
-                if (!didPop) widget.viewModel.backFromTaskDetail();
-              },
+            return AppNavigationScope(
+              controller: _navigation,
               child: Column(
                 children: <Widget>[
                   _ApplicationHeader(
@@ -195,6 +294,10 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     isSyncControlPending: state.isSyncControlPending,
                     onRefresh: widget.viewModel.refresh,
                     onStopSync: widget.viewModel.stopSync,
+                    onSearch: _navigation.openSearch,
+                    showSearch:
+                        state.selectedTaskId == null && state.tasks.isNotEmpty,
+                    onOpenNavigation: _navigation.openDrawer,
                   ),
                   if (state.syncControlFailureMessage case final message?)
                     MaterialBanner(
@@ -233,14 +336,58 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     ),
                   Expanded(
                     child: LayoutBuilder(
-                      builder: (context, constraints) => _ShellBody(
-                        state: state,
-                        viewModel: widget.viewModel,
-                        quickAdd: _quickAdd,
-                        quickAddFocus: _quickAddFocus,
-                        openBulkAdd: () => _showBulkAdd(),
-                        wide: constraints.maxWidth >= 900,
-                      ),
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >= 900;
+                        final pages = <Page<Object?>>[
+                          _surfacePage(const CollectionRoute()),
+                          for (final route in _navigation.state.routes.skip(1))
+                            _surfacePage(route),
+                        ];
+                        final visibleRoute = _navigation.state.routes.reversed
+                            .firstWhere(
+                              (route) =>
+                                  route is SearchRoute ||
+                                  route is TaskDetailRoute ||
+                                  route is DrawerRoute ||
+                                  route is CollectionRoute,
+                            );
+                        final visible = switch (visibleRoute) {
+                          SearchRoute() => SearchOverlay(
+                            viewModel: _search,
+                            onOpenResult: _openSearchResult,
+                            onClose: _handleBack,
+                          ),
+                          DrawerRoute() => _ListNavigation(
+                            state: state,
+                            viewModel: widget.viewModel,
+                            onSelected: _handleBack,
+                          ),
+                          CollectionRoute() ||
+                          TaskDetailRoute() => _shellBody(state, wide),
+                          _ => throw StateError('unsupported_visual_route'),
+                        };
+                        return NavigatorPopHandler<Object?>(
+                          onPopWithResult: (_) =>
+                              _surfaceNavigatorKey.currentState?.maybePop(),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: <Widget>[
+                              visible,
+                              Offstage(
+                                offstage: true,
+                                child: ExcludeFocus(
+                                  child: Navigator(
+                                    key: _surfaceNavigatorKey,
+                                    requestFocus: false,
+                                    pages: pages,
+                                    onDidRemovePage: _pageRemoved,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -251,7 +398,23 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       ),
     );
   }
+
+  Widget _shellBody(TasksViewState state, bool wide) => _ShellBody(
+    state: state,
+    viewModel: widget.viewModel,
+    quickAdd: _quickAdd,
+    quickAddFocus: _quickAddFocus,
+    openBulkAdd: () => _showBulkAdd(),
+    openTask: _openTask,
+    onBack: _handleBack,
+    wide: wide,
+  );
 }
+
+MaterialPage<Object?> _surfacePage(AppRoute route) => MaterialPage<Object?>(
+  key: ValueKey<AppRoute>(route),
+  child: const SizedBox.expand(),
+);
 
 final class _ApplicationHeader extends StatelessWidget {
   const _ApplicationHeader({
@@ -260,6 +423,9 @@ final class _ApplicationHeader extends StatelessWidget {
     required this.isSyncControlPending,
     required this.onRefresh,
     required this.onStopSync,
+    required this.onSearch,
+    required this.showSearch,
+    required this.onOpenNavigation,
     this.onHealthAction,
   });
 
@@ -269,9 +435,13 @@ final class _ApplicationHeader extends StatelessWidget {
   final bool isSyncControlPending;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onStopSync;
+  final VoidCallback onSearch;
+  final bool showSearch;
+  final VoidCallback onOpenNavigation;
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 720;
     return Column(
       children: <Widget>[
         Container(
@@ -297,33 +467,80 @@ final class _ApplicationHeader extends StatelessWidget {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               ),
               const Spacer(),
-              FilledButton.icon(
-                onPressed:
-                    isRefreshing ||
-                        isSyncControlPending ||
-                        health.inactiveReason == SyncInactiveReason.syncStopped
-                    ? null
-                    : onRefresh,
-                icon: isRefreshing
-                    ? const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh),
-                label: const Text('Refresh'),
-              ),
-              if (health.outcome != SyncHealthOutcome.inactive) ...<Widget>[
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: isSyncControlPending ? null : onStopSync,
-                  icon: isSyncControlPending
+              if (MediaQuery.sizeOf(context).width < 900) ...<Widget>[
+                IconButton(
+                  tooltip: 'Open navigation',
+                  onPressed: onOpenNavigation,
+                  icon: const Icon(Icons.menu),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (showSearch) ...<Widget>[
+                IconButton(
+                  tooltip: 'Search tasks',
+                  onPressed: onSearch,
+                  icon: const Icon(Icons.search),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (compact)
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed:
+                      isRefreshing ||
+                          isSyncControlPending ||
+                          health.inactiveReason ==
+                              SyncInactiveReason.syncStopped
+                      ? null
+                      : onRefresh,
+                  icon: isRefreshing
                       ? const SizedBox.square(
                           dimension: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.pause_circle_outline),
-                  label: const Text('Stop sync'),
+                      : const Icon(Icons.refresh),
+                )
+              else
+                FilledButton.icon(
+                  onPressed:
+                      isRefreshing ||
+                          isSyncControlPending ||
+                          health.inactiveReason ==
+                              SyncInactiveReason.syncStopped
+                      ? null
+                      : onRefresh,
+                  icon: isRefreshing
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
                 ),
+              if (health.outcome != SyncHealthOutcome.inactive) ...<Widget>[
+                SizedBox(width: compact ? 4 : 12),
+                if (compact)
+                  IconButton(
+                    tooltip: 'Stop sync',
+                    onPressed: isSyncControlPending ? null : onStopSync,
+                    icon: isSyncControlPending
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.pause_circle_outline),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: isSyncControlPending ? null : onStopSync,
+                    icon: isSyncControlPending
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.pause_circle_outline),
+                    label: const Text('Stop sync'),
+                  ),
               ],
             ],
           ),
@@ -342,6 +559,8 @@ final class _ShellBody extends StatelessWidget {
     required this.quickAddFocus,
     required this.wide,
     required this.openBulkAdd,
+    required this.openTask,
+    required this.onBack,
   });
 
   final TasksViewState state;
@@ -350,6 +569,8 @@ final class _ShellBody extends StatelessWidget {
   final FocusNode quickAddFocus;
   final bool wide;
   final VoidCallback openBulkAdd;
+  final ValueChanged<TaskId> openTask;
+  final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -359,7 +580,11 @@ final class _ShellBody extends StatelessWidget {
     if (state.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    final detail = TaskDetailViewModel.fromTasks(viewModel);
+    final detail = TaskDetailViewModel.fromTasks(
+      viewModel,
+      navigateToTask: openTask,
+      navigateBack: onBack,
+    );
     final body = !wide
         ? detail.state == null
               ? _TaskCollection(
@@ -368,6 +593,7 @@ final class _ShellBody extends StatelessWidget {
                   quickAdd: quickAdd,
                   quickAddFocus: quickAddFocus,
                   openBulkAdd: openBulkAdd,
+                  openTask: openTask,
                 )
               : TaskDetailsPane(viewModel: detail, compact: true)
         : Row(
@@ -385,6 +611,7 @@ final class _ShellBody extends StatelessWidget {
                   quickAdd: quickAdd,
                   quickAddFocus: quickAddFocus,
                   openBulkAdd: openBulkAdd,
+                  openTask: openTask,
                 ),
               ),
               const VerticalDivider(width: 1),
@@ -396,7 +623,7 @@ final class _ShellBody extends StatelessWidget {
           );
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): detail.back,
+        const SingleActivator(LogicalKeyboardKey.escape): onBack,
       },
       child: body,
     );
@@ -404,10 +631,15 @@ final class _ShellBody extends StatelessWidget {
 }
 
 final class _ListNavigation extends StatelessWidget {
-  const _ListNavigation({required this.state, required this.viewModel});
+  const _ListNavigation({
+    required this.state,
+    required this.viewModel,
+    this.onSelected,
+  });
 
   final TasksViewState state;
   final TasksViewModel viewModel;
+  final VoidCallback? onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -434,7 +666,10 @@ final class _ListNavigation extends StatelessWidget {
                 trailing: _CountBadge(
                   count: state.viewCount(SmartTaskView(smartView)),
                 ),
-                onTap: () => viewModel.selectSmartView(smartView),
+                onTap: () {
+                  viewModel.selectSmartView(smartView);
+                  onSelected?.call();
+                },
               ),
             const Divider(height: 24),
             Padding(
@@ -476,7 +711,10 @@ final class _ListNavigation extends StatelessWidget {
                         viewModel: viewModel,
                         taskListId: list.id,
                       ),
-                onTap: () => viewModel.selectTaskList(list.id),
+                onTap: () {
+                  viewModel.selectTaskList(list.id);
+                  onSelected?.call();
+                },
               ),
           ],
         ),
@@ -574,6 +812,7 @@ final class _TaskCollection extends StatelessWidget {
     required this.quickAdd,
     required this.quickAddFocus,
     required this.openBulkAdd,
+    required this.openTask,
   });
 
   final TasksViewState state;
@@ -581,6 +820,7 @@ final class _TaskCollection extends StatelessWidget {
   final QuickAddViewModel quickAdd;
   final FocusNode quickAddFocus;
   final VoidCallback openBulkAdd;
+  final ValueChanged<TaskId> openTask;
 
   @override
   Widget build(BuildContext context) {
@@ -797,7 +1037,7 @@ final class _TaskCollection extends StatelessWidget {
                         ].join(' • '),
                       ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => viewModel.selectTask(task.id),
+                      onTap: () => openTask(task.id),
                     );
                   },
                 ),
@@ -810,8 +1050,9 @@ final class _TaskCollection extends StatelessWidget {
 Future<void> _showCreateTaskListDialog(
   BuildContext context,
   TasksViewModel viewModel,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.listEdit,
   builder: (_) => _TaskListEditDialog(
     viewModel: viewModel,
     dialogTitle: 'Create task list',
@@ -825,8 +1066,9 @@ Future<void> _showRenameTaskListDialog(
   BuildContext context,
   TasksViewModel viewModel,
   CachedTaskList taskList,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.listEdit,
   builder: (_) => _TaskListEditDialog(
     viewModel: viewModel,
     dialogTitle: 'Rename task list',
@@ -841,8 +1083,9 @@ Future<void> _showCreateTaskDialog(
   TasksViewModel viewModel,
   TaskListId taskListId, {
   TaskId? parentTaskId,
-}) => showDialog<void>(
+}) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.taskEdit,
   builder: (_) => _CreateTaskDialog(
     viewModel: viewModel,
     taskListId: taskListId,
@@ -930,8 +1173,9 @@ Future<void> _showDeleteTaskListConfirmation(
   BuildContext context,
   TasksViewModel viewModel,
   CachedTaskList taskList,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.confirmation,
   builder: (_) => DeleteTaskListConfirmationDialog(
     viewModel: viewModel,
     taskList: taskList,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../app/navigation_state.dart';
 import '../../../domain/model/tasks.dart';
 import '../../../domain/policy/date_workflow.dart';
 import '../../../domain/policy/effective_due.dart';
@@ -466,8 +467,9 @@ final class SubtaskList extends StatelessWidget {
 Future<void> _showCreateSubtaskDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.taskEdit,
   builder: (_) => _CreateSubtaskDialog(viewModel: viewModel),
 );
 
@@ -537,8 +539,9 @@ Future<void> _showTaskContentDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.taskEdit,
   builder: (_) => _TaskContentDialog(viewModel: viewModel, task: task),
 );
 
@@ -641,8 +644,9 @@ Future<void> _showDateDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.date,
   builder: (_) => _TaskDateDialog(viewModel: viewModel, task: task),
 );
 
@@ -720,8 +724,9 @@ Future<void> _showParentDialog(
   TaskDetailViewModel viewModel,
   CachedTask task,
   List<CachedTask> candidates,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.taskEdit,
   builder: (dialogContext) => AlertDialog(
     title: const Text('Choose parent task'),
     content: SizedBox(
@@ -757,8 +762,9 @@ Future<void> _showMoveListDialog(
   TaskDetailViewModel viewModel,
   CachedTask task,
   List<CachedTaskList> destinations,
-) => showDialog<void>(
+) => showAppDialog<void>(
   context: context,
+  kind: AppDialogKind.taskEdit,
   builder: (dialogContext) => AlertDialog(
     title: const Text('Move task to list'),
     content: SizedBox(

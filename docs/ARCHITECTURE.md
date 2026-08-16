@@ -37,6 +37,11 @@ S24B adds a bounded line/paragraph parser and bulk-capture ViewModel over one
 repository transaction; every accepted top-level task receives its ordinary
 desired create state and explicit predecessor dependency for ordered,
 per-resource publication.
+S25 adds a search repository over the supported account-scoped task projection,
+a reactive search ViewModel/overlay, and one explicit application route stack
+for search, drawer, selection, dialog, and stable-local-ID detail state. The
+shell's nested Navigator participates in predictive back without widget-owned
+surface flags.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

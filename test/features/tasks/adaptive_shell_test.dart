@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
+import 'package:axiotask/src/app/navigation_state.dart';
 import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
@@ -120,6 +121,129 @@ void main() {
     expect(find.text('Subtasks'), findsOneWidget);
     expect(find.text('Cached child'), findsOneWidget);
     expect(find.text('Add task'), findsNothing);
+  });
+
+  testWidgets(
+    'search opens child parent context and system back follows route state',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      final navigation = AppNavigationController();
+      addTearDown(fixture.dispose);
+      addTearDown(navigation.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AdaptiveShell(
+            viewModel: fixture.viewModel,
+            navigation: navigation,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Search tasks'));
+      await tester.pumpAndSettle();
+      expect(navigation.state.predictiveBackRoute, const SearchRoute());
+      await tester.enterText(
+        find.byKey(const Key('search-input')),
+        'Cached child',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Matched subtask: Cached child'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('search-result-0')));
+      await tester.pumpAndSettle();
+
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      expect(
+        find.text('Stored locally while verification is pending.'),
+        findsOneWidget,
+      );
+      expect(
+        navigation.state.predictiveBackRoute,
+        const TaskDetailRoute(TaskId(11)),
+      );
+
+      fixture.viewModel.clearTaskSelection();
+      await tester.pump();
+      await tester.tap(find.byTooltip('Search tasks'));
+      await tester.pumpAndSettle();
+      expect(navigation.state.predictiveBackRoute, const SearchRoute());
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('search-input')), findsNothing);
+      expect(navigation.state.canHandlePredictiveBack, isFalse);
+    },
+  );
+
+  testWidgets('compact drawer is a back-aware navigation route', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(600, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    final navigation = AppNavigationController();
+    addTearDown(fixture.dispose);
+    addTearDown(navigation.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AdaptiveShell(
+          viewModel: fixture.viewModel,
+          navigation: navigation,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Open navigation'));
+    await tester.pumpAndSettle();
+    expect(navigation.state.predictiveBackRoute, const DrawerRoute());
+    expect(find.text('SMART VIEWS'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(navigation.state.canHandlePredictiveBack, isFalse);
+    expect(find.text('SMART VIEWS'), findsNothing);
+  });
+
+  testWidgets('dialog back leaves the detail route beneath it', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    final navigation = AppNavigationController();
+    addTearDown(fixture.dispose);
+    addTearDown(navigation.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AdaptiveShell(
+          viewModel: fixture.viewModel,
+          navigation: navigation,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Cached parent'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Edit task content'));
+    await tester.pumpAndSettle();
+
+    expect(navigation.state.dialog, AppDialogKind.taskEdit);
+    expect(navigation.state.routes.whereType<TaskDetailRoute>(), hasLength(1));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(navigation.state.dialog, isNull);
+    expect(
+      navigation.state.predictiveBackRoute,
+      const TaskDetailRoute(TaskId(11)),
+    );
   });
 
   testWidgets('task details add, promote, and demote one-level subtasks', (

@@ -285,6 +285,15 @@ Focused parser, SQLite, ViewModel, widget, and isolated Linux tests use only
 synthetic data and temporary files. Ignored actual preview/result captures use
 the synthetic screenshot composition and never read normal storage or Google.
 
+S25 adds no dependency, schema version, OAuth configuration, account access, or
+storage namespace. Search observes the existing account-scoped supported task
+projection, so deleted, unsupported, unsynchronizable, and cross-account rows
+cannot enter the search boundary. Focused repository, ViewModel, overlay,
+navigation-state, adaptive-shell, golden, and isolated Linux tests use only
+synthetic data and temporary files. The ignored screenshot runner adds
+`search-results-{light,dark}.png`; inspect both actual 1280×720 images after
+capture.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

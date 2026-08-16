@@ -94,6 +94,12 @@ is invalid. One SQLite transaction acknowledges all tasks or none; each task
 then follows ordinary ordered Google create publication with honest pending or
 failed sync health.
 
+Search finds supported cached tasks by title or notes without crossing account
+or protected-data boundaries. A matching subtask is labeled beneath its parent
+and opens that parent detail context. Pointer and keyboard activation share the
+same result path, while search, compact navigation, detail, selection, and
+tracked-dialog state use one deterministic Navigator-backed back stack.
+
 The desktop shell also projects Focus, Upcoming, Missed, Unscheduled, All, and
 per-list collections from the cached supported task graph. A parent's effective
 date is the earlier of its explicit date and unfinished direct-child dates;
@@ -507,6 +513,11 @@ flutter test test/app/database_recovery_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
 flutter test test/features/tasks/smart_views_golden_test.dart
 flutter test test/features/tasks/task_details_golden_test.dart
+flutter test test/data/database/search_repository_test.dart
+flutter test test/app/navigation_state_test.dart
+flutter test test/features/search/search_view_model_test.dart
+flutter test test/features/search/search_overlay_test.dart
+flutter test test/features/search/search_navigation_golden_test.dart
 flutter test test/domain/bulk_capture_parser_test.dart
 flutter test test/data/database/bulk_capture_repository_test.dart
 flutter test test/features/tasks/bulk_add_view_model_test.dart
@@ -534,6 +545,7 @@ flutter test integration_test/smart_views_restart_linux_test.dart -d linux
 flutter test integration_test/task_details_linux_test.dart -d linux
 flutter test integration_test/quick_capture_linux_test.dart -d linux
 flutter test integration_test/bulk_capture_linux_test.dart -d linux
+flutter test integration_test/search_navigation_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -546,7 +558,8 @@ stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
 protected-depth failure, fixed-time light/dark smart views, and long-content
 light/dark task details plus effective-date/completion/durable-Undo workflow
 states, plus keyboard-focused light/dark quick-capture previews and validated
-light/dark bulk-capture preview/result states, into the ignored
+light/dark bulk-capture preview/result states and title/notes search with child
+parent context, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
