@@ -133,6 +133,19 @@ void main() {
 
     await tester.tap(find.text('Cached child'));
     await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Change parent'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(ListTile, 'Leaf task'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final reparent = fixture.tasks.applied.last as DemoteTaskCommand;
+    expect(reparent.taskId, const TaskId(12));
+    expect(reparent.parentTaskId, const TaskId(13));
+
     await tester.tap(find.widgetWithText(OutlinedButton, 'Promote'));
     await tester.pump();
     expect(fixture.tasks.applied.last, isA<PromoteTaskCommand>());
@@ -155,6 +168,42 @@ void main() {
     final demote = fixture.tasks.applied.last as DemoteTaskCommand;
     expect(demote.taskId, const TaskId(13));
     expect(demote.parentTaskId, const TaskId(11));
+  });
+
+  testWidgets('task details reorder by anchor and move across lists', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.text('Leaf task'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Move up'));
+    await tester.pump();
+    final reorder = fixture.tasks.applied.last as MoveTaskCommand;
+    expect(reorder.taskId, const TaskId(13));
+    expect(reorder.destinationTaskListId, const TaskListId(7));
+    expect(reorder.previousTaskId, isNull);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Move to list'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(ListTile, 'Synthetic archive'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final crossList = fixture.tasks.applied.last as MoveTaskCommand;
+    expect(crossList.taskId, const TaskId(13));
+    expect(crossList.destinationTaskListId, const TaskListId(8));
+    expect(crossList.parentTaskId, isNull);
   });
 
   testWidgets('Refresh button invokes the ViewModel foreground action', (
@@ -602,6 +651,12 @@ final _snapshot = CachedTasksSnapshot(
       accountId: AccountId(1),
       remoteId: TaskListRemoteId('synthetic-list'),
       title: 'Synthetic inbox',
+    ),
+    CachedTaskList(
+      id: TaskListId(8),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-archive'),
+      title: 'Synthetic archive',
     ),
   ],
   tasks: <CachedTask>[

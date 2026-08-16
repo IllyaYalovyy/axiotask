@@ -486,6 +486,12 @@ final _hierarchySnapshot = CachedTasksSnapshot(
       remoteId: TaskListRemoteId('synthetic-hierarchy-list'),
       title: 'Synthetic hierarchy',
     ),
+    CachedTaskList(
+      id: TaskListId(8),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-hierarchy-archive'),
+      title: 'Synthetic archive',
+    ),
   ],
   tasks: const <CachedTask>[
     CachedTask(

@@ -560,7 +560,7 @@ void main() {
   );
 
   test(
-    'local hierarchy projection survives read-back without remote MOVE',
+    'Google sibling-order change supersedes pending local hierarchy',
     () async {
       final remote = _ScriptedReadService(
         taskListPages: <RemotePage<RemoteTaskList>>[
@@ -645,7 +645,7 @@ void main() {
       final projected = (await harness.snapshot()).tasks.singleWhere(
         (value) => value.id == task,
       );
-      expect(projected.parentTaskId, parent);
+      expect(projected.parentTaskId, isNull);
       expect(
         (await cache.readTaskRemoteBase(harness.accountId, task))?.parentTaskId,
         isNull,

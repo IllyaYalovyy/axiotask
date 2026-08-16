@@ -21,7 +21,7 @@ import 'package:integration_test/integration_test.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('one-level hierarchy remains actionable after Linux restart', (
+  testWidgets('task detail hierarchy and ordering survive Linux restart', (
     tester,
   ) async {
     final root = await Directory.systemTemp.createTemp(
@@ -42,6 +42,11 @@ void main() {
       accountId: account,
       remoteId: const TaskListRemoteId('hierarchy-list'),
       title: 'Hierarchy list',
+    );
+    final archive = await cache.putTaskList(
+      accountId: account,
+      remoteId: const TaskListRemoteId('hierarchy-archive'),
+      title: 'Hierarchy archive',
     );
     final parent = await _putTask(
       cache,
@@ -107,14 +112,25 @@ void main() {
     expect(find.widgetWithText(OutlinedButton, 'Promote'), findsOneWidget);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Promote'));
     await tester.pumpAndSettle();
+    expect(find.widgetWithText(OutlinedButton, 'Move down'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Move down'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Move to list'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(ListTile, 'Hierarchy archive'),
+      ),
+    );
+    await tester.pumpAndSettle();
 
     final snapshot = await tasks
         .watchTasks(TasksQuery(accountId: account))
         .first;
-    expect(
-      snapshot.tasks.singleWhere((task) => task.id == leaf).parentTaskId,
-      isNull,
-    );
+    final moved = snapshot.tasks.singleWhere((task) => task.id == leaf);
+    expect(moved.parentTaskId, isNull);
+    expect(moved.taskListId, archive);
     expect(find.text('Restarted subtask'), findsWidgets);
   });
 }

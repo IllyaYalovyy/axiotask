@@ -4190,6 +4190,66 @@ class $DesiredStateRowsTable extends DesiredStateRows
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _baseTaskListIdMeta = const VerificationMeta(
+    'baseTaskListId',
+  );
+  @override
+  late final GeneratedColumn<int> baseTaskListId = GeneratedColumn<int>(
+    'base_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseParentTaskIdMeta = const VerificationMeta(
+    'baseParentTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> baseParentTaskId = GeneratedColumn<int>(
+    'base_parent_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _basePreviousTaskIdMeta =
+      const VerificationMeta('basePreviousTaskId');
+  @override
+  late final GeneratedColumn<int> basePreviousTaskId = GeneratedColumn<int>(
+    'base_previous_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _basePositionMeta = const VerificationMeta(
+    'basePosition',
+  );
+  @override
+  late final GeneratedColumn<String> basePosition = GeneratedColumn<String>(
+    'base_position',
+    aliasedName,
+    true,
+    check: () =>
+        basePosition.isNull() |
+        ComparableExpr(basePosition.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseSiblingOrderMeta = const VerificationMeta(
+    'baseSiblingOrder',
+  );
+  @override
+  late final GeneratedColumn<String> baseSiblingOrder = GeneratedColumn<String>(
+    'base_sibling_order',
+    aliasedName,
+    true,
+    check: () =>
+        baseSiblingOrder.isNull() |
+        ComparableExpr(baseSiblingOrder.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _failureCodeMeta = const VerificationMeta(
     'failureCode',
   );
@@ -4259,6 +4319,11 @@ class $DesiredStateRowsTable extends DesiredStateRows
     baseNotes,
     baseStatus,
     baseDueEpochDay,
+    baseTaskListId,
+    baseParentTaskId,
+    basePreviousTaskId,
+    basePosition,
+    baseSiblingOrder,
     failureCode,
     createdAt,
     lastTransitionAt,
@@ -4517,6 +4582,51 @@ class $DesiredStateRowsTable extends DesiredStateRows
         ),
       );
     }
+    if (data.containsKey('base_task_list_id')) {
+      context.handle(
+        _baseTaskListIdMeta,
+        baseTaskListId.isAcceptableOrUnknown(
+          data['base_task_list_id']!,
+          _baseTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_parent_task_id')) {
+      context.handle(
+        _baseParentTaskIdMeta,
+        baseParentTaskId.isAcceptableOrUnknown(
+          data['base_parent_task_id']!,
+          _baseParentTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_previous_task_id')) {
+      context.handle(
+        _basePreviousTaskIdMeta,
+        basePreviousTaskId.isAcceptableOrUnknown(
+          data['base_previous_task_id']!,
+          _basePreviousTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_position')) {
+      context.handle(
+        _basePositionMeta,
+        basePosition.isAcceptableOrUnknown(
+          data['base_position']!,
+          _basePositionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_sibling_order')) {
+      context.handle(
+        _baseSiblingOrderMeta,
+        baseSiblingOrder.isAcceptableOrUnknown(
+          data['base_sibling_order']!,
+          _baseSiblingOrderMeta,
+        ),
+      );
+    }
     if (data.containsKey('failure_code')) {
       context.handle(
         _failureCodeMeta,
@@ -4679,6 +4789,26 @@ class $DesiredStateRowsTable extends DesiredStateRows
         DriftSqlType.int,
         data['${effectivePrefix}base_due_epoch_day'],
       ),
+      baseTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_task_list_id'],
+      ),
+      baseParentTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_parent_task_id'],
+      ),
+      basePreviousTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_previous_task_id'],
+      ),
+      basePosition: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_position'],
+      ),
+      baseSiblingOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_sibling_order'],
+      ),
       failureCode: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}failure_code'],
@@ -4731,6 +4861,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
   final String? baseNotes;
   final String? baseStatus;
   final int? baseDueEpochDay;
+  final int? baseTaskListId;
+  final int? baseParentTaskId;
+  final int? basePreviousTaskId;
+  final String? basePosition;
+  final String? baseSiblingOrder;
   final String? failureCode;
   final DateTime createdAt;
   final DateTime lastTransitionAt;
@@ -4765,6 +4900,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     this.baseNotes,
     this.baseStatus,
     this.baseDueEpochDay,
+    this.baseTaskListId,
+    this.baseParentTaskId,
+    this.basePreviousTaskId,
+    this.basePosition,
+    this.baseSiblingOrder,
     this.failureCode,
     required this.createdAt,
     required this.lastTransitionAt,
@@ -4841,6 +4981,21 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     }
     if (!nullToAbsent || baseDueEpochDay != null) {
       map['base_due_epoch_day'] = Variable<int>(baseDueEpochDay);
+    }
+    if (!nullToAbsent || baseTaskListId != null) {
+      map['base_task_list_id'] = Variable<int>(baseTaskListId);
+    }
+    if (!nullToAbsent || baseParentTaskId != null) {
+      map['base_parent_task_id'] = Variable<int>(baseParentTaskId);
+    }
+    if (!nullToAbsent || basePreviousTaskId != null) {
+      map['base_previous_task_id'] = Variable<int>(basePreviousTaskId);
+    }
+    if (!nullToAbsent || basePosition != null) {
+      map['base_position'] = Variable<String>(basePosition);
+    }
+    if (!nullToAbsent || baseSiblingOrder != null) {
+      map['base_sibling_order'] = Variable<String>(baseSiblingOrder);
     }
     if (!nullToAbsent || failureCode != null) {
       map['failure_code'] = Variable<String>(failureCode);
@@ -4921,6 +5076,21 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       baseDueEpochDay: baseDueEpochDay == null && nullToAbsent
           ? const Value.absent()
           : Value(baseDueEpochDay),
+      baseTaskListId: baseTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseTaskListId),
+      baseParentTaskId: baseParentTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseParentTaskId),
+      basePreviousTaskId: basePreviousTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(basePreviousTaskId),
+      basePosition: basePosition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(basePosition),
+      baseSiblingOrder: baseSiblingOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseSiblingOrder),
       failureCode: failureCode == null && nullToAbsent
           ? const Value.absent()
           : Value(failureCode),
@@ -4975,6 +5145,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       baseNotes: serializer.fromJson<String?>(json['baseNotes']),
       baseStatus: serializer.fromJson<String?>(json['baseStatus']),
       baseDueEpochDay: serializer.fromJson<int?>(json['baseDueEpochDay']),
+      baseTaskListId: serializer.fromJson<int?>(json['baseTaskListId']),
+      baseParentTaskId: serializer.fromJson<int?>(json['baseParentTaskId']),
+      basePreviousTaskId: serializer.fromJson<int?>(json['basePreviousTaskId']),
+      basePosition: serializer.fromJson<String?>(json['basePosition']),
+      baseSiblingOrder: serializer.fromJson<String?>(json['baseSiblingOrder']),
       failureCode: serializer.fromJson<String?>(json['failureCode']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       lastTransitionAt: serializer.fromJson<DateTime>(json['lastTransitionAt']),
@@ -5016,6 +5191,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       'baseNotes': serializer.toJson<String?>(baseNotes),
       'baseStatus': serializer.toJson<String?>(baseStatus),
       'baseDueEpochDay': serializer.toJson<int?>(baseDueEpochDay),
+      'baseTaskListId': serializer.toJson<int?>(baseTaskListId),
+      'baseParentTaskId': serializer.toJson<int?>(baseParentTaskId),
+      'basePreviousTaskId': serializer.toJson<int?>(basePreviousTaskId),
+      'basePosition': serializer.toJson<String?>(basePosition),
+      'baseSiblingOrder': serializer.toJson<String?>(baseSiblingOrder),
       'failureCode': serializer.toJson<String?>(failureCode),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'lastTransitionAt': serializer.toJson<DateTime>(lastTransitionAt),
@@ -5053,6 +5233,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     Value<String?> baseNotes = const Value.absent(),
     Value<String?> baseStatus = const Value.absent(),
     Value<int?> baseDueEpochDay = const Value.absent(),
+    Value<int?> baseTaskListId = const Value.absent(),
+    Value<int?> baseParentTaskId = const Value.absent(),
+    Value<int?> basePreviousTaskId = const Value.absent(),
+    Value<String?> basePosition = const Value.absent(),
+    Value<String?> baseSiblingOrder = const Value.absent(),
     Value<String?> failureCode = const Value.absent(),
     DateTime? createdAt,
     DateTime? lastTransitionAt,
@@ -5103,6 +5288,19 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     baseDueEpochDay: baseDueEpochDay.present
         ? baseDueEpochDay.value
         : this.baseDueEpochDay,
+    baseTaskListId: baseTaskListId.present
+        ? baseTaskListId.value
+        : this.baseTaskListId,
+    baseParentTaskId: baseParentTaskId.present
+        ? baseParentTaskId.value
+        : this.baseParentTaskId,
+    basePreviousTaskId: basePreviousTaskId.present
+        ? basePreviousTaskId.value
+        : this.basePreviousTaskId,
+    basePosition: basePosition.present ? basePosition.value : this.basePosition,
+    baseSiblingOrder: baseSiblingOrder.present
+        ? baseSiblingOrder.value
+        : this.baseSiblingOrder,
     failureCode: failureCode.present ? failureCode.value : this.failureCode,
     createdAt: createdAt ?? this.createdAt,
     lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
@@ -5177,6 +5375,21 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       baseDueEpochDay: data.baseDueEpochDay.present
           ? data.baseDueEpochDay.value
           : this.baseDueEpochDay,
+      baseTaskListId: data.baseTaskListId.present
+          ? data.baseTaskListId.value
+          : this.baseTaskListId,
+      baseParentTaskId: data.baseParentTaskId.present
+          ? data.baseParentTaskId.value
+          : this.baseParentTaskId,
+      basePreviousTaskId: data.basePreviousTaskId.present
+          ? data.basePreviousTaskId.value
+          : this.basePreviousTaskId,
+      basePosition: data.basePosition.present
+          ? data.basePosition.value
+          : this.basePosition,
+      baseSiblingOrder: data.baseSiblingOrder.present
+          ? data.baseSiblingOrder.value
+          : this.baseSiblingOrder,
       failureCode: data.failureCode.present
           ? data.failureCode.value
           : this.failureCode,
@@ -5220,6 +5433,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           ..write('baseNotes: $baseNotes, ')
           ..write('baseStatus: $baseStatus, ')
           ..write('baseDueEpochDay: $baseDueEpochDay, ')
+          ..write('baseTaskListId: $baseTaskListId, ')
+          ..write('baseParentTaskId: $baseParentTaskId, ')
+          ..write('basePreviousTaskId: $basePreviousTaskId, ')
+          ..write('basePosition: $basePosition, ')
+          ..write('baseSiblingOrder: $baseSiblingOrder, ')
           ..write('failureCode: $failureCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastTransitionAt: $lastTransitionAt')
@@ -5259,6 +5477,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     baseNotes,
     baseStatus,
     baseDueEpochDay,
+    baseTaskListId,
+    baseParentTaskId,
+    basePreviousTaskId,
+    basePosition,
+    baseSiblingOrder,
     failureCode,
     createdAt,
     lastTransitionAt,
@@ -5297,6 +5520,11 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           other.baseNotes == this.baseNotes &&
           other.baseStatus == this.baseStatus &&
           other.baseDueEpochDay == this.baseDueEpochDay &&
+          other.baseTaskListId == this.baseTaskListId &&
+          other.baseParentTaskId == this.baseParentTaskId &&
+          other.basePreviousTaskId == this.basePreviousTaskId &&
+          other.basePosition == this.basePosition &&
+          other.baseSiblingOrder == this.baseSiblingOrder &&
           other.failureCode == this.failureCode &&
           other.createdAt == this.createdAt &&
           other.lastTransitionAt == this.lastTransitionAt);
@@ -5333,6 +5561,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
   final Value<String?> baseNotes;
   final Value<String?> baseStatus;
   final Value<int?> baseDueEpochDay;
+  final Value<int?> baseTaskListId;
+  final Value<int?> baseParentTaskId;
+  final Value<int?> basePreviousTaskId;
+  final Value<String?> basePosition;
+  final Value<String?> baseSiblingOrder;
   final Value<String?> failureCode;
   final Value<DateTime> createdAt;
   final Value<DateTime> lastTransitionAt;
@@ -5367,6 +5600,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.baseNotes = const Value.absent(),
     this.baseStatus = const Value.absent(),
     this.baseDueEpochDay = const Value.absent(),
+    this.baseTaskListId = const Value.absent(),
+    this.baseParentTaskId = const Value.absent(),
+    this.basePreviousTaskId = const Value.absent(),
+    this.basePosition = const Value.absent(),
+    this.baseSiblingOrder = const Value.absent(),
     this.failureCode = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.lastTransitionAt = const Value.absent(),
@@ -5402,6 +5640,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.baseNotes = const Value.absent(),
     this.baseStatus = const Value.absent(),
     this.baseDueEpochDay = const Value.absent(),
+    this.baseTaskListId = const Value.absent(),
+    this.baseParentTaskId = const Value.absent(),
+    this.basePreviousTaskId = const Value.absent(),
+    this.basePosition = const Value.absent(),
+    this.baseSiblingOrder = const Value.absent(),
     this.failureCode = const Value.absent(),
     required DateTime createdAt,
     required DateTime lastTransitionAt,
@@ -5445,6 +5688,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Expression<String>? baseNotes,
     Expression<String>? baseStatus,
     Expression<int>? baseDueEpochDay,
+    Expression<int>? baseTaskListId,
+    Expression<int>? baseParentTaskId,
+    Expression<int>? basePreviousTaskId,
+    Expression<String>? basePosition,
+    Expression<String>? baseSiblingOrder,
     Expression<String>? failureCode,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? lastTransitionAt,
@@ -5485,6 +5733,12 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       if (baseNotes != null) 'base_notes': baseNotes,
       if (baseStatus != null) 'base_status': baseStatus,
       if (baseDueEpochDay != null) 'base_due_epoch_day': baseDueEpochDay,
+      if (baseTaskListId != null) 'base_task_list_id': baseTaskListId,
+      if (baseParentTaskId != null) 'base_parent_task_id': baseParentTaskId,
+      if (basePreviousTaskId != null)
+        'base_previous_task_id': basePreviousTaskId,
+      if (basePosition != null) 'base_position': basePosition,
+      if (baseSiblingOrder != null) 'base_sibling_order': baseSiblingOrder,
       if (failureCode != null) 'failure_code': failureCode,
       if (createdAt != null) 'created_at': createdAt,
       if (lastTransitionAt != null) 'last_transition_at': lastTransitionAt,
@@ -5522,6 +5776,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Value<String?>? baseNotes,
     Value<String?>? baseStatus,
     Value<int?>? baseDueEpochDay,
+    Value<int?>? baseTaskListId,
+    Value<int?>? baseParentTaskId,
+    Value<int?>? basePreviousTaskId,
+    Value<String?>? basePosition,
+    Value<String?>? baseSiblingOrder,
     Value<String?>? failureCode,
     Value<DateTime>? createdAt,
     Value<DateTime>? lastTransitionAt,
@@ -5559,6 +5818,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       baseNotes: baseNotes ?? this.baseNotes,
       baseStatus: baseStatus ?? this.baseStatus,
       baseDueEpochDay: baseDueEpochDay ?? this.baseDueEpochDay,
+      baseTaskListId: baseTaskListId ?? this.baseTaskListId,
+      baseParentTaskId: baseParentTaskId ?? this.baseParentTaskId,
+      basePreviousTaskId: basePreviousTaskId ?? this.basePreviousTaskId,
+      basePosition: basePosition ?? this.basePosition,
+      baseSiblingOrder: baseSiblingOrder ?? this.baseSiblingOrder,
       failureCode: failureCode ?? this.failureCode,
       createdAt: createdAt ?? this.createdAt,
       lastTransitionAt: lastTransitionAt ?? this.lastTransitionAt,
@@ -5664,6 +5928,21 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     if (baseDueEpochDay.present) {
       map['base_due_epoch_day'] = Variable<int>(baseDueEpochDay.value);
     }
+    if (baseTaskListId.present) {
+      map['base_task_list_id'] = Variable<int>(baseTaskListId.value);
+    }
+    if (baseParentTaskId.present) {
+      map['base_parent_task_id'] = Variable<int>(baseParentTaskId.value);
+    }
+    if (basePreviousTaskId.present) {
+      map['base_previous_task_id'] = Variable<int>(basePreviousTaskId.value);
+    }
+    if (basePosition.present) {
+      map['base_position'] = Variable<String>(basePosition.value);
+    }
+    if (baseSiblingOrder.present) {
+      map['base_sibling_order'] = Variable<String>(baseSiblingOrder.value);
+    }
     if (failureCode.present) {
       map['failure_code'] = Variable<String>(failureCode.value);
     }
@@ -5709,6 +5988,11 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
           ..write('baseNotes: $baseNotes, ')
           ..write('baseStatus: $baseStatus, ')
           ..write('baseDueEpochDay: $baseDueEpochDay, ')
+          ..write('baseTaskListId: $baseTaskListId, ')
+          ..write('baseParentTaskId: $baseParentTaskId, ')
+          ..write('basePreviousTaskId: $basePreviousTaskId, ')
+          ..write('basePosition: $basePosition, ')
+          ..write('baseSiblingOrder: $baseSiblingOrder, ')
           ..write('failureCode: $failureCode, ')
           ..write('createdAt: $createdAt, ')
           ..write('lastTransitionAt: $lastTransitionAt')
@@ -6360,6 +6644,60 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _baseTaskListIdMeta = const VerificationMeta(
+    'baseTaskListId',
+  );
+  @override
+  late final GeneratedColumn<int> baseTaskListId = GeneratedColumn<int>(
+    'base_task_list_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseParentTaskIdMeta = const VerificationMeta(
+    'baseParentTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> baseParentTaskId = GeneratedColumn<int>(
+    'base_parent_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _basePreviousTaskIdMeta =
+      const VerificationMeta('basePreviousTaskId');
+  @override
+  late final GeneratedColumn<int> basePreviousTaskId = GeneratedColumn<int>(
+    'base_previous_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _basePositionMeta = const VerificationMeta(
+    'basePosition',
+  );
+  @override
+  late final GeneratedColumn<String> basePosition = GeneratedColumn<String>(
+    'base_position',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _baseSiblingOrderMeta = const VerificationMeta(
+    'baseSiblingOrder',
+  );
+  @override
+  late final GeneratedColumn<String> baseSiblingOrder = GeneratedColumn<String>(
+    'base_sibling_order',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _notBeforeMeta = const VerificationMeta(
     'notBefore',
   );
@@ -6444,6 +6782,11 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    baseTaskListId,
+    baseParentTaskId,
+    basePreviousTaskId,
+    basePosition,
+    baseSiblingOrder,
     notBefore,
     state,
     failureCode,
@@ -6596,6 +6939,51 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
         baseTitle.isAcceptableOrUnknown(data['base_title']!, _baseTitleMeta),
       );
     }
+    if (data.containsKey('base_task_list_id')) {
+      context.handle(
+        _baseTaskListIdMeta,
+        baseTaskListId.isAcceptableOrUnknown(
+          data['base_task_list_id']!,
+          _baseTaskListIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_parent_task_id')) {
+      context.handle(
+        _baseParentTaskIdMeta,
+        baseParentTaskId.isAcceptableOrUnknown(
+          data['base_parent_task_id']!,
+          _baseParentTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_previous_task_id')) {
+      context.handle(
+        _basePreviousTaskIdMeta,
+        basePreviousTaskId.isAcceptableOrUnknown(
+          data['base_previous_task_id']!,
+          _basePreviousTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_position')) {
+      context.handle(
+        _basePositionMeta,
+        basePosition.isAcceptableOrUnknown(
+          data['base_position']!,
+          _basePositionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('base_sibling_order')) {
+      context.handle(
+        _baseSiblingOrderMeta,
+        baseSiblingOrder.isAcceptableOrUnknown(
+          data['base_sibling_order']!,
+          _baseSiblingOrderMeta,
+        ),
+      );
+    }
     if (data.containsKey('not_before')) {
       context.handle(
         _notBeforeMeta,
@@ -6719,6 +7107,26 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
         DriftSqlType.string,
         data['${effectivePrefix}base_title'],
       ),
+      baseTaskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_task_list_id'],
+      ),
+      baseParentTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_parent_task_id'],
+      ),
+      basePreviousTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}base_previous_task_id'],
+      ),
+      basePosition: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_position'],
+      ),
+      baseSiblingOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_sibling_order'],
+      ),
       notBefore: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}not_before'],
@@ -6767,6 +7175,11 @@ class DesiredStateAttemptRow extends DataClass
   final DateTime? baseRemoteUpdatedAt;
   final String? baseObservedPublicationId;
   final String? baseTitle;
+  final int? baseTaskListId;
+  final int? baseParentTaskId;
+  final int? basePreviousTaskId;
+  final String? basePosition;
+  final String? baseSiblingOrder;
   final DateTime? notBefore;
   final String state;
   final String? failureCode;
@@ -6790,6 +7203,11 @@ class DesiredStateAttemptRow extends DataClass
     this.baseRemoteUpdatedAt,
     this.baseObservedPublicationId,
     this.baseTitle,
+    this.baseTaskListId,
+    this.baseParentTaskId,
+    this.basePreviousTaskId,
+    this.basePosition,
+    this.baseSiblingOrder,
     this.notBefore,
     required this.state,
     this.failureCode,
@@ -6841,6 +7259,21 @@ class DesiredStateAttemptRow extends DataClass
     }
     if (!nullToAbsent || baseTitle != null) {
       map['base_title'] = Variable<String>(baseTitle);
+    }
+    if (!nullToAbsent || baseTaskListId != null) {
+      map['base_task_list_id'] = Variable<int>(baseTaskListId);
+    }
+    if (!nullToAbsent || baseParentTaskId != null) {
+      map['base_parent_task_id'] = Variable<int>(baseParentTaskId);
+    }
+    if (!nullToAbsent || basePreviousTaskId != null) {
+      map['base_previous_task_id'] = Variable<int>(basePreviousTaskId);
+    }
+    if (!nullToAbsent || basePosition != null) {
+      map['base_position'] = Variable<String>(basePosition);
+    }
+    if (!nullToAbsent || baseSiblingOrder != null) {
+      map['base_sibling_order'] = Variable<String>(baseSiblingOrder);
     }
     if (!nullToAbsent || notBefore != null) {
       map['not_before'] = Variable<DateTime>(notBefore);
@@ -6898,6 +7331,21 @@ class DesiredStateAttemptRow extends DataClass
       baseTitle: baseTitle == null && nullToAbsent
           ? const Value.absent()
           : Value(baseTitle),
+      baseTaskListId: baseTaskListId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseTaskListId),
+      baseParentTaskId: baseParentTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseParentTaskId),
+      basePreviousTaskId: basePreviousTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(basePreviousTaskId),
+      basePosition: basePosition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(basePosition),
+      baseSiblingOrder: baseSiblingOrder == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseSiblingOrder),
       notBefore: notBefore == null && nullToAbsent
           ? const Value.absent()
           : Value(notBefore),
@@ -6941,6 +7389,11 @@ class DesiredStateAttemptRow extends DataClass
         json['baseObservedPublicationId'],
       ),
       baseTitle: serializer.fromJson<String?>(json['baseTitle']),
+      baseTaskListId: serializer.fromJson<int?>(json['baseTaskListId']),
+      baseParentTaskId: serializer.fromJson<int?>(json['baseParentTaskId']),
+      basePreviousTaskId: serializer.fromJson<int?>(json['basePreviousTaskId']),
+      basePosition: serializer.fromJson<String?>(json['basePosition']),
+      baseSiblingOrder: serializer.fromJson<String?>(json['baseSiblingOrder']),
       notBefore: serializer.fromJson<DateTime?>(json['notBefore']),
       state: serializer.fromJson<String>(json['state']),
       failureCode: serializer.fromJson<String?>(json['failureCode']),
@@ -6971,6 +7424,11 @@ class DesiredStateAttemptRow extends DataClass
         baseObservedPublicationId,
       ),
       'baseTitle': serializer.toJson<String?>(baseTitle),
+      'baseTaskListId': serializer.toJson<int?>(baseTaskListId),
+      'baseParentTaskId': serializer.toJson<int?>(baseParentTaskId),
+      'basePreviousTaskId': serializer.toJson<int?>(basePreviousTaskId),
+      'basePosition': serializer.toJson<String?>(basePosition),
+      'baseSiblingOrder': serializer.toJson<String?>(baseSiblingOrder),
       'notBefore': serializer.toJson<DateTime?>(notBefore),
       'state': serializer.toJson<String>(state),
       'failureCode': serializer.toJson<String?>(failureCode),
@@ -6997,6 +7455,11 @@ class DesiredStateAttemptRow extends DataClass
     Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
     Value<String?> baseObservedPublicationId = const Value.absent(),
     Value<String?> baseTitle = const Value.absent(),
+    Value<int?> baseTaskListId = const Value.absent(),
+    Value<int?> baseParentTaskId = const Value.absent(),
+    Value<int?> basePreviousTaskId = const Value.absent(),
+    Value<String?> basePosition = const Value.absent(),
+    Value<String?> baseSiblingOrder = const Value.absent(),
     Value<DateTime?> notBefore = const Value.absent(),
     String? state,
     Value<String?> failureCode = const Value.absent(),
@@ -7030,6 +7493,19 @@ class DesiredStateAttemptRow extends DataClass
         ? baseObservedPublicationId.value
         : this.baseObservedPublicationId,
     baseTitle: baseTitle.present ? baseTitle.value : this.baseTitle,
+    baseTaskListId: baseTaskListId.present
+        ? baseTaskListId.value
+        : this.baseTaskListId,
+    baseParentTaskId: baseParentTaskId.present
+        ? baseParentTaskId.value
+        : this.baseParentTaskId,
+    basePreviousTaskId: basePreviousTaskId.present
+        ? basePreviousTaskId.value
+        : this.basePreviousTaskId,
+    basePosition: basePosition.present ? basePosition.value : this.basePosition,
+    baseSiblingOrder: baseSiblingOrder.present
+        ? baseSiblingOrder.value
+        : this.baseSiblingOrder,
     notBefore: notBefore.present ? notBefore.value : this.notBefore,
     state: state ?? this.state,
     failureCode: failureCode.present ? failureCode.value : this.failureCode,
@@ -7077,6 +7553,21 @@ class DesiredStateAttemptRow extends DataClass
           ? data.baseObservedPublicationId.value
           : this.baseObservedPublicationId,
       baseTitle: data.baseTitle.present ? data.baseTitle.value : this.baseTitle,
+      baseTaskListId: data.baseTaskListId.present
+          ? data.baseTaskListId.value
+          : this.baseTaskListId,
+      baseParentTaskId: data.baseParentTaskId.present
+          ? data.baseParentTaskId.value
+          : this.baseParentTaskId,
+      basePreviousTaskId: data.basePreviousTaskId.present
+          ? data.basePreviousTaskId.value
+          : this.basePreviousTaskId,
+      basePosition: data.basePosition.present
+          ? data.basePosition.value
+          : this.basePosition,
+      baseSiblingOrder: data.baseSiblingOrder.present
+          ? data.baseSiblingOrder.value
+          : this.baseSiblingOrder,
       notBefore: data.notBefore.present ? data.notBefore.value : this.notBefore,
       state: data.state.present ? data.state.value : this.state,
       failureCode: data.failureCode.present
@@ -7109,6 +7600,11 @@ class DesiredStateAttemptRow extends DataClass
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('baseTaskListId: $baseTaskListId, ')
+          ..write('baseParentTaskId: $baseParentTaskId, ')
+          ..write('basePreviousTaskId: $basePreviousTaskId, ')
+          ..write('basePosition: $basePosition, ')
+          ..write('baseSiblingOrder: $baseSiblingOrder, ')
           ..write('notBefore: $notBefore, ')
           ..write('state: $state, ')
           ..write('failureCode: $failureCode, ')
@@ -7137,6 +7633,11 @@ class DesiredStateAttemptRow extends DataClass
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    baseTaskListId,
+    baseParentTaskId,
+    basePreviousTaskId,
+    basePosition,
+    baseSiblingOrder,
     notBefore,
     state,
     failureCode,
@@ -7164,6 +7665,11 @@ class DesiredStateAttemptRow extends DataClass
           other.baseRemoteUpdatedAt == this.baseRemoteUpdatedAt &&
           other.baseObservedPublicationId == this.baseObservedPublicationId &&
           other.baseTitle == this.baseTitle &&
+          other.baseTaskListId == this.baseTaskListId &&
+          other.baseParentTaskId == this.baseParentTaskId &&
+          other.basePreviousTaskId == this.basePreviousTaskId &&
+          other.basePosition == this.basePosition &&
+          other.baseSiblingOrder == this.baseSiblingOrder &&
           other.notBefore == this.notBefore &&
           other.state == this.state &&
           other.failureCode == this.failureCode &&
@@ -7190,6 +7696,11 @@ class DesiredStateAttemptRowsCompanion
   final Value<DateTime?> baseRemoteUpdatedAt;
   final Value<String?> baseObservedPublicationId;
   final Value<String?> baseTitle;
+  final Value<int?> baseTaskListId;
+  final Value<int?> baseParentTaskId;
+  final Value<int?> basePreviousTaskId;
+  final Value<String?> basePosition;
+  final Value<String?> baseSiblingOrder;
   final Value<DateTime?> notBefore;
   final Value<String> state;
   final Value<String?> failureCode;
@@ -7213,6 +7724,11 @@ class DesiredStateAttemptRowsCompanion
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.baseTaskListId = const Value.absent(),
+    this.baseParentTaskId = const Value.absent(),
+    this.basePreviousTaskId = const Value.absent(),
+    this.basePosition = const Value.absent(),
+    this.baseSiblingOrder = const Value.absent(),
     this.notBefore = const Value.absent(),
     this.state = const Value.absent(),
     this.failureCode = const Value.absent(),
@@ -7237,6 +7753,11 @@ class DesiredStateAttemptRowsCompanion
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.baseTaskListId = const Value.absent(),
+    this.baseParentTaskId = const Value.absent(),
+    this.basePreviousTaskId = const Value.absent(),
+    this.basePosition = const Value.absent(),
+    this.baseSiblingOrder = const Value.absent(),
     this.notBefore = const Value.absent(),
     required String state,
     this.failureCode = const Value.absent(),
@@ -7267,6 +7788,11 @@ class DesiredStateAttemptRowsCompanion
     Expression<DateTime>? baseRemoteUpdatedAt,
     Expression<String>? baseObservedPublicationId,
     Expression<String>? baseTitle,
+    Expression<int>? baseTaskListId,
+    Expression<int>? baseParentTaskId,
+    Expression<int>? basePreviousTaskId,
+    Expression<String>? basePosition,
+    Expression<String>? baseSiblingOrder,
     Expression<DateTime>? notBefore,
     Expression<String>? state,
     Expression<String>? failureCode,
@@ -7295,6 +7821,12 @@ class DesiredStateAttemptRowsCompanion
       if (baseObservedPublicationId != null)
         'base_observed_publication_id': baseObservedPublicationId,
       if (baseTitle != null) 'base_title': baseTitle,
+      if (baseTaskListId != null) 'base_task_list_id': baseTaskListId,
+      if (baseParentTaskId != null) 'base_parent_task_id': baseParentTaskId,
+      if (basePreviousTaskId != null)
+        'base_previous_task_id': basePreviousTaskId,
+      if (basePosition != null) 'base_position': basePosition,
+      if (baseSiblingOrder != null) 'base_sibling_order': baseSiblingOrder,
       if (notBefore != null) 'not_before': notBefore,
       if (state != null) 'state': state,
       if (failureCode != null) 'failure_code': failureCode,
@@ -7321,6 +7853,11 @@ class DesiredStateAttemptRowsCompanion
     Value<DateTime?>? baseRemoteUpdatedAt,
     Value<String?>? baseObservedPublicationId,
     Value<String?>? baseTitle,
+    Value<int?>? baseTaskListId,
+    Value<int?>? baseParentTaskId,
+    Value<int?>? basePreviousTaskId,
+    Value<String?>? basePosition,
+    Value<String?>? baseSiblingOrder,
     Value<DateTime?>? notBefore,
     Value<String>? state,
     Value<String?>? failureCode,
@@ -7347,6 +7884,11 @@ class DesiredStateAttemptRowsCompanion
       baseObservedPublicationId:
           baseObservedPublicationId ?? this.baseObservedPublicationId,
       baseTitle: baseTitle ?? this.baseTitle,
+      baseTaskListId: baseTaskListId ?? this.baseTaskListId,
+      baseParentTaskId: baseParentTaskId ?? this.baseParentTaskId,
+      basePreviousTaskId: basePreviousTaskId ?? this.basePreviousTaskId,
+      basePosition: basePosition ?? this.basePosition,
+      baseSiblingOrder: baseSiblingOrder ?? this.baseSiblingOrder,
       notBefore: notBefore ?? this.notBefore,
       state: state ?? this.state,
       failureCode: failureCode ?? this.failureCode,
@@ -7415,6 +7957,21 @@ class DesiredStateAttemptRowsCompanion
     if (baseTitle.present) {
       map['base_title'] = Variable<String>(baseTitle.value);
     }
+    if (baseTaskListId.present) {
+      map['base_task_list_id'] = Variable<int>(baseTaskListId.value);
+    }
+    if (baseParentTaskId.present) {
+      map['base_parent_task_id'] = Variable<int>(baseParentTaskId.value);
+    }
+    if (basePreviousTaskId.present) {
+      map['base_previous_task_id'] = Variable<int>(basePreviousTaskId.value);
+    }
+    if (basePosition.present) {
+      map['base_position'] = Variable<String>(basePosition.value);
+    }
+    if (baseSiblingOrder.present) {
+      map['base_sibling_order'] = Variable<String>(baseSiblingOrder.value);
+    }
     if (notBefore.present) {
       map['not_before'] = Variable<DateTime>(notBefore.value);
     }
@@ -7453,6 +8010,11 @@ class DesiredStateAttemptRowsCompanion
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('baseTaskListId: $baseTaskListId, ')
+          ..write('baseParentTaskId: $baseParentTaskId, ')
+          ..write('basePreviousTaskId: $basePreviousTaskId, ')
+          ..write('basePosition: $basePosition, ')
+          ..write('baseSiblingOrder: $baseSiblingOrder, ')
           ..write('notBefore: $notBefore, ')
           ..write('state: $state, ')
           ..write('failureCode: $failureCode, ')
@@ -12396,6 +12958,11 @@ typedef $$DesiredStateRowsTableCreateCompanionBuilder =
       Value<String?> baseNotes,
       Value<String?> baseStatus,
       Value<int?> baseDueEpochDay,
+      Value<int?> baseTaskListId,
+      Value<int?> baseParentTaskId,
+      Value<int?> basePreviousTaskId,
+      Value<String?> basePosition,
+      Value<String?> baseSiblingOrder,
       Value<String?> failureCode,
       required DateTime createdAt,
       required DateTime lastTransitionAt,
@@ -12432,6 +12999,11 @@ typedef $$DesiredStateRowsTableUpdateCompanionBuilder =
       Value<String?> baseNotes,
       Value<String?> baseStatus,
       Value<int?> baseDueEpochDay,
+      Value<int?> baseTaskListId,
+      Value<int?> baseParentTaskId,
+      Value<int?> basePreviousTaskId,
+      Value<String?> basePosition,
+      Value<String?> baseSiblingOrder,
       Value<String?> failureCode,
       Value<DateTime> createdAt,
       Value<DateTime> lastTransitionAt,
@@ -12593,6 +13165,31 @@ class $$DesiredStateRowsTableFilterComposer
 
   ColumnFilters<int> get baseDueEpochDay => $composableBuilder(
     column: $table.baseDueEpochDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -12771,6 +13368,31 @@ class $$DesiredStateRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get failureCode => $composableBuilder(
     column: $table.failureCode,
     builder: (column) => ColumnOrderings(column),
@@ -12924,6 +13546,31 @@ class $$DesiredStateRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get failureCode => $composableBuilder(
     column: $table.failureCode,
     builder: (column) => column,
@@ -13005,6 +13652,11 @@ class $$DesiredStateRowsTableTableManager
                 Value<String?> baseNotes = const Value.absent(),
                 Value<String?> baseStatus = const Value.absent(),
                 Value<int?> baseDueEpochDay = const Value.absent(),
+                Value<int?> baseTaskListId = const Value.absent(),
+                Value<int?> baseParentTaskId = const Value.absent(),
+                Value<int?> basePreviousTaskId = const Value.absent(),
+                Value<String?> basePosition = const Value.absent(),
+                Value<String?> baseSiblingOrder = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> lastTransitionAt = const Value.absent(),
@@ -13039,6 +13691,11 @@ class $$DesiredStateRowsTableTableManager
                 baseNotes: baseNotes,
                 baseStatus: baseStatus,
                 baseDueEpochDay: baseDueEpochDay,
+                baseTaskListId: baseTaskListId,
+                baseParentTaskId: baseParentTaskId,
+                basePreviousTaskId: basePreviousTaskId,
+                basePosition: basePosition,
+                baseSiblingOrder: baseSiblingOrder,
                 failureCode: failureCode,
                 createdAt: createdAt,
                 lastTransitionAt: lastTransitionAt,
@@ -13075,6 +13732,11 @@ class $$DesiredStateRowsTableTableManager
                 Value<String?> baseNotes = const Value.absent(),
                 Value<String?> baseStatus = const Value.absent(),
                 Value<int?> baseDueEpochDay = const Value.absent(),
+                Value<int?> baseTaskListId = const Value.absent(),
+                Value<int?> baseParentTaskId = const Value.absent(),
+                Value<int?> basePreviousTaskId = const Value.absent(),
+                Value<String?> basePosition = const Value.absent(),
+                Value<String?> baseSiblingOrder = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime lastTransitionAt,
@@ -13109,6 +13771,11 @@ class $$DesiredStateRowsTableTableManager
                 baseNotes: baseNotes,
                 baseStatus: baseStatus,
                 baseDueEpochDay: baseDueEpochDay,
+                baseTaskListId: baseTaskListId,
+                baseParentTaskId: baseParentTaskId,
+                basePreviousTaskId: basePreviousTaskId,
+                basePosition: basePosition,
+                baseSiblingOrder: baseSiblingOrder,
                 failureCode: failureCode,
                 createdAt: createdAt,
                 lastTransitionAt: lastTransitionAt,
@@ -13397,6 +14064,11 @@ typedef $$DesiredStateAttemptRowsTableCreateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<int?> baseTaskListId,
+      Value<int?> baseParentTaskId,
+      Value<int?> basePreviousTaskId,
+      Value<String?> basePosition,
+      Value<String?> baseSiblingOrder,
       Value<DateTime?> notBefore,
       required String state,
       Value<String?> failureCode,
@@ -13422,6 +14094,11 @@ typedef $$DesiredStateAttemptRowsTableUpdateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<int?> baseTaskListId,
+      Value<int?> baseParentTaskId,
+      Value<int?> basePreviousTaskId,
+      Value<String?> basePosition,
+      Value<String?> baseSiblingOrder,
       Value<DateTime?> notBefore,
       Value<String> state,
       Value<String?> failureCode,
@@ -13520,6 +14197,31 @@ class $$DesiredStateAttemptRowsTableFilterComposer
 
   ColumnFilters<String> get baseTitle => $composableBuilder(
     column: $table.baseTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -13643,6 +14345,31 @@ class $$DesiredStateAttemptRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get notBefore => $composableBuilder(
     column: $table.notBefore,
     builder: (column) => ColumnOrderings(column),
@@ -13749,6 +14476,31 @@ class $$DesiredStateAttemptRowsTableAnnotationComposer
   GeneratedColumn<String> get baseTitle =>
       $composableBuilder(column: $table.baseTitle, builder: (column) => column);
 
+  GeneratedColumn<int> get baseTaskListId => $composableBuilder(
+    column: $table.baseTaskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get baseParentTaskId => $composableBuilder(
+    column: $table.baseParentTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get basePreviousTaskId => $composableBuilder(
+    column: $table.basePreviousTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get basePosition => $composableBuilder(
+    column: $table.basePosition,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseSiblingOrder => $composableBuilder(
+    column: $table.baseSiblingOrder,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get notBefore =>
       $composableBuilder(column: $table.notBefore, builder: (column) => column);
 
@@ -13832,6 +14584,11 @@ class $$DesiredStateAttemptRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<int?> baseTaskListId = const Value.absent(),
+                Value<int?> baseParentTaskId = const Value.absent(),
+                Value<int?> basePreviousTaskId = const Value.absent(),
+                Value<String?> basePosition = const Value.absent(),
+                Value<String?> baseSiblingOrder = const Value.absent(),
                 Value<DateTime?> notBefore = const Value.absent(),
                 Value<String> state = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
@@ -13855,6 +14612,11 @@ class $$DesiredStateAttemptRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                baseTaskListId: baseTaskListId,
+                baseParentTaskId: baseParentTaskId,
+                basePreviousTaskId: basePreviousTaskId,
+                basePosition: basePosition,
+                baseSiblingOrder: baseSiblingOrder,
                 notBefore: notBefore,
                 state: state,
                 failureCode: failureCode,
@@ -13880,6 +14642,11 @@ class $$DesiredStateAttemptRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<int?> baseTaskListId = const Value.absent(),
+                Value<int?> baseParentTaskId = const Value.absent(),
+                Value<int?> basePreviousTaskId = const Value.absent(),
+                Value<String?> basePosition = const Value.absent(),
+                Value<String?> baseSiblingOrder = const Value.absent(),
                 Value<DateTime?> notBefore = const Value.absent(),
                 required String state,
                 Value<String?> failureCode = const Value.absent(),
@@ -13903,6 +14670,11 @@ class $$DesiredStateAttemptRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                baseTaskListId: baseTaskListId,
+                baseParentTaskId: baseParentTaskId,
+                basePreviousTaskId: basePreviousTaskId,
+                basePosition: basePosition,
+                baseSiblingOrder: baseSiblingOrder,
                 notBefore: notBefore,
                 state: state,
                 failureCode: failureCode,

@@ -16,6 +16,7 @@ import 'delete_operations.dart';
 import 'phase.dart';
 import 'read_plan.dart';
 import 'run.dart';
+import 'structure_operations.dart';
 import 'update_operations.dart';
 
 final class SyncEngine {
@@ -49,10 +50,13 @@ final class SyncEngine {
     var resourceProjectionWrites = 0;
     var createOperations = 0;
     var updateOperations = 0;
+    var moveOperations = 0;
     var deleteOperations = 0;
     var googleWonReplacements = 0;
     final googleWonReplacementCounts = <ContentSupersessionKind, int>{};
     var confirmedUpdateReadBacks = 0;
+    var googleWonStructures = 0;
+    var confirmedStructureReadBacks = 0;
     var conditionalReplans = 0;
     Failure? firstFailure;
     var begun = false;
@@ -75,6 +79,7 @@ final class SyncEngine {
       resourceProjectionWrites: resourceProjectionWrites,
       createOperations: createOperations,
       updateOperations: updateOperations,
+      moveOperations: moveOperations,
       deleteOperations: deleteOperations,
       googleWonReplacements: googleWonReplacements,
       googleWonReplacementDetails: ContentSupersessionKind.values
@@ -87,6 +92,8 @@ final class SyncEngine {
           )
           .toList(growable: false),
       confirmedUpdateReadBacks: confirmedUpdateReadBacks,
+      googleWonStructures: googleWonStructures,
+      confirmedStructureReadBacks: confirmedStructureReadBacks,
       conditionalReplans: conditionalReplans,
     );
 
@@ -141,13 +148,17 @@ final class SyncEngine {
       );
     }
 
-    Future<Failure?> refetchTaskScope(UpdateOperationClaim claim) async {
+    Future<Failure?> refetchTaskScope({
+      required TaskListId taskListId,
+      required RemoteTaskListId taskListRemoteId,
+      required String reason,
+    }) async {
       final plan = TaskScopeReadPlan();
       PageToken? token;
       var pageIndex = 0;
       do {
         final result = await googleTasks.listTasks(
-          claim.taskListRemoteId,
+          taskListRemoteId,
           pageToken: token,
           cancellation: readCancellation,
         );
@@ -165,7 +176,7 @@ final class SyncEngine {
               recordUnsupported(error);
               return error.failure;
             }
-            final scope = 'tasks:${claim.taskListId.value}:conditional';
+            final scope = 'tasks:${taskListId.value}:$reason';
             if (await interrupted(
                   SyncRunBoundary(
                     kind: SyncRunBoundaryKind.beforePagePublication,
@@ -180,8 +191,8 @@ final class SyncEngine {
               accountId: request.accountId,
               runId: runId,
               taskList: PublishedTaskList(
-                localId: claim.taskListId,
-                remoteId: claim.taskListRemoteId,
+                localId: taskListId,
+                remoteId: taskListRemoteId,
               ),
               items: ready,
               nextPageToken: value.nextPageToken,
@@ -403,6 +414,17 @@ final class SyncEngine {
       runId: runId.value,
       reconciledAt: clock.now().toUtc(),
     );
+    final structureReconciliation = await store.reconcileStructure(
+      accountId: request.accountId,
+      runId: runId.value,
+      reconciledAt: clock.now().toUtc(),
+    );
+    confirmedStructureReadBacks += structureReconciliation.confirmedReadBacks;
+    googleWonStructures += structureReconciliation.supersessions.fold<int>(
+      0,
+      (count, result) => count + result.count,
+    );
+    firstFailure ??= structureReconciliation.failure;
     final reconciliation = await store.reconcileContent(
       accountId: request.accountId,
       runId: runId.value,
@@ -661,6 +683,148 @@ final class SyncEngine {
           throw StateError('Unsupported create operation mapping.');
       }
     }
+    final moveReplans = <RemoteTaskId, int>{};
+    moveLoop:
+    while (!stopOperations) {
+      if (await interrupted(
+            const SyncRunBoundary(
+              kind: SyncRunBoundaryKind.beforeOperationClaim,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+      final claim = await store.claimNextMove(
+        accountId: request.accountId,
+        runId: runId.value,
+        claimedAt: clock.now().toUtc(),
+      );
+      if (claim == null) break;
+      if (await interrupted(
+            SyncRunBoundary(
+              kind: SyncRunBoundaryKind.afterOperationClaim,
+              operationAttemptId: claim.attemptId,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+      moveOperations += 1;
+      final result = await googleTasks.moveTask(
+        const MoveOperationMapper().map(claim),
+      );
+      switch (result) {
+        case CommittedMutation<RemoteTask>(:final value):
+          if (value is! RemoteLiveTask ||
+              value.id != claim.taskRemoteId ||
+              value.parentId != claim.parentRemoteId) {
+            await store.resolveMoveFailure(
+              accountId: request.accountId,
+              claim: claim,
+              failure: _invalidMoveResponseFailure,
+              uncertain: true,
+              resolvedAt: clock.now().toUtc(),
+            );
+            firstFailure ??= _invalidMoveResponseFailure;
+            break;
+          }
+          if (await interrupted(
+                SyncRunBoundary(
+                  kind: SyncRunBoundaryKind.beforeRemoteAcknowledgement,
+                  operationAttemptId: claim.attemptId,
+                ),
+              )
+              case final interruption?) {
+            return interruption;
+          }
+          try {
+            await store.acknowledgeMove(
+              accountId: request.accountId,
+              claim: claim,
+              remote: value,
+              observationId: 'mutation:${runId.value}:${claim.attemptId}',
+              acknowledgedAt: clock.now().toUtc(),
+            );
+          } on Object {
+            firstFailure ??= _moveAcknowledgementFailure;
+            stopOperations = true;
+            break;
+          }
+          if (await interrupted(
+                SyncRunBoundary(
+                  kind: SyncRunBoundaryKind.afterRemoteAcknowledgement,
+                  operationAttemptId: claim.attemptId,
+                ),
+              )
+              case final interruption?) {
+            return interruption;
+          }
+        case RejectedMutation<RemoteTask>(:final error):
+          final canReplan =
+              error.kind == GoogleTasksErrorKind.conditional ||
+              error.kind == GoogleTasksErrorKind.notFound ||
+              error.kind == GoogleTasksErrorKind.permanent;
+          final count = (moveReplans[claim.taskRemoteId] ?? 0) + 1;
+          moveReplans[claim.taskRemoteId] = count;
+          if (canReplan && count <= _maximumConditionalReplans) {
+            conditionalReplans += 1;
+            await store.prepareMoveReplan(
+              accountId: request.accountId,
+              claim: claim,
+              replannedAt: clock.now().toUtc(),
+            );
+            var refetchFailure = await refetchTaskScope(
+              taskListId: claim.sourceTaskListId,
+              taskListRemoteId: claim.sourceTaskListRemoteId,
+              reason: 'move-replan',
+            );
+            if (refetchFailure == null &&
+                claim.destinationTaskListId != claim.sourceTaskListId) {
+              refetchFailure = await refetchTaskScope(
+                taskListId: claim.destinationTaskListId,
+                taskListRemoteId: claim.destinationTaskListRemoteId,
+                reason: 'move-replan',
+              );
+            }
+            if (refetchFailure != null) {
+              firstFailure ??= refetchFailure;
+              stopOperations = true;
+              break;
+            }
+            final replanned = await store.reconcileStructure(
+              accountId: request.accountId,
+              runId: runId.value,
+              reconciledAt: clock.now().toUtc(),
+            );
+            confirmedStructureReadBacks += replanned.confirmedReadBacks;
+            googleWonStructures += replanned.supersessions.fold<int>(
+              0,
+              (total, value) => total + value.count,
+            );
+            firstFailure ??= replanned.failure;
+            if (replanned.failure == null) continue moveLoop;
+            stopOperations = true;
+            break;
+          }
+          await store.resolveMoveFailure(
+            accountId: request.accountId,
+            claim: claim,
+            failure: error.failure,
+            uncertain: false,
+            resolvedAt: clock.now().toUtc(),
+          );
+          firstFailure ??= error.failure;
+        case UncertainMutation<RemoteTask>(:final error):
+          await store.resolveMoveFailure(
+            accountId: request.accountId,
+            claim: claim,
+            failure: error.failure,
+            uncertain: true,
+            resolvedAt: clock.now().toUtc(),
+          );
+          firstFailure ??= error.failure;
+      }
+    }
     if (!stopOperations) {
       try {
         await store.confirmNoOpUpdates(
@@ -780,7 +944,11 @@ final class SyncEngine {
                     claim: claim,
                     replannedAt: clock.now().toUtc(),
                   );
-                  final refetchFailure = await refetchTaskScope(claim);
+                  final refetchFailure = await refetchTaskScope(
+                    taskListId: claim.taskListId,
+                    taskListRemoteId: claim.taskListRemoteId,
+                    reason: 'conditional',
+                  );
                   if (refetchFailure != null) {
                     firstFailure ??= refetchFailure;
                     stopOperations = true;
@@ -1048,6 +1216,24 @@ const Failure _invalidUpdateResponseFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'Google did not return the expected updated resource.',
   safeSummary: 'The update response did not match the claimed operation.',
+);
+
+const Failure _invalidMoveResponseFailure = Failure(
+  code: 'sync.move_response_mismatch',
+  category: FailureCategory.remote,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The task placement could not be confirmed.',
+  safeSummary: 'The MOVE response did not match the claimed task placement.',
+);
+
+const Failure _moveAcknowledgementFailure = Failure(
+  code: 'sync.move_acknowledgement_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The task placement may not have been recorded locally.',
+  safeSummary: 'The MOVE acknowledgement transaction did not commit.',
 );
 
 const Failure _mutationAcknowledgementFailure = Failure(

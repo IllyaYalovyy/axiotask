@@ -12,7 +12,6 @@ Failure? validateHierarchyChange({
   if (task.id == requestedParent.id) return _parentIsTask;
   if (task.accountId != requestedParent.accountId) return _crossAccount;
   if (task.taskListId != requestedParent.taskListId) return _crossList;
-  if (task.parentTaskId != null) return _reparentNotSupported;
   if (requestedParent.parentTaskId != null) return _unsupportedDepth;
   if (taskHasChildren) return _subtreeDepth;
   return null;
@@ -52,15 +51,6 @@ const _crossList = Failure(
   retry: RetryClassification.permanent,
   impact: 'The task hierarchy was not changed.',
   safeSummary: 'The parent belongs to another task list.',
-);
-
-const _reparentNotSupported = Failure(
-  code: 'task.reparent_not_supported',
-  category: FailureCategory.internal,
-  operation: FailureOperation.write,
-  retry: RetryClassification.permanent,
-  impact: 'The task hierarchy was not changed.',
-  safeSummary: 'Promote the subtask before choosing a different parent.',
 );
 
 const _unsupportedDepth = Failure(

@@ -299,7 +299,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       _emit(
         _with(activity: SyncActivity.verifying, verificationRequired: true),
       );
-      return whenIdle;
+      return _drain ?? Future<void>.value();
     }
 
     if (_localEditTimer?.isActive ?? false) {

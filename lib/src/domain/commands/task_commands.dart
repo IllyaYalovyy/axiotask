@@ -86,6 +86,20 @@ final class DemoteTaskCommand extends ExistingTaskCommand {
   final TaskId parentTaskId;
 }
 
+final class MoveTaskCommand extends ExistingTaskCommand {
+  const MoveTaskCommand({
+    required super.accountId,
+    required super.taskId,
+    required this.destinationTaskListId,
+    this.parentTaskId,
+    this.previousTaskId,
+  });
+
+  final TaskListId destinationTaskListId;
+  final TaskId? parentTaskId;
+  final TaskId? previousTaskId;
+}
+
 final class UpdateTaskContentCommand extends ExistingTaskCommand {
   const UpdateTaskContentCommand({
     required super.accountId,

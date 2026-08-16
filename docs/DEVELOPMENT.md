@@ -180,6 +180,11 @@ S18A extends the same ignored screenshot runner with `hierarchy-controls` and
 the last valid one-level projection under a safe application-failure code and
 never renders the protected decoded diagnostic payload.
 
+S18B extends `hierarchy-controls` with manual sibling ordering and cross-list
+movement controls. The isolated Linux integration drives promote, reorder, and
+move-to-list commands across a file-backed restart; the actual synthetic PNG is
+reviewed from ignored `screenshots/actual/` output.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

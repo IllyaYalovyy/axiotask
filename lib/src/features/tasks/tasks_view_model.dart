@@ -324,6 +324,23 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       );
 
+  Future<void> moveTask({
+    required TaskId taskId,
+    required TaskListId destinationTaskListId,
+    TaskId? parentTaskId,
+    TaskId? previousTaskId,
+  }) => _performTaskCommand(
+    () => tasksRepository.apply(
+      MoveTaskCommand(
+        accountId: accountId,
+        taskId: taskId,
+        destinationTaskListId: destinationTaskListId,
+        parentTaskId: parentTaskId,
+        previousTaskId: previousTaskId,
+      ),
+    ),
+  );
+
   Future<void> deleteTask(TaskId taskId) => _performTaskCommand(
     () => tasksRepository.deleteTask(
       DeleteTaskCommand(accountId: accountId, taskId: taskId),

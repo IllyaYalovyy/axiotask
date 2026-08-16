@@ -6,7 +6,9 @@ import '../../domain/model/tasks.dart';
 import '../../sync/create_operations.dart';
 import '../../sync/delete_operations.dart';
 import '../../sync/health/sync_health.dart';
+import '../../sync/reconciliation/structure_policy.dart';
 import '../../sync/run.dart';
+import '../../sync/structure_operations.dart';
 import '../../sync/update_operations.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
@@ -31,6 +33,348 @@ final class DatabaseReadSyncStore implements SyncStore {
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
   final SyncHealthDao _health;
+
+  @override
+  Future<StructureReconciliationSummary> reconcileStructure({
+    required AccountId accountId,
+    required String runId,
+    required DateTime reconciledAt,
+  }) async {
+    if (!await isPublicationComplete(
+      accountId: accountId,
+      runId: SyncRunId(runId),
+    )) {
+      return const StructureReconciliationSummary();
+    }
+    return _database.transaction(() async {
+      var confirmedReadBacks = 0;
+      var localMovesPending = 0;
+      var googleWins = 0;
+      Failure? failure;
+      final desiredRows =
+          await (_database.select(_database.desiredStateRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.resourceType.equals('task') &
+                    row.desiredLifecycle.equals('present') &
+                    row.structureDirty.equals(true) &
+                    row.baseRemoteId.isNotNull() &
+                    row.state.isIn(const <String>['pending', 'uncertain']),
+              ))
+              .get();
+      for (final desired in desiredRows) {
+        if (desired.targetTaskId == null ||
+            desired.desiredTaskListId == null ||
+            desired.baseTaskListId == null ||
+            desired.basePosition == null ||
+            desired.baseSiblingOrder == null) {
+          failure ??= _invalidStructureBaseFailure;
+          continue;
+        }
+        final currentBase =
+            await (_database.select(_database.taskRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskId.equals(desired.targetTaskId!) &
+                      row.deleted.equals(false) &
+                      row.observedPublicationId.equals(runId),
+                ))
+                .getSingleOrNull();
+        if (currentBase == null) continue;
+        final remote = await _structureSnapshot(currentBase, runId: runId);
+        if (remote == null) continue;
+        final base = TaskStructureSnapshot(
+          taskListId: TaskListId(desired.baseTaskListId!),
+          parentTaskId: desired.baseParentTaskId == null
+              ? null
+              : TaskId(desired.baseParentTaskId!),
+          previousTaskId: desired.basePreviousTaskId == null
+              ? null
+              : TaskId(desired.basePreviousTaskId!),
+          siblingOrderFingerprint: desired.baseSiblingOrder!,
+        );
+        final local = TaskPlacement(
+          taskListId: TaskListId(desired.desiredTaskListId!),
+          parentTaskId: desired.desiredParentTaskId == null
+              ? null
+              : TaskId(desired.desiredParentTaskId!),
+          previousTaskId: desired.desiredPreviousTaskId == null
+              ? null
+              : TaskId(desired.desiredPreviousTaskId!),
+        );
+        final anchorValid = await _placementReferencesAreCurrent(
+          accountId: accountId,
+          placement: local,
+          runId: runId,
+          targetTaskId: TaskId(desired.targetTaskId!),
+        );
+        final winner = anchorValid
+            ? reconcileTaskStructure(base: base, local: local, remote: remote)
+            : StructureWinner.google;
+        switch (winner) {
+          case StructureWinner.local:
+            await _rebasePendingStructure(
+              desired: desired,
+              currentBase: currentBase,
+              remote: remote,
+              transitionedAt: reconciledAt,
+            );
+            localMovesPending += 1;
+          case StructureWinner.google:
+          case StructureWinner.confirmed:
+            await _resolveObservedStructure(
+              desired: desired,
+              currentBase: currentBase,
+              remote: remote,
+              resolution: winner == StructureWinner.google
+                  ? DesiredStateLifecycle.superseded
+                  : DesiredStateLifecycle.confirmed,
+              transitionedAt: reconciledAt,
+            );
+            if (winner == StructureWinner.google) {
+              googleWins += 1;
+            } else {
+              confirmedReadBacks += 1;
+            }
+        }
+      }
+      await _desired.recomputeCounts(accountId);
+      return StructureReconciliationSummary(
+        confirmedReadBacks: confirmedReadBacks,
+        localMovesPending: localMovesPending,
+        supersessions: <StructureSupersessionResult>[
+          if (googleWins > 0)
+            StructureSupersessionResult(
+              kind: StructureSupersessionKind.taskPlacement,
+              count: googleWins,
+            ),
+        ],
+        failure: failure,
+      );
+    });
+  }
+
+  @override
+  Future<MoveOperationClaim?> claimNextMove({
+    required AccountId accountId,
+    required String runId,
+    required DateTime claimedAt,
+  }) async {
+    if (!await isPublicationComplete(
+      accountId: accountId,
+      runId: SyncRunId(runId),
+    )) {
+      return null;
+    }
+    return _database.transaction(() async {
+      final rows =
+          await (_database.select(_database.desiredStateRows)
+                ..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.resourceType.equals('task') &
+                      row.desiredLifecycle.equals('present') &
+                      row.structureDirty.equals(true) &
+                      row.baseRemoteId.isNotNull() &
+                      row.state.equals('pending'),
+                )
+                ..orderBy(<OrderingTerm Function($DesiredStateRowsTable)>[
+                  (row) => OrderingTerm.asc(row.localCausalSequence),
+                  (row) => OrderingTerm.asc(row.id),
+                ]))
+              .get();
+      for (final desired in rows) {
+        final current =
+            await (_database.select(_database.taskRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskId.equals(desired.targetTaskId!) &
+                      row.deleted.equals(false) &
+                      row.observedPublicationId.equals(runId),
+                ))
+                .getSingleOrNull();
+        if (current == null || current.etag == null) continue;
+        final sourceList = await _taskListRow(
+          accountId,
+          TaskListId(current.taskListId),
+        );
+        final destinationList = await _taskListRow(
+          accountId,
+          TaskListId(desired.desiredTaskListId!),
+        );
+        if (sourceList?.remoteId == null || destinationList?.remoteId == null) {
+          continue;
+        }
+        final parent = await _currentRemoteTask(
+          accountId,
+          desired.desiredParentTaskId,
+          runId,
+        );
+        final previous = await _currentRemoteTask(
+          accountId,
+          desired.desiredPreviousTaskId,
+          runId,
+        );
+        if ((desired.desiredParentTaskId != null && parent == null) ||
+            (desired.desiredPreviousTaskId != null && previous == null)) {
+          continue;
+        }
+        final attempt = await _desired.claimTask(
+          accountId: accountId,
+          taskId: TaskId(desired.targetTaskId!),
+          claimedAt: claimedAt,
+        );
+        return MoveOperationClaim(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskId: TaskId(desired.targetTaskId!),
+          taskRemoteId: RemoteTaskId(current.remoteId),
+          sourceTaskListId: TaskListId(current.taskListId),
+          sourceTaskListRemoteId: RemoteTaskListId(sourceList!.remoteId!),
+          destinationTaskListId: TaskListId(desired.desiredTaskListId!),
+          destinationTaskListRemoteId: RemoteTaskListId(
+            destinationList!.remoteId!,
+          ),
+          parentTaskId: desired.desiredParentTaskId == null
+              ? null
+              : TaskId(desired.desiredParentTaskId!),
+          parentRemoteId: parent == null ? null : RemoteTaskId(parent.remoteId),
+          previousTaskId: desired.desiredPreviousTaskId == null
+              ? null
+              : TaskId(desired.desiredPreviousTaskId!),
+          previousRemoteId: previous == null
+              ? null
+              : RemoteTaskId(previous.remoteId),
+          etag: current.etag!,
+        );
+      }
+      return null;
+    });
+  }
+
+  @override
+  Future<void> acknowledgeMove({
+    required AccountId accountId,
+    required MoveOperationClaim claim,
+    required RemoteLiveTask remote,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) {
+    return _database.transaction(() async {
+      if (remote.id != claim.taskRemoteId ||
+          remote.parentId != claim.parentRemoteId) {
+        throw const DesiredStateInvariantException('move_response_mismatch');
+      }
+      final desired =
+          await (_database.select(_database.desiredStateRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.targetTaskId.equals(claim.taskId.value),
+              ))
+              .getSingle();
+      final isCurrent = desired.generation == claim.generation;
+      if (isCurrent) {
+        await _moveProjectedSubtree(
+          accountId: accountId,
+          taskId: claim.taskId,
+          taskListId: claim.destinationTaskListId,
+          parentTaskId: claim.parentTaskId,
+          position: remote.position,
+          content: desired.contentDirty ? null : remote,
+        );
+      }
+      await _cache.putTaskRemoteBase(
+        accountId: accountId,
+        taskId: claim.taskId,
+        taskListId: claim.destinationTaskListId,
+        parentTaskId: claim.parentTaskId,
+        remoteId: TaskRemoteId(remote.id.value),
+        observedPublicationId: observationId,
+        deleted: false,
+        title: remote.title,
+        notes: remote.notes,
+        status: _taskStatus(remote.status),
+        due: _taskDate(remote.due),
+        position: remote.position,
+        completedAt: remote.completed,
+        hidden: remote.hidden,
+        etag: remote.etag,
+        remoteUpdatedAt: remote.updated,
+        selfLink: remote.selfLink,
+        links: _links(remote.links),
+        webViewLink: remote.webViewLink,
+      );
+      await (_database.update(_database.desiredStateAttemptRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.id.equals(claim.attemptId),
+          ))
+          .write(
+            DesiredStateAttemptRowsCompanion(
+              state: const Value<String>('confirmed'),
+              failureCode: const Value<String?>(null),
+              lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
+            ),
+          );
+      if (isCurrent) {
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            structureDirty: desired.contentDirty
+                ? const Value<bool>(false)
+                : const Value<bool>.absent(),
+            baseRemoteId: Value<String>(remote.id.value),
+            baseEtag: Value<String?>(remote.etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(remote.updated?.toUtc()),
+            baseObservedPublicationId: Value<String>(observationId),
+            baseTaskListId: Value<int>(claim.destinationTaskListId.value),
+            baseParentTaskId: Value<int?>(claim.parentTaskId?.value),
+            basePreviousTaskId: Value<int?>(claim.previousTaskId?.value),
+            basePosition: Value<String>(remote.position),
+            baseSiblingOrder: Value<String>(
+              'canonical-response:${claim.taskId.value}:${remote.position}',
+            ),
+            state: Value<String>(
+              desired.contentDirty ? 'pending' : 'confirmed',
+            ),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
+          ),
+        );
+      }
+      await _desired.recomputeCounts(accountId);
+    });
+  }
+
+  @override
+  Future<void> prepareMoveReplan({
+    required AccountId accountId,
+    required MoveOperationClaim claim,
+    required DateTime replannedAt,
+  }) => _desired.prepareTaskUpdateReplan(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    generation: claim.generation,
+    replannedAt: replannedAt,
+  );
+
+  @override
+  Future<void> resolveMoveFailure({
+    required AccountId accountId,
+    required MoveOperationClaim claim,
+    required Failure failure,
+    required bool uncertain,
+    required DateTime resolvedAt,
+  }) => _desired.transitionAttempt(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    state: uncertain
+        ? DesiredStateLifecycle.uncertain
+        : DesiredStateLifecycle.failed,
+    transitionedAt: resolvedAt,
+    failureCode: failure.code,
+  );
 
   @override
   Future<void> recoverDeletes({
@@ -363,6 +707,10 @@ final class DatabaseReadSyncStore implements SyncStore {
           parentRemoteId: candidate.parentRemoteId == null
               ? null
               : RemoteTaskId(candidate.parentRemoteId!.value),
+          previousTaskId: candidate.previousTaskId,
+          previousRemoteId: candidate.previousRemoteId == null
+              ? null
+              : RemoteTaskId(candidate.previousRemoteId!.value),
           title: attempt.title!,
           notes: attempt.notes,
           status: attempt.status!,
@@ -633,7 +981,7 @@ final class DatabaseReadSyncStore implements SyncStore {
   }) {
     return _database.transaction(() async {
       var writes = 0;
-      for (final item in items) {
+      for (final item in _parentsBeforeChildren(items)) {
         final existing =
             await (_database.select(_database.taskCacheRows)..where(
                   (row) =>
@@ -643,7 +991,6 @@ final class DatabaseReadSyncStore implements SyncStore {
                 .getSingleOrNull();
         final parentId = await _parentLocalId(
           accountId: accountId,
-          taskListId: taskList.localId,
           remoteTask: item,
         );
         final TaskId localId;
@@ -694,12 +1041,16 @@ final class DatabaseReadSyncStore implements SyncStore {
                       ))
                       .getSingleOrNull() !=
                   null;
+              final protectedStructureIds = <int>{
+                existing.id,
+                ?existing.parentTaskId,
+              };
               final hasUnresolvedLocalStructure =
                   await (_database.select(_database.desiredStateRows)..where(
                         (row) =>
                             row.accountId.equals(accountId.value) &
                             row.resourceType.equals('task') &
-                            row.targetTaskId.equals(existing.id) &
+                            row.targetTaskId.isIn(protectedStructureIds) &
                             row.desiredLifecycle.equals('present') &
                             row.structureDirty.equals(true) &
                             row.state.isIn(const <String>[
@@ -952,6 +1303,268 @@ final class DatabaseReadSyncStore implements SyncStore {
     );
   }
 
+  Future<TaskStructureSnapshot?> _structureSnapshot(
+    TaskRemoteBase task, {
+    required String runId,
+  }) async {
+    if (task.position == null) return null;
+    final siblings =
+        await (_database.select(_database.taskRemoteBases)
+              ..where(
+                (row) =>
+                    row.accountId.equals(task.accountId) &
+                    row.taskListId.equals(task.taskListId) &
+                    (task.parentTaskId == null
+                        ? row.parentTaskId.isNull()
+                        : row.parentTaskId.equals(task.parentTaskId!)) &
+                    row.deleted.equals(false) &
+                    row.observedPublicationId.equals(runId),
+              )
+              ..orderBy(<OrderingTerm Function($TaskRemoteBasesTable)>[
+                (row) => OrderingTerm.asc(row.position),
+                (row) => OrderingTerm.asc(row.taskId),
+              ]))
+            .get();
+    final index = siblings.indexWhere((row) => row.taskId == task.taskId);
+    if (index < 0) return null;
+    return TaskStructureSnapshot(
+      taskListId: TaskListId(task.taskListId),
+      parentTaskId: task.parentTaskId == null
+          ? null
+          : TaskId(task.parentTaskId!),
+      previousTaskId: index == 0 ? null : TaskId(siblings[index - 1].taskId),
+      siblingOrderFingerprint: siblings
+          .map((row) => '${row.taskId}:${row.position}')
+          .join('|'),
+    );
+  }
+
+  Future<bool> _placementReferencesAreCurrent({
+    required AccountId accountId,
+    required TaskPlacement placement,
+    required String runId,
+    required TaskId targetTaskId,
+  }) async {
+    final parent = await _currentRemoteTask(
+      accountId,
+      placement.parentTaskId?.value,
+      runId,
+    );
+    if (placement.parentTaskId != null &&
+        (parent == null ||
+            parent.taskListId != placement.taskListId.value ||
+            parent.parentTaskId != null)) {
+      return false;
+    }
+    final previous = await _currentRemoteTask(
+      accountId,
+      placement.previousTaskId?.value,
+      runId,
+    );
+    if (placement.previousTaskId != null &&
+        (previous == null ||
+            previous.taskId == targetTaskId.value ||
+            previous.taskListId != placement.taskListId.value ||
+            previous.parentTaskId != placement.parentTaskId?.value)) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<TaskRemoteBase?> _currentRemoteTask(
+    AccountId accountId,
+    int? taskId,
+    String runId,
+  ) {
+    if (taskId == null) return Future<TaskRemoteBase?>.value();
+    return (_database.select(_database.taskRemoteBases)..where(
+          (row) =>
+              row.accountId.equals(accountId.value) &
+              row.taskId.equals(taskId) &
+              row.deleted.equals(false) &
+              row.observedPublicationId.equals(runId),
+        ))
+        .getSingleOrNull();
+  }
+
+  Future<TaskListCacheRow?> _taskListRow(
+    AccountId accountId,
+    TaskListId taskListId,
+  ) =>
+      (_database.select(_database.taskListCacheRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.id.equals(taskListId.value) &
+                row.projection.equals(CacheProjection.supported.name),
+          ))
+          .getSingleOrNull();
+
+  Future<void> _rebasePendingStructure({
+    required DesiredStateRow desired,
+    required TaskRemoteBase currentBase,
+    required TaskStructureSnapshot remote,
+    required DateTime transitionedAt,
+  }) async {
+    await (_database.update(
+      _database.desiredStateRows,
+    )..where((row) => row.id.equals(desired.id))).write(
+      DesiredStateRowsCompanion(
+        baseEtag: Value<String?>(currentBase.etag),
+        baseRemoteUpdatedAt: Value<DateTime?>(
+          currentBase.remoteUpdatedAt?.toUtc(),
+        ),
+        baseObservedPublicationId: Value<String>(
+          currentBase.observedPublicationId,
+        ),
+        baseTaskListId: Value<int>(remote.taskListId.value),
+        baseParentTaskId: Value<int?>(remote.parentTaskId?.value),
+        basePreviousTaskId: Value<int?>(remote.previousTaskId?.value),
+        basePosition: Value<String>(currentBase.position!),
+        baseSiblingOrder: Value<String>(remote.siblingOrderFingerprint),
+        state: const Value<String>('pending'),
+        failureCode: const Value<String?>(null),
+        lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+      ),
+    );
+    await _resolveStructureAttempts(
+      desired,
+      DesiredStateLifecycle.superseded,
+      transitionedAt,
+    );
+  }
+
+  Future<void> _resolveObservedStructure({
+    required DesiredStateRow desired,
+    required TaskRemoteBase currentBase,
+    required TaskStructureSnapshot remote,
+    required DesiredStateLifecycle resolution,
+    required DateTime transitionedAt,
+  }) async {
+    final taskId = TaskId(desired.targetTaskId!);
+    await _moveProjectedSubtree(
+      accountId: AccountId(desired.accountId),
+      taskId: taskId,
+      taskListId: remote.taskListId,
+      parentTaskId: remote.parentTaskId,
+      position: currentBase.position!,
+    );
+    if (!desired.contentDirty &&
+        currentBase.title != null &&
+        currentBase.status != null) {
+      await (_database.update(_database.taskCacheRows)..where(
+            (row) =>
+                row.accountId.equals(desired.accountId) &
+                row.id.equals(taskId.value),
+          ))
+          .write(
+            TaskCacheRowsCompanion(
+              title: Value<String>(currentBase.title!),
+              notes: Value<String?>(currentBase.notes),
+              status: Value<String>(currentBase.status!),
+              dueEpochDay: Value<int?>(currentBase.dueEpochDay),
+            ),
+          );
+    }
+    final remainingContent = desired.contentDirty;
+    await (_database.update(
+      _database.desiredStateRows,
+    )..where((row) => row.id.equals(desired.id))).write(
+      DesiredStateRowsCompanion(
+        desiredTaskListId: Value<int>(remote.taskListId.value),
+        desiredParentTaskId: Value<int?>(remote.parentTaskId?.value),
+        desiredPreviousTaskId: Value<int?>(remote.previousTaskId?.value),
+        structureDirty: remainingContent
+            ? const Value<bool>(false)
+            : const Value<bool>.absent(),
+        baseEtag: Value<String?>(currentBase.etag),
+        baseRemoteUpdatedAt: Value<DateTime?>(
+          currentBase.remoteUpdatedAt?.toUtc(),
+        ),
+        baseObservedPublicationId: Value<String>(
+          currentBase.observedPublicationId,
+        ),
+        baseTaskListId: Value<int>(remote.taskListId.value),
+        baseParentTaskId: Value<int?>(remote.parentTaskId?.value),
+        basePreviousTaskId: Value<int?>(remote.previousTaskId?.value),
+        basePosition: Value<String>(currentBase.position!),
+        baseSiblingOrder: Value<String>(remote.siblingOrderFingerprint),
+        state: Value<String>(
+          remainingContent ? 'pending' : _stateValue(resolution),
+        ),
+        failureCode: const Value<String?>(null),
+        lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+      ),
+    );
+    await _resolveStructureAttempts(desired, resolution, transitionedAt);
+  }
+
+  Future<void> _resolveStructureAttempts(
+    DesiredStateRow desired,
+    DesiredStateLifecycle resolution,
+    DateTime transitionedAt,
+  ) =>
+      (_database.update(_database.desiredStateAttemptRows)..where(
+            (row) =>
+                row.accountId.equals(desired.accountId) &
+                row.desiredStateId.equals(desired.id) &
+                row.generation.equals(desired.generation) &
+                row.state.isIn(const <String>[
+                  'in_flight',
+                  'uncertain',
+                  'failed',
+                ]),
+          ))
+          .write(
+            DesiredStateAttemptRowsCompanion(
+              state: Value<String>(_stateValue(resolution)),
+              failureCode: const Value<String?>(null),
+              lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
+            ),
+          );
+
+  Future<void> _moveProjectedSubtree({
+    required AccountId accountId,
+    required TaskId taskId,
+    required TaskListId taskListId,
+    required TaskId? parentTaskId,
+    required String position,
+    RemoteLiveTask? content,
+  }) async {
+    await _database.customUpdate(
+      '''
+      UPDATE tasks
+      SET task_list_id = ?1,
+          parent_task_id = CASE
+            WHEN id = ?2 THEN NULLIF(?3, 0)
+            ELSE ?2
+          END,
+          position = CASE WHEN id = ?2 THEN ?4 ELSE position END
+      WHERE account_id = ?5
+        AND (id = ?2 OR parent_task_id = ?2)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<int>(taskListId.value),
+        Variable<int>(taskId.value),
+        Variable<int>(parentTaskId?.value ?? 0),
+        Variable<String>(position),
+        Variable<int>(accountId.value),
+      ],
+      updates: <TableInfo<Table, Object?>>{_database.taskCacheRows},
+    );
+    if (content != null) {
+      await (_database.update(
+        _database.taskCacheRows,
+      )..where((row) => row.id.equals(taskId.value))).write(
+        TaskCacheRowsCompanion(
+          title: Value<String>(content.title),
+          notes: Value<String?>(content.notes),
+          status: Value<String>(_statusValue(_taskStatus(content.status))),
+          dueEpochDay: Value<int?>(_epochDay(_taskDate(content.due))),
+        ),
+      );
+    }
+  }
+
   Future<void> _requireAccount(AccountId accountId) async {
     final account = await (_database.select(
       _database.accounts,
@@ -972,7 +1585,6 @@ final class DatabaseReadSyncStore implements SyncStore {
 
   Future<TaskId?> _parentLocalId({
     required AccountId accountId,
-    required TaskListId taskListId,
     required RemoteTask remoteTask,
   }) async {
     final remoteParent = switch (remoteTask) {
@@ -984,7 +1596,6 @@ final class DatabaseReadSyncStore implements SyncStore {
         await (_database.select(_database.taskCacheRows)..where(
               (row) =>
                   row.accountId.equals(accountId.value) &
-                  row.taskListId.equals(taskListId.value) &
                   row.remoteId.equals(remoteParent.value),
             ))
             .getSingleOrNull();
@@ -993,6 +1604,20 @@ final class DatabaseReadSyncStore implements SyncStore {
     }
     return TaskId(row.id);
   }
+}
+
+List<RemoteTask> _parentsBeforeChildren(List<RemoteTask> items) {
+  final ids = items.map((task) => task.id.value).toSet();
+  final roots = <RemoteTask>[];
+  final children = <RemoteTask>[];
+  for (final item in items) {
+    final parentId = switch (item) {
+      RemoteLiveTask(:final parentId) => parentId?.value,
+      RemoteTaskTombstone() => null,
+    };
+    (parentId != null && ids.contains(parentId) ? children : roots).add(item);
+  }
+  return <RemoteTask>[...roots, ...children];
 }
 
 PersistedSyncFacts _copyFacts(
@@ -1058,3 +1683,21 @@ List<TaskRemoteLinkRecord> _links(List<RemoteTaskLink> values) => values
       ),
     )
     .toList(growable: false);
+
+String _stateValue(DesiredStateLifecycle state) => switch (state) {
+  DesiredStateLifecycle.pending => 'pending',
+  DesiredStateLifecycle.inFlight => 'in_flight',
+  DesiredStateLifecycle.uncertain => 'uncertain',
+  DesiredStateLifecycle.failed => 'failed',
+  DesiredStateLifecycle.confirmed => 'confirmed',
+  DesiredStateLifecycle.superseded => 'superseded',
+};
+
+const Failure _invalidStructureBaseFailure = Failure(
+  code: 'sync.structure_base_invalid',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task placement was not synchronized.',
+  safeSummary: 'Required structural reconciliation evidence is incomplete.',
+);

@@ -4,6 +4,7 @@ import '../domain/model/tasks.dart';
 import 'create_operations.dart';
 import 'delete_operations.dart';
 import 'phase.dart';
+import 'structure_operations.dart';
 import 'update_operations.dart';
 
 final class SyncRunId {
@@ -56,10 +57,13 @@ final class SyncRunReport {
     required this.resourceProjectionWrites,
     this.createOperations = 0,
     this.updateOperations = 0,
+    this.moveOperations = 0,
     this.deleteOperations = 0,
     this.googleWonReplacements = 0,
     this.googleWonReplacementDetails = const <ContentSupersessionResult>[],
     this.confirmedUpdateReadBacks = 0,
+    this.googleWonStructures = 0,
+    this.confirmedStructureReadBacks = 0,
     this.conditionalReplans = 0,
     this.ineligibleReason,
     this.failure,
@@ -77,10 +81,13 @@ final class SyncRunReport {
   final int resourceProjectionWrites;
   final int createOperations;
   final int updateOperations;
+  final int moveOperations;
   final int deleteOperations;
   final int googleWonReplacements;
   final List<ContentSupersessionResult> googleWonReplacementDetails;
   final int confirmedUpdateReadBacks;
+  final int googleWonStructures;
+  final int confirmedStructureReadBacks;
   final int conditionalReplans;
 }
 
@@ -166,7 +173,8 @@ abstract interface class SyncStore
         ReadSyncStore,
         CreateSyncStore,
         UpdateSyncStore,
-        DeleteSyncStore {}
+        DeleteSyncStore,
+        StructureSyncStore {}
 
 abstract interface class SyncRunObserver {
   void phaseStarted(SyncRunId runId, SyncRunPhase phase);

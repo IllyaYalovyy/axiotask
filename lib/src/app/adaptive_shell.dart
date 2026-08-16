@@ -578,6 +578,22 @@ final class _TaskDetails extends StatelessWidget {
               candidate.parentTaskId == null,
         )
         .toList(growable: false);
+    final alternateParentCandidates = parentCandidates
+        .where((candidate) => candidate.id != task.parentTaskId)
+        .toList(growable: false);
+    final siblings = state.tasks
+        .where(
+          (candidate) =>
+              candidate.taskListId == task.taskListId &&
+              candidate.parentTaskId == task.parentTaskId,
+        )
+        .toList(growable: false);
+    final siblingIndex = siblings.indexWhere(
+      (candidate) => candidate.id == task.id,
+    );
+    final destinationLists = state.taskLists
+        .where((candidate) => candidate.id != task.taskListId)
+        .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.all(24),
       children: <Widget>[
@@ -662,6 +678,65 @@ final class _TaskDetails extends StatelessWidget {
                 icon: const Icon(Icons.arrow_upward),
                 label: const Text('Promote'),
               ),
+            if (task.parentTaskId != null &&
+                alternateParentCandidates.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => _showDemoteTaskDialog(
+                        context,
+                        viewModel,
+                        task,
+                        alternateParentCandidates,
+                      ),
+                icon: const Icon(Icons.account_tree_outlined),
+                label: const Text('Change parent'),
+              ),
+            if (siblingIndex > 0)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => unawaited(
+                        viewModel.moveTask(
+                          taskId: task.id,
+                          destinationTaskListId: task.taskListId,
+                          parentTaskId: task.parentTaskId,
+                          previousTaskId: siblingIndex == 1
+                              ? null
+                              : siblings[siblingIndex - 2].id,
+                        ),
+                      ),
+                icon: const Icon(Icons.arrow_upward),
+                label: const Text('Move up'),
+              ),
+            if (siblingIndex >= 0 && siblingIndex < siblings.length - 1)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => unawaited(
+                        viewModel.moveTask(
+                          taskId: task.id,
+                          destinationTaskListId: task.taskListId,
+                          parentTaskId: task.parentTaskId,
+                          previousTaskId: siblings[siblingIndex + 1].id,
+                        ),
+                      ),
+                icon: const Icon(Icons.arrow_downward),
+                label: const Text('Move down'),
+              ),
+            if (destinationLists.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => _showMoveTaskDialog(
+                        context,
+                        viewModel,
+                        task,
+                        destinationLists,
+                      ),
+                icon: const Icon(Icons.drive_file_move_outline),
+                label: const Text('Move to list'),
+              ),
           ],
         ),
         if (state.selectedTaskChildren.isNotEmpty) ...<Widget>[
@@ -724,6 +799,45 @@ Future<void> _showDemoteTaskDialog(
                     viewModel.state.taskCommandFailureMessage == null) {
                   Navigator.of(dialogContext).pop();
                 }
+              },
+            ),
+        ],
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(dialogContext).pop(),
+        child: const Text('Cancel'),
+      ),
+    ],
+  ),
+);
+
+Future<void> _showMoveTaskDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  CachedTask task,
+  List<CachedTaskList> destinations,
+) => showDialog<void>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    title: const Text('Move task to list'),
+    content: SizedBox(
+      width: 360,
+      child: ListView(
+        shrinkWrap: true,
+        children: <Widget>[
+          for (final destination in destinations)
+            ListTile(
+              title: Text(destination.title),
+              onTap: () {
+                Navigator.of(dialogContext).pop();
+                unawaited(
+                  viewModel.moveTask(
+                    taskId: task.id,
+                    destinationTaskListId: destination.id,
+                  ),
+                );
               },
             ),
         ],

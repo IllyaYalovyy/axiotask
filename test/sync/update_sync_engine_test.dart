@@ -1038,6 +1038,258 @@ void main() {
       );
     },
   );
+
+  test(
+    'REC-011/REC-012 cross-list MOVE preserves a subtree and adopts canonical order',
+    () async {
+      final remote = FakeGoogleTasksService();
+      addTearDown(remote.close);
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Source',
+        taskTitle: 'Moving root',
+      );
+      final child = await harness.seedTask(
+        seeded.listRemoteId,
+        title: 'Moving child',
+        parentId: seeded.taskRemoteId,
+      );
+      final destination = switch (await remote.createTaskList(
+        const CreateTaskListOperation(title: 'Destination'),
+      )) {
+        CommittedMutation<RemoteTaskList>(:final value) => value,
+        _ => throw StateError('Synthetic destination setup failed.'),
+      };
+      final anchor = await harness.seedTask(destination.id, title: 'Anchor');
+      await harness.run();
+      final before = await harness.snapshot();
+      final destinationId = before.taskLists
+          .singleWhere((list) => list.remoteId?.value == destination.id.value)
+          .id;
+      final anchorId = before.tasks
+          .singleWhere((task) => task.remoteId?.value == anchor.id.value)
+          .id;
+      final childId = before.tasks
+          .singleWhere((task) => task.remoteId?.value == child.id.value)
+          .id;
+
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: destinationId,
+        previousTaskId: anchorId,
+      );
+      await harness.updateTask(
+        seeded.taskId,
+        title: 'Moved and edited',
+        notes: 'Independent content facet',
+        status: TaskStatus.needsAction,
+        due: null,
+      );
+      final report = await harness.run();
+      final moveCall = remote.calls.lastWhere(
+        (call) => call.operation == FakeGoogleTasksMethod.moveTask,
+      );
+      final after = await harness.snapshot();
+      final root = after.tasks.singleWhere((task) => task.id == seeded.taskId);
+      final projectedChild = after.tasks.singleWhere(
+        (task) => task.id == childId,
+      );
+
+      expect(report.outcome, SyncRunOutcome.succeeded);
+      expect(report.moveOperations, 1);
+      expect(report.updateOperations, 0);
+      expect(moveCall.query['destinationTasklist'], destination.id.value);
+      expect(moveCall.query['previous'], anchor.id.value);
+      expect(root.taskListId, destinationId);
+      expect(root.parentTaskId, isNull);
+      expect(root.title, 'Moved and edited');
+      expect(projectedChild.taskListId, destinationId);
+      expect(projectedChild.parentTaskId, seeded.taskId);
+      expect(
+        after.tasks.indexWhere((task) => task.id == anchorId),
+        lessThan(after.tasks.indexWhere((task) => task.id == seeded.taskId)),
+      );
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.pending,
+      );
+      harness.clock.advance(const Duration(minutes: 1));
+      final contentReport = await harness.run();
+      expect(contentReport.updateOperations, 1);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
+      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 1);
+
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: seeded.listId,
+      );
+      harness.clock.advance(const Duration(minutes: 1));
+      final repeatedMove = await harness.run();
+      final returned = await harness.snapshot();
+      expect(repeatedMove.moveOperations, 1);
+      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 2);
+      expect(
+        returned.tasks
+            .singleWhere((task) => task.id == seeded.taskId)
+            .taskListId,
+        seeded.listId,
+      );
+      expect(
+        returned.tasks.singleWhere((task) => task.id == childId).taskListId,
+        seeded.listId,
+      );
+    },
+  );
+
+  test(
+    'REC-008/REC-009 concurrent remote placement wins without oscillation',
+    () async {
+      final remote = FakeGoogleTasksService();
+      addTearDown(remote.close);
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Concurrent list',
+        taskTitle: 'First',
+      );
+      final second = await harness.seedTask(
+        seeded.listRemoteId,
+        title: 'Second',
+      );
+      final third = await harness.seedTask(seeded.listRemoteId, title: 'Third');
+      await harness.run();
+      final snapshot = await harness.snapshot();
+      final secondId = snapshot.tasks
+          .singleWhere((task) => task.remoteId?.value == second.id.value)
+          .id;
+      final thirdId = snapshot.tasks
+          .singleWhere((task) => task.remoteId?.value == third.id.value)
+          .id;
+
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: seeded.listId,
+        previousTaskId: secondId,
+      );
+      final current = await (harness.database.select(
+        harness.database.taskRemoteBases,
+      )..where((row) => row.taskId.equals(seeded.taskId.value))).getSingle();
+      expect(
+        await remote.moveTask(
+          MoveTaskOperation(
+            sourceTaskListId: seeded.listRemoteId,
+            taskId: seeded.taskRemoteId,
+            etag: current.etag!,
+            pathFreshness: MutationPathFreshness.current,
+            previousId: third.id,
+          ),
+        ),
+        isA<CommittedMutation<RemoteTask>>(),
+      );
+      final movesBeforeReconcile = remote.callCount(
+        FakeGoogleTasksMethod.moveTask,
+      );
+      final report = await harness.run();
+      final after = await harness.snapshot();
+
+      expect(report.outcome, SyncRunOutcome.succeeded);
+      expect(report.googleWonStructures, 1);
+      expect(report.moveOperations, 0);
+      expect(after.tasks.map((task) => task.id).toList(), <TaskId>[
+        thirdId,
+        seeded.taskId,
+        secondId,
+      ]);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.superseded,
+      );
+      harness.clock.advance(const Duration(minutes: 1));
+      await harness.run();
+      expect(
+        remote.callCount(FakeGoogleTasksMethod.moveTask),
+        movesBeforeReconcile,
+      );
+    },
+  );
+
+  test(
+    'REC-017 deleted previous anchor supersedes MOVE without replay',
+    () async {
+      final remote = FakeGoogleTasksService();
+      addTearDown(remote.close);
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Anchor race',
+        taskTitle: 'Move target',
+      );
+      final anchor = await harness.seedTask(
+        seeded.listRemoteId,
+        title: 'Anchor',
+      );
+      await harness.run();
+      final snapshot = await harness.snapshot();
+      final anchorId = snapshot.tasks
+          .singleWhere((task) => task.remoteId?.value == anchor.id.value)
+          .id;
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: seeded.listId,
+        previousTaskId: anchorId,
+      );
+      final anchorBase = await (harness.database.select(
+        harness.database.taskRemoteBases,
+      )..where((row) => row.taskId.equals(anchorId.value))).getSingle();
+      expect(
+        await remote.deleteTask(
+          DeleteTaskOperation(
+            taskListId: seeded.listRemoteId,
+            taskId: anchor.id,
+            etag: anchorBase.etag!,
+            pathFreshness: MutationPathFreshness.current,
+          ),
+        ),
+        isA<CommittedMutation<void>>(),
+      );
+      final movesBefore = remote.callCount(FakeGoogleTasksMethod.moveTask);
+
+      final report = await harness.run();
+
+      expect(report.outcome, SyncRunOutcome.succeeded);
+      expect(report.moveOperations, 0);
+      expect(report.googleWonStructures, 1);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.superseded,
+      );
+      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), movesBefore);
+    },
+  );
 }
 
 final class _SeededRemote {
@@ -1165,7 +1417,7 @@ final class _UpdateHarness {
     final current = switch (await remote.listTasks(seeded.listRemoteId)) {
       Success<RemotePage<RemoteTask>>(:final value) =>
         value.items.whereType<RemoteLiveTask>().singleWhere(
-          (task) => task.id == seeded.taskRemoteId,
+          (task) => task.id.value == seeded.taskRemoteId.value,
         ),
       _ => throw StateError('Synthetic remote task read failed.'),
     };
@@ -1195,7 +1447,7 @@ final class _UpdateHarness {
       switch (await remote.listTasks(seeded.listRemoteId)) {
         Success<RemotePage<RemoteTask>>(:final value) =>
           value.items.whereType<RemoteLiveTask>().singleWhere(
-            (task) => task.id == seeded.taskRemoteId,
+            (task) => task.id.value == seeded.taskRemoteId.value,
           ),
         _ => throw StateError('Synthetic remote task read failed.'),
       };
@@ -1250,6 +1502,24 @@ final class _UpdateHarness {
         notes: notes,
         status: status,
         due: due,
+      ),
+    );
+    expect(result, isA<Success<void>>());
+  }
+
+  Future<void> moveTask(
+    TaskId id, {
+    required TaskListId destinationTaskListId,
+    TaskId? parentTaskId,
+    TaskId? previousTaskId,
+  }) async {
+    final result = await DatabaseTasksRepository(database, clock: clock).apply(
+      MoveTaskCommand(
+        accountId: accountId,
+        taskId: id,
+        destinationTaskListId: destinationTaskListId,
+        parentTaskId: parentTaskId,
+        previousTaskId: previousTaskId,
       ),
     );
     expect(result, isA<Success<void>>());

@@ -35,13 +35,16 @@ Google DELETE during the grace window even on Refresh or restart. Expiry strips
 the content snapshot and schedules authoritative deletion with positive task
 tombstone verification. List deletion has an explicit irreversible
 confirmation and no Undo. The task detail pane can create a direct subtask,
-promote a child, or demote a leaf beneath a valid top-level task. These local
-structure changes commit durably, survive restart, and remain pending without a
-remote MOVE; invalid deeper or cross-scope relationships fail before mutation.
+promote a child, demote a leaf, reorder siblings, or move a stable task/subtree
+between Google lists. Structure changes commit durably, survive restart, and
+publish through Google MOVE with valid remote `parent`/`previous` anchors.
+Canonical response positions replace projected order; competing Google
+placement wins without replay while content edits remain independent. Invalid
+deeper, missing-anchor, or cross-scope relationships fail before mutation.
 Unexpected deeper Google hierarchy keeps the last valid cache visible under an
 application failure, records decoded evidence only in sensitive development
-diagnostics, and issues no repair mutation. Remote move/reorder execution,
-general retry, bulk delete, Clear completed, Android lifecycle wiring, and
+diagnostics, and issues no repair mutation. General retry, bulk delete, Clear
+completed, Android lifecycle wiring, and
 account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
@@ -188,10 +191,10 @@ encodes due dates at UTC midnight, uses the live-proven JSON `null` spelling to
 clear notes and due, and requires canonical 200 resource or empty 204 responses.
 It performs no retries or reconciliation: response loss, malformed success,
 unknown responses, and possibly stale source-list paths remain explicit
-uncertain results. The engine consumes ordered list/task creates plus eligible
-complete task-content PATCHes and list-title updates. Confirmed operations and
-read-proven no-ops are not replayed; deletes and moves remain adapter-only until
-their owning slices.
+uncertain results. The engine consumes ordered list/task creates, eligible
+complete task-content PATCHes and list-title updates, deletion work, and
+structure MOVE work. Confirmed operations and read-proven no-ops are not
+replayed; cross-list MOVE keeps the same Google task ID and subtree.
 
 Each composition injects a distinct database filename, preferences namespace,
 secure-storage namespace, OAuth-configuration identity, and diagnostic
@@ -391,6 +394,7 @@ flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/task_lists_repository_test.dart
 flutter test test/data/database/task_edits_repository_test.dart
 flutter test test/data/database/hierarchy_repository_test.dart
+flutter test test/data/database/structure_repository_test.dart
 flutter test test/domain/hierarchy_policy_test.dart
 flutter test test/data/database/delete_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
@@ -400,6 +404,8 @@ flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
 flutter test test/sync/update_sync_engine_test.dart
+flutter test test/sync/reconciliation/structure_policy_test.dart
+flutter test test/sync/structure_reconciliation_multi_host_test.dart
 flutter test test/sync/delete_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart

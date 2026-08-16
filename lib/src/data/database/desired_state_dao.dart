@@ -92,6 +92,7 @@ final class TaskDesiredStateRecord {
     required this.taskId,
     required this.taskListId,
     required this.parentTaskId,
+    required this.previousTaskId,
     required this.contentDirty,
     required this.structureDirty,
     required this.title,
@@ -110,6 +111,11 @@ final class TaskDesiredStateRecord {
     required this.baseNotes,
     required this.baseStatus,
     required this.baseDue,
+    required this.baseTaskListId,
+    required this.baseParentTaskId,
+    required this.basePreviousTaskId,
+    required this.basePosition,
+    required this.baseSiblingOrder,
     required this.localModifiedAt,
     required this.createdAt,
     required this.lastTransitionAt,
@@ -120,6 +126,7 @@ final class TaskDesiredStateRecord {
   final TaskId taskId;
   final TaskListId taskListId;
   final TaskId? parentTaskId;
+  final TaskId? previousTaskId;
   final bool contentDirty;
   final bool structureDirty;
   final String title;
@@ -138,6 +145,11 @@ final class TaskDesiredStateRecord {
   final String? baseNotes;
   final TaskStatus? baseStatus;
   final TaskDate? baseDue;
+  final TaskListId? baseTaskListId;
+  final TaskId? baseParentTaskId;
+  final TaskId? basePreviousTaskId;
+  final String? basePosition;
+  final String? baseSiblingOrder;
   final DateTime? localModifiedAt;
   final DateTime createdAt;
   final DateTime lastTransitionAt;
@@ -183,6 +195,8 @@ final class DesiredCreateCandidate {
     required this.parentTaskId,
     required this.taskListRemoteId,
     required this.parentRemoteId,
+    required this.previousTaskId,
+    required this.previousRemoteId,
   });
 
   final DesiredCreateResourceType resourceType;
@@ -191,6 +205,8 @@ final class DesiredCreateCandidate {
   final TaskId? parentTaskId;
   final TaskListRemoteId? taskListRemoteId;
   final TaskRemoteId? parentRemoteId;
+  final TaskId? previousTaskId;
+  final TaskRemoteId? previousRemoteId;
 }
 
 enum DesiredUpdateResourceType { task, taskList }
@@ -260,8 +276,10 @@ final class DesiredStateDao {
             d.target_task_id,
             d.desired_task_list_id,
             d.desired_parent_task_id,
+            d.desired_previous_task_id,
             desired_list.remote_id AS desired_list_remote_id,
             desired_parent.remote_id AS desired_parent_remote_id
+            ,desired_previous.remote_id AS desired_previous_remote_id
           FROM desired_states d
           LEFT JOIN task_lists target_list
             ON target_list.account_id = d.account_id
@@ -275,6 +293,9 @@ final class DesiredStateDao {
           LEFT JOIN tasks desired_parent
             ON desired_parent.account_id = d.account_id
            AND desired_parent.id = d.desired_parent_task_id
+          LEFT JOIN tasks desired_previous
+            ON desired_previous.account_id = d.account_id
+           AND desired_previous.id = d.desired_previous_task_id
           WHERE d.account_id = ?1
             AND EXISTS (
               SELECT 1
@@ -314,7 +335,9 @@ final class DesiredStateDao {
                   )
                 )
                 AND (d.desired_parent_task_id IS NULL
-                  OR desired_parent.remote_id IS NOT NULL))
+                  OR desired_parent.remote_id IS NOT NULL)
+                AND (d.desired_previous_task_id IS NULL
+                  OR desired_previous.remote_id IS NOT NULL))
             )
           ORDER BY
             CASE
@@ -349,6 +372,8 @@ final class DesiredStateDao {
         parentTaskId: null,
         taskListRemoteId: null,
         parentRemoteId: null,
+        previousTaskId: null,
+        previousRemoteId: null,
       );
     }
     if (resourceType != 'task') {
@@ -356,6 +381,10 @@ final class DesiredStateDao {
     }
     final parentTaskId = row.readNullable<int>('desired_parent_task_id');
     final parentRemoteId = row.readNullable<String>('desired_parent_remote_id');
+    final previousTaskId = row.readNullable<int>('desired_previous_task_id');
+    final previousRemoteId = row.readNullable<String>(
+      'desired_previous_remote_id',
+    );
     return DesiredCreateCandidate(
       resourceType: DesiredCreateResourceType.task,
       taskListId: TaskListId(row.read<int>('desired_task_list_id')),
@@ -367,6 +396,10 @@ final class DesiredStateDao {
       parentRemoteId: parentRemoteId == null
           ? null
           : TaskRemoteId(parentRemoteId),
+      previousTaskId: previousTaskId == null ? null : TaskId(previousTaskId),
+      previousRemoteId: previousRemoteId == null
+          ? null
+          : TaskRemoteId(previousRemoteId),
     );
   }
 
@@ -1245,6 +1278,7 @@ final class DesiredStateDao {
     required TaskId taskId,
     required TaskListId taskListId,
     required TaskId? parentTaskId,
+    required TaskId? previousTaskId,
     required String title,
     required String? notes,
     required TaskStatus status,
@@ -1253,6 +1287,27 @@ final class DesiredStateDao {
   }) async {
     final existing = await _taskQuery(accountId, taskId).getSingleOrNull();
     final sequence = await _nextCausalSequence(accountId);
+    TaskRemoteBase? newlyCapturedBase;
+    _StoredStructureBase? newlyCapturedStructure;
+    if (existing != null &&
+        (!existing.structureDirty ||
+            existing.state == 'confirmed' ||
+            existing.state == 'superseded')) {
+      newlyCapturedBase =
+          await (_database.select(_database.taskRemoteBases)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.taskId.equals(taskId.value) &
+                    row.deleted.equals(false),
+              ))
+              .getSingleOrNull();
+      if (newlyCapturedBase == null) {
+        throw const DesiredStateInvariantException(
+          'structure_without_remote_base',
+        );
+      }
+      newlyCapturedStructure = await _taskStructureBase(newlyCapturedBase);
+    }
     final int desiredStateId;
     if (existing == null) {
       final base =
@@ -1268,6 +1323,7 @@ final class DesiredStateDao {
           'structure_without_remote_base',
         );
       }
+      final structureBase = await _taskStructureBase(base);
       desiredStateId = await _database
           .into(_database.desiredStateRows)
           .insert(
@@ -1284,6 +1340,7 @@ final class DesiredStateDao {
               dueEpochDay: Value<int?>(_epochDay(due)),
               desiredTaskListId: Value<int>(taskListId.value),
               desiredParentTaskId: Value<int?>(parentTaskId?.value),
+              desiredPreviousTaskId: Value<int?>(previousTaskId?.value),
               structureDirty: const Value<bool>(true),
               generation: 1,
               localCausalSequence: sequence,
@@ -1298,6 +1355,13 @@ final class DesiredStateDao {
               baseNotes: Value<String?>(base.notes),
               baseStatus: Value<String?>(base.status),
               baseDueEpochDay: Value<int?>(base.dueEpochDay),
+              baseTaskListId: Value<int>(base.taskListId),
+              baseParentTaskId: Value<int?>(base.parentTaskId),
+              basePreviousTaskId: Value<int?>(
+                structureBase.previousTaskId?.value,
+              ),
+              basePosition: Value<String>(base.position!),
+              baseSiblingOrder: Value<String>(structureBase.fingerprint),
               createdAt: modifiedAt.toUtc(),
               lastTransitionAt: modifiedAt.toUtc(),
             ),
@@ -1318,7 +1382,23 @@ final class DesiredStateDao {
               dueEpochDay: Value<int?>(_epochDay(due)),
               desiredTaskListId: Value<int>(taskListId.value),
               desiredParentTaskId: Value<int?>(parentTaskId?.value),
+              desiredPreviousTaskId: Value<int?>(previousTaskId?.value),
               structureDirty: const Value<bool>(true),
+              baseTaskListId: newlyCapturedBase == null
+                  ? const Value<int>.absent()
+                  : Value<int>(newlyCapturedBase.taskListId),
+              baseParentTaskId: newlyCapturedBase == null
+                  ? const Value<int?>.absent()
+                  : Value<int?>(newlyCapturedBase.parentTaskId),
+              basePreviousTaskId: newlyCapturedStructure == null
+                  ? const Value<int?>.absent()
+                  : Value<int?>(newlyCapturedStructure.previousTaskId?.value),
+              basePosition: newlyCapturedBase == null
+                  ? const Value<String?>.absent()
+                  : Value<String?>(newlyCapturedBase.position),
+              baseSiblingOrder: newlyCapturedStructure == null
+                  ? const Value<String?>.absent()
+                  : Value<String>(newlyCapturedStructure.fingerprint),
               generation: Value<int>(existing.generation + 1),
               localCausalSequence: Value<int>(sequence),
               state: Value<String>(_stateValue(DesiredStateLifecycle.pending)),
@@ -1331,9 +1411,25 @@ final class DesiredStateDao {
           (row) =>
               row.accountId.equals(accountId.value) &
               row.desiredStateId.equals(desiredStateId) &
-              row.dependencyKind.equals('parent_task'),
+              row.dependencyKind.isIn(const <String>[
+                'task_list',
+                'parent_task',
+                'previous_task',
+              ]),
         ))
         .go();
+    if (existing != null && existing.baseRemoteId == null) {
+      await _database
+          .into(_database.desiredStateDependencyRows)
+          .insert(
+            DesiredStateDependencyRowsCompanion.insert(
+              accountId: accountId.value,
+              desiredStateId: desiredStateId,
+              dependencyKind: 'task_list',
+              dependsOnTaskListId: Value<int>(taskListId.value),
+            ),
+          );
+    }
     if (parentTaskId != null) {
       await _database
           .into(_database.desiredStateDependencyRows)
@@ -1343,6 +1439,18 @@ final class DesiredStateDao {
               desiredStateId: desiredStateId,
               dependencyKind: 'parent_task',
               dependsOnTaskId: Value<int>(parentTaskId.value),
+            ),
+          );
+    }
+    if (previousTaskId != null) {
+      await _database
+          .into(_database.desiredStateDependencyRows)
+          .insert(
+            DesiredStateDependencyRowsCompanion.insert(
+              accountId: accountId.value,
+              desiredStateId: desiredStateId,
+              dependencyKind: 'previous_task',
+              dependsOnTaskId: Value<int>(previousTaskId.value),
             ),
           );
     }
@@ -1388,6 +1496,11 @@ final class DesiredStateDao {
                 desired.baseObservedPublicationId,
               ),
               baseTitle: Value<String?>(desired.baseTitle),
+              baseTaskListId: Value<int?>(desired.baseTaskListId),
+              baseParentTaskId: Value<int?>(desired.baseParentTaskId),
+              basePreviousTaskId: Value<int?>(desired.basePreviousTaskId),
+              basePosition: Value<String?>(desired.basePosition),
+              baseSiblingOrder: Value<String?>(desired.baseSiblingOrder),
               state: _stateValue(DesiredStateLifecycle.inFlight),
               claimedAt: claimedAt.toUtc(),
               lastTransitionAt: claimedAt.toUtc(),
@@ -1462,6 +1575,11 @@ final class DesiredStateDao {
                 desired.baseObservedPublicationId,
               ),
               baseTitle: Value<String?>(desired.baseTitle),
+              baseTaskListId: Value<int?>(desired.baseTaskListId),
+              baseParentTaskId: Value<int?>(desired.baseParentTaskId),
+              basePreviousTaskId: Value<int?>(desired.basePreviousTaskId),
+              basePosition: Value<String?>(desired.basePosition),
+              baseSiblingOrder: Value<String?>(desired.baseSiblingOrder),
               state: _stateValue(DesiredStateLifecycle.inFlight),
               claimedAt: claimedAt.toUtc(),
               lastTransitionAt: claimedAt.toUtc(),
@@ -1936,6 +2054,10 @@ final class DesiredStateDao {
     required DateTime transitionedAt,
     required bool updateProjection,
   }) async {
+    final contentResolved = state != DesiredStateLifecycle.pending;
+    final effectiveState = contentResolved && desired.structureDirty
+        ? DesiredStateLifecycle.pending
+        : state;
     if (updateProjection) {
       await (_database.update(_database.taskCacheRows)..where(
             (row) =>
@@ -1955,6 +2077,9 @@ final class DesiredStateDao {
       _database.desiredStateRows,
     )..where((row) => row.id.equals(desired.id))).write(
       DesiredStateRowsCompanion(
+        contentDirty: contentResolved && desired.structureDirty
+            ? const Value<bool>(false)
+            : const Value<bool>.absent(),
         title: updateProjection
             ? Value<String>(current.title!)
             : const Value<String>.absent(),
@@ -1975,7 +2100,7 @@ final class DesiredStateDao {
         baseNotes: Value<String?>(current.notes),
         baseStatus: Value<String>(current.status!),
         baseDueEpochDay: Value<int?>(current.dueEpochDay),
-        state: Value<String>(_stateValue(state)),
+        state: Value<String>(_stateValue(effectiveState)),
         failureCode: const Value<String?>(null),
         lastTransitionAt: Value<DateTime>(transitionedAt.toUtc()),
       ),
@@ -2041,9 +2166,51 @@ final class DesiredStateDao {
         );
   }
 
+  Future<_StoredStructureBase> _taskStructureBase(TaskRemoteBase base) async {
+    if (base.position == null) {
+      throw const DesiredStateInvariantException('structure_base_incomplete');
+    }
+    final siblings =
+        await (_database.select(_database.taskRemoteBases)
+              ..where(
+                (row) =>
+                    row.accountId.equals(base.accountId) &
+                    row.taskListId.equals(base.taskListId) &
+                    (base.parentTaskId == null
+                        ? row.parentTaskId.isNull()
+                        : row.parentTaskId.equals(base.parentTaskId!)) &
+                    row.deleted.equals(false),
+              )
+              ..orderBy(<OrderingTerm Function($TaskRemoteBasesTable)>[
+                (row) => OrderingTerm.asc(row.position),
+                (row) => OrderingTerm.asc(row.taskId),
+              ]))
+            .get();
+    final index = siblings.indexWhere((row) => row.taskId == base.taskId);
+    if (index < 0) {
+      throw const DesiredStateInvariantException('structure_base_missing');
+    }
+    return _StoredStructureBase(
+      previousTaskId: index == 0 ? null : TaskId(siblings[index - 1].taskId),
+      fingerprint: siblings
+          .map((row) => '${row.taskId}:${row.position}')
+          .join('|'),
+    );
+  }
+
   Future<void> _reach(DesiredStateTransactionBoundary boundary) async {
     await transactionControl?.call(boundary);
   }
+}
+
+final class _StoredStructureBase {
+  const _StoredStructureBase({
+    required this.previousTaskId,
+    required this.fingerprint,
+  });
+
+  final TaskId? previousTaskId;
+  final String fingerprint;
 }
 
 TaskListDesiredStateRecord _mapTaskList(DesiredStateRow row) =>
@@ -2076,6 +2243,9 @@ TaskDesiredStateRecord _mapTask(DesiredStateRow row) => TaskDesiredStateRecord(
   parentTaskId: row.desiredParentTaskId == null
       ? null
       : TaskId(row.desiredParentTaskId!),
+  previousTaskId: row.desiredPreviousTaskId == null
+      ? null
+      : TaskId(row.desiredPreviousTaskId!),
   contentDirty: row.contentDirty,
   structureDirty: row.structureDirty,
   title: row.title!,
@@ -2096,6 +2266,17 @@ TaskDesiredStateRecord _mapTask(DesiredStateRow row) => TaskDesiredStateRecord(
   baseNotes: row.baseNotes,
   baseStatus: row.baseStatus == null ? null : _status(row.baseStatus),
   baseDue: _taskDate(row.baseDueEpochDay),
+  baseTaskListId: row.baseTaskListId == null
+      ? null
+      : TaskListId(row.baseTaskListId!),
+  baseParentTaskId: row.baseParentTaskId == null
+      ? null
+      : TaskId(row.baseParentTaskId!),
+  basePreviousTaskId: row.basePreviousTaskId == null
+      ? null
+      : TaskId(row.basePreviousTaskId!),
+  basePosition: row.basePosition,
+  baseSiblingOrder: row.baseSiblingOrder,
   localModifiedAt: row.localModifiedAt?.toUtc(),
   createdAt: row.createdAt.toUtc(),
   lastTransitionAt: row.lastTransitionAt.toUtc(),

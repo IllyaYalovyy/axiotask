@@ -243,6 +243,14 @@ Widget and isolated Linux integration tests exercise the task-detail controls;
 curated golden and actual synthetic desktop captures cover hierarchy controls
 and the protected-depth error state.
 
+S18B adds pure structure-winner tests, real-SQLite anchor/boundary and projected
+ordering tests, engine coverage for canonical cross-list subtree MOVE plus an
+independent content edit, and two-host competing-order convergence with a
+quiescent repeat. Existing deletion and unsupported-depth suites remain the
+move/delete and no-flattening regression gates. Widget and isolated Linux
+integration checks drive reorder and move-to-list task-detail controls; the
+ignored `hierarchy-controls` desktop PNG is inspected at 1280×720.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

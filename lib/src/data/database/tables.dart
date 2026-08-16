@@ -346,6 +346,20 @@ class DesiredStateRows extends Table {
 
   IntColumn get baseDueEpochDay => integer().nullable()();
 
+  IntColumn get baseTaskListId => integer().nullable()();
+
+  IntColumn get baseParentTaskId => integer().nullable()();
+
+  IntColumn get basePreviousTaskId => integer().nullable()();
+
+  TextColumn get basePosition => text().nullable().check(
+    basePosition.isNull() | basePosition.length.isBiggerThanValue(0),
+  )();
+
+  TextColumn get baseSiblingOrder => text().nullable().check(
+    baseSiblingOrder.isNull() | baseSiblingOrder.length.isBiggerThanValue(0),
+  )();
+
   TextColumn get failureCode => text().nullable().check(
     failureCode.isNull() | failureCode.length.isBiggerThanValue(0),
   )();
@@ -372,6 +386,12 @@ class DesiredStateRows extends Table {
     'FOREIGN KEY (account_id, desired_parent_task_id) '
         'REFERENCES tasks(account_id, id)',
     'FOREIGN KEY (account_id, desired_previous_task_id) '
+        'REFERENCES tasks(account_id, id)',
+    'FOREIGN KEY (account_id, base_task_list_id) '
+        'REFERENCES task_lists(account_id, id)',
+    'FOREIGN KEY (account_id, base_parent_task_id) '
+        'REFERENCES tasks(account_id, id)',
+    'FOREIGN KEY (account_id, base_previous_task_id) '
         'REFERENCES tasks(account_id, id)',
     "CHECK ((resource_type = 'task_list' "
         "AND target_key = 'task_list:' || target_task_list_id "
@@ -552,6 +572,16 @@ class DesiredStateAttemptRows extends Table {
   TextColumn get baseObservedPublicationId => text().nullable()();
 
   TextColumn get baseTitle => text().nullable()();
+
+  IntColumn get baseTaskListId => integer().nullable()();
+
+  IntColumn get baseParentTaskId => integer().nullable()();
+
+  IntColumn get basePreviousTaskId => integer().nullable()();
+
+  TextColumn get basePosition => text().nullable()();
+
+  TextColumn get baseSiblingOrder => text().nullable()();
 
   DateTimeColumn get notBefore => dateTime().nullable()();
 

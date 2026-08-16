@@ -86,7 +86,9 @@ final class DatabaseTasksRepository implements TasksRepository {
   Future<Outcome<void>> apply(ExistingTaskCommand command) async {
     final validation = validateTaskCommand(command);
     if (validation != null) return Outcome<void>.failure(validation);
-    if (command is PromoteTaskCommand || command is DemoteTaskCommand) {
+    if (command is PromoteTaskCommand ||
+        command is DemoteTaskCommand ||
+        command is MoveTaskCommand) {
       return _applyHierarchy(command);
     }
     try {
@@ -199,8 +201,15 @@ final class DatabaseTasksRepository implements TasksRepository {
           throw const _TaskCommandException(_unsynchronizableTaskFailure);
         }
 
+        final destinationTaskListId = switch (command) {
+          MoveTaskCommand(:final destinationTaskListId) =>
+            destinationTaskListId,
+          _ => TaskListId(target.taskListId),
+        };
+        await _requireTaskList(command.accountId, destinationTaskListId);
         final requestedParentId = switch (command) {
           DemoteTaskCommand(:final parentTaskId) => parentTaskId,
+          MoveTaskCommand(:final parentTaskId) => parentTaskId,
           PromoteTaskCommand() => null,
           _ => throw const DesiredStateInvariantException(
             'unknown_hierarchy_command',
@@ -218,7 +227,7 @@ final class DatabaseTasksRepository implements TasksRepository {
           if (parent.accountId != command.accountId.value) {
             throw const _TaskCommandException(_parentCrossAccountFailure);
           }
-          if (parent.taskListId != target.taskListId) {
+          if (parent.taskListId != destinationTaskListId.value) {
             throw const _TaskCommandException(_parentCrossListFailure);
           }
           if (parent.projection == CacheProjection.deleted.name) {
@@ -246,29 +255,79 @@ final class DatabaseTasksRepository implements TasksRepository {
                 .getSingleOrNull() !=
             null;
         final policyFailure = validateHierarchyChange(
-          task: _cachedTask(target),
+          task: _cachedTask(target).copyWith(taskListId: destinationTaskListId),
           requestedParent: parent == null ? null : _cachedTask(parent),
           taskHasChildren: hasChildren,
         );
-        if (policyFailure != null) {
+        if (policyFailure != null &&
+            !(command is MoveTaskCommand &&
+                requestedParentId == null &&
+                policyFailure.code == 'task.already_top_level')) {
           throw _TaskCommandException(policyFailure);
         }
-        await (_database.update(_database.taskCacheRows)..where(
-              (row) =>
-                  row.accountId.equals(command.accountId.value) &
-                  row.id.equals(command.taskId.value),
-            ))
-            .write(
-              TaskCacheRowsCompanion(
-                parentTaskId: Value<int?>(requestedParentId?.value),
-              ),
-            );
+        final previousTaskId = switch (command) {
+          MoveTaskCommand(:final previousTaskId) => previousTaskId,
+          _ => null,
+        };
+        if (previousTaskId == command.taskId) {
+          throw const _TaskCommandException(_previousIsTaskFailure);
+        }
+        if (previousTaskId case final anchorId?) {
+          final anchor =
+              await (_database.select(_database.taskCacheRows)..where(
+                    (row) =>
+                        row.id.equals(anchorId.value) &
+                        row.accountId.equals(command.accountId.value),
+                  ))
+                  .getSingleOrNull();
+          if (anchor == null ||
+              anchor.projection != CacheProjection.supported.name) {
+            throw const _TaskCommandException(_previousNotFoundFailure);
+          }
+          if (anchor.taskListId != destinationTaskListId.value ||
+              anchor.parentTaskId != requestedParentId?.value) {
+            throw const _TaskCommandException(_previousWrongScopeFailure);
+          }
+        }
+        if (target.taskListId != destinationTaskListId.value) {
+          await _database.customUpdate(
+            '''
+            UPDATE tasks
+            SET task_list_id = ?1,
+                parent_task_id = CASE
+                  WHEN id = ?2 THEN NULLIF(?3, 0)
+                  ELSE ?2
+                END
+            WHERE account_id = ?4
+              AND (id = ?2 OR parent_task_id = ?2)
+            ''',
+            variables: <Variable<Object>>[
+              Variable<int>(destinationTaskListId.value),
+              Variable<int>(command.taskId.value),
+              Variable<int>(requestedParentId?.value ?? 0),
+              Variable<int>(command.accountId.value),
+            ],
+            updates: <TableInfo<Table, Object?>>{_database.taskCacheRows},
+          );
+        } else {
+          await (_database.update(_database.taskCacheRows)..where(
+                (row) =>
+                    row.accountId.equals(command.accountId.value) &
+                    row.id.equals(command.taskId.value),
+              ))
+              .write(
+                TaskCacheRowsCompanion(
+                  parentTaskId: Value<int?>(requestedParentId?.value),
+                ),
+              );
+        }
         await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
         await _desired.writeTaskStructure(
           accountId: command.accountId,
           taskId: command.taskId,
-          taskListId: TaskListId(target.taskListId),
+          taskListId: destinationTaskListId,
           parentTaskId: requestedParentId,
+          previousTaskId: previousTaskId,
           title: target.title,
           notes: target.notes,
           status: _taskStatus(target.status),
@@ -347,6 +406,24 @@ final class DatabaseTasksRepository implements TasksRepository {
         t.notes AS task_notes,
         t.status AS task_status,
         t.due_epoch_day AS task_due_epoch_day,
+        (
+          SELECT d.desired_previous_task_id
+          FROM desired_states d
+          WHERE d.account_id = t.account_id
+            AND d.target_task_id = t.id
+            AND d.structure_dirty = 1
+            AND d.state IN ('pending', 'in_flight', 'uncertain', 'failed')
+          LIMIT 1
+        ) AS desired_previous_task_id,
+        (
+          SELECT d.local_causal_sequence
+          FROM desired_states d
+          WHERE d.account_id = t.account_id
+            AND d.target_task_id = t.id
+            AND d.structure_dirty = 1
+            AND d.state IN ('pending', 'in_flight', 'uncertain', 'failed')
+          LIMIT 1
+        ) AS desired_order_sequence,
         CASE
           WHEN NOT EXISTS (
             SELECT 1 FROM scope_completeness sc
@@ -553,6 +630,7 @@ CachedTask _cachedTask(TaskCacheRow row) => CachedTask(
 CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
   final taskLists = <TaskListId, CachedTaskList>{};
   final tasks = <CachedTask>[];
+  final desiredOrder = <TaskId, ({TaskId? previous, int sequence})>{};
   CacheCompleteness completeness = CacheCompleteness.unobserved;
   for (final row in rows) {
     final rowAccountId = row.read<int>('account_id');
@@ -585,9 +663,10 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
     if (taskListId != listId.value) {
       throw const CacheMappingException('task_list_partition_mismatch');
     }
+    final taskId = TaskId(taskIdValue);
     tasks.add(
       CachedTask(
-        id: TaskId(taskIdValue),
+        id: taskId,
         accountId: accountId,
         taskListId: listId,
         parentTaskId: switch (row.readNullable<int>('parent_task_id')) {
@@ -605,13 +684,60 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
         due: _mapEpochDay(row.readNullable<int>('task_due_epoch_day')),
       ),
     );
+    if (row.readNullable<int>('desired_order_sequence') case final sequence?) {
+      desiredOrder[taskId] = (
+        previous: switch (row.readNullable<int>('desired_previous_task_id')) {
+          final value? => TaskId(value),
+          null => null,
+        },
+        sequence: sequence,
+      );
+    }
   }
   return CachedTasksSnapshot(
     accountId: accountId,
     taskLists: taskLists.values.toList(growable: false),
-    tasks: tasks,
+    tasks: _projectDesiredOrder(tasks, desiredOrder),
     completeness: completeness,
   );
+}
+
+List<CachedTask> _projectDesiredOrder(
+  List<CachedTask> canonical,
+  Map<TaskId, ({TaskId? previous, int sequence})> desired,
+) {
+  final projected = canonical.toList(growable: true);
+  final entries = desired.entries.toList(
+    growable: false,
+  )..sort((left, right) => left.value.sequence.compareTo(right.value.sequence));
+  for (final entry in entries) {
+    final targetIndex = projected.indexWhere((task) => task.id == entry.key);
+    if (targetIndex < 0) continue;
+    final target = projected.removeAt(targetIndex);
+    final previous = entry.value.previous;
+    if (previous != null) {
+      final anchorIndex = projected.indexWhere(
+        (task) =>
+            task.id == previous &&
+            task.taskListId == target.taskListId &&
+            task.parentTaskId == target.parentTaskId,
+      );
+      if (anchorIndex >= 0) {
+        projected.insert(anchorIndex + 1, target);
+        continue;
+      }
+    }
+    final firstSibling = projected.indexWhere(
+      (task) =>
+          task.taskListId == target.taskListId &&
+          task.parentTaskId == target.parentTaskId,
+    );
+    projected.insert(
+      firstSibling < 0 ? projected.length : firstSibling,
+      target,
+    );
+  }
+  return projected;
 }
 
 final class CacheMappingException implements Exception {
@@ -729,6 +855,33 @@ const Failure _parentUnsupportedFailure = Failure(
   retry: RetryClassification.permanent,
   impact: 'The task hierarchy was not changed.',
   safeSummary: 'Unsupported remote data cannot become a parent.',
+);
+
+const Failure _previousIsTaskFailure = Failure(
+  code: 'task.previous_is_task',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task order was not changed.',
+  safeSummary: 'A task cannot be ordered after itself.',
+);
+
+const Failure _previousNotFoundFailure = Failure(
+  code: 'task.previous_not_found',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task order was not changed.',
+  safeSummary: 'The selected previous task is unavailable.',
+);
+
+const Failure _previousWrongScopeFailure = Failure(
+  code: 'task.previous_wrong_scope',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task order was not changed.',
+  safeSummary: 'The previous task must be a sibling in the destination.',
 );
 
 const Failure _taskCrossAccountFailure = Failure(

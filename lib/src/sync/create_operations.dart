@@ -16,6 +16,8 @@ final class CreateOperationClaim {
        parentTaskId = null,
        taskListRemoteId = null,
        parentRemoteId = null,
+       previousTaskId = null,
+       previousRemoteId = null,
        notes = null,
        status = null,
        due = null;
@@ -28,6 +30,8 @@ final class CreateOperationClaim {
     required this.parentTaskId,
     required this.taskListRemoteId,
     required this.parentRemoteId,
+    required this.previousTaskId,
+    required this.previousRemoteId,
     required this.title,
     required this.notes,
     required this.status,
@@ -42,6 +46,8 @@ final class CreateOperationClaim {
   final TaskId? parentTaskId;
   final RemoteTaskListId? taskListRemoteId;
   final RemoteTaskId? parentRemoteId;
+  final TaskId? previousTaskId;
+  final RemoteTaskId? previousRemoteId;
   final String title;
   final String? notes;
   final TaskStatus? status;
@@ -68,6 +74,7 @@ final class CreateOperationMapper {
         null => null,
       },
       parentId: claim.parentRemoteId,
+      previousId: claim.previousRemoteId,
     ),
   };
 }
