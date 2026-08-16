@@ -53,6 +53,16 @@ The device-preference adapter has a separate contract suite covering typed
 defaults, malformed values, write failures, and recovery. Unit/widget tests use
 an in-memory implementation and never open the platform preference store.
 
+S22A implements those contracts in
+`test/data/preferences/device_preferences_test.dart`, with relational account,
+foreign-key, restart, and stream evidence in
+`test/data/preferences/relational_preferences_test.dart`. The combined
+repository routing test proves a failed device write neither routes relational
+or query settings through device storage nor changes synchronization settings.
+`integration_test/preferences_native_smoke_test.dart` uses one isolated
+namespace, verifies the actual `SharedPreferencesAsync` plugin after adapter
+reconstruction, and removes only its three exact synthetic keys.
+
 No test path is obtained from the production application-data resolver.
 
 ### 3. Google HTTP adapter contract tests

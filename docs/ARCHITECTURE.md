@@ -17,6 +17,9 @@ uncertainty, preserves newer generations and durable latches, and rejects stale
 finalizers through S21A. Real-process qualification and non-destructive
 database recovery preserve main/WAL/SHM files, stop Google work when storage is
 unsafe, and present Retry Open instead of invented empty data through S21B.
+Typed account/list/view preferences now use the existing relational schema,
+while namespaced theme, density, and onboarding dismissal use the disposable
+device adapter through one repository boundary in S22A.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

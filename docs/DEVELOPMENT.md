@@ -36,6 +36,13 @@ S02 additionally locks `drift` 2.34.3, `sqlite3` 3.5.1 with bundled SQLite
 `build_runner` 2.15.1. The generated Drift output is committed. The normal
 quality gate regenerates it and fails if any generated Dart file changes.
 
+S22A locks `shared_preferences` 2.5.5 for disposable device presentation only.
+The application adapter uses `SharedPreferencesAsync` with the composition's
+injected namespace. Account/list/view query preferences remain in Drift, while
+unit tests inject an in-memory device backend and never open normal preferences.
+The default device presentation is system theme, standard density, and
+onboarding not dismissed; malformed values are removed and safely diagnosed.
+
 The version-1 database contains the account-scoped Google list/task cache,
 separate remote bases, page-scope completeness, relational preference
 foundation, durable truthful-health facts, coalesced desired state and

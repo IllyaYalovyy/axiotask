@@ -28,14 +28,20 @@ replaced with an empty cache.
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
-The preference tables establish relational storage only. Their typed
-application adapter and device-only preferences remain the S22A slice.
+The preference tables are exposed through the S22A typed application
+repository. List order/exclusion and per-view sort/completion filtering remain
+account-scoped in these tables; theme, density, and onboarding dismissal are
+device-only and never enter SQLite.
 
 ## Invariants
 
 - Every cache, remote-base, completeness, and relational-preference row carries
   or derives an `account_id`. Composite foreign keys prevent a task, parent,
   remote base, or preference from attaching to another account or list.
+- Missing list preferences default to no explicit sidebar order and inclusion
+  in smart views. Missing view preferences default to manual sorting with
+  completed tasks hidden. Both projections are reactive and require an explicit
+  account plus list/view key; no unscoped preference read exists.
 - Repository reads require an `AccountId`; every list/task predicate and join is
   constrained by that account. There is no unscoped task read API.
 - Local list/task IDs are SQLite-assigned 64-bit identities. Google IDs are

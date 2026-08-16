@@ -126,6 +126,9 @@ flutter pub get
 `pubspec.lock` is committed. Do not run a dependency upgrade as part of normal
 setup. SQLite is supplied as a native asset by the locked `sqlite3` package; do
 not install `sqlite3_flutter_libs` or a system SQLite development package.
+`shared_preferences` 2.5.5 is locked for namespaced theme, density, and
+onboarding dismissal through `SharedPreferencesAsync`; relational/query and
+synchronization settings remain in SQLite.
 `connectivity_plus` 7.3.1 observes Linux NetworkManager only for no-route and
 may-have-returned scheduling hints; an available interface never proves Google
 reachability or healthy sync.
@@ -438,6 +441,9 @@ flutter test test/data/database/delete_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/data/database/sync_settings_repository_test.dart
+flutter test test/data/preferences/relational_preferences_test.dart
+flutter test test/data/preferences/device_preferences_test.dart
+flutter test test/data/preferences/preferences_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
@@ -475,6 +481,7 @@ flutter test integration_test/create_publish_linux_test.dart -d linux
 flutter test integration_test/update_publish_linux_test.dart -d linux
 flutter test integration_test/delete_publish_linux_test.dart -d linux
 flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
+flutter test integration_test/preferences_native_smoke_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

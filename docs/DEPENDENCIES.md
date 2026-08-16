@@ -156,6 +156,29 @@ S27B. Removing the plugin requires another supported platform adapter that
 passes the same hint-only contract; synchronization remains correct when the
 hint is unknown.
 
+## Admitted for S22A device presentation preferences
+
+S22A locks `shared_preferences` 2.5.5 with the resolved Android 2.4.27 and
+Linux 2.4.1 implementations. It is published by the Flutter team under the
+BSD-3-Clause license, supports the locked Flutter 3.44 / Dart 3.12 toolchain,
+and adds no database, credential, or Google access. Linux uses its XDG-backed
+file implementation; Android uses the plugin's asynchronous platform storage.
+Both native debug builds pass after admission.
+
+Only `SharedPreferencesAsync` is constructed, behind a namespaced typed device
+adapter. The adapter can represent system/light/dark theme, standard/compact
+visual density, and onboarding dismissal only. Malformed values are removed
+and defaulted with production-safe diagnostics; failed writes preserve the
+previous in-memory value and return a typed failure. Account ownership, list
+references, view query settings, desired state, and synchronization facts have
+no device-adapter API and remain in Drift. Tests use an in-memory backend, so
+normal platform preferences are never opened by unit or persistence suites.
+
+The package documentation explicitly disclaims critical-write durability, which
+is why removal is straightforward: another asynchronous device-presentation
+adapter can replace it behind the same narrow contract without migrating or
+touching task, account, or synchronization state.
+
 ## Deliberately not selected
 
 | Candidate | Reason |
