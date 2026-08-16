@@ -125,7 +125,17 @@ final class PagePublicationResult<T> {
   final int resourceWrites;
 }
 
-abstract interface class ReadSyncStore {
+abstract interface class SyncReauthorizationStore {
+  Future<bool> readReauthorizationRequired(AccountId accountId);
+
+  Future<String?> readAuthorizationSubject(AccountId accountId);
+
+  Future<void> requireReauthorization(AccountId accountId);
+
+  Future<void> completeReauthorization(AccountId accountId);
+}
+
+abstract interface class ReadSyncStore implements SyncReauthorizationStore {
   Future<void> recoverReadRun(AccountId accountId);
 
   Future<ReadSyncEligibility> readEligibility(AccountId accountId);

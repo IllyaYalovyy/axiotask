@@ -22,6 +22,13 @@ enum RetryClassification { transient, permanent, unknown }
 
 enum FailureAction { retry, connect, reviewConfiguration }
 
+/// Policy admitted for a conclusively classified Google authorization failure.
+///
+/// Most authorization-looking HTTP responses remain [none]. Only an adapter
+/// contract backed by accepted endpoint evidence may opt a response into the
+/// single refresh-and-repeat path.
+enum AuthorizationRecovery { none, refreshOnce }
+
 sealed class RetryAfter {
   const RetryAfter();
 }
@@ -84,6 +91,7 @@ final class Failure {
     this.action,
     this.sensitiveContext,
     this.remoteContext,
+    this.authorizationRecovery = AuthorizationRecovery.none,
   });
 
   final String code;
@@ -95,6 +103,7 @@ final class Failure {
   final String safeSummary;
   final String? sensitiveContext;
   final RemoteFailureContext? remoteContext;
+  final AuthorizationRecovery authorizationRecovery;
 
   @override
   bool operator ==(Object other) =>
@@ -108,7 +117,8 @@ final class Failure {
           action == other.action &&
           safeSummary == other.safeSummary &&
           sensitiveContext == other.sensitiveContext &&
-          remoteContext == other.remoteContext;
+          remoteContext == other.remoteContext &&
+          authorizationRecovery == other.authorizationRecovery;
 
   @override
   int get hashCode => Object.hash(
@@ -121,6 +131,7 @@ final class Failure {
     safeSummary,
     sensitiveContext,
     remoteContext,
+    authorizationRecovery,
   );
 
   @override

@@ -10,7 +10,7 @@ been verified merely because it loaded successfully.
 
 | Outcome | Meaning | Required presentation |
 |---|---|---|
-| Inactive | Sync was stopped, or usable Tasks authorization is absent | “Sync stopped” with Resume, or “No authorization” with Connect; never green |
+| Inactive | Sync was stopped, or usable Tasks authorization is absent | “Sync stopped” with Resume, or “No authorization” with Connect for an unconfigured account and Reauthorize for a durable terminal rejection; never green |
 | Good | The latest forced or scheduled required sync succeeded less than five minutes ago and no work, failure, or uncertainty is newer | Green icon, “Synced,” and exact last-success time; this reports successful synchronization rather than claiming an atomic Google snapshot |
 | Failed | A failure was detected, retry backoff/exhaustion is waiting, a run timed out, or last success reached five minutes without active verification | Persistent concrete reason—no connection, remote failure, application failure, or stale—plus last-success time/age, pending count, and any available action |
 | Pending | A nonfailed verification/run is active or immediately queued, a retry request is executing, or durable work awaits its eligible immediate run | Yellow icon, precise activity/reason, and pending count; never green |

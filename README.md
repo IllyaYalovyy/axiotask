@@ -170,10 +170,11 @@ flutter run -d linux --debug -t lib/main_development.dart \
 
 Omitting the subject or OAuth configuration is safe: the composition fails
 closed as No authorization. A mismatched authenticated subject also fails
-before a Tasks read. This slice restores existing Linux credentials; it does
-not add interactive Connect/Reauthorize UI. The optional live smoke therefore
-requires the configured dedicated account and its already provisioned,
-composition-specific credential namespace.
+before a Tasks read. Initial authorization still requires the configured
+dedicated account and its composition-specific credential namespace. After a
+terminal rejection, S19B wires the Linux Reauthorize action through the same
+isolated authorization adapter and requires a matching subject before a full
+verification run.
 
 The read service itself is page-oriented so later synchronization can publish
 validated pages incrementally. Task-list requests use the documented maximum
@@ -273,6 +274,17 @@ PKCE verifiers, DPoP private keys, and callback URLs remain redacted. The probe
 verifies restart/refresh behavior and deletes only its isolated credential
 bundle afterward. It never reads or changes normal Axiotask credentials or
 local data.
+
+The application synchronization boundary refreshes once only for the exact
+structured read rejection admitted by the controlled P11 evidence. A second
+rejection, terminal refresh, missing Tasks scope, or subject mismatch persists
+an account-scoped reauthorization latch. Cached tasks and durable pending intent
+remain visible and untouched; restart suppresses further Google work and shows
+Inactive / No authorization with Reauthorize. Cancelling leaves the latch in
+place. A matching successful Reauthorize clears it and starts a complete
+verification, which remains Pending until that run finalizes successfully.
+Unknown 401/403 shapes and mutation-side authorization-like responses are never
+blindly replayed.
 
 ## Isolated Google Tasks mutation probe
 
@@ -409,6 +421,8 @@ flutter test test/sync/structure_reconciliation_multi_host_test.dart
 flutter test test/sync/delete_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart
+flutter test test/sync/auth/sync_authorization_recovery_test.dart
+flutter test test/sync/auth/sync_reauthorization_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
@@ -436,10 +450,11 @@ flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 ./scripts/privacy_check.sh
 ```
 
-Capture the isolated synthetic Linux states, including pending provisional list
-and task creates, stopped list/task content edits, active Stop, stopped Resume,
-retry waiting/execution/exhaustion, hierarchy controls, and protected-depth
-failure, into the ignored
+Capture the isolated synthetic Linux states, including persistent
+no-authorization with Reauthorize and preserved cached/unresolved work, pending
+provisional list and task creates, stopped list/task content edits, active Stop,
+stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
+protected-depth failure, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

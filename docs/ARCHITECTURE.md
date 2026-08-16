@@ -5,9 +5,10 @@ foreground coordination, Linux lifecycle/Stop/Resume control, durable offline
 list/task acknowledgement, ordered Google create/update/delete/MOVE
 publication, whole-record content reconciliation, and Google-authoritative
 one-level structure reconciliation are implemented through S18B. Bounded
-request retry, durable between-run backoff/exhaustion, and explicit Retry
-recovery are implemented through S19A. Token refresh/reauthorization, Android
-lifecycle control, and other later mutations remain later slices.**
+request retry, durable between-run backoff/exhaustion, explicit Retry recovery,
+refresh-once authorization recovery, and durable reauthorization are implemented
+through S19B. Android lifecycle control and other later mutations remain later
+slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed

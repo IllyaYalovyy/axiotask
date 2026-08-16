@@ -292,6 +292,7 @@ final class _Harness {
       ),
       settings: DatabaseSyncSettingsRepository(database),
       retryStore: DatabaseReadSyncStore(database),
+      reauthorizationStore: DatabaseReadSyncStore(database),
       lifecycle: lifecycle,
       run: (request) =>
           SyncEngine(

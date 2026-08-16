@@ -192,6 +192,12 @@ Pending; exhaustion remains Failed with an immediate Retry action. Focused
 retry verification is available under `test/sync/retry/` and uses no real
 account, credential, network, or normal application storage.
 
+S19B validates the existing `health-no-authorization` scenario as the durable
+reauthorization layout: cached synthetic tasks and unresolved counts remain
+visible, health is Inactive, and Reauthorize is prominent at 1280×720. The
+ignored actual capture uses no OAuth configuration, credentials, Google access,
+or normal application storage.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

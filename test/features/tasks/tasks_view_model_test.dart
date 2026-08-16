@@ -102,6 +102,7 @@ void main() {
       var stopCalls = 0;
       var resumeCalls = 0;
       var retryCalls = 0;
+      var reauthorizeCalls = 0;
       final viewModel = TasksViewModel(
         accountId: const AccountId(1),
         tasksRepository: tasks,
@@ -115,6 +116,9 @@ void main() {
         },
         retryRequested: () async {
           retryCalls += 1;
+        },
+        reauthorizeRequested: () async {
+          reauthorizeCalls += 1;
         },
       );
       addTearDown(viewModel.dispose);
@@ -131,6 +135,8 @@ void main() {
       expect(resumeCalls, 1);
       await viewModel.handleSyncHealthAction(SyncHealthAction.retry);
       expect(retryCalls, 1);
+      await viewModel.handleSyncHealthAction(SyncHealthAction.reauthorize);
+      expect(reauthorizeCalls, 1);
     },
   );
 

@@ -124,6 +124,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.taskDeleteCommitted,
     this.refreshRequested,
     this.retryRequested,
+    this.reauthorizeRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
   }) : _state = TasksViewState(
@@ -152,6 +153,7 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function(DateTime notBefore)? taskDeleteCommitted;
   final Future<void> Function()? refreshRequested;
   final Future<void> Function()? retryRequested;
+  final Future<void> Function()? reauthorizeRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
   TasksViewState _state;
@@ -451,14 +453,14 @@ final class TasksViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> handleSyncHealthAction(SyncHealthAction action) =>
-      switch (action) {
-        SyncHealthAction.resume => resumeSync(),
-        SyncHealthAction.retry => retrySync(),
-        SyncHealthAction.none ||
-        SyncHealthAction.connect ||
-        SyncHealthAction.reauthorize => Future<void>.value(),
-      };
+  Future<void> handleSyncHealthAction(
+    SyncHealthAction action,
+  ) => switch (action) {
+    SyncHealthAction.resume => resumeSync(),
+    SyncHealthAction.retry => retrySync(),
+    SyncHealthAction.reauthorize => _performSyncControl(reauthorizeRequested),
+    SyncHealthAction.none || SyncHealthAction.connect => Future<void>.value(),
+  };
 
   Future<void> _performSyncControl(Future<void> Function()? action) {
     final existing = _syncControlInFlight;

@@ -72,6 +72,7 @@ void main() {
         ),
         settings: DatabaseSyncSettingsRepository(database),
         retryStore: DatabaseReadSyncStore(database),
+        reauthorizationStore: DatabaseReadSyncStore(database),
         taskDeleteEligibility: _DeleteEligibility(database),
         run: (request) =>
             SyncEngine(

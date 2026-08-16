@@ -569,6 +569,7 @@ final class _Harness {
       connectivity: connectivity,
       settings: settings ?? _MemorySyncSettingsRepository(),
       retryStore: _MemoryRetryStore(),
+      reauthorizationStore: _MemoryReauthorizationStore(),
       taskDeleteEligibility: deleteEligibility,
       run: runner.call,
     );
@@ -598,6 +599,28 @@ final class _MemoryRetryStore implements SyncRetryEpisodeStore {
   @override
   Future<void> clearRetryEpisode(AccountId accountId) async {
     value = null;
+  }
+}
+
+final class _MemoryReauthorizationStore implements SyncReauthorizationStore {
+  bool required = false;
+
+  @override
+  Future<bool> readReauthorizationRequired(AccountId accountId) async =>
+      required;
+
+  @override
+  Future<String?> readAuthorizationSubject(AccountId accountId) async =>
+      _subject.value;
+
+  @override
+  Future<void> requireReauthorization(AccountId accountId) async {
+    required = true;
+  }
+
+  @override
+  Future<void> completeReauthorization(AccountId accountId) async {
+    required = false;
   }
 }
 

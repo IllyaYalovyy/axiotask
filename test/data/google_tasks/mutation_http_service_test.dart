@@ -531,8 +531,8 @@ void main() {
           (
             status: 401,
             body: '{"error":{"status":"UNAUTHENTICATED"}}',
-            kind: GoogleTasksErrorKind.authorization,
-            commitState: MutationCommitState.notCommitted,
+            kind: GoogleTasksErrorKind.unknown,
+            commitState: MutationCommitState.uncertain,
             retry: RetryClassification.unknown,
           ),
           (

@@ -36,6 +36,47 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   final SyncHealthDao _health;
 
   @override
+  Future<bool> readReauthorizationRequired(AccountId accountId) async =>
+      (await readEligibility(accountId)).reauthorizationRequired;
+
+  @override
+  Future<String?> readAuthorizationSubject(AccountId accountId) async =>
+      (await readEligibility(accountId)).googleSubject;
+
+  @override
+  Future<void> requireReauthorization(AccountId accountId) {
+    return _database.transaction(() async {
+      await _requireAccount(accountId);
+      await _ensureSyncFacts(accountId);
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        const SyncFactRowsCompanion(reauthorizationRequired: Value<bool>(true)),
+      );
+    });
+  }
+
+  @override
+  Future<void> completeReauthorization(AccountId accountId) {
+    return _database.transaction(() async {
+      await _requireAccount(accountId);
+      await _ensureSyncFacts(accountId);
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        const SyncFactRowsCompanion(
+          reauthorizationRequired: Value<bool>(false),
+          latestFailureReason: Value<String?>(null),
+          latestFailureAt: Value<DateTime?>(null),
+          latestFailureDiagnosticCode: Value<String?>(null),
+          latestFailureAction: Value<String?>(null),
+          requiredScopeIncomplete: Value<bool>(false),
+        ),
+      );
+    });
+  }
+
+  @override
   Future<RetryEpisode?> readRetryEpisode(AccountId accountId) async {
     final row = await (_database.select(
       _database.syncFactRows,

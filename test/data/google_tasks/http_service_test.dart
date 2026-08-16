@@ -185,6 +185,76 @@ void main() {
   });
 
   group('HttpGoogleTasksService failures', () {
+    test(
+      'AUTH-006 classifies only the observed malformed-bearer shape as refreshable',
+      () async {
+        final server = await ScriptedServer.start((request) async {
+          request.response.statusCode = HttpStatus.unauthorized;
+          request.response.headers
+            ..contentType = ContentType.json
+            ..set(
+              HttpHeaders.wwwAuthenticateHeader,
+              'Bearer realm="synthetic"',
+            );
+          request.response.write(
+            jsonEncode(<String, Object>{
+              'error': <String, Object>{
+                'code': 401,
+                'errors': <Object>[
+                  <String, Object>{'reason': 'authError'},
+                ],
+                'message': 'Synthetic malformed credential.',
+                'status': 'UNAUTHENTICATED',
+              },
+            }),
+          );
+          await request.response.close();
+        });
+        addTearDown(server.close);
+        final service = _service(server: server);
+        addTearDown(service.close);
+
+        final result = await service.listTaskLists();
+
+        final failure = (result as Failed<RemotePage<RemoteTaskList>>).failure;
+        expect(failure.code, 'google_tasks.unauthorized');
+        expect(failure.category, FailureCategory.authorization);
+        expect(
+          failure.authorizationRecovery,
+          AuthorizationRecovery.refreshOnce,
+        );
+      },
+    );
+
+    test('AUTH-006 unknown auth-like responses remain unclassified', () async {
+      var call = 0;
+      final server = await ScriptedServer.start((request) async {
+        call += 1;
+        request.response.statusCode = call == 1
+            ? HttpStatus.unauthorized
+            : HttpStatus.forbidden;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          call == 1
+              ? '{"error":{"status":"UNAUTHENTICATED"}}'
+              : '{"error":{"errors":[{"reason":"authError"}]}}',
+        );
+        await request.response.close();
+      });
+      addTearDown(server.close);
+      final service = _service(server: server);
+      addTearDown(service.close);
+
+      for (var index = 0; index < 2; index += 1) {
+        final result = await service.listTaskLists();
+        final failure = (result as Failed<RemotePage<RemoteTaskList>>).failure;
+        expect(failure.code, 'google_tasks.remote_rejected');
+        expect(failure.category, FailureCategory.remote);
+        expect(failure.retry, RetryClassification.unknown);
+        expect(failure.authorizationRecovery, AuthorizationRecovery.none);
+      }
+    });
+
     test('rejects a response that exceeds the configured byte bound', () async {
       final server = await ScriptedServer.start((request) async {
         request.response.headers.contentType = ContentType.json;
@@ -367,13 +437,6 @@ void main() {
             RetryClassification retry,
           })
         >[
-          (
-            status: 401,
-            body: '{"error":{"status":"UNAUTHENTICATED"}}',
-            code: 'google_tasks.unauthorized',
-            category: FailureCategory.authorization,
-            retry: RetryClassification.unknown,
-          ),
           (
             status: 403,
             body: '{"error":{"errors":[{"reason":"quotaExceeded"}]}}',

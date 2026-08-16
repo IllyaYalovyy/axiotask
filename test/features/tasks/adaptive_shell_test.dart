@@ -51,6 +51,15 @@ void main() {
       (
         _health(
           SyncHealthOutcome.inactive,
+          inactiveReason: SyncInactiveReason.noAuthorization,
+          action: SyncHealthAction.reauthorize,
+        ),
+        'No authorization',
+        'Reauthorize',
+      ),
+      (
+        _health(
+          SyncHealthOutcome.inactive,
           inactiveReason: SyncInactiveReason.syncStopped,
           action: SyncHealthAction.resume,
         ),

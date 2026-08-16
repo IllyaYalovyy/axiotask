@@ -28,6 +28,7 @@ enum SyncTrigger {
   resumeSync,
   localEdit,
   deleteEligible,
+  reauthorization,
   retry,
   cadence,
 }
@@ -41,6 +42,7 @@ extension SyncTriggerValue on SyncTrigger {
     SyncTrigger.resumeSync => 'resume_sync',
     SyncTrigger.localEdit => 'local_edit',
     SyncTrigger.deleteEligible => 'delete_eligible',
+    SyncTrigger.reauthorization => 'reauthorization',
     SyncTrigger.retry => 'retry',
     SyncTrigger.cadence => 'cadence',
   };
@@ -119,6 +121,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     required RandomSource random,
     required this.settings,
     required this.retryStore,
+    required this.reauthorizationStore,
     required this.run,
     this.taskDeleteEligibility,
     LifecyclePort? lifecycle,
@@ -148,6 +151,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   final MonotonicScheduler scheduler;
   final SyncSettingsRepository settings;
   final SyncRetryEpisodeStore retryStore;
+  final SyncReauthorizationStore reauthorizationStore;
   final CoordinatedSyncRun run;
   final TaskDeleteEligibilityStore? taskDeleteEligibility;
   final ConnectivityPort? _connectivity;
@@ -176,7 +180,9 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   bool _shutdownRequested = false;
   Future<void>? _settingsOperation;
   Future<void>? _manualRetryOperation;
+  Future<void>? _reauthorizationOperation;
   RetryEpisode? _retryEpisode;
+  bool _reauthorizationRequired = false;
   bool _started = false;
   bool _closed = false;
 
@@ -204,7 +210,12 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     if (_started) return whenIdle;
     _started = true;
     try {
-      _syncEnabled = await settings.readSyncEnabled(accountId);
+      final eligibility = await Future.wait<Object>(<Future<Object>>[
+        settings.readSyncEnabled(accountId),
+        reauthorizationStore.readReauthorizationRequired(accountId),
+      ]);
+      _syncEnabled = eligibility[0] as bool;
+      _reauthorizationRequired = eligibility[1] as bool;
     } on Object {
       _emit(
         _with(
@@ -220,6 +231,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _retryEpisode = await retryStore.readRetryEpisode(accountId);
     if (_syncEnabled != true) {
       _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+      return;
+    }
+    if (_reauthorizationRequired) {
+      _emit(_inactiveAuthorization());
       return;
     }
     if (_retryEpisode != null) {
@@ -248,6 +263,66 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       }),
     );
     return operation;
+  }
+
+  Future<void> reauthorize() {
+    _requireOpen();
+    final existing = _reauthorizationOperation;
+    if (existing != null) return existing;
+    final operation = _reauthorize();
+    _reauthorizationOperation = operation;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_reauthorizationOperation, operation)) {
+          _reauthorizationOperation = null;
+        }
+      }),
+    );
+    return operation;
+  }
+
+  Future<void> _reauthorize() async {
+    _reauthorizationRequired = await reauthorizationStore
+        .readReauthorizationRequired(accountId);
+    if (!_reauthorizationRequired) return;
+    _emit(
+      _with(
+        authorization: SyncAuthorization.refreshing,
+        activity: SyncActivity.checkingAuthorization,
+        verificationRequired: true,
+      ),
+    );
+    final outcome = await authorization.requestTasksAuthorization();
+    switch (outcome) {
+      case Success<AccountSubject>(:final value):
+        final expected = await reauthorizationStore.readAuthorizationSubject(
+          accountId,
+        );
+        if (expected == null || value.value != expected) {
+          await reauthorizationStore.requireReauthorization(accountId);
+          _reauthorizationRequired = true;
+          _emit(_inactiveAuthorization());
+          return;
+        }
+        await reauthorizationStore.completeReauthorization(accountId);
+        _reauthorizationRequired = false;
+        await _clearRetryEpisode();
+        if (_syncEnabled == true && !_stopRequested && !_shutdownRequested) {
+          await _requestImmediate(SyncTrigger.reauthorization);
+        } else {
+          _emit(
+            _with(
+              authorization: SyncAuthorization.usable,
+              activity: SyncActivity.idle,
+              verificationRequired: false,
+              clearFailure: true,
+            ),
+          );
+        }
+      case Failed<AccountSubject>():
+        _reauthorizationRequired = true;
+        _emit(_inactiveAuthorization());
+    }
   }
 
   Future<void> stop() => _changeSyncEnabled(false);
@@ -328,7 +403,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   Future<void> _requestImmediate(SyncTrigger trigger) {
     _requireOpen();
-    if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+    if (_syncEnabled != true ||
+        _reauthorizationRequired ||
+        _stopRequested ||
+        _shutdownRequested) {
       return whenIdle;
     }
     if (_activeControl != null) {
@@ -480,6 +558,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   void _scheduleCadence() {
     _cadenceTimer?.cancel();
     if (_syncEnabled != true ||
+        _reauthorizationRequired ||
         _stopRequested ||
         _shutdownRequested ||
         (_retryEpisode?.automaticRetryExhausted ?? false) ||
@@ -497,6 +576,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     final state = authorization.currentState;
     if (state is TasksAuthorized || state is AuthorizationExpired) return true;
     if (state is AuthorizationRejected) {
+      await reauthorizationStore.requireReauthorization(accountId);
+      _reauthorizationRequired = true;
       _emit(_inactiveAuthorization());
       return false;
     }
@@ -510,13 +591,16 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     final outcome = await authorization.restoreTasksAuthorization();
     return switch (outcome) {
       Success<AccountSubject>() => true,
-      Failed<AccountSubject>(:final failure) => _acceptAuthorizationFailure(
-        failure,
-      ),
+      Failed<AccountSubject>(:final failure) =>
+        await _acceptAuthorizationFailure(failure),
     };
   }
 
-  bool _acceptAuthorizationFailure(Failure failure) {
+  Future<bool> _acceptAuthorizationFailure(Failure failure) async {
+    if (authorization.currentState is AuthorizationRejected) {
+      await reauthorizationStore.requireReauthorization(accountId);
+      _reauthorizationRequired = true;
+    }
     if (failure.category == FailureCategory.authorization ||
         failure.category == FailureCategory.configuration ||
         authorization.currentState is NoTasksAuthorization ||
@@ -543,6 +627,13 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     SyncRunReport report, {
     required bool keepPending,
   }) async {
+    _reauthorizationRequired = await reauthorizationStore
+        .readReauthorizationRequired(accountId);
+    if (_reauthorizationRequired) {
+      await _clearRetryEpisode();
+      _emit(_inactiveAuthorization());
+      return false;
+    }
     switch (report.outcome) {
       case SyncRunOutcome.succeeded:
         await _clearRetryEpisode();
@@ -824,7 +915,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       case NoTasksAuthorization() || AuthorizationRejected():
         if (_started) _emit(_inactiveAuthorization());
       case AuthorizationRequestFailed(:final failure):
-        _acceptAuthorizationFailure(failure);
+        unawaited(_acceptAuthorizationFailure(failure));
     }
   }
 
@@ -1044,6 +1135,11 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       await _lifecycleOperation;
     } on Object {
       // The safe failure projection was emitted by the lifecycle listener.
+    }
+    try {
+      await _reauthorizationOperation;
+    } on Object {
+      // The durable latch remains authoritative after a failed action.
     }
     _closed = true;
     await _facts.close();

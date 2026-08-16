@@ -66,6 +66,16 @@ final class FakeAuthorizationAttempt {
         Outcome<AccountSubject>.success(subject),
       );
 
+  factory FakeAuthorizationAttempt.interactiveRejected(Failure failure) =>
+      FakeAuthorizationAttempt._(
+        FakeAuthorizationOperation.interactive,
+        <AuthorizationState>[
+          const AuthorizationConnecting(),
+          AuthorizationRejected(failure),
+        ],
+        Outcome<AccountSubject>.failure(failure),
+      );
+
   factory FakeAuthorizationAttempt.restoreMismatch(
     AccountSubject returnedSubject,
     Failure failure,

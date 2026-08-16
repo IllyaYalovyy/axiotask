@@ -261,6 +261,17 @@ explicit Retry latch clearing. Health and Linux golden/actual screenshot checks
 prove that waiting/exhaustion are Failed while only an executing retry is
 Pending.
 
+S19B adds engine/coordinator authorization-recovery suites over real in-memory
+SQLite plus the qualified authorization fake. They prove one refresh and one
+request replay for the accepted structured read rejection, terminal refresh and
+second-rejection latching, cache/intent preservation, restart suppression,
+cancel/scope/subject failure, stopped-sync precedence, and matching interactive
+reauthorization followed by Pending full verification. HTTP adapter tests admit
+only the observed malformed-bearer read shape; unknown 401/403 shapes and every
+mutation-side auth-like response remain non-replayed and fail closed. Linux
+authorization contracts retain `invalid_grant`, scope, subject, cancellation,
+DPoP, and secure replacement coverage.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

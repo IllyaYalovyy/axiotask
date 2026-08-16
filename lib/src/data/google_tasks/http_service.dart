@@ -552,7 +552,7 @@ final class HttpGoogleTasksService implements GoogleTasksService {
       statusCode: statusCode,
       retryAfter: _parseRetryAfter(headers['retry-after']),
     );
-    if (statusCode == 401) {
+    if (_isObservedMalformedBearerResponse(statusCode, body, headers)) {
       return Failure(
         code: 'google_tasks.unauthorized',
         category: FailureCategory.authorization,
@@ -562,6 +562,7 @@ final class HttpGoogleTasksService implements GoogleTasksService {
         action: FailureAction.connect,
         safeSummary: 'Google rejected the Tasks request as unauthorized.',
         remoteContext: remoteContext,
+        authorizationRecovery: AuthorizationRecovery.refreshOnce,
       );
     }
     if (statusCode == 429 ||
@@ -634,6 +635,29 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     }
   }
 
+  bool _isObservedMalformedBearerResponse(
+    int statusCode,
+    List<int> body,
+    Map<String, String> headers,
+  ) {
+    if (statusCode != HttpStatus.unauthorized ||
+        headers['www-authenticate'] == null) {
+      return false;
+    }
+    try {
+      final decoded = jsonDecode(_safeUtf8(body));
+      if (decoded is! Map<String, Object?>) return false;
+      final error = decoded['error'];
+      if (error is! Map<String, Object?>) return false;
+      return error['code'] == HttpStatus.unauthorized &&
+          error['errors'] is List<Object?> &&
+          error['message'] is String &&
+          error['status'] is String;
+    } on FormatException {
+      return false;
+    }
+  }
+
   GoogleTasksMutationError _mapMutationHttpError(
     int statusCode,
     List<int> body,
@@ -643,22 +667,6 @@ final class HttpGoogleTasksService implements GoogleTasksService {
       statusCode: statusCode,
       retryAfter: _parseRetryAfter(headers['retry-after']),
     );
-    if (statusCode == HttpStatus.unauthorized) {
-      return GoogleTasksMutationError(
-        failure: Failure(
-          code: 'google_tasks.unauthorized',
-          category: FailureCategory.authorization,
-          operation: FailureOperation.write,
-          retry: RetryClassification.unknown,
-          impact: 'Google Tasks authorization was not accepted.',
-          action: FailureAction.connect,
-          safeSummary: 'Google rejected a Tasks mutation as unauthorized.',
-          remoteContext: remoteContext,
-        ),
-        kind: GoogleTasksErrorKind.authorization,
-        commitState: MutationCommitState.notCommitted,
-      );
-    }
     if (statusCode == HttpStatus.tooManyRequests ||
         (statusCode == HttpStatus.forbidden &&
             _errorReasons(body).contains('quotaExceeded'))) {

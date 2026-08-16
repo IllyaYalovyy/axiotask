@@ -79,6 +79,7 @@ void main() {
         ),
         settings: settings,
         retryStore: DatabaseReadSyncStore(database),
+        reauthorizationStore: DatabaseReadSyncStore(database),
         run: (request) =>
             SyncEngine(
               store: DatabaseReadSyncStore(database),

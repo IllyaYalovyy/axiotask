@@ -296,6 +296,7 @@ final class _Harness {
           : FakeRandom.scriptedJitter(jitter),
       settings: _Settings(),
       retryStore: store,
+      reauthorizationStore: store,
       connectivity: connectivity,
       run: runner.call,
     );
@@ -327,10 +328,30 @@ final class _Harness {
   Future<void> close() => coordinator.close();
 }
 
-final class _MemoryRetryStore implements SyncRetryEpisodeStore {
+final class _MemoryRetryStore
+    implements SyncRetryEpisodeStore, SyncReauthorizationStore {
   _MemoryRetryStore([this.value]);
 
   RetryEpisode? value;
+  bool reauthorizationRequired = false;
+
+  @override
+  Future<bool> readReauthorizationRequired(AccountId accountId) async =>
+      reauthorizationRequired;
+
+  @override
+  Future<String?> readAuthorizationSubject(AccountId accountId) async =>
+      'synthetic-retry-coordinator';
+
+  @override
+  Future<void> requireReauthorization(AccountId accountId) async {
+    reauthorizationRequired = true;
+  }
+
+  @override
+  Future<void> completeReauthorization(AccountId accountId) async {
+    reauthorizationRequired = false;
+  }
 
   @override
   Future<RetryEpisode?> readRetryEpisode(AccountId accountId) async => value;

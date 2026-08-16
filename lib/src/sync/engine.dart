@@ -161,6 +161,7 @@ final class SyncEngine {
       required TaskListId taskListId,
       required RemoteTaskListId taskListRemoteId,
       required String reason,
+      required AccountSubject expectedSubject,
     }) async {
       final plan = TaskScopeReadPlan();
       PageToken? token;
@@ -173,6 +174,8 @@ final class SyncEngine {
             cancellation: readCancellation,
           ),
           runDeadline,
+          accountId: request.accountId,
+          expectedSubject: expectedSubject,
         );
         switch (result) {
           case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -271,12 +274,16 @@ final class SyncEngine {
     }
     final subject = await _usableSubject();
     if (subject == null) {
+      if (authorization.currentState is AuthorizationRejected) {
+        await store.requireReauthorization(request.accountId);
+      }
       return report(
         SyncRunOutcome.ineligible,
         ineligibleReason: SyncRunIneligibleReason.noAuthorization,
       );
     }
     if (subject.value != eligibility.googleSubject) {
+      await store.requireReauthorization(request.accountId);
       return report(
         SyncRunOutcome.ineligible,
         ineligibleReason: SyncRunIneligibleReason.accountMismatch,
@@ -308,6 +315,8 @@ final class SyncEngine {
           cancellation: readCancellation,
         ),
         runDeadline,
+        accountId: request.accountId,
+        expectedSubject: subject,
       );
       switch (result) {
         case Failed<RemotePage<RemoteTaskList>>(:final failure):
@@ -371,6 +380,8 @@ final class SyncEngine {
               cancellation: readCancellation,
             ),
             runDeadline,
+            accountId: request.accountId,
+            expectedSubject: subject,
           );
           switch (result) {
             case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -518,6 +529,8 @@ final class SyncEngine {
             claim,
             readCancellation,
             runDeadline,
+            accountId: request.accountId,
+            expectedSubject: subject,
           );
           if (verification case Failed<void>(:final failure)) {
             await store.resolveDeleteFailure(
@@ -836,6 +849,7 @@ final class SyncEngine {
               taskListId: claim.sourceTaskListId,
               taskListRemoteId: claim.sourceTaskListRemoteId,
               reason: 'move-replan',
+              expectedSubject: subject,
             );
             if (refetchFailure == null &&
                 claim.destinationTaskListId != claim.sourceTaskListId) {
@@ -843,6 +857,7 @@ final class SyncEngine {
                 taskListId: claim.destinationTaskListId,
                 taskListRemoteId: claim.destinationTaskListRemoteId,
                 reason: 'move-replan',
+                expectedSubject: subject,
               );
             }
             if (refetchFailure != null) {
@@ -1022,6 +1037,7 @@ final class SyncEngine {
                     taskListId: claim.taskListId,
                     taskListRemoteId: claim.taskListRemoteId,
                     reason: 'conditional',
+                    expectedSubject: subject,
                   );
                   if (refetchFailure != null) {
                     firstFailure ??= refetchFailure;
@@ -1214,8 +1230,10 @@ final class SyncEngine {
   Future<Outcome<void>> _verifyTaskDelete(
     DeleteOperationClaim claim,
     GoogleTasksReadCancellation? cancellation,
-    Duration runDeadline,
-  ) async {
+    Duration runDeadline, {
+    required AccountId accountId,
+    required AccountSubject expectedSubject,
+  }) async {
     PageToken? token;
     do {
       final result = await _retryRead(
@@ -1225,6 +1243,8 @@ final class SyncEngine {
           cancellation: cancellation,
         ),
         runDeadline,
+        accountId: accountId,
+        expectedSubject: expectedSubject,
       );
       switch (result) {
         case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -1276,8 +1296,11 @@ final class SyncEngine {
 
   Future<Outcome<T>> _retryRead<T>(
     Future<Outcome<T>> Function() request,
-    Duration runDeadline,
-  ) async {
+    Duration runDeadline, {
+    required AccountId accountId,
+    required AccountSubject expectedSubject,
+  }) async {
+    var authorizationRefreshed = false;
     for (var attempt = 1; attempt <= syncRequestAttemptLimit; attempt += 1) {
       if (!_attemptFits(runDeadline)) {
         return Outcome<T>.failure(_requestBudgetFailure);
@@ -1287,6 +1310,28 @@ final class SyncEngine {
         Failed<T>(:final failure) => failure,
         Success<T>() => null,
       };
+      if (failure?.authorizationRecovery == AuthorizationRecovery.refreshOnce) {
+        if (authorizationRefreshed) {
+          await store.requireReauthorization(accountId);
+          return result;
+        }
+        if (attempt == syncRequestAttemptLimit) return result;
+        authorizationRefreshed = true;
+        final refresh = await authorization.refreshTasksAuthorization();
+        switch (refresh) {
+          case Success<AccountSubject>(:final value):
+            if (value != expectedSubject) {
+              await store.requireReauthorization(accountId);
+              return Outcome<T>.failure(_subjectMismatchFailure);
+            }
+          case Failed<AccountSubject>(:final failure):
+            if (authorization.currentState is AuthorizationRejected) {
+              await store.requireReauthorization(accountId);
+            }
+            return Outcome<T>.failure(failure);
+        }
+        continue;
+      }
       if (failure == null ||
           !retryPolicy.isAutomaticallyRetryable(failure) ||
           attempt == syncRequestAttemptLimit) {
@@ -1489,6 +1534,15 @@ const Failure _conditionalRefetchFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'A changed Google task could not be reconciled.',
   safeSummary: 'The conditional-conflict refetch did not complete.',
+);
+
+const Failure _subjectMismatchFailure = Failure(
+  code: 'account.subject_mismatch',
+  category: FailureCategory.authorization,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.permanent,
+  impact: 'No Google Tasks data was read or changed.',
+  safeSummary: 'The refreshed authorization subject did not match the account.',
 );
 
 TaskStatus _taskStatus(RemoteTaskStatus status) => switch (status) {
