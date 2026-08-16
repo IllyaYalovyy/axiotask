@@ -233,3 +233,16 @@ collection renders rather than a separate SQL approximation.
 OAuth tokens, DPoP keys, authorization headers, release diagnostics, and
 device-only preferences are not part of these cache/health/desired-state
 tables.
+
+## Diagnostic persistence schema
+
+S29A diagnostics deliberately remain outside the task-cache SQLite database so
+database-open and database-unavailable failures can still be recorded. Release
+and development use separate JSON documents in their already isolated
+application-support boundaries. Schema version 1 contains a fixed product
+discriminator plus ordered records with a positive sequence, UTC timestamp,
+typed subsystem/event kind, stable code, operation, and string fields. Atomic
+sibling-file replacement persists each append/clear; reopen rejects malformed,
+wrong-version, or wrong-product documents and reapplies the 500-record release
+or 1000-record development bound. Credential redaction occurs before a record
+reaches this schema.

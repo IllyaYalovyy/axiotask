@@ -217,8 +217,8 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Restores Linux authorization, verifies an existing configured account, and publishes eligible creates; missing configuration/authorization fails closed | Safe structured fields only |
-| Sensitive development | `lib/main_development.dart` | Verification and eligible create publication require the explicit dedicated-account subject to match before any Google request | Local private context retained; credentials always redacted |
+| Production-safe | `lib/main.dart` | Restores Linux authorization, verifies an existing configured account, and publishes eligible creates; missing configuration/authorization fails closed | Up to 500 persisted safe structured records in `axiotask-diagnostics-safe.json` |
+| Sensitive development | `lib/main_development.dart` | Verification and eligible create publication require the explicit dedicated-account subject to match before any Google request | Up to 1000 persisted private-context records in `axiotask-development-diagnostics-sensitive.json`; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Creates only its isolated synthetic account and verifies against an in-process synthetic read service | Safe in-memory history |
 
 Run the synthetic composition with a unique lowercase instance name:
@@ -290,15 +290,18 @@ namespace. Synthetic instance names additionally partition parallel runs. The
 production database factory resolves and opens only its injected filename in
 the native application-support directory. Development and synthetic entry
 points open only their distinct database names and never the normal
-`axiotask.sqlite` store. Diagnostic history remains in memory, and the
-synthetic shell never creates preferences or secure storage. Production and
-development read transport use only their declared secure-storage namespace.
+`axiotask.sqlite` store. Production and development diagnostics use separate,
+versioned files in application support storage; oldest records are removed at
+their fixed bounds. Synthetic history remains in memory, and the synthetic
+shell never creates preferences or secure storage. Production and development
+read transport use only their declared secure-storage namespace.
 
 Sensitive development diagnostics may retain synthetic or dedicated-account
 task/API/storage context locally. Production diagnostics discard private fields.
 Both paths redact credential fields and recognizable authorization material,
 including bearer/refresh tokens and OAuth callback URLs, before storage. There
-is no telemetry, automatic upload, or committed diagnostic output.
+is no telemetry, automatic upload, runtime sensitive-mode switch, or committed
+diagnostic output. Viewing/export/clear UI is intentionally deferred to S29B.
 
 ## Linux secure credential storage
 

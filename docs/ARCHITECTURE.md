@@ -567,6 +567,7 @@ different products:
   production-safe summaries. It excludes task content, account details, raw
   request/response bodies, SQL values, raw remote IDs, and full URLs. The user
   can inspect, copy, export, and clear this safe history from Diagnostics.
+  S29A persists the newest 500 records in its versioned release-safe file.
 - **Development product:** a debug-only sensitive sink records the information
   needed to reconstruct failures. It does not sample or suppress errors or
   boundary/state transitions: it includes task titles/notes, decoded Google
@@ -574,7 +575,8 @@ different products:
   desired-state/attempt/coordinator transitions, database operations/values,
   repository/UI commands, stack traces, and timing. A visibly marked in-app
   Diagnostics surface provides live viewing, search, copy/export, and clear
-  without requiring a terminal or filesystem access.
+  without requiring a terminal or filesystem access. S29A persists the newest
+  1000 records in a distinct development-sensitive file.
 
 Credential scrubbing is unconditional. Neither product may log access or
 refresh tokens, authorization headers or codes, client secrets, PKCE verifiers,
@@ -583,6 +585,12 @@ development sink is compiled/composed only into debug development builds; a
 release build has no runtime flag capable of enabling it. Both histories are
 bounded and local, exports are explicit, and there is no telemetry, remote
 logging, crash upload, or automatic diagnostics upload.
+
+The persistence schema stores a product discriminator, schema version, and
+ordered records containing sequence, UTC timestamp, subsystem, kind, stable
+code, operation, and bounded fields. Writes replace the document through a
+flushed sibling file. A schema/product mismatch fails closed rather than loading
+one diagnostic product through the other.
 
 ## Composition and build modes
 

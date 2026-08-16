@@ -35,6 +35,8 @@ final class TestComposition implements AppComposition {
         applicationIdentifier: 'dev.axiotask.axiotask.test.$normalizedId',
         storage: StorageBoundary(
           databaseName: 'axiotask-test-$normalizedId.sqlite',
+          diagnosticsFileName:
+              'axiotask-test-$normalizedId-diagnostics-safe.json',
           preferencesNamespace:
               'dev.axiotask.axiotask.test.$normalizedId.preferences',
           secureStorageNamespace:

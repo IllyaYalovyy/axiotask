@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:path_provider/path_provider.dart';
+
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
@@ -22,7 +26,21 @@ final class DevelopmentComposition implements AppComposition {
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
   }) {
-    final history = InMemoryDiagnosticHistory();
+    final history = InMemoryDiagnosticHistory(
+      maxRecords: defaultDevelopmentDiagnosticRecordLimit,
+    );
+    return DevelopmentComposition._fromHistory(
+      history: history,
+      expectedDedicatedSubject: expectedDedicatedSubject,
+      linuxReadConfiguration: linuxReadConfiguration,
+    );
+  }
+
+  factory DevelopmentComposition._fromHistory({
+    required DiagnosticHistory history,
+    required AccountSubject? expectedDedicatedSubject,
+    required LinuxReadConfiguration linuxReadConfiguration,
+  }) {
     return DevelopmentComposition._(
       clock: SystemClock(),
       randomness: SecureRandomSource(),
@@ -31,6 +49,25 @@ final class DevelopmentComposition implements AppComposition {
       diagnosticHistory: history,
       accountGuard: DedicatedAccountGuard(expectedDedicatedSubject),
       configuredAccountSubject: expectedDedicatedSubject,
+      linuxReadConfiguration: linuxReadConfiguration,
+    );
+  }
+
+  static Future<DevelopmentComposition> open({
+    File? diagnosticFile,
+    AccountSubject? expectedDedicatedSubject,
+    LinuxReadConfiguration linuxReadConfiguration =
+        const LinuxReadConfiguration(clientId: '', clientSecret: ''),
+  }) async {
+    final file = diagnosticFile ?? await _resolveDiagnosticFile(_boundary);
+    final history = PersistentDiagnosticHistory.open(
+      file,
+      product: DiagnosticProduct.sensitiveDevelopment,
+      maxRecords: defaultDevelopmentDiagnosticRecordLimit,
+    );
+    return DevelopmentComposition._fromHistory(
+      history: history,
+      expectedDedicatedSubject: expectedDedicatedSubject,
       linuxReadConfiguration: linuxReadConfiguration,
     );
   }
@@ -50,7 +87,7 @@ final class DevelopmentComposition implements AppComposition {
   @override
   final SensitiveDevelopmentDiagnosticSink diagnostics;
 
-  final InMemoryDiagnosticHistory diagnosticHistory;
+  final DiagnosticHistory diagnosticHistory;
 
   @override
   final DedicatedAccountGuard accountGuard;
@@ -76,6 +113,7 @@ final class DevelopmentComposition implements AppComposition {
     applicationIdentifier: 'dev.axiotask.axiotask.development',
     storage: StorageBoundary(
       databaseName: 'axiotask-development.sqlite',
+      diagnosticsFileName: 'axiotask-development-diagnostics-sensitive.json',
       preferencesNamespace: 'dev.axiotask.axiotask.development.preferences',
       secureStorageNamespace: 'dev.axiotask.axiotask.development.credentials',
       diagnosticsNamespace:
@@ -85,5 +123,13 @@ final class DevelopmentComposition implements AppComposition {
       name: 'development-dedicated-account',
       allowsRealGoogle: true,
     ),
+  );
+}
+
+Future<File> _resolveDiagnosticFile(CompositionBoundary boundary) async {
+  final directory = await getApplicationSupportDirectory();
+  return File(
+    '${directory.path}${Platform.pathSeparator}'
+    '${boundary.storage.diagnosticsFileName}',
   );
 }

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:axiotask/src/app/composition/development_composition.dart';
 import 'package:axiotask/src/app/composition/linux_read_transport.dart';
 import 'package:axiotask/src/app/composition/release_composition.dart';
@@ -28,6 +30,8 @@ void main() {
 
       composition.diagnostics.record(
         const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.application,
+          kind: DiagnosticEventKind.failure,
           code: 'release.canary',
           operation: 'verify',
           fields: <DiagnosticField>[
@@ -59,6 +63,8 @@ void main() {
 
       development.diagnostics.record(
         const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.application,
+          kind: DiagnosticEventKind.failure,
           code: 'development.canary',
           operation: 'verify',
           fields: <DiagnosticField>[
@@ -71,6 +77,70 @@ void main() {
       final output = development.diagnosticHistory.records.single.renderedText;
       expect(output, contains(taskCanary));
       expect(output, isNot(contains('credential-canary')));
+    },
+  );
+
+  test(
+    'release and development compositions reopen separate histories',
+    () async {
+      final directory = Directory.systemTemp.createTempSync(
+        'axiotask-composition-diagnostics-',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final releaseFile = File('${directory.path}/release.json');
+      final developmentFile = File('${directory.path}/development.json');
+
+      var release = await ReleaseComposition.open(diagnosticFile: releaseFile);
+      var development = await DevelopmentComposition.open(
+        diagnosticFile: developmentFile,
+        expectedDedicatedSubject: const AccountSubject('dedicated-subject'),
+      );
+      release.diagnostics.record(
+        const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.ui,
+          kind: DiagnosticEventKind.transition,
+          code: 'ui.release_transition',
+          operation: 'navigate',
+          fields: <DiagnosticField>[
+            DiagnosticField.private('task', taskCanary),
+          ],
+        ),
+      );
+      development.diagnostics.record(
+        const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.ui,
+          kind: DiagnosticEventKind.transition,
+          code: 'ui.development_transition',
+          operation: 'navigate',
+          fields: <DiagnosticField>[
+            DiagnosticField.private('task', taskCanary),
+          ],
+        ),
+      );
+      release.diagnosticHistory.close();
+      development.diagnosticHistory.close();
+
+      release = await ReleaseComposition.open(diagnosticFile: releaseFile);
+      development = await DevelopmentComposition.open(
+        diagnosticFile: developmentFile,
+        expectedDedicatedSubject: const AccountSubject('dedicated-subject'),
+      );
+      addTearDown(release.diagnosticHistory.close);
+      addTearDown(development.diagnosticHistory.close);
+
+      expect(
+        release.diagnosticHistory.records.single.code,
+        'ui.release_transition',
+      );
+      expect(
+        release.diagnosticHistory.records.single.renderedText,
+        isNot(contains(taskCanary)),
+      );
+      expect(
+        development.diagnosticHistory.records.single.renderedText,
+        contains(taskCanary),
+      );
+      expect(releaseFile.path, isNot(developmentFile.path));
     },
   );
 

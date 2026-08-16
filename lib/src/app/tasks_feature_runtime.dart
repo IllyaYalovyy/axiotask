@@ -146,6 +146,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
             rethrow;
           }
         },
+        diagnostics: composition.diagnostics,
       );
       final healthRepository = DatabaseSyncHealthRepository(
         dao: SyncHealthDao(database),
@@ -182,6 +183,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           reauthorizeRequested: coordinator.reauthorize,
           stopSyncRequested: coordinator.stop,
           resumeSyncRequested: coordinator.resume,
+          diagnostics: composition.diagnostics,
         ),
         database: database,
         coordinator: coordinator,

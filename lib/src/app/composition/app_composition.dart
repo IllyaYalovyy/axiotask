@@ -13,18 +13,21 @@ enum CompositionProfile { release, development, syntheticTest }
 final class StorageBoundary {
   const StorageBoundary({
     required this.databaseName,
+    required this.diagnosticsFileName,
     required this.preferencesNamespace,
     required this.secureStorageNamespace,
     required this.diagnosticsNamespace,
   });
 
   final String databaseName;
+  final String diagnosticsFileName;
   final String preferencesNamespace;
   final String secureStorageNamespace;
   final String diagnosticsNamespace;
 
   Iterable<String> get namespaces => <String>[
     databaseName,
+    diagnosticsFileName,
     preferencesNamespace,
     secureStorageNamespace,
     diagnosticsNamespace,

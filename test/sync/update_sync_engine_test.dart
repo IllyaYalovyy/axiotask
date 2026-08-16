@@ -846,6 +846,12 @@ void main() {
         'superseded': '0',
       });
       expect(diagnostic.renderedText, isNot(contains('Generation')));
+      final summary = history.records.singleWhere(
+        (record) => record.code == 'sync.automatic_resolution_summary',
+      );
+      expect(summary.kind, DiagnosticEventKind.resolution);
+      expect(summary.fields['total'], '1');
+      expect(summary.fields['uncertain_update_resolutions'], '1');
     },
   );
 
@@ -1711,6 +1717,12 @@ void main() {
         'superseded': '0',
       });
       expect(diagnostic.renderedText, isNot(contains('Move generation')));
+      final summary = history.records.singleWhere(
+        (record) => record.code == 'sync.automatic_resolution_summary',
+      );
+      expect(summary.kind, DiagnosticEventKind.resolution);
+      expect(summary.fields['total'], '1');
+      expect(summary.fields['uncertain_move_resolutions'], '1');
     },
   );
 

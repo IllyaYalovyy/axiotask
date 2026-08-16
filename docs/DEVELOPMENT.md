@@ -333,15 +333,21 @@ credentials, OAuth configuration, diagnostics, or Google.
 
 ## Development versus release diagnostics
 
-S01 provides a clearly named debug development entry point that composes the
-sensitive local diagnostic sink. The full in-app viewer remains a later UI
-slice. The sink records
+The clearly named debug development entry point composes the sensitive local
+diagnostic sink. S29A persists at most 1000 records in the development-only
+application-support file
+`axiotask-development-diagnostics-sensitive.json`; the release root instead
+persists at most 500 safe records in `axiotask-diagnostics-safe.json`. Each
+version-1 record has a monotonic sequence, UTC timestamp, subsystem, event kind,
+stable code, operation, and bounded fields. Oldest-record cleanup happens on
+append and reopen. The full in-app viewer remains the S29B UI slice. The sink
+records
 all application failures and the boundary/state-transition evidence needed to
 reproduce them, including test-account task content and detailed API/database
 context, without sampling or suppressing errors. When the later viewer slice is
 implemented, it is one interaction from sync details and supports live search,
-copy, explicit export, and clear. Its rotating log files and exports remain
-inside ignored development storage.
+copy, explicit export, and clear. Its diagnostic file and future exports remain
+inside application support or ignored development storage, never the repository.
 
 The normal release entry point constructs only the production-safe sink and has
 no runtime diagnostic-mode flag. Behavioral composition tests prove the

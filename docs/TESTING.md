@@ -75,6 +75,14 @@ development-sink tests verify that task-content and decoded-payload canaries are
 retained for investigation while authorization headers, tokens, PKCE values,
 DPoP keys, and other credential canaries remain absent.
 
+`test/core/diagnostics_test.dart` covers `HLT-010/011` product separation,
+credential shapes (including deliberately misclassified safe fields), typed
+sync/API/storage/UI events, fixed bounds, clear, schema rejection, and restart.
+`test/app/composition/composition_test.dart` reopens distinct release and
+development files and proves the release composition remains production-sink
+only. Coordinator, ViewModel, HTTP, authorization, preferences, bootstrap, and
+sync-engine regressions cover their concrete event producers.
+
 These are protocol tests, not synchronization tests.
 
 The S06 suite is `test/data/google_tasks/decoder_test.dart` plus

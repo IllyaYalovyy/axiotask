@@ -64,8 +64,10 @@ final class SyncEngine {
     var googleWonReplacements = 0;
     final googleWonReplacementCounts = <ContentSupersessionKind, int>{};
     var confirmedUpdateReadBacks = 0;
+    var uncertainUpdateResolutions = 0;
     var googleWonStructures = 0;
     var confirmedStructureReadBacks = 0;
+    var uncertainMoveResolutions = 0;
     var conditionalReplans = 0;
     Failure? firstFailure;
     var begun = false;
@@ -120,6 +122,8 @@ final class SyncEngine {
     void recordUnsupported(ReadPlanException error) {
       diagnostics?.record(
         DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.failure,
           code: error.failure.code,
           operation: 'synchronize_task_scope',
           fields: <DiagnosticField>[
@@ -153,6 +157,18 @@ final class SyncEngine {
 
     Future<SyncRunReport?> phase(SyncRunPhase value) async {
       observer.phaseStarted(runId, value);
+      diagnostics?.record(
+        DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.transition,
+          code: 'sync.phase_started',
+          operation: 'synchronize',
+          fields: <DiagnosticField>[
+            DiagnosticField.safe('phase', value.name),
+            DiagnosticField.private('run_id', runId.value),
+          ],
+        ),
+      );
       return interrupted(
         SyncRunBoundary(kind: SyncRunBoundaryKind.phase, phase: value),
       );
@@ -466,6 +482,8 @@ final class SyncEngine {
                   );
                   diagnostics?.record(
                     const DiagnosticEvent(
+                      subsystem: DiagnosticSubsystem.sync,
+                      kind: DiagnosticEventKind.resolution,
                       code: 'sync.uncertain_list_delete_confirmed_missing',
                       operation: 'recover_list_delete',
                     ),
@@ -485,6 +503,8 @@ final class SyncEngine {
                 );
                 diagnostics?.record(
                   const DiagnosticEvent(
+                    subsystem: DiagnosticSubsystem.sync,
+                    kind: DiagnosticEventKind.resolution,
                     code: 'sync.uncertain_list_delete_live_replay',
                     operation: 'recover_list_delete',
                   ),
@@ -505,9 +525,13 @@ final class SyncEngine {
       runId: runId.value,
       resolvedAt: clock.now().toUtc(),
     );
+    uncertainUpdateResolutions += olderUpdateRecovery.total;
+    uncertainMoveResolutions += olderMoveRecovery.total;
     if (olderUpdateRecovery.total > 0) {
       diagnostics?.record(
         DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.resolution,
           code: 'sync.uncertain_update_readback_resolved',
           operation: 'recover_update',
           fields: <DiagnosticField>[
@@ -520,6 +544,8 @@ final class SyncEngine {
     if (olderMoveRecovery.total > 0) {
       diagnostics?.record(
         DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.resolution,
           code: 'sync.uncertain_move_readback_resolved',
           operation: 'recover_move',
           fields: <DiagnosticField>[
@@ -746,6 +772,8 @@ final class SyncEngine {
       if (claim.isRecovery) {
         diagnostics?.record(
           DiagnosticEvent(
+            subsystem: DiagnosticSubsystem.sync,
+            kind: DiagnosticEventKind.resolution,
             code: 'sync.create_recovery_duplicate_possible',
             operation: 'recover_create',
             fields: <DiagnosticField>[
@@ -1344,6 +1372,46 @@ final class SyncEngine {
         )
         case final interruption?) {
       return interruption;
+    }
+
+    final automaticResolutionCount =
+        googleWonReplacements +
+        confirmedUpdateReadBacks +
+        uncertainUpdateResolutions +
+        googleWonStructures +
+        confirmedStructureReadBacks +
+        uncertainMoveResolutions;
+    if (automaticResolutionCount > 0) {
+      diagnostics?.record(
+        DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.resolution,
+          code: 'sync.automatic_resolution_summary',
+          operation: 'reconcile',
+          fields: <DiagnosticField>[
+            DiagnosticField.safe('total', automaticResolutionCount),
+            DiagnosticField.safe('google_won_content', googleWonReplacements),
+            DiagnosticField.safe(
+              'confirmed_update_readbacks',
+              confirmedUpdateReadBacks,
+            ),
+            DiagnosticField.safe(
+              'uncertain_update_resolutions',
+              uncertainUpdateResolutions,
+            ),
+            DiagnosticField.safe('google_won_structure', googleWonStructures),
+            DiagnosticField.safe(
+              'confirmed_structure_readbacks',
+              confirmedStructureReadBacks,
+            ),
+            DiagnosticField.safe(
+              'uncertain_move_resolutions',
+              uncertainMoveResolutions,
+            ),
+            DiagnosticField.private('run_id', runId.value),
+          ],
+        ),
+      );
     }
 
     if (firstFailure case final failure?) {

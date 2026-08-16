@@ -17,7 +17,7 @@ const String _expectedSubject = String.fromEnvironment(
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final composition = DevelopmentComposition.create(
+  final composition = await DevelopmentComposition.open(
     expectedDedicatedSubject: _expectedSubject.isEmpty
         ? null
         : const AccountSubject(_expectedSubject),

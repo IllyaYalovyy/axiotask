@@ -13,7 +13,7 @@ export 'src/app/axiotask_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final composition = ReleaseComposition.create(
+  final composition = await ReleaseComposition.open(
     linuxReadConfiguration: const LinuxReadConfiguration(
       clientId: String.fromEnvironment('AXIOTASK_LINUX_AUTH_CLIENT_ID'),
       clientSecret: String.fromEnvironment('AXIOTASK_LINUX_AUTH_CLIENT_SECRET'),

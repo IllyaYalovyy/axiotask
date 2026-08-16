@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
@@ -69,6 +70,7 @@ void main() {
       final tasks = _TasksRepository();
       final health = _HealthRepository();
       final refresh = Completer<void>();
+      final diagnosticHistory = InMemoryDiagnosticHistory();
       var calls = 0;
       final viewModel = TasksViewModel(
         accountId: const AccountId(1),
@@ -78,6 +80,7 @@ void main() {
           calls += 1;
           return refresh.future;
         },
+        diagnostics: ProductionDiagnosticSink(diagnosticHistory),
       );
       addTearDown(viewModel.dispose);
 
@@ -90,6 +93,16 @@ void main() {
 
       expect(viewModel.state.isRefreshing, isFalse);
       expect(calls, 1);
+      expect(diagnosticHistory.records.map((record) => record.code), <String>[
+        'ui.refresh_started',
+        'ui.refresh_completed',
+      ]);
+      expect(
+        diagnosticHistory.records.every(
+          (record) => record.subsystem == DiagnosticSubsystem.ui,
+        ),
+        isTrue,
+      );
     },
   );
 

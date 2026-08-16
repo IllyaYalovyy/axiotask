@@ -119,6 +119,12 @@ aggregate counts, and a sanitized cause. It rejects task titles/notes, email
 addresses, raw remote IDs, raw request/response bodies, SQL values, and full URLs
 with query parameters.
 
+The release-safe history and sensitive-development history use separate
+versioned application-support files and product discriminators. They retain the
+newest 500 and 1000 records respectively; each event accepts at most 32 fields
+and each rendered value is bounded. Reopen reapplies the record bound before
+new events are accepted.
+
 The **development sensitive sink** exists only in debug development
 composition. It records enough local evidence to investigate content-dependent
 and state-dependent failures without sampling or suppressing failures or
@@ -142,6 +148,8 @@ error path. Production output must contain neither. Development output must
 retain the task-content canary needed to reproduce the issue while still
 excluding every credential canary. A release-composition test proves that the
 sensitive sink and renderer cannot be constructed or enabled at runtime.
+Credential-shaped material is scrubbed even when a producer mistakenly labels
+its field safe; explicitly credential-classified fields are dropped entirely.
 
 There is no telemetry, remote crash reporting, or automatic diagnostics upload.
 

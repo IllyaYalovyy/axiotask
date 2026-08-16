@@ -683,6 +683,8 @@ final class LinuxAuthorization implements AuthorizationPort {
     );
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.authorization,
+        kind: DiagnosticEventKind.failure,
         code: failure.code,
         operation: 'linux-authorization',
         fields: <DiagnosticField>[

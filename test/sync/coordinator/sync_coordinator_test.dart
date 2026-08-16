@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/lifecycle.dart';
 import 'package:axiotask/src/core/outcome.dart';
@@ -22,6 +23,30 @@ const _subject = AccountSubject('synthetic-coordinator-subject');
 
 void main() {
   final startedAt = DateTime.utc(2026, 8, 15, 12);
+
+  test('sync runtime transitions enter the typed diagnostic sink', () async {
+    final history = InMemoryDiagnosticHistory();
+    final harness = _Harness(
+      startedAt: startedAt,
+      autoComplete: true,
+      diagnostics: ProductionDiagnosticSink(history),
+    );
+    addTearDown(harness.close);
+
+    await harness.coordinator.start();
+
+    expect(history.records, isNotEmpty);
+    expect(
+      history.records.every(
+        (record) => record.subsystem == DiagnosticSubsystem.sync,
+      ),
+      isTrue,
+    );
+    expect(
+      history.records.any((record) => record.code == 'sync.runtime_transition'),
+      isTrue,
+    );
+  });
 
   test(
     'RUN-002 serializes runs and merges one follow-up trigger set',
@@ -557,6 +582,7 @@ final class _Harness {
     SyncSettingsRepository? settings,
     bool autoComplete = false,
     TaskDeleteEligibilityStore? deleteEligibility,
+    DiagnosticSink? diagnostics,
   }) : clock = FakeClock(startedAt),
        runner = _ControlledRunner(autoComplete: autoComplete) {
     coordinator = SyncCoordinator(
@@ -572,6 +598,7 @@ final class _Harness {
       reauthorizationStore: _MemoryReauthorizationStore(),
       taskDeleteEligibility: deleteEligibility,
       run: runner.call,
+      diagnostics: diagnostics,
     );
   }
 

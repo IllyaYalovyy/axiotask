@@ -61,6 +61,8 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
       final code = _safeDatabaseFailureCode(error);
       widget.diagnostics.record(
         DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.storage,
+          kind: DiagnosticEventKind.failure,
           code: 'database.open_failed',
           operation: 'open_database',
           fields: <DiagnosticField>[DiagnosticField.safe('failure_code', code)],
@@ -78,6 +80,8 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
     } on Object {
       widget.diagnostics.record(
         const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.application,
+          kind: DiagnosticEventKind.failure,
           code: 'application.runtime_start_failed',
           operation: 'start_runtime',
         ),
@@ -104,6 +108,8 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
     final code = _safeDatabaseFailureCode(error);
     widget.diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.storage,
+        kind: DiagnosticEventKind.failure,
         code: 'database.became_unavailable',
         operation: 'use_database',
         fields: <DiagnosticField>[DiagnosticField.safe('failure_code', code)],

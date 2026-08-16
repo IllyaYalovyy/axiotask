@@ -947,6 +947,7 @@ The release product persists a bounded, account-scoped stream of safe event
 codes, phases, timing, counts, failure reasons, and sanitized causes. It is easy
 to inspect, copy, export, and clear in the application, but never contains task
 content, account details, raw remote IDs, raw bodies, SQL values, or full URLs.
+Its S29A file retains the newest 500 typed records.
 
 The debug development product additionally composes a bounded sensitive sink.
 It does not sample or suppress failures or sync boundary/state transitions. It
@@ -956,12 +957,18 @@ transitions, database operations/values, repository/UI commands, stack traces,
 timing, and unsupported resources. Its searchable live view is one interaction
 from sync details and is permanently marked as containing private test-account
 data. Export is explicit; files/exports are local and ignored by Git.
+Its separate S29A file retains the newest 1000 typed records.
 
 Both products scrub credentials before event construction. Access/refresh
 tokens, authorization headers/codes, client secrets, PKCE verifiers, DPoP
 private keys, secure-store values, and unredacted OAuth callback URLs are never
 logged. There is no automatic upload or telemetry, and release composition has
 no runtime path to the sensitive sink.
+
+Sync phase starts, coordinator fact changes, typed failures, uncertain-operation
+resolutions, and aggregate automatic-resolution counts enter the same injected
+sink. The release aggregate contains counts only; development may additionally
+retain the private run/resource evidence supplied by the producer.
 
 ## Process death, restart, and persistence recovery
 

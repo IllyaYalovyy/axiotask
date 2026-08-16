@@ -354,6 +354,8 @@ final class LinuxBrowserFlow implements BrowserAuthorizationFlow {
   void _recordNonFatal(String code, String phase) {
     _diagnostics?.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.authorization,
+        kind: DiagnosticEventKind.failure,
         code: code,
         operation: 'linux-browser-authorization',
         fields: <DiagnosticField>[DiagnosticField.safe('phase', phase)],

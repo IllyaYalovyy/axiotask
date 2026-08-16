@@ -293,6 +293,8 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
   void _recordDefault(String preference, String reason) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.storage,
+        kind: DiagnosticEventKind.resolution,
         code: 'preferences.device_value_defaulted',
         operation: 'read_device_preferences',
         fields: <DiagnosticField>[
@@ -316,6 +318,8 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
     } on Object {
       _diagnostics.record(
         DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.storage,
+          kind: DiagnosticEventKind.failure,
           code: 'preferences.device_write_failed',
           operation: 'write_device_preferences',
           fields: <DiagnosticField>[

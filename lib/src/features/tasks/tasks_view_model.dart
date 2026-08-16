@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../core/clock.dart';
+import '../../core/diagnostics/diagnostics.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
@@ -249,6 +250,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.reauthorizeRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
+    this.diagnostics,
   }) : clock = clock ?? SystemClock(),
        calendarScheduler =
            calendarScheduler ??
@@ -290,6 +292,7 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function()? reauthorizeRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
+  final DiagnosticSink? diagnostics;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
@@ -515,9 +518,14 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   Future<void> _performRefresh(Future<void> Function() action) async {
+    _recordUi('ui.refresh_started', DiagnosticEventKind.transition);
     _replaceState(_state.copyWith(isRefreshing: true));
     try {
       await action();
+      _recordUi('ui.refresh_completed', DiagnosticEventKind.transition);
+    } on Object {
+      _recordUi('ui.refresh_failed', DiagnosticEventKind.failure);
+      rethrow;
     } finally {
       _refreshInFlight = null;
       _replaceState(_state.copyWith(isRefreshing: false));
@@ -748,6 +756,7 @@ final class TasksViewModel extends ChangeNotifier {
     BulkTaskOperationsRepository repository,
     BulkExistingTaskCommand command,
   ) async {
+    _recordUi('ui.bulk_command_started', DiagnosticEventKind.transition);
     _replaceState(
       _state.copyWith(
         isBulkCommandPending: true,
@@ -769,6 +778,7 @@ final class TasksViewModel extends ChangeNotifier {
   }) async {
     switch (result) {
       case Success<BulkOperationReceipt>(:final value):
+        _recordUi('ui.bulk_command_completed', DiagnosticEventKind.transition);
         _replaceState(
           _state.copyWith(
             bulkSelectedTaskIds: clearSelection
@@ -783,6 +793,7 @@ final class TasksViewModel extends ChangeNotifier {
           await localEditCommitted?.call();
         }
       case Failed<BulkOperationReceipt>():
+        _recordUi('ui.bulk_command_failed', DiagnosticEventKind.failure);
         _replaceState(
           _state.copyWith(
             bulkCommandFailureMessage: clearSelection
@@ -842,6 +853,7 @@ final class TasksViewModel extends ChangeNotifier {
     Future<Outcome<T>> Function() action, {
     Future<void> Function(T value)? onSuccess,
   }) async {
+    _recordUi('ui.task_command_started', DiagnosticEventKind.transition);
     _replaceState(
       _state.copyWith(
         isTaskCommandPending: true,
@@ -857,7 +869,16 @@ final class TasksViewModel extends ChangeNotifier {
           } else {
             await localEditCommitted?.call();
           }
+          _recordUi(
+            'ui.task_command_completed',
+            DiagnosticEventKind.transition,
+          );
         case Failed<T>(:final failure):
+          _recordUi(
+            'ui.task_command_failed',
+            DiagnosticEventKind.failure,
+            failureCode: failure.code,
+          );
           _replaceState(
             _state.copyWith(
               taskCommandFailureMessage: switch (failure.code) {
@@ -891,6 +912,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   Future<void> _runListCommand<T>(Future<Outcome<T>> Function() action) async {
+    _recordUi('ui.list_command_started', DiagnosticEventKind.transition);
     _replaceState(
       _state.copyWith(
         isListCommandPending: true,
@@ -902,7 +924,16 @@ final class TasksViewModel extends ChangeNotifier {
       switch (result) {
         case Success<T>():
           await localEditCommitted?.call();
+          _recordUi(
+            'ui.list_command_completed',
+            DiagnosticEventKind.transition,
+          );
         case Failed<T>(:final failure):
+          _recordUi(
+            'ui.list_command_failed',
+            DiagnosticEventKind.failure,
+            failureCode: failure.code,
+          );
           _replaceState(
             _state.copyWith(
               listCommandFailureMessage:
@@ -931,6 +962,7 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> _runPreferenceCommand(
     Future<Outcome<void>> Function() action,
   ) async {
+    _recordUi('ui.preference_command_started', DiagnosticEventKind.transition);
     _replaceState(
       _state.copyWith(
         isPreferenceCommandPending: true,
@@ -940,11 +972,17 @@ final class TasksViewModel extends ChangeNotifier {
     try {
       final result = await action();
       if (result case Failed<void>()) {
+        _recordUi('ui.preference_command_failed', DiagnosticEventKind.failure);
         _replaceState(
           _state.copyWith(
             preferenceFailureMessage:
                 'The view preference could not be saved safely.',
           ),
+        );
+      } else {
+        _recordUi(
+          'ui.preference_command_completed',
+          DiagnosticEventKind.transition,
         );
       }
     } finally {
@@ -972,6 +1010,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   Future<void> _runSyncControl(Future<void> Function() action) async {
+    _recordUi('ui.sync_control_started', DiagnosticEventKind.transition);
     _replaceState(
       _state.copyWith(
         isSyncControlPending: true,
@@ -980,7 +1019,9 @@ final class TasksViewModel extends ChangeNotifier {
     );
     try {
       await action();
+      _recordUi('ui.sync_control_completed', DiagnosticEventKind.transition);
     } on Object {
+      _recordUi('ui.sync_control_failed', DiagnosticEventKind.failure);
       _replaceState(
         _state.copyWith(
           syncControlFailureMessage:
@@ -1043,6 +1084,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptBulkOperationError(Object _) {
+    _recordUi('ui.bulk_result_read_failed', DiagnosticEventKind.failure);
     _replaceState(
       _state.copyWith(
         bulkCommandFailureMessage:
@@ -1052,6 +1094,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptPreferenceReadError(Object _) {
+    _recordUi('ui.preference_read_failed', DiagnosticEventKind.failure);
     _replaceState(
       _state.copyWith(
         preferenceFailureMessage:
@@ -1081,6 +1124,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptTaskDeleteUndoError(Object _) {
+    _recordUi('ui.delete_undo_read_failed', DiagnosticEventKind.failure);
     _replaceState(
       _state.copyWith(
         taskCommandFailureMessage: 'Undo state could not be read safely.',
@@ -1097,6 +1141,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptTaskDueChangeUndoError(Object _) {
+    _recordUi('ui.due_undo_read_failed', DiagnosticEventKind.failure);
     _replaceState(
       _state.copyWith(
         taskCommandFailureMessage:
@@ -1106,6 +1151,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptRepositoryError(Object _) {
+    _recordUi('ui.repository_read_failed', DiagnosticEventKind.failure);
     _replaceState(
       _state.copyWith(
         isLoading: false,
@@ -1117,6 +1163,21 @@ final class TasksViewModel extends ChangeNotifier {
   void _replaceState(TasksViewState value) {
     _state = value;
     notifyListeners();
+  }
+
+  void _recordUi(String code, DiagnosticEventKind kind, {String? failureCode}) {
+    diagnostics?.record(
+      DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.ui,
+        kind: kind,
+        code: code,
+        operation: 'tasks_view_model',
+        fields: <DiagnosticField>[
+          if (failureCode != null)
+            DiagnosticField.safe('failure_code', failureCode),
+        ],
+      ),
+    );
   }
 
   @override

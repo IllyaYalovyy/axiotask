@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../core/clock.dart';
+import '../../core/diagnostics/diagnostics.dart';
 import '../../core/failure.dart';
 import '../../core/lifecycle.dart';
 import '../../core/outcome.dart';
@@ -123,6 +124,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     required this.retryStore,
     required this.reauthorizationStore,
     required this.run,
+    this.diagnostics,
     this.taskDeleteEligibility,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
@@ -153,6 +155,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   final SyncRetryEpisodeStore retryStore;
   final SyncReauthorizationStore reauthorizationStore;
   final CoordinatedSyncRun run;
+  final DiagnosticSink? diagnostics;
   final TaskDeleteEligibilityStore? taskDeleteEligibility;
   final ConnectivityPort? _connectivity;
   final SyncRetryPolicy _retryPolicy;
@@ -1111,6 +1114,27 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   void _emit(SyncRuntimeFacts value) {
     _currentFacts = value;
+    diagnostics?.record(
+      DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.sync,
+        kind: value.detectedFailureReason == null
+            ? DiagnosticEventKind.transition
+            : DiagnosticEventKind.failure,
+        code: value.diagnosticCode ?? 'sync.runtime_transition',
+        operation: 'coordinate_sync',
+        fields: <DiagnosticField>[
+          DiagnosticField.safe('authorization', value.authorization.name),
+          DiagnosticField.safe('connectivity', value.connectivity.name),
+          DiagnosticField.safe('activity', value.activity.name),
+          DiagnosticField.safe(
+            'verification_required',
+            value.verificationRequired,
+          ),
+          if (value.detectedFailureReason case final reason?)
+            DiagnosticField.safe('failure_reason', reason.name),
+        ],
+      ),
+    );
     if (!_facts.isClosed) _facts.add(value);
   }
 

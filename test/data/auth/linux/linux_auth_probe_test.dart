@@ -11,6 +11,8 @@ void main() {
       final sink = SensitiveDevelopmentDiagnosticSink(history);
       sink.record(
         const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.authorization,
+          kind: DiagnosticEventKind.failure,
           code: 'auth.token_response_invalid',
           operation: 'linux-authorization',
           fields: <DiagnosticField>[

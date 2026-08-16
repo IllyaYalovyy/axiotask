@@ -159,6 +159,8 @@ final class HttpGoogleTasksService
       if (response.statusCode == HttpStatus.notFound) {
         _diagnostics.record(
           DiagnosticEvent(
+            subsystem: DiagnosticSubsystem.api,
+            kind: DiagnosticEventKind.resolution,
             code: 'google_tasks.task_list_readback_missing',
             operation: 'read',
             fields: <DiagnosticField>[
@@ -561,6 +563,8 @@ final class HttpGoogleTasksService
         case Success<RemotePage<T>>(:final value):
           _diagnostics.record(
             DiagnosticEvent(
+              subsystem: DiagnosticSubsystem.api,
+              kind: DiagnosticEventKind.transition,
               code: 'google_tasks.read_page',
               operation: 'read',
               fields: <DiagnosticField>[
@@ -884,6 +888,8 @@ final class HttpGoogleTasksService
   }) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.api,
+        kind: DiagnosticEventKind.transition,
         code: 'google_tasks.mutation_succeeded',
         operation: 'write',
         fields: <DiagnosticField>[
@@ -907,6 +913,8 @@ final class HttpGoogleTasksService
   }) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.api,
+        kind: DiagnosticEventKind.failure,
         code: 'google_tasks.mutation_failed',
         operation: 'write',
         fields: <DiagnosticField>[
@@ -935,6 +943,8 @@ final class HttpGoogleTasksService
   }) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.api,
+        kind: DiagnosticEventKind.failure,
         code: 'google_tasks.read_failed',
         operation: 'read',
         fields: <DiagnosticField>[

@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:path_provider/path_provider.dart';
+
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
@@ -20,7 +24,19 @@ final class ReleaseComposition implements AppComposition {
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
   }) {
-    final history = InMemoryDiagnosticHistory();
+    final history = InMemoryDiagnosticHistory(
+      maxRecords: defaultReleaseDiagnosticRecordLimit,
+    );
+    return ReleaseComposition._fromHistory(
+      history: history,
+      linuxReadConfiguration: linuxReadConfiguration,
+    );
+  }
+
+  factory ReleaseComposition._fromHistory({
+    required DiagnosticHistory history,
+    required LinuxReadConfiguration linuxReadConfiguration,
+  }) {
     return ReleaseComposition._(
       clock: SystemClock(),
       randomness: SecureRandomSource(),
@@ -28,6 +44,23 @@ final class ReleaseComposition implements AppComposition {
       diagnostics: ProductionDiagnosticSink(history),
       diagnosticHistory: history,
       accountGuard: const NormalAccountGuard(),
+      linuxReadConfiguration: linuxReadConfiguration,
+    );
+  }
+
+  static Future<ReleaseComposition> open({
+    File? diagnosticFile,
+    LinuxReadConfiguration linuxReadConfiguration =
+        const LinuxReadConfiguration(clientId: '', clientSecret: ''),
+  }) async {
+    final file = diagnosticFile ?? await _resolveDiagnosticFile(_boundary);
+    final history = PersistentDiagnosticHistory.open(
+      file,
+      product: DiagnosticProduct.releaseSafe,
+      maxRecords: defaultReleaseDiagnosticRecordLimit,
+    );
+    return ReleaseComposition._fromHistory(
+      history: history,
       linuxReadConfiguration: linuxReadConfiguration,
     );
   }
@@ -47,7 +80,7 @@ final class ReleaseComposition implements AppComposition {
   @override
   final ProductionDiagnosticSink diagnostics;
 
-  final InMemoryDiagnosticHistory diagnosticHistory;
+  final DiagnosticHistory diagnosticHistory;
 
   @override
   final NormalAccountGuard accountGuard;
@@ -73,6 +106,7 @@ final class ReleaseComposition implements AppComposition {
     applicationIdentifier: 'dev.axiotask.axiotask',
     storage: StorageBoundary(
       databaseName: 'axiotask.sqlite',
+      diagnosticsFileName: 'axiotask-diagnostics-safe.json',
       preferencesNamespace: 'dev.axiotask.axiotask.preferences',
       secureStorageNamespace: 'dev.axiotask.axiotask.credentials',
       diagnosticsNamespace: 'dev.axiotask.axiotask.diagnostics.safe',
@@ -81,5 +115,13 @@ final class ReleaseComposition implements AppComposition {
       name: 'production',
       allowsRealGoogle: true,
     ),
+  );
+}
+
+Future<File> _resolveDiagnosticFile(CompositionBoundary boundary) async {
+  final directory = await getApplicationSupportDirectory();
+  return File(
+    '${directory.path}${Platform.pathSeparator}'
+    '${boundary.storage.diagnosticsFileName}',
   );
 }

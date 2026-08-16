@@ -352,6 +352,8 @@ final class LinuxSecureCredentialStore implements CredentialStore {
   void _recordFailure(Failure failure) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.storage,
+        kind: DiagnosticEventKind.failure,
         code: failure.code,
         operation: failure.operation.name,
         fields: <DiagnosticField>[
@@ -365,6 +367,8 @@ final class LinuxSecureCredentialStore implements CredentialStore {
   void _recordRecoveredMutation(String mutation) {
     _diagnostics.record(
       DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.storage,
+        kind: DiagnosticEventKind.resolution,
         code: 'auth.secure_store_ambiguous_operation_recovered',
         operation: 'write',
         fields: <DiagnosticField>[DiagnosticField.safe('mutation', mutation)],

@@ -300,6 +300,7 @@ final class _NoTransportComposition implements AppComposition {
     applicationIdentifier: 'dev.axiotask.synthetic.unreadable',
     storage: StorageBoundary(
       databaseName: 'synthetic-unreadable.sqlite',
+      diagnosticsFileName: 'synthetic-unreadable-diagnostics.json',
       preferencesNamespace: 'synthetic.unreadable.preferences',
       secureStorageNamespace: 'synthetic.unreadable.credentials',
       diagnosticsNamespace: 'synthetic.unreadable.diagnostics',
