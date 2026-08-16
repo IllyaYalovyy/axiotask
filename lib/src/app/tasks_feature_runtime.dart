@@ -73,27 +73,33 @@ final class TasksFeatureRuntime {
       now: composition.clock.now().toUtc(),
     );
     final transport = await composition.createReadTransport(subject);
+    final syncStore = DatabaseReadSyncStore(database);
     final coordinator = SyncCoordinator(
       accountId: accountId,
       authorization: transport.authorization,
       clock: composition.clock,
       scheduler: composition.scheduler,
+      random: composition.randomness,
       settings: DatabaseSyncSettingsRepository(database),
+      retryStore: syncStore,
       taskDeleteEligibility: _DatabaseTaskDeleteEligibilityStore(database),
       lifecycle: lifecycle,
       connectivity: connectivity,
       run: (request) =>
           SyncEngine(
-            store: DatabaseReadSyncStore(database),
+            store: syncStore,
             googleTasks: transport.googleTasks,
             authorization: transport.authorization,
             clock: composition.clock,
+            scheduler: composition.scheduler,
             random: composition.randomness,
+            retryObserver: request.retryObserver,
             control: request.control,
             diagnostics: composition.diagnostics,
           ).run(
             SyncRunRequest(
               accountId: accountId,
+              deadline: request.deadline,
               triggers: request.triggers
                   .map((trigger) => trigger.value)
                   .toSet(),
@@ -120,6 +126,7 @@ final class TasksFeatureRuntime {
         localEditCommitted: coordinator.localEditCommitted,
         taskDeleteCommitted: coordinator.taskDeleteCommitted,
         refreshRequested: coordinator.refresh,
+        retryRequested: coordinator.retry,
         stopSyncRequested: coordinator.stop,
         resumeSyncRequested: coordinator.resume,
       ),

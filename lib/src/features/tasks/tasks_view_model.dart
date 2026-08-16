@@ -123,6 +123,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.localEditCommitted,
     this.taskDeleteCommitted,
     this.refreshRequested,
+    this.retryRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
   }) : _state = TasksViewState(
@@ -150,6 +151,7 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function()? localEditCommitted;
   final Future<void> Function(DateTime notBefore)? taskDeleteCommitted;
   final Future<void> Function()? refreshRequested;
+  final Future<void> Function()? retryRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
   TasksViewState _state;
@@ -223,6 +225,8 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> stopSync() => _performSyncControl(stopSyncRequested);
 
   Future<void> resumeSync() => _performSyncControl(resumeSyncRequested);
+
+  Future<void> retrySync() => _performSyncControl(retryRequested);
 
   Future<void> createTaskList(String title) {
     final repository = taskListsRepository;
@@ -450,7 +454,7 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> handleSyncHealthAction(SyncHealthAction action) =>
       switch (action) {
         SyncHealthAction.resume => resumeSync(),
-        SyncHealthAction.retry => refresh(),
+        SyncHealthAction.retry => retrySync(),
         SyncHealthAction.none ||
         SyncHealthAction.connect ||
         SyncHealthAction.reauthorize => Future<void>.value(),

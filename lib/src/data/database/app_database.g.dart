@@ -9459,6 +9459,74 @@ class $SyncFactRowsTable extends SyncFactRows
         ),
         defaultValue: const Constant(false),
       );
+  static const VerificationMeta _retryEpisodeStartedAtMeta =
+      const VerificationMeta('retryEpisodeStartedAt');
+  @override
+  late final GeneratedColumn<DateTime> retryEpisodeStartedAt =
+      GeneratedColumn<DateTime>(
+        'retry_episode_started_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _retryEpisodeDeadlineAtMeta =
+      const VerificationMeta('retryEpisodeDeadlineAt');
+  @override
+  late final GeneratedColumn<DateTime> retryEpisodeDeadlineAt =
+      GeneratedColumn<DateTime>(
+        'retry_episode_deadline_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _retryNextAttemptAtMeta =
+      const VerificationMeta('retryNextAttemptAt');
+  @override
+  late final GeneratedColumn<DateTime> retryNextAttemptAt =
+      GeneratedColumn<DateTime>(
+        'retry_next_attempt_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _retryServerNotBeforeAtMeta =
+      const VerificationMeta('retryServerNotBeforeAt');
+  @override
+  late final GeneratedColumn<DateTime> retryServerNotBeforeAt =
+      GeneratedColumn<DateTime>(
+        'retry_server_not_before_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _retryLastObservedAtMeta =
+      const VerificationMeta('retryLastObservedAt');
+  @override
+  late final GeneratedColumn<DateTime> retryLastObservedAt =
+      GeneratedColumn<DateTime>(
+        'retry_last_observed_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _retryAttemptCountMeta = const VerificationMeta(
+    'retryAttemptCount',
+  );
+  @override
+  late final GeneratedColumn<int> retryAttemptCount = GeneratedColumn<int>(
+    'retry_attempt_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(retryAttemptCount).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _requiredScopeIncompleteMeta =
       const VerificationMeta('requiredScopeIncomplete');
   @override
@@ -9504,6 +9572,12 @@ class $SyncFactRowsTable extends SyncFactRows
     reauthorizationRequired,
     retryWaiting,
     automaticRetryExhausted,
+    retryEpisodeStartedAt,
+    retryEpisodeDeadlineAt,
+    retryNextAttemptAt,
+    retryServerNotBeforeAt,
+    retryLastObservedAt,
+    retryAttemptCount,
     requiredScopeIncomplete,
     followUpRequired,
   ];
@@ -9633,6 +9707,60 @@ class $SyncFactRowsTable extends SyncFactRows
         ),
       );
     }
+    if (data.containsKey('retry_episode_started_at')) {
+      context.handle(
+        _retryEpisodeStartedAtMeta,
+        retryEpisodeStartedAt.isAcceptableOrUnknown(
+          data['retry_episode_started_at']!,
+          _retryEpisodeStartedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_episode_deadline_at')) {
+      context.handle(
+        _retryEpisodeDeadlineAtMeta,
+        retryEpisodeDeadlineAt.isAcceptableOrUnknown(
+          data['retry_episode_deadline_at']!,
+          _retryEpisodeDeadlineAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_next_attempt_at')) {
+      context.handle(
+        _retryNextAttemptAtMeta,
+        retryNextAttemptAt.isAcceptableOrUnknown(
+          data['retry_next_attempt_at']!,
+          _retryNextAttemptAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_server_not_before_at')) {
+      context.handle(
+        _retryServerNotBeforeAtMeta,
+        retryServerNotBeforeAt.isAcceptableOrUnknown(
+          data['retry_server_not_before_at']!,
+          _retryServerNotBeforeAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_last_observed_at')) {
+      context.handle(
+        _retryLastObservedAtMeta,
+        retryLastObservedAt.isAcceptableOrUnknown(
+          data['retry_last_observed_at']!,
+          _retryLastObservedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('retry_attempt_count')) {
+      context.handle(
+        _retryAttemptCountMeta,
+        retryAttemptCount.isAcceptableOrUnknown(
+          data['retry_attempt_count']!,
+          _retryAttemptCountMeta,
+        ),
+      );
+    }
     if (data.containsKey('required_scope_incomplete')) {
       context.handle(
         _requiredScopeIncompleteMeta,
@@ -9712,6 +9840,30 @@ class $SyncFactRowsTable extends SyncFactRows
         DriftSqlType.bool,
         data['${effectivePrefix}automatic_retry_exhausted'],
       )!,
+      retryEpisodeStartedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_episode_started_at'],
+      ),
+      retryEpisodeDeadlineAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_episode_deadline_at'],
+      ),
+      retryNextAttemptAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_next_attempt_at'],
+      ),
+      retryServerNotBeforeAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_server_not_before_at'],
+      ),
+      retryLastObservedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}retry_last_observed_at'],
+      ),
+      retryAttemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}retry_attempt_count'],
+      )!,
       requiredScopeIncomplete: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}required_scope_incomplete'],
@@ -9743,6 +9895,12 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
   final bool reauthorizationRequired;
   final bool retryWaiting;
   final bool automaticRetryExhausted;
+  final DateTime? retryEpisodeStartedAt;
+  final DateTime? retryEpisodeDeadlineAt;
+  final DateTime? retryNextAttemptAt;
+  final DateTime? retryServerNotBeforeAt;
+  final DateTime? retryLastObservedAt;
+  final int retryAttemptCount;
   final bool requiredScopeIncomplete;
   final bool followUpRequired;
   const SyncFactRow({
@@ -9759,6 +9917,12 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
     required this.reauthorizationRequired,
     required this.retryWaiting,
     required this.automaticRetryExhausted,
+    this.retryEpisodeStartedAt,
+    this.retryEpisodeDeadlineAt,
+    this.retryNextAttemptAt,
+    this.retryServerNotBeforeAt,
+    this.retryLastObservedAt,
+    required this.retryAttemptCount,
     required this.requiredScopeIncomplete,
     required this.followUpRequired,
   });
@@ -9790,6 +9954,28 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
     map['reauthorization_required'] = Variable<bool>(reauthorizationRequired);
     map['retry_waiting'] = Variable<bool>(retryWaiting);
     map['automatic_retry_exhausted'] = Variable<bool>(automaticRetryExhausted);
+    if (!nullToAbsent || retryEpisodeStartedAt != null) {
+      map['retry_episode_started_at'] = Variable<DateTime>(
+        retryEpisodeStartedAt,
+      );
+    }
+    if (!nullToAbsent || retryEpisodeDeadlineAt != null) {
+      map['retry_episode_deadline_at'] = Variable<DateTime>(
+        retryEpisodeDeadlineAt,
+      );
+    }
+    if (!nullToAbsent || retryNextAttemptAt != null) {
+      map['retry_next_attempt_at'] = Variable<DateTime>(retryNextAttemptAt);
+    }
+    if (!nullToAbsent || retryServerNotBeforeAt != null) {
+      map['retry_server_not_before_at'] = Variable<DateTime>(
+        retryServerNotBeforeAt,
+      );
+    }
+    if (!nullToAbsent || retryLastObservedAt != null) {
+      map['retry_last_observed_at'] = Variable<DateTime>(retryLastObservedAt);
+    }
+    map['retry_attempt_count'] = Variable<int>(retryAttemptCount);
     map['required_scope_incomplete'] = Variable<bool>(requiredScopeIncomplete);
     map['follow_up_required'] = Variable<bool>(followUpRequired);
     return map;
@@ -9821,6 +10007,22 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
       reauthorizationRequired: Value(reauthorizationRequired),
       retryWaiting: Value(retryWaiting),
       automaticRetryExhausted: Value(automaticRetryExhausted),
+      retryEpisodeStartedAt: retryEpisodeStartedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(retryEpisodeStartedAt),
+      retryEpisodeDeadlineAt: retryEpisodeDeadlineAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(retryEpisodeDeadlineAt),
+      retryNextAttemptAt: retryNextAttemptAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(retryNextAttemptAt),
+      retryServerNotBeforeAt: retryServerNotBeforeAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(retryServerNotBeforeAt),
+      retryLastObservedAt: retryLastObservedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(retryLastObservedAt),
+      retryAttemptCount: Value(retryAttemptCount),
       requiredScopeIncomplete: Value(requiredScopeIncomplete),
       followUpRequired: Value(followUpRequired),
     );
@@ -9857,6 +10059,22 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
       automaticRetryExhausted: serializer.fromJson<bool>(
         json['automaticRetryExhausted'],
       ),
+      retryEpisodeStartedAt: serializer.fromJson<DateTime?>(
+        json['retryEpisodeStartedAt'],
+      ),
+      retryEpisodeDeadlineAt: serializer.fromJson<DateTime?>(
+        json['retryEpisodeDeadlineAt'],
+      ),
+      retryNextAttemptAt: serializer.fromJson<DateTime?>(
+        json['retryNextAttemptAt'],
+      ),
+      retryServerNotBeforeAt: serializer.fromJson<DateTime?>(
+        json['retryServerNotBeforeAt'],
+      ),
+      retryLastObservedAt: serializer.fromJson<DateTime?>(
+        json['retryLastObservedAt'],
+      ),
+      retryAttemptCount: serializer.fromJson<int>(json['retryAttemptCount']),
       requiredScopeIncomplete: serializer.fromJson<bool>(
         json['requiredScopeIncomplete'],
       ),
@@ -9888,6 +10106,18 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
       'automaticRetryExhausted': serializer.toJson<bool>(
         automaticRetryExhausted,
       ),
+      'retryEpisodeStartedAt': serializer.toJson<DateTime?>(
+        retryEpisodeStartedAt,
+      ),
+      'retryEpisodeDeadlineAt': serializer.toJson<DateTime?>(
+        retryEpisodeDeadlineAt,
+      ),
+      'retryNextAttemptAt': serializer.toJson<DateTime?>(retryNextAttemptAt),
+      'retryServerNotBeforeAt': serializer.toJson<DateTime?>(
+        retryServerNotBeforeAt,
+      ),
+      'retryLastObservedAt': serializer.toJson<DateTime?>(retryLastObservedAt),
+      'retryAttemptCount': serializer.toJson<int>(retryAttemptCount),
       'requiredScopeIncomplete': serializer.toJson<bool>(
         requiredScopeIncomplete,
       ),
@@ -9909,6 +10139,12 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
     bool? reauthorizationRequired,
     bool? retryWaiting,
     bool? automaticRetryExhausted,
+    Value<DateTime?> retryEpisodeStartedAt = const Value.absent(),
+    Value<DateTime?> retryEpisodeDeadlineAt = const Value.absent(),
+    Value<DateTime?> retryNextAttemptAt = const Value.absent(),
+    Value<DateTime?> retryServerNotBeforeAt = const Value.absent(),
+    Value<DateTime?> retryLastObservedAt = const Value.absent(),
+    int? retryAttemptCount,
     bool? requiredScopeIncomplete,
     bool? followUpRequired,
   }) => SyncFactRow(
@@ -9937,6 +10173,22 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
     retryWaiting: retryWaiting ?? this.retryWaiting,
     automaticRetryExhausted:
         automaticRetryExhausted ?? this.automaticRetryExhausted,
+    retryEpisodeStartedAt: retryEpisodeStartedAt.present
+        ? retryEpisodeStartedAt.value
+        : this.retryEpisodeStartedAt,
+    retryEpisodeDeadlineAt: retryEpisodeDeadlineAt.present
+        ? retryEpisodeDeadlineAt.value
+        : this.retryEpisodeDeadlineAt,
+    retryNextAttemptAt: retryNextAttemptAt.present
+        ? retryNextAttemptAt.value
+        : this.retryNextAttemptAt,
+    retryServerNotBeforeAt: retryServerNotBeforeAt.present
+        ? retryServerNotBeforeAt.value
+        : this.retryServerNotBeforeAt,
+    retryLastObservedAt: retryLastObservedAt.present
+        ? retryLastObservedAt.value
+        : this.retryLastObservedAt,
+    retryAttemptCount: retryAttemptCount ?? this.retryAttemptCount,
     requiredScopeIncomplete:
         requiredScopeIncomplete ?? this.requiredScopeIncomplete,
     followUpRequired: followUpRequired ?? this.followUpRequired,
@@ -9980,6 +10232,24 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
       automaticRetryExhausted: data.automaticRetryExhausted.present
           ? data.automaticRetryExhausted.value
           : this.automaticRetryExhausted,
+      retryEpisodeStartedAt: data.retryEpisodeStartedAt.present
+          ? data.retryEpisodeStartedAt.value
+          : this.retryEpisodeStartedAt,
+      retryEpisodeDeadlineAt: data.retryEpisodeDeadlineAt.present
+          ? data.retryEpisodeDeadlineAt.value
+          : this.retryEpisodeDeadlineAt,
+      retryNextAttemptAt: data.retryNextAttemptAt.present
+          ? data.retryNextAttemptAt.value
+          : this.retryNextAttemptAt,
+      retryServerNotBeforeAt: data.retryServerNotBeforeAt.present
+          ? data.retryServerNotBeforeAt.value
+          : this.retryServerNotBeforeAt,
+      retryLastObservedAt: data.retryLastObservedAt.present
+          ? data.retryLastObservedAt.value
+          : this.retryLastObservedAt,
+      retryAttemptCount: data.retryAttemptCount.present
+          ? data.retryAttemptCount.value
+          : this.retryAttemptCount,
       requiredScopeIncomplete: data.requiredScopeIncomplete.present
           ? data.requiredScopeIncomplete.value
           : this.requiredScopeIncomplete,
@@ -10005,6 +10275,12 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
           ..write('reauthorizationRequired: $reauthorizationRequired, ')
           ..write('retryWaiting: $retryWaiting, ')
           ..write('automaticRetryExhausted: $automaticRetryExhausted, ')
+          ..write('retryEpisodeStartedAt: $retryEpisodeStartedAt, ')
+          ..write('retryEpisodeDeadlineAt: $retryEpisodeDeadlineAt, ')
+          ..write('retryNextAttemptAt: $retryNextAttemptAt, ')
+          ..write('retryServerNotBeforeAt: $retryServerNotBeforeAt, ')
+          ..write('retryLastObservedAt: $retryLastObservedAt, ')
+          ..write('retryAttemptCount: $retryAttemptCount, ')
           ..write('requiredScopeIncomplete: $requiredScopeIncomplete, ')
           ..write('followUpRequired: $followUpRequired')
           ..write(')'))
@@ -10012,7 +10288,7 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     accountId,
     lastSuccessfulSyncAt,
     latestFailureReason,
@@ -10026,9 +10302,15 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
     reauthorizationRequired,
     retryWaiting,
     automaticRetryExhausted,
+    retryEpisodeStartedAt,
+    retryEpisodeDeadlineAt,
+    retryNextAttemptAt,
+    retryServerNotBeforeAt,
+    retryLastObservedAt,
+    retryAttemptCount,
     requiredScopeIncomplete,
     followUpRequired,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -10047,6 +10329,12 @@ class SyncFactRow extends DataClass implements Insertable<SyncFactRow> {
           other.reauthorizationRequired == this.reauthorizationRequired &&
           other.retryWaiting == this.retryWaiting &&
           other.automaticRetryExhausted == this.automaticRetryExhausted &&
+          other.retryEpisodeStartedAt == this.retryEpisodeStartedAt &&
+          other.retryEpisodeDeadlineAt == this.retryEpisodeDeadlineAt &&
+          other.retryNextAttemptAt == this.retryNextAttemptAt &&
+          other.retryServerNotBeforeAt == this.retryServerNotBeforeAt &&
+          other.retryLastObservedAt == this.retryLastObservedAt &&
+          other.retryAttemptCount == this.retryAttemptCount &&
           other.requiredScopeIncomplete == this.requiredScopeIncomplete &&
           other.followUpRequired == this.followUpRequired);
 }
@@ -10065,6 +10353,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
   final Value<bool> reauthorizationRequired;
   final Value<bool> retryWaiting;
   final Value<bool> automaticRetryExhausted;
+  final Value<DateTime?> retryEpisodeStartedAt;
+  final Value<DateTime?> retryEpisodeDeadlineAt;
+  final Value<DateTime?> retryNextAttemptAt;
+  final Value<DateTime?> retryServerNotBeforeAt;
+  final Value<DateTime?> retryLastObservedAt;
+  final Value<int> retryAttemptCount;
   final Value<bool> requiredScopeIncomplete;
   final Value<bool> followUpRequired;
   const SyncFactRowsCompanion({
@@ -10081,6 +10375,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
     this.reauthorizationRequired = const Value.absent(),
     this.retryWaiting = const Value.absent(),
     this.automaticRetryExhausted = const Value.absent(),
+    this.retryEpisodeStartedAt = const Value.absent(),
+    this.retryEpisodeDeadlineAt = const Value.absent(),
+    this.retryNextAttemptAt = const Value.absent(),
+    this.retryServerNotBeforeAt = const Value.absent(),
+    this.retryLastObservedAt = const Value.absent(),
+    this.retryAttemptCount = const Value.absent(),
     this.requiredScopeIncomplete = const Value.absent(),
     this.followUpRequired = const Value.absent(),
   });
@@ -10098,6 +10398,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
     this.reauthorizationRequired = const Value.absent(),
     this.retryWaiting = const Value.absent(),
     this.automaticRetryExhausted = const Value.absent(),
+    this.retryEpisodeStartedAt = const Value.absent(),
+    this.retryEpisodeDeadlineAt = const Value.absent(),
+    this.retryNextAttemptAt = const Value.absent(),
+    this.retryServerNotBeforeAt = const Value.absent(),
+    this.retryLastObservedAt = const Value.absent(),
+    this.retryAttemptCount = const Value.absent(),
     this.requiredScopeIncomplete = const Value.absent(),
     this.followUpRequired = const Value.absent(),
   });
@@ -10115,6 +10421,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
     Expression<bool>? reauthorizationRequired,
     Expression<bool>? retryWaiting,
     Expression<bool>? automaticRetryExhausted,
+    Expression<DateTime>? retryEpisodeStartedAt,
+    Expression<DateTime>? retryEpisodeDeadlineAt,
+    Expression<DateTime>? retryNextAttemptAt,
+    Expression<DateTime>? retryServerNotBeforeAt,
+    Expression<DateTime>? retryLastObservedAt,
+    Expression<int>? retryAttemptCount,
     Expression<bool>? requiredScopeIncomplete,
     Expression<bool>? followUpRequired,
   }) {
@@ -10138,6 +10450,17 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
       if (retryWaiting != null) 'retry_waiting': retryWaiting,
       if (automaticRetryExhausted != null)
         'automatic_retry_exhausted': automaticRetryExhausted,
+      if (retryEpisodeStartedAt != null)
+        'retry_episode_started_at': retryEpisodeStartedAt,
+      if (retryEpisodeDeadlineAt != null)
+        'retry_episode_deadline_at': retryEpisodeDeadlineAt,
+      if (retryNextAttemptAt != null)
+        'retry_next_attempt_at': retryNextAttemptAt,
+      if (retryServerNotBeforeAt != null)
+        'retry_server_not_before_at': retryServerNotBeforeAt,
+      if (retryLastObservedAt != null)
+        'retry_last_observed_at': retryLastObservedAt,
+      if (retryAttemptCount != null) 'retry_attempt_count': retryAttemptCount,
       if (requiredScopeIncomplete != null)
         'required_scope_incomplete': requiredScopeIncomplete,
       if (followUpRequired != null) 'follow_up_required': followUpRequired,
@@ -10158,6 +10481,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
     Value<bool>? reauthorizationRequired,
     Value<bool>? retryWaiting,
     Value<bool>? automaticRetryExhausted,
+    Value<DateTime?>? retryEpisodeStartedAt,
+    Value<DateTime?>? retryEpisodeDeadlineAt,
+    Value<DateTime?>? retryNextAttemptAt,
+    Value<DateTime?>? retryServerNotBeforeAt,
+    Value<DateTime?>? retryLastObservedAt,
+    Value<int>? retryAttemptCount,
     Value<bool>? requiredScopeIncomplete,
     Value<bool>? followUpRequired,
   }) {
@@ -10178,6 +10507,15 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
       retryWaiting: retryWaiting ?? this.retryWaiting,
       automaticRetryExhausted:
           automaticRetryExhausted ?? this.automaticRetryExhausted,
+      retryEpisodeStartedAt:
+          retryEpisodeStartedAt ?? this.retryEpisodeStartedAt,
+      retryEpisodeDeadlineAt:
+          retryEpisodeDeadlineAt ?? this.retryEpisodeDeadlineAt,
+      retryNextAttemptAt: retryNextAttemptAt ?? this.retryNextAttemptAt,
+      retryServerNotBeforeAt:
+          retryServerNotBeforeAt ?? this.retryServerNotBeforeAt,
+      retryLastObservedAt: retryLastObservedAt ?? this.retryLastObservedAt,
+      retryAttemptCount: retryAttemptCount ?? this.retryAttemptCount,
       requiredScopeIncomplete:
           requiredScopeIncomplete ?? this.requiredScopeIncomplete,
       followUpRequired: followUpRequired ?? this.followUpRequired,
@@ -10238,6 +10576,34 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
         automaticRetryExhausted.value,
       );
     }
+    if (retryEpisodeStartedAt.present) {
+      map['retry_episode_started_at'] = Variable<DateTime>(
+        retryEpisodeStartedAt.value,
+      );
+    }
+    if (retryEpisodeDeadlineAt.present) {
+      map['retry_episode_deadline_at'] = Variable<DateTime>(
+        retryEpisodeDeadlineAt.value,
+      );
+    }
+    if (retryNextAttemptAt.present) {
+      map['retry_next_attempt_at'] = Variable<DateTime>(
+        retryNextAttemptAt.value,
+      );
+    }
+    if (retryServerNotBeforeAt.present) {
+      map['retry_server_not_before_at'] = Variable<DateTime>(
+        retryServerNotBeforeAt.value,
+      );
+    }
+    if (retryLastObservedAt.present) {
+      map['retry_last_observed_at'] = Variable<DateTime>(
+        retryLastObservedAt.value,
+      );
+    }
+    if (retryAttemptCount.present) {
+      map['retry_attempt_count'] = Variable<int>(retryAttemptCount.value);
+    }
     if (requiredScopeIncomplete.present) {
       map['required_scope_incomplete'] = Variable<bool>(
         requiredScopeIncomplete.value,
@@ -10265,6 +10631,12 @@ class SyncFactRowsCompanion extends UpdateCompanion<SyncFactRow> {
           ..write('reauthorizationRequired: $reauthorizationRequired, ')
           ..write('retryWaiting: $retryWaiting, ')
           ..write('automaticRetryExhausted: $automaticRetryExhausted, ')
+          ..write('retryEpisodeStartedAt: $retryEpisodeStartedAt, ')
+          ..write('retryEpisodeDeadlineAt: $retryEpisodeDeadlineAt, ')
+          ..write('retryNextAttemptAt: $retryNextAttemptAt, ')
+          ..write('retryServerNotBeforeAt: $retryServerNotBeforeAt, ')
+          ..write('retryLastObservedAt: $retryLastObservedAt, ')
+          ..write('retryAttemptCount: $retryAttemptCount, ')
           ..write('requiredScopeIncomplete: $requiredScopeIncomplete, ')
           ..write('followUpRequired: $followUpRequired')
           ..write(')'))
@@ -15357,6 +15729,12 @@ typedef $$SyncFactRowsTableCreateCompanionBuilder =
       Value<bool> reauthorizationRequired,
       Value<bool> retryWaiting,
       Value<bool> automaticRetryExhausted,
+      Value<DateTime?> retryEpisodeStartedAt,
+      Value<DateTime?> retryEpisodeDeadlineAt,
+      Value<DateTime?> retryNextAttemptAt,
+      Value<DateTime?> retryServerNotBeforeAt,
+      Value<DateTime?> retryLastObservedAt,
+      Value<int> retryAttemptCount,
       Value<bool> requiredScopeIncomplete,
       Value<bool> followUpRequired,
     });
@@ -15375,6 +15753,12 @@ typedef $$SyncFactRowsTableUpdateCompanionBuilder =
       Value<bool> reauthorizationRequired,
       Value<bool> retryWaiting,
       Value<bool> automaticRetryExhausted,
+      Value<DateTime?> retryEpisodeStartedAt,
+      Value<DateTime?> retryEpisodeDeadlineAt,
+      Value<DateTime?> retryNextAttemptAt,
+      Value<DateTime?> retryServerNotBeforeAt,
+      Value<DateTime?> retryLastObservedAt,
+      Value<int> retryAttemptCount,
       Value<bool> requiredScopeIncomplete,
       Value<bool> followUpRequired,
     });
@@ -15450,6 +15834,36 @@ class $$SyncFactRowsTableFilterComposer
 
   ColumnFilters<bool> get automaticRetryExhausted => $composableBuilder(
     column: $table.automaticRetryExhausted,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryEpisodeStartedAt => $composableBuilder(
+    column: $table.retryEpisodeStartedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryEpisodeDeadlineAt => $composableBuilder(
+    column: $table.retryEpisodeDeadlineAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryNextAttemptAt => $composableBuilder(
+    column: $table.retryNextAttemptAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryServerNotBeforeAt => $composableBuilder(
+    column: $table.retryServerNotBeforeAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get retryLastObservedAt => $composableBuilder(
+    column: $table.retryLastObservedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get retryAttemptCount => $composableBuilder(
+    column: $table.retryAttemptCount,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -15538,6 +15952,36 @@ class $$SyncFactRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get retryEpisodeStartedAt => $composableBuilder(
+    column: $table.retryEpisodeStartedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get retryEpisodeDeadlineAt => $composableBuilder(
+    column: $table.retryEpisodeDeadlineAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get retryNextAttemptAt => $composableBuilder(
+    column: $table.retryNextAttemptAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get retryServerNotBeforeAt => $composableBuilder(
+    column: $table.retryServerNotBeforeAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get retryLastObservedAt => $composableBuilder(
+    column: $table.retryLastObservedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get retryAttemptCount => $composableBuilder(
+    column: $table.retryAttemptCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<bool> get requiredScopeIncomplete => $composableBuilder(
     column: $table.requiredScopeIncomplete,
     builder: (column) => ColumnOrderings(column),
@@ -15621,6 +16065,36 @@ class $$SyncFactRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get retryEpisodeStartedAt => $composableBuilder(
+    column: $table.retryEpisodeStartedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get retryEpisodeDeadlineAt => $composableBuilder(
+    column: $table.retryEpisodeDeadlineAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get retryNextAttemptAt => $composableBuilder(
+    column: $table.retryNextAttemptAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get retryServerNotBeforeAt => $composableBuilder(
+    column: $table.retryServerNotBeforeAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get retryLastObservedAt => $composableBuilder(
+    column: $table.retryLastObservedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get retryAttemptCount => $composableBuilder(
+    column: $table.retryAttemptCount,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<bool> get requiredScopeIncomplete => $composableBuilder(
     column: $table.requiredScopeIncomplete,
     builder: (column) => column,
@@ -15677,6 +16151,12 @@ class $$SyncFactRowsTableTableManager
                 Value<bool> reauthorizationRequired = const Value.absent(),
                 Value<bool> retryWaiting = const Value.absent(),
                 Value<bool> automaticRetryExhausted = const Value.absent(),
+                Value<DateTime?> retryEpisodeStartedAt = const Value.absent(),
+                Value<DateTime?> retryEpisodeDeadlineAt = const Value.absent(),
+                Value<DateTime?> retryNextAttemptAt = const Value.absent(),
+                Value<DateTime?> retryServerNotBeforeAt = const Value.absent(),
+                Value<DateTime?> retryLastObservedAt = const Value.absent(),
+                Value<int> retryAttemptCount = const Value.absent(),
                 Value<bool> requiredScopeIncomplete = const Value.absent(),
                 Value<bool> followUpRequired = const Value.absent(),
               }) => SyncFactRowsCompanion(
@@ -15693,6 +16173,12 @@ class $$SyncFactRowsTableTableManager
                 reauthorizationRequired: reauthorizationRequired,
                 retryWaiting: retryWaiting,
                 automaticRetryExhausted: automaticRetryExhausted,
+                retryEpisodeStartedAt: retryEpisodeStartedAt,
+                retryEpisodeDeadlineAt: retryEpisodeDeadlineAt,
+                retryNextAttemptAt: retryNextAttemptAt,
+                retryServerNotBeforeAt: retryServerNotBeforeAt,
+                retryLastObservedAt: retryLastObservedAt,
+                retryAttemptCount: retryAttemptCount,
                 requiredScopeIncomplete: requiredScopeIncomplete,
                 followUpRequired: followUpRequired,
               ),
@@ -15712,6 +16198,12 @@ class $$SyncFactRowsTableTableManager
                 Value<bool> reauthorizationRequired = const Value.absent(),
                 Value<bool> retryWaiting = const Value.absent(),
                 Value<bool> automaticRetryExhausted = const Value.absent(),
+                Value<DateTime?> retryEpisodeStartedAt = const Value.absent(),
+                Value<DateTime?> retryEpisodeDeadlineAt = const Value.absent(),
+                Value<DateTime?> retryNextAttemptAt = const Value.absent(),
+                Value<DateTime?> retryServerNotBeforeAt = const Value.absent(),
+                Value<DateTime?> retryLastObservedAt = const Value.absent(),
+                Value<int> retryAttemptCount = const Value.absent(),
                 Value<bool> requiredScopeIncomplete = const Value.absent(),
                 Value<bool> followUpRequired = const Value.absent(),
               }) => SyncFactRowsCompanion.insert(
@@ -15728,6 +16220,12 @@ class $$SyncFactRowsTableTableManager
                 reauthorizationRequired: reauthorizationRequired,
                 retryWaiting: retryWaiting,
                 automaticRetryExhausted: automaticRetryExhausted,
+                retryEpisodeStartedAt: retryEpisodeStartedAt,
+                retryEpisodeDeadlineAt: retryEpisodeDeadlineAt,
+                retryNextAttemptAt: retryNextAttemptAt,
+                retryServerNotBeforeAt: retryServerNotBeforeAt,
+                retryLastObservedAt: retryLastObservedAt,
+                retryAttemptCount: retryAttemptCount,
                 requiredScopeIncomplete: requiredScopeIncomplete,
                 followUpRequired: followUpRequired,
               ),

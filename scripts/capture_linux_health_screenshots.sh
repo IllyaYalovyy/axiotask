@@ -11,6 +11,9 @@ scenarios=(
   health-stale-failed
   health-no-authorization
   health-sync-stopped
+  health-retry-waiting
+  health-retry-executing
+  health-retry-exhausted
   list-create-pending
   list-rename-sync-stopped
   task-create-pending

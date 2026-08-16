@@ -185,6 +185,13 @@ movement controls. The isolated Linux integration drives promote, reorder, and
 move-to-list commands across a file-backed restart; the actual synthetic PNG is
 reviewed from ignored `screenshots/actual/` output.
 
+S19A adds `health-retry-waiting`, `health-retry-executing`, and
+`health-retry-exhausted` to the same isolated runner. Waiting shows the exact
+synthetic UTC boundary and Retry action under Failed; execution alone is
+Pending; exhaustion remains Failed with an immediate Retry action. Focused
+retry verification is available under `test/sync/retry/` and uses no real
+account, credential, network, or normal application storage.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

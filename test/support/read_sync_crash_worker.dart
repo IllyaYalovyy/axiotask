@@ -29,7 +29,7 @@ Future<void> main(List<String> arguments) async {
     store: DatabaseReadSyncStore(database),
     googleTasks: _WorkerReadService(),
     authorization: const SyntheticAuthorization(subject),
-    clock: _WorkerClock(),
+    clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
     random: SequenceRandomSource(List<int>.generate(16, (index) => index)),
     control: const _StopAfterCommittedPage(),
   );
@@ -54,14 +54,6 @@ final class _StopAfterCommittedPage implements SyncRunControl {
     }
     return SyncRunControlDecision.proceed;
   }
-}
-
-final class _WorkerClock implements Clock {
-  @override
-  Duration get monotonicElapsed => Duration.zero;
-
-  @override
-  DateTime now() => DateTime.utc(2026, 8, 15, 12);
 }
 
 final class _WorkerReadService implements GoogleTasksService {

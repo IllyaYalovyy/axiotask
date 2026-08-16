@@ -94,13 +94,14 @@ void main() {
   );
 
   test(
-    'Stop and Resume delegate once and expose deterministic progress',
+    'Stop, Resume, and Retry delegate once and expose deterministic progress',
     () async {
       final tasks = _TasksRepository();
       final health = _HealthRepository();
       final stop = Completer<void>();
       var stopCalls = 0;
       var resumeCalls = 0;
+      var retryCalls = 0;
       final viewModel = TasksViewModel(
         accountId: const AccountId(1),
         tasksRepository: tasks,
@@ -111,6 +112,9 @@ void main() {
         },
         resumeSyncRequested: () async {
           resumeCalls += 1;
+        },
+        retryRequested: () async {
+          retryCalls += 1;
         },
       );
       addTearDown(viewModel.dispose);
@@ -125,6 +129,8 @@ void main() {
 
       await viewModel.handleSyncHealthAction(SyncHealthAction.resume);
       expect(resumeCalls, 1);
+      await viewModel.handleSyncHealthAction(SyncHealthAction.retry);
+      expect(retryCalls, 1);
     },
   );
 

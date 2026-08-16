@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fake_clock.dart';
 import '../support/fake_google_tasks_service.dart';
+import '../support/fake_random.dart';
 
 void main() {
   const subject = AccountSubject('synthetic-read-sync-subject');
@@ -358,7 +359,13 @@ void main() {
         (await harness.snapshot()).completeness,
         CacheCompleteness.incomplete,
       );
-      expect(remote.requestedTaskLists, <String>['list-a', 'list-b']);
+      expect(remote.requestedTaskLists, <String>[
+        'list-a',
+        'list-a',
+        'list-a',
+        'list-a',
+        'list-b',
+      ]);
     },
   );
 
@@ -864,8 +871,8 @@ final class _Harness {
         googleTasks: remote,
         authorization: SyntheticAuthorization(subject),
         clock: clock,
-        random: SequenceRandomSource(
-          List<int>.generate(256, (index) => index % 256),
+        random: FakeRandom.scriptedJitter(
+          List<Duration>.filled(128, Duration.zero),
         ),
         observer: observer,
         control: control,

@@ -270,6 +270,35 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
     ),
   ),
   (
+    name: 'health-retry-waiting',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.remoteFailure,
+      action: SyncHealthAction.retry,
+      retryNextAttemptAt: DateTime.utc(2026, 8, 15, 12, 0, 30),
+      retryAttemptCount: 2,
+    ),
+  ),
+  (
+    name: 'health-retry-executing',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.retrying,
+    ),
+  ),
+  (
+    name: 'health-retry-exhausted',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.remoteFailure,
+      action: SyncHealthAction.retry,
+      automaticRetryExhausted: true,
+    ),
+  ),
+  (
     name: 'list-create-pending',
     snapshot: CachedTasksSnapshot(
       accountId: const AccountId(1),
@@ -540,6 +569,9 @@ SyncHealth _health(
   DateTime? lastSuccessfulSyncAt,
   SyncWorkCounts counts = const SyncWorkCounts(),
   String? diagnosticCode,
+  DateTime? retryNextAttemptAt,
+  int retryAttemptCount = 0,
+  bool automaticRetryExhausted = false,
 }) => SyncHealth(
   outcome: outcome,
   inactiveReason: inactiveReason,
@@ -548,6 +580,9 @@ SyncHealth _health(
   action: action,
   counts: counts,
   diagnosticCode: diagnosticCode,
+  retryNextAttemptAt: retryNextAttemptAt,
+  retryAttemptCount: retryAttemptCount,
+  automaticRetryExhausted: automaticRetryExhausted,
   lastSuccessfulSyncAt: lastSuccessfulSyncAt,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
 );

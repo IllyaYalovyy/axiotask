@@ -33,6 +33,7 @@ final class FakeRandom implements RandomSource {
   }
 
   /// Returns a full-jitter delay in the inclusive range zero through [maximum].
+  @override
   Duration fullJitter(Duration maximum) {
     if (maximum.isNegative) {
       throw ArgumentError.value(maximum, 'maximum', 'must not be negative');

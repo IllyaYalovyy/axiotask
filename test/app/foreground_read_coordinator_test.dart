@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/fake_auth.dart';
 import '../support/fake_clock.dart';
 import '../support/fake_lifecycle.dart';
+import '../support/fake_random.dart';
 
 void main() {
   const subject = AccountSubject('synthetic-foreground-read-subject');
@@ -286,7 +287,11 @@ final class _Harness {
       authorization: authorization,
       clock: clock,
       scheduler: clock,
+      random: SequenceRandomSource(
+        List<int>.generate(512, (index) => index % 256),
+      ),
       settings: DatabaseSyncSettingsRepository(database),
+      retryStore: DatabaseReadSyncStore(database),
       lifecycle: lifecycle,
       run: (request) =>
           SyncEngine(
@@ -294,13 +299,16 @@ final class _Harness {
             googleTasks: service,
             authorization: authorization,
             clock: clock,
-            random: SequenceRandomSource(
-              List<int>.generate(256, (index) => index),
+            scheduler: clock,
+            random: FakeRandom.scriptedJitter(
+              List<Duration>.filled(64, Duration.zero),
             ),
+            retryObserver: request.retryObserver,
             control: request.control,
           ).run(
             SyncRunRequest(
               accountId: accountId,
+              deadline: request.deadline,
               triggers: request.triggers
                   .map((trigger) => trigger.value)
                   .toSet(),

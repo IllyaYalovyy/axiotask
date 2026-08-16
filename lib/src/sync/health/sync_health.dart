@@ -98,6 +98,8 @@ final class PersistedSyncFacts {
     this.counts = const SyncWorkCounts(),
     this.retryWaiting = false,
     this.automaticRetryExhausted = false,
+    this.retryNextAttemptAt,
+    this.retryAttemptCount = 0,
     this.requiredScopeIncomplete = false,
     this.followUpRequired = false,
   });
@@ -109,6 +111,8 @@ final class PersistedSyncFacts {
   final SyncWorkCounts counts;
   final bool retryWaiting;
   final bool automaticRetryExhausted;
+  final DateTime? retryNextAttemptAt;
+  final int retryAttemptCount;
   final bool requiredScopeIncomplete;
   final bool followUpRequired;
 
@@ -122,6 +126,8 @@ final class PersistedSyncFacts {
       counts == other.counts &&
       retryWaiting == other.retryWaiting &&
       automaticRetryExhausted == other.automaticRetryExhausted &&
+      retryNextAttemptAt == other.retryNextAttemptAt &&
+      retryAttemptCount == other.retryAttemptCount &&
       requiredScopeIncomplete == other.requiredScopeIncomplete &&
       followUpRequired == other.followUpRequired;
 
@@ -134,6 +140,8 @@ final class PersistedSyncFacts {
     counts,
     retryWaiting,
     automaticRetryExhausted,
+    retryNextAttemptAt,
+    retryAttemptCount,
     requiredScopeIncomplete,
     followUpRequired,
   );
@@ -170,6 +178,9 @@ final class SyncHealth {
     this.pendingReason,
     this.action = SyncHealthAction.none,
     this.diagnosticCode,
+    this.retryNextAttemptAt,
+    this.retryAttemptCount = 0,
+    this.automaticRetryExhausted = false,
   });
 
   final SyncHealthOutcome outcome;
@@ -181,6 +192,9 @@ final class SyncHealth {
   final DateTime? lastSuccessfulSyncAt;
   final DateTime evaluatedAt;
   final String? diagnosticCode;
+  final DateTime? retryNextAttemptAt;
+  final int retryAttemptCount;
+  final bool automaticRetryExhausted;
 
   String get summary => switch (outcome) {
     SyncHealthOutcome.inactive => 'Inactive',
@@ -189,24 +203,32 @@ final class SyncHealth {
     SyncHealthOutcome.good => 'Synced',
   };
 
-  String get reasonLabel => switch ((
-    inactiveReason,
-    failureReason,
-    pendingReason,
-  )) {
-    (SyncInactiveReason.syncStopped, _, _) => 'Sync stopped',
-    (SyncInactiveReason.noAuthorization, _, _) => 'No authorization',
-    (_, SyncFailureReason.noConnection, _) => 'No connection',
-    (_, SyncFailureReason.remoteFailure, _) => 'Google Tasks failed',
-    (_, SyncFailureReason.applicationFailure, _) => 'Application failure',
-    (_, SyncFailureReason.stale, _) => 'Cached data is stale',
-    (_, _, SyncPendingReason.checkingAuthorization) => 'Checking authorization',
-    (_, _, SyncPendingReason.verifying) => 'Verifying with Google',
-    (_, _, SyncPendingReason.retrying) => 'Retrying synchronization',
-    (_, _, SyncPendingReason.localChanges) => 'Changes awaiting Google',
-    _ when outcome == SyncHealthOutcome.good => 'Synchronization completed',
-    _ => 'Synchronization state unavailable',
-  };
+  String get reasonLabel {
+    if (outcome == SyncHealthOutcome.failed && automaticRetryExhausted) {
+      return 'Automatic retry exhausted';
+    }
+    final retryAt = retryNextAttemptAt;
+    if (outcome == SyncHealthOutcome.failed &&
+        retryAt != null &&
+        retryAt.toUtc().isAfter(evaluatedAt.toUtc())) {
+      return 'Retry ${retryAttemptCount + 1} after ${_exactUtc(retryAt)}';
+    }
+    return switch ((inactiveReason, failureReason, pendingReason)) {
+      (SyncInactiveReason.syncStopped, _, _) => 'Sync stopped',
+      (SyncInactiveReason.noAuthorization, _, _) => 'No authorization',
+      (_, SyncFailureReason.noConnection, _) => 'No connection',
+      (_, SyncFailureReason.remoteFailure, _) => 'Google Tasks failed',
+      (_, SyncFailureReason.applicationFailure, _) => 'Application failure',
+      (_, SyncFailureReason.stale, _) => 'Cached data is stale',
+      (_, _, SyncPendingReason.checkingAuthorization) =>
+        'Checking authorization',
+      (_, _, SyncPendingReason.verifying) => 'Verifying with Google',
+      (_, _, SyncPendingReason.retrying) => 'Retrying synchronization',
+      (_, _, SyncPendingReason.localChanges) => 'Changes awaiting Google',
+      _ when outcome == SyncHealthOutcome.good => 'Synchronization completed',
+      _ => 'Synchronization state unavailable',
+    };
+  }
 
   String get lastSuccessLabel {
     final value = lastSuccessfulSyncAt;
@@ -260,6 +282,9 @@ SyncHealth projectSyncHealth({
     lastSuccessfulSyncAt: facts.lastSuccessfulSyncAt,
     evaluatedAt: now,
     diagnosticCode: diagnosticCode,
+    retryNextAttemptAt: facts.retryNextAttemptAt,
+    retryAttemptCount: facts.retryAttemptCount,
+    automaticRetryExhausted: facts.automaticRetryExhausted,
   );
 
   if (!facts.syncEnabled) {
@@ -382,4 +407,14 @@ SyncHealth projectSyncHealth({
     );
   }
   return result(outcome: SyncHealthOutcome.good);
+}
+
+String _exactUtc(DateTime value) {
+  final utc = value.toUtc();
+  return '${utc.year.toString().padLeft(4, '0')}-'
+      '${utc.month.toString().padLeft(2, '0')}-'
+      '${utc.day.toString().padLeft(2, '0')} '
+      '${utc.hour.toString().padLeft(2, '0')}:'
+      '${utc.minute.toString().padLeft(2, '0')}:'
+      '${utc.second.toString().padLeft(2, '0')} UTC';
 }

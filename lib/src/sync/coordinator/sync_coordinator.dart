@@ -4,12 +4,15 @@ import '../../core/clock.dart';
 import '../../core/failure.dart';
 import '../../core/lifecycle.dart';
 import '../../core/outcome.dart';
+import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
 import '../../data/connectivity/connectivity.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/repository/sync_settings_repository.dart';
 import '../health/sync_health.dart';
 import '../health/sync_health_repository.dart';
+import '../retry/retry_episode.dart';
+import '../retry/retry_policy.dart';
 import '../run.dart';
 
 const Duration syncLocalEditDebounce = Duration(seconds: 5);
@@ -25,6 +28,7 @@ enum SyncTrigger {
   resumeSync,
   localEdit,
   deleteEligible,
+  retry,
   cadence,
 }
 
@@ -37,6 +41,7 @@ extension SyncTriggerValue on SyncTrigger {
     SyncTrigger.resumeSync => 'resume_sync',
     SyncTrigger.localEdit => 'local_edit',
     SyncTrigger.deleteEligible => 'delete_eligible',
+    SyncTrigger.retry => 'retry',
     SyncTrigger.cadence => 'cadence',
   };
 }
@@ -79,11 +84,13 @@ final class SyncCoordinatorRun {
     required Set<SyncTrigger> triggers,
     required this.deadline,
     required this.control,
+    required this.retryObserver,
   }) : triggers = Set<SyncTrigger>.unmodifiable(triggers);
 
   final Set<SyncTrigger> triggers;
   final Duration deadline;
   final SyncCoordinatorRunControl control;
+  final SyncRequestRetryObserver retryObserver;
 }
 
 typedef CoordinatedSyncRun =
@@ -109,12 +116,15 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     required this.authorization,
     required this.clock,
     required this.scheduler,
+    required RandomSource random,
     required this.settings,
+    required this.retryStore,
     required this.run,
     this.taskDeleteEligibility,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
   }) : _connectivity = connectivity,
+       _retryPolicy = SyncRetryPolicy(random),
        _currentFacts = SyncRuntimeFacts(
          authorization: _authorizationFact(authorization.currentState),
          connectivity: _connectivityFact(
@@ -137,9 +147,11 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   final Clock clock;
   final MonotonicScheduler scheduler;
   final SyncSettingsRepository settings;
+  final SyncRetryEpisodeStore retryStore;
   final CoordinatedSyncRun run;
   final TaskDeleteEligibilityStore? taskDeleteEligibility;
   final ConnectivityPort? _connectivity;
+  final SyncRetryPolicy _retryPolicy;
   final StreamController<SyncRuntimeFacts> _facts =
       StreamController<SyncRuntimeFacts>.broadcast(sync: true);
   final Set<SyncTrigger> _pendingTriggers = <SyncTrigger>{};
@@ -153,6 +165,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   ScheduledTimer? _localEditTimer;
   ScheduledTimer? _cadenceTimer;
   ScheduledTimer? _deleteEligibilityTimer;
+  ScheduledTimer? _retryTimer;
+  ScheduledTimer? _retryExhaustionTimer;
   Duration? _localEditBurstStartedAt;
   SyncCoordinatorRunControl? _activeControl;
   var _activeGeneration = 0;
@@ -161,6 +175,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   bool _stopRequested = false;
   bool _shutdownRequested = false;
   Future<void>? _settingsOperation;
+  Future<void>? _manualRetryOperation;
+  RetryEpisode? _retryEpisode;
   bool _started = false;
   bool _closed = false;
 
@@ -201,8 +217,13 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       rethrow;
     }
     await _refreshTaskDeleteEligibility();
+    _retryEpisode = await retryStore.readRetryEpisode(accountId);
     if (_syncEnabled != true) {
       _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+      return;
+    }
+    if (_retryEpisode != null) {
+      await _restoreRetryEpisode();
       return;
     }
     await _requestImmediate(SyncTrigger.startup);
@@ -211,6 +232,22 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   Future<void> refresh() async {
     await _refreshTaskDeleteEligibility();
     await _requestImmediate(SyncTrigger.refresh);
+  }
+
+  Future<void> retry() {
+    _requireOpen();
+    final existing = _manualRetryOperation;
+    if (existing != null) return existing;
+    final operation = _retryExplicitly();
+    _manualRetryOperation = operation;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_manualRetryOperation, operation)) {
+          _manualRetryOperation = null;
+        }
+      }),
+    );
+    return operation;
   }
 
   Future<void> stop() => _changeSyncEnabled(false);
@@ -309,14 +346,17 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       _pendingTriggers.add(SyncTrigger.localEdit);
     }
     _pendingTriggers.add(trigger);
+    final isRetry = trigger == SyncTrigger.retry;
     _emit(
       _with(
         authorization: _authorizationFact(authorization.currentState),
         activity: _checkingAuthorization(authorization.currentState)
             ? SyncActivity.checkingAuthorization
+            : isRetry
+            ? SyncActivity.retrying
             : SyncActivity.verifying,
         verificationRequired: true,
-        clearFailure: trigger == SyncTrigger.resumeSync,
+        clearFailure: isRetry || trigger == SyncTrigger.resumeSync,
       ),
     );
     return _ensureDrain();
@@ -356,8 +396,11 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
         _emit(
           _with(
             authorization: SyncAuthorization.usable,
-            activity: SyncActivity.verifying,
+            activity: triggers.contains(SyncTrigger.retry)
+                ? SyncActivity.retrying
+                : SyncActivity.verifying,
             verificationRequired: true,
+            clearFailure: triggers.contains(SyncTrigger.retry),
           ),
         );
         final deadlineTimer = scheduler.schedule(syncRunDeadline, () {
@@ -384,6 +427,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
               triggers: triggers,
               deadline: deadline,
               control: control,
+              retryObserver: _CoordinatorRequestRetryObserver(this),
             ),
           );
         } finally {
@@ -394,8 +438,19 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
         _activeControl = null;
         _activeTimedOut = false;
 
-        if (!stale && !timedOut && _followUpTriggers.isEmpty) {
-          _acceptReport(report);
+        var retryScheduled = false;
+        if (!stale) {
+          retryScheduled = timedOut
+              ? await _acceptFailure(_runTimeoutFailure)
+              : await _acceptReport(
+                  report,
+                  keepPending: _followUpTriggers.isNotEmpty,
+                );
+        }
+        if (retryScheduled) {
+          _followUpTriggers.clear();
+          _pendingTriggers.clear();
+          continue;
         }
         if (_followUpTriggers.isNotEmpty) {
           _pendingTriggers.addAll(_followUpTriggers);
@@ -424,7 +479,11 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   void _scheduleCadence() {
     _cadenceTimer?.cancel();
-    if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
+    if (_syncEnabled != true ||
+        _stopRequested ||
+        _shutdownRequested ||
+        (_retryEpisode?.automaticRetryExhausted ?? false) ||
+        (_retryEpisode?.retryWaiting ?? false)) {
       _cadenceTimer = null;
       return;
     }
@@ -480,17 +539,36 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     return false;
   }
 
-  void _acceptReport(SyncRunReport report) {
+  Future<bool> _acceptReport(
+    SyncRunReport report, {
+    required bool keepPending,
+  }) async {
     switch (report.outcome) {
-      case SyncRunOutcome.succeeded || SyncRunOutcome.failed:
+      case SyncRunOutcome.succeeded:
+        await _clearRetryEpisode();
         _emit(
           _with(
             authorization: SyncAuthorization.usable,
-            activity: SyncActivity.idle,
-            verificationRequired: false,
+            activity: keepPending ? SyncActivity.verifying : SyncActivity.idle,
+            verificationRequired: keepPending,
             clearFailure: true,
           ),
         );
+        return false;
+      case SyncRunOutcome.failed:
+        final failure = report.failure;
+        if (failure == null) {
+          _emit(
+            _with(
+              activity: SyncActivity.idle,
+              verificationRequired: false,
+              detectedFailureReason: SyncFailureReason.applicationFailure,
+              diagnosticCode: 'sync.failed_without_reason',
+            ),
+          );
+          return false;
+        }
+        return _acceptFailure(failure);
       case SyncRunOutcome.ineligible:
         switch (report.ineligibleReason) {
           case SyncRunIneligibleReason.noAuthorization:
@@ -505,6 +583,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
             );
           case SyncRunIneligibleReason.accountMissing ||
               SyncRunIneligibleReason.accountMismatch ||
+              SyncRunIneligibleReason.automaticRetryExhausted ||
               null:
             _emit(
               _with(
@@ -515,6 +594,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
               ),
             );
         }
+        return false;
       case SyncRunOutcome.interrupted:
         _emit(
           _with(
@@ -525,7 +605,202 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
             failureAction: SyncHealthAction.retry,
           ),
         );
+        return false;
     }
+  }
+
+  Future<bool> _acceptFailure(Failure failure) async {
+    _emit(
+      _with(
+        activity: SyncActivity.idle,
+        verificationRequired: false,
+        detectedFailureReason: _failureReason(failure),
+        diagnosticCode: failure.code,
+        failureAction: _retryPolicy.isAutomaticallyRetryable(failure)
+            ? SyncHealthAction.retry
+            : SyncHealthAction.none,
+      ),
+    );
+    if (!_retryPolicy.isAutomaticallyRetryable(failure)) {
+      await _clearRetryEpisode();
+      return false;
+    }
+    final now = clock.now().toUtc();
+    var episode = _retryEpisode;
+    if (episode == null || episode.automaticRetryExhausted) {
+      episode = RetryEpisode(
+        startedAt: now,
+        deadlineAt: now.add(syncRetryEpisodeBudget),
+        lastObservedAt: now,
+        attemptCount: 0,
+      );
+    }
+    if (!now.isBefore(episode.deadlineAt) ||
+        now.isBefore(episode.lastObservedAt)) {
+      await _latchRetryExhaustion(episode);
+      return true;
+    }
+    final serverBoundary = _later(
+      episode.serverNotBeforeAt,
+      _retryPolicy.serverNotBefore(failure, now),
+    );
+    final delay = _retryPolicy.betweenRunDelay(
+      episode.attemptCount,
+      failure,
+      now,
+    );
+    final nextAttempt = _later(now.add(delay), serverBoundary)!;
+    episode = episode.copyWith(
+      lastObservedAt: now,
+      nextAttemptAt: nextAttempt,
+      serverNotBeforeAt: serverBoundary,
+      automaticRetryExhausted: false,
+    );
+    _retryEpisode = episode;
+    await retryStore.writeRetryEpisode(accountId, episode);
+    _scheduleRetryEpisode();
+    return true;
+  }
+
+  Future<void> _restoreRetryEpisode() async {
+    final episode = _retryEpisode!;
+    final now = clock.now().toUtc();
+    if (episode.automaticRetryExhausted ||
+        !now.isBefore(episode.deadlineAt) ||
+        now.isBefore(episode.lastObservedAt)) {
+      await _latchRetryExhaustion(episode);
+      return;
+    }
+    _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+    if (episode.nextAttemptAt == null ||
+        !now.isBefore(episode.nextAttemptAt!)) {
+      await _beginRetryRun();
+      return;
+    }
+    _scheduleRetryEpisode();
+  }
+
+  void _scheduleRetryEpisode() {
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
+    _retryTimer = null;
+    _retryExhaustionTimer = null;
+    final episode = _retryEpisode;
+    if (episode == null || episode.automaticRetryExhausted || _closed) return;
+    final now = clock.now().toUtc();
+    final exhaustionDelay = episode.deadlineAt.difference(now);
+    _retryExhaustionTimer = scheduler.schedule(
+      exhaustionDelay.isNegative ? Duration.zero : exhaustionDelay,
+      () => unawaited(_latchRetryExhaustion(episode)),
+    );
+    final next = episode.nextAttemptAt;
+    if (next == null || !next.isBefore(episode.deadlineAt)) return;
+    final delay = next.difference(now);
+    _retryTimer = scheduler.schedule(
+      delay.isNegative ? Duration.zero : delay,
+      () => unawaited(_beginRetryRun()),
+    );
+  }
+
+  Future<void> _beginRetryRun() async {
+    if (_closed ||
+        _syncEnabled != true ||
+        _stopRequested ||
+        _shutdownRequested) {
+      return;
+    }
+    final episode = _retryEpisode;
+    if (episode == null || episode.automaticRetryExhausted) return;
+    final now = clock.now().toUtc();
+    if (!now.isBefore(episode.deadlineAt) ||
+        now.isBefore(episode.lastObservedAt)) {
+      await _latchRetryExhaustion(episode);
+      return;
+    }
+    final serverBoundary = episode.serverNotBeforeAt;
+    if (serverBoundary != null && now.isBefore(serverBoundary)) {
+      _retryEpisode = episode.copyWith(nextAttemptAt: serverBoundary);
+      await retryStore.writeRetryEpisode(accountId, _retryEpisode!);
+      _scheduleRetryEpisode();
+      return;
+    }
+    if (_connectivity?.currentHint == ConnectivityHint.provenNoRoute) {
+      final parked = episode.copyWith(
+        lastObservedAt: now,
+        clearNextAttempt: true,
+      );
+      _retryEpisode = parked;
+      await retryStore.writeRetryEpisode(accountId, parked);
+      _scheduleRetryEpisode();
+      return;
+    }
+    _retryTimer?.cancel();
+    final executing = episode.copyWith(
+      lastObservedAt: now,
+      clearNextAttempt: true,
+      attemptCount: episode.attemptCount + 1,
+    );
+    _retryEpisode = executing;
+    await retryStore.writeRetryEpisode(accountId, executing);
+    await _requestImmediate(SyncTrigger.retry);
+  }
+
+  Future<void> _retryExplicitly() async {
+    if (_syncEnabled != true || _stopRequested || _shutdownRequested) return;
+    final now = clock.now().toUtc();
+    final existing =
+        _retryEpisode ?? await retryStore.readRetryEpisode(accountId);
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
+    final serverBoundary = existing?.serverNotBeforeAt;
+    final episode = RetryEpisode(
+      startedAt: now,
+      deadlineAt: now.add(syncRetryEpisodeBudget),
+      lastObservedAt: now,
+      nextAttemptAt: serverBoundary != null && now.isBefore(serverBoundary)
+          ? serverBoundary
+          : null,
+      serverNotBeforeAt: serverBoundary,
+      attemptCount: 0,
+    );
+    _retryEpisode = episode;
+    await retryStore.writeRetryEpisode(accountId, episode);
+    if (episode.nextAttemptAt != null) {
+      _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+      _scheduleRetryEpisode();
+      return;
+    }
+    await _beginRetryRun();
+  }
+
+  Future<void> _latchRetryExhaustion(RetryEpisode episode) async {
+    if (_retryEpisode != episode && _retryEpisode != null) return;
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
+    final now = clock.now().toUtc();
+    final exhausted = episode.copyWith(
+      lastObservedAt: now,
+      clearNextAttempt: true,
+      automaticRetryExhausted: true,
+    );
+    _retryEpisode = exhausted;
+    await retryStore.writeRetryEpisode(accountId, exhausted);
+    _emit(
+      _with(
+        activity: SyncActivity.idle,
+        verificationRequired: false,
+        failureAction: SyncHealthAction.retry,
+      ),
+    );
+  }
+
+  Future<void> _clearRetryEpisode() async {
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
+    _retryTimer = null;
+    _retryExhaustionTimer = null;
+    if (_retryEpisode != null) await retryStore.clearRetryEpisode(accountId);
+    _retryEpisode = null;
   }
 
   void _acceptAuthorizationState(AuthorizationState state) {
@@ -557,7 +832,12 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     if (_closed) return;
     _emit(_with(connectivity: _connectivityFact(hint)));
     if (hint == ConnectivityHint.mayHaveReturned) {
-      unawaited(_requestImmediate(SyncTrigger.connectivityRestored));
+      if (_retryEpisode != null &&
+          !(_retryEpisode?.automaticRetryExhausted ?? true)) {
+        unawaited(_beginRetryRun());
+      } else {
+        unawaited(_requestImmediate(SyncTrigger.connectivityRestored));
+      }
     }
   }
 
@@ -595,6 +875,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
         _cadenceTimer = null;
         _deleteEligibilityTimer?.cancel();
         _deleteEligibilityTimer = null;
+        _retryTimer?.cancel();
+        _retryExhaustionTimer?.cancel();
         _activeControl?.requestCancellation();
       case LifecycleBackgrounded() || WindowFocusChanged():
         // Android background eligibility is deliberately owned by S27B.
@@ -647,6 +929,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _localEditBurstStartedAt = null;
     _cadenceTimer?.cancel();
     _cadenceTimer = null;
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
     _activeControl?.requestCancellation();
     try {
       await settings.setSyncEnabled(accountId, false);
@@ -675,6 +959,29 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _stopRequested = false;
     _shutdownRequested = false;
     await _refreshTaskDeleteEligibility();
+    final existing =
+        _retryEpisode ?? await retryStore.readRetryEpisode(accountId);
+    if (existing != null) {
+      final now = clock.now().toUtc();
+      final serverBoundary = existing.serverNotBeforeAt;
+      final restarted = RetryEpisode(
+        startedAt: now,
+        deadlineAt: now.add(syncRetryEpisodeBudget),
+        lastObservedAt: now,
+        nextAttemptAt: serverBoundary != null && now.isBefore(serverBoundary)
+            ? serverBoundary
+            : null,
+        serverNotBeforeAt: serverBoundary,
+        attemptCount: 0,
+      );
+      _retryEpisode = restarted;
+      await retryStore.writeRetryEpisode(accountId, restarted);
+      if (restarted.nextAttemptAt != null) {
+        _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
+        _scheduleRetryEpisode();
+        return;
+      }
+    }
     await _requestImmediate(SyncTrigger.resumeSync);
   }
 
@@ -728,6 +1035,8 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _localEditTimer?.cancel();
     _cadenceTimer?.cancel();
     _deleteEligibilityTimer?.cancel();
+    _retryTimer?.cancel();
+    _retryExhaustionTimer?.cancel();
     await _authorizationSubscription.cancel();
     await _lifecycleSubscription?.cancel();
     await _connectivitySubscription?.cancel();
@@ -739,6 +1048,49 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _closed = true;
     await _facts.close();
   }
+}
+
+final class _CoordinatorRequestRetryObserver
+    implements SyncRequestRetryObserver {
+  const _CoordinatorRequestRetryObserver(this.coordinator);
+
+  final SyncCoordinator coordinator;
+
+  @override
+  void retryStateChanged(
+    SyncRequestRetryState state, {
+    required Failure failure,
+    required int attempt,
+    required Duration? delay,
+  }) {
+    if (coordinator._closed) return;
+    switch (state) {
+      case SyncRequestRetryState.waiting:
+        coordinator._emit(
+          coordinator._with(
+            activity: SyncActivity.idle,
+            verificationRequired: false,
+            detectedFailureReason: _failureReason(failure),
+            diagnosticCode: failure.code,
+            failureAction: SyncHealthAction.retry,
+          ),
+        );
+      case SyncRequestRetryState.executing:
+        coordinator._emit(
+          coordinator._with(
+            activity: SyncActivity.retrying,
+            verificationRequired: true,
+            clearFailure: true,
+          ),
+        );
+    }
+  }
+}
+
+DateTime? _later(DateTime? first, DateTime? second) {
+  if (first == null) return second?.toUtc();
+  if (second == null) return first.toUtc();
+  return first.toUtc().isAfter(second.toUtc()) ? first.toUtc() : second.toUtc();
 }
 
 SyncAuthorization _authorizationFact(AuthorizationState state) =>

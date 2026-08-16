@@ -438,7 +438,8 @@ flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 
 Capture the isolated synthetic Linux states, including pending provisional list
 and task creates, stopped list/task content edits, active Stop, stopped Resume,
-hierarchy controls, and protected-depth failure, into the ignored
+retry waiting/execution/exhaustion, hierarchy controls, and protected-depth
+failure, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

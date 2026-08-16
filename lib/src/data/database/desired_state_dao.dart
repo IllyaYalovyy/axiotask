@@ -2320,6 +2320,7 @@ _allowedAttemptTransitions =
         DesiredStateLifecycle.superseded,
       },
       DesiredStateLifecycle.inFlight: <DesiredStateLifecycle>{
+        DesiredStateLifecycle.pending,
         DesiredStateLifecycle.confirmed,
         DesiredStateLifecycle.superseded,
         DesiredStateLifecycle.uncertain,

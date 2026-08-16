@@ -9,12 +9,14 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/sync_settings_repository.dart';
 import 'package:axiotask/src/sync/coordinator/sync_coordinator.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
+import 'package:axiotask/src/sync/retry/retry_episode.dart';
 import 'package:axiotask/src/sync/run.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_clock.dart';
 import '../../support/fake_connectivity.dart';
 import '../../support/fake_lifecycle.dart';
+import '../../support/fake_random.dart';
 
 const _subject = AccountSubject('synthetic-coordinator-subject');
 
@@ -562,9 +564,11 @@ final class _Harness {
       authorization: authorization ?? const SyntheticAuthorization(_subject),
       clock: clock,
       scheduler: clock,
+      random: FakeRandom.seeded(7),
       lifecycle: lifecycle,
       connectivity: connectivity,
       settings: settings ?? _MemorySyncSettingsRepository(),
+      retryStore: _MemoryRetryStore(),
       taskDeleteEligibility: deleteEligibility,
       run: runner.call,
     );
@@ -575,6 +579,26 @@ final class _Harness {
   late final SyncCoordinator coordinator;
 
   Future<void> close() => coordinator.close();
+}
+
+final class _MemoryRetryStore implements SyncRetryEpisodeStore {
+  RetryEpisode? value;
+
+  @override
+  Future<RetryEpisode?> readRetryEpisode(AccountId accountId) async => value;
+
+  @override
+  Future<void> writeRetryEpisode(
+    AccountId accountId,
+    RetryEpisode episode,
+  ) async {
+    value = episode;
+  }
+
+  @override
+  Future<void> clearRetryEpisode(AccountId accountId) async {
+    value = null;
+  }
 }
 
 final class _MemoryTaskDeleteEligibility implements TaskDeleteEligibilityStore {

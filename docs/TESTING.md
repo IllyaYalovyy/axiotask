@@ -251,6 +251,16 @@ move/delete and no-flattening regression gates. Widget and isolated Linux
 integration checks drive reorder and move-to-list task-detail controls; the
 ignored `hierarchy-controls` desktop PNG is inspected at 1280×720.
 
+S19A adds a pure retry-policy suite plus engine and coordinator integration
+under injected wall/monotonic time and deterministic full jitter. The focused
+tests cover initial-plus-three request attempts, safe conclusively uncommitted
+mutation retry, `Retry-After`, fitting an attempt inside the two-minute run
+budget, durable restart reconstruction, exact five-minute exhaustion, backward
+wall-clock discontinuity, unknown/permanent fail-closed classification, and
+explicit Retry latch clearing. Health and Linux golden/actual screenshot checks
+prove that waiting/exhaustion are Failed while only an executing retry is
+Pending.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

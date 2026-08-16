@@ -64,6 +64,32 @@ void main() {
         diagnosticCode: 'sync.unsupported_task_depth',
       ),
     ),
+    (
+      'retry_waiting',
+      _health(
+        SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.remoteFailure,
+        action: SyncHealthAction.retry,
+        retryNextAttemptAt: DateTime.utc(2026, 8, 15, 12, 0, 30),
+        retryAttemptCount: 2,
+      ),
+    ),
+    (
+      'retry_executing',
+      _health(
+        SyncHealthOutcome.pending,
+        pendingReason: SyncPendingReason.retrying,
+      ),
+    ),
+    (
+      'retry_exhausted',
+      _health(
+        SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.remoteFailure,
+        action: SyncHealthAction.retry,
+        automaticRetryExhausted: true,
+      ),
+    ),
   ];
 
   for (final (name, health) in cases) {
@@ -286,6 +312,9 @@ SyncHealth _health(
   DateTime? lastSuccessfulSyncAt,
   String? diagnosticCode,
   SyncWorkCounts counts = const SyncWorkCounts(),
+  DateTime? retryNextAttemptAt,
+  int retryAttemptCount = 0,
+  bool automaticRetryExhausted = false,
 }) => SyncHealth(
   outcome: outcome,
   inactiveReason: inactiveReason,
@@ -295,5 +324,8 @@ SyncHealth _health(
   counts: counts,
   lastSuccessfulSyncAt: lastSuccessfulSyncAt,
   diagnosticCode: diagnosticCode,
+  retryNextAttemptAt: retryNextAttemptAt,
+  retryAttemptCount: retryAttemptCount,
+  automaticRetryExhausted: automaticRetryExhausted,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
 );

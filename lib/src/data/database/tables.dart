@@ -671,6 +671,20 @@ class SyncFactRows extends Table {
   BoolColumn get automaticRetryExhausted =>
       boolean().withDefault(const Constant(false))();
 
+  DateTimeColumn get retryEpisodeStartedAt => dateTime().nullable()();
+
+  DateTimeColumn get retryEpisodeDeadlineAt => dateTime().nullable()();
+
+  DateTimeColumn get retryNextAttemptAt => dateTime().nullable()();
+
+  DateTimeColumn get retryServerNotBeforeAt => dateTime().nullable()();
+
+  DateTimeColumn get retryLastObservedAt => dateTime().nullable()();
+
+  IntColumn get retryAttemptCount => integer()
+      .withDefault(const Constant(0))
+      .check(retryAttemptCount.isBiggerOrEqualValue(0))();
+
   BoolColumn get requiredScopeIncomplete =>
       boolean().withDefault(const Constant(false))();
 
@@ -691,6 +705,17 @@ class SyncFactRows extends Table {
         'AND latest_failure_at IS NOT NULL '
         'AND length(latest_failure_diagnostic_code) > 0 '
         'AND latest_failure_action IS NOT NULL))',
+    'CHECK ((retry_episode_started_at IS NULL '
+        'AND retry_episode_deadline_at IS NULL '
+        'AND retry_next_attempt_at IS NULL '
+        'AND retry_server_not_before_at IS NULL '
+        'AND retry_last_observed_at IS NULL '
+        'AND retry_attempt_count = 0 '
+        'AND automatic_retry_exhausted = 0) OR '
+        '(retry_episode_started_at IS NOT NULL '
+        'AND retry_episode_deadline_at IS NOT NULL '
+        'AND retry_last_observed_at IS NOT NULL '
+        'AND retry_episode_deadline_at > retry_episode_started_at))',
   ];
 }
 

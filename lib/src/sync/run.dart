@@ -26,6 +26,7 @@ final class SyncRunRequest {
   SyncRunRequest({
     required this.accountId,
     Set<String> triggers = const <String>{'explicit'},
+    this.deadline,
   }) : triggers = Set<String>.unmodifiable(triggers) {
     if (this.triggers.isEmpty || this.triggers.any((value) => value.isEmpty)) {
       throw ArgumentError.value(triggers, 'triggers', 'must be non-empty');
@@ -34,6 +35,7 @@ final class SyncRunRequest {
 
   final AccountId accountId;
   final Set<String> triggers;
+  final Duration? deadline;
 }
 
 enum SyncRunOutcome { succeeded, ineligible, failed, interrupted }
@@ -43,6 +45,7 @@ enum SyncRunIneligibleReason {
   syncStopped,
   noAuthorization,
   accountMismatch,
+  automaticRetryExhausted,
 }
 
 final class SyncRunReport {
@@ -96,12 +99,14 @@ final class ReadSyncEligibility {
     required this.exists,
     required this.syncEnabled,
     required this.reauthorizationRequired,
+    this.automaticRetryExhausted = false,
     required this.googleSubject,
   });
 
   final bool exists;
   final bool syncEnabled;
   final bool reauthorizationRequired;
+  final bool automaticRetryExhausted;
   final String? googleSubject;
 }
 
@@ -185,6 +190,29 @@ final class NoopSyncRunObserver implements SyncRunObserver {
 
   @override
   void phaseStarted(SyncRunId runId, SyncRunPhase phase) {}
+}
+
+enum SyncRequestRetryState { waiting, executing }
+
+abstract interface class SyncRequestRetryObserver {
+  void retryStateChanged(
+    SyncRequestRetryState state, {
+    required Failure failure,
+    required int attempt,
+    required Duration? delay,
+  });
+}
+
+final class NoopSyncRequestRetryObserver implements SyncRequestRetryObserver {
+  const NoopSyncRequestRetryObserver();
+
+  @override
+  void retryStateChanged(
+    SyncRequestRetryState state, {
+    required Failure failure,
+    required int attempt,
+    required Duration? delay,
+  }) {}
 }
 
 enum SyncRunBoundaryKind {

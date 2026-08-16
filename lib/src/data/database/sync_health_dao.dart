@@ -68,6 +68,8 @@ final class SyncHealthDao {
         COALESCE(f.reauthorization_required, 0) AS reauthorization_required,
         COALESCE(f.retry_waiting, 0) AS retry_waiting,
         COALESCE(f.automatic_retry_exhausted, 0) AS automatic_retry_exhausted,
+        f.retry_next_attempt_at,
+        COALESCE(f.retry_attempt_count, 0) AS retry_attempt_count,
         COALESCE(f.required_scope_incomplete, 0) AS required_scope_incomplete,
         COALESCE(f.follow_up_required, 0) AS follow_up_required
       FROM accounts a
@@ -114,6 +116,10 @@ PersistedSyncFacts _mapFacts(QueryRow row) {
     ),
     retryWaiting: row.read<bool>('retry_waiting'),
     automaticRetryExhausted: row.read<bool>('automatic_retry_exhausted'),
+    retryNextAttemptAt: row
+        .readNullable<DateTime>('retry_next_attempt_at')
+        ?.toUtc(),
+    retryAttemptCount: row.read<int>('retry_attempt_count'),
     requiredScopeIncomplete: row.read<bool>('required_scope_incomplete'),
     followUpRequired: row.read<bool>('follow_up_required'),
   );

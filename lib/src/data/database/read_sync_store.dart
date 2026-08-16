@@ -7,6 +7,7 @@ import '../../sync/create_operations.dart';
 import '../../sync/delete_operations.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/reconciliation/structure_policy.dart';
+import '../../sync/retry/retry_episode.dart';
 import '../../sync/run.dart';
 import '../../sync/structure_operations.dart';
 import '../../sync/update_operations.dart';
@@ -16,7 +17,7 @@ import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'sync_health_dao.dart';
 
-final class DatabaseReadSyncStore implements SyncStore {
+final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   DatabaseReadSyncStore(
     this._database, {
     DesiredStateTransactionControl? transactionControl,
@@ -33,6 +34,75 @@ final class DatabaseReadSyncStore implements SyncStore {
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
   final SyncHealthDao _health;
+
+  @override
+  Future<RetryEpisode?> readRetryEpisode(AccountId accountId) async {
+    final row = await (_database.select(
+      _database.syncFactRows,
+    )..where((row) => row.accountId.equals(accountId.value))).getSingleOrNull();
+    final startedAt = row?.retryEpisodeStartedAt;
+    if (startedAt == null) return null;
+    final deadlineAt = row!.retryEpisodeDeadlineAt;
+    final lastObservedAt = row.retryLastObservedAt;
+    if (deadlineAt == null || lastObservedAt == null) {
+      throw const CacheInvariantException('retry_episode_incomplete');
+    }
+    return RetryEpisode(
+      startedAt: startedAt.toUtc(),
+      deadlineAt: deadlineAt.toUtc(),
+      nextAttemptAt: row.retryNextAttemptAt?.toUtc(),
+      serverNotBeforeAt: row.retryServerNotBeforeAt?.toUtc(),
+      lastObservedAt: lastObservedAt.toUtc(),
+      attemptCount: row.retryAttemptCount,
+      automaticRetryExhausted: row.automaticRetryExhausted,
+    );
+  }
+
+  @override
+  Future<void> writeRetryEpisode(AccountId accountId, RetryEpisode episode) {
+    return _database.transaction(() async {
+      await _requireAccount(accountId);
+      await _ensureSyncFacts(accountId);
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        SyncFactRowsCompanion(
+          retryWaiting: Value<bool>(episode.retryWaiting),
+          automaticRetryExhausted: Value<bool>(episode.automaticRetryExhausted),
+          retryEpisodeStartedAt: Value<DateTime>(episode.startedAt.toUtc()),
+          retryEpisodeDeadlineAt: Value<DateTime>(episode.deadlineAt.toUtc()),
+          retryNextAttemptAt: Value<DateTime?>(episode.nextAttemptAt?.toUtc()),
+          retryServerNotBeforeAt: Value<DateTime?>(
+            episode.serverNotBeforeAt?.toUtc(),
+          ),
+          retryLastObservedAt: Value<DateTime>(episode.lastObservedAt.toUtc()),
+          retryAttemptCount: Value<int>(episode.attemptCount),
+        ),
+      );
+    });
+  }
+
+  @override
+  Future<void> clearRetryEpisode(AccountId accountId) {
+    return _database.transaction(() async {
+      await _requireAccount(accountId);
+      await _ensureSyncFacts(accountId);
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        const SyncFactRowsCompanion(
+          retryWaiting: Value<bool>(false),
+          automaticRetryExhausted: Value<bool>(false),
+          retryEpisodeStartedAt: Value<DateTime?>(null),
+          retryEpisodeDeadlineAt: Value<DateTime?>(null),
+          retryNextAttemptAt: Value<DateTime?>(null),
+          retryServerNotBeforeAt: Value<DateTime?>(null),
+          retryLastObservedAt: Value<DateTime?>(null),
+          retryAttemptCount: Value<int>(0),
+        ),
+      );
+    });
+  }
 
   @override
   Future<StructureReconciliationSummary> reconcileStructure({
@@ -371,9 +441,13 @@ final class DatabaseReadSyncStore implements SyncStore {
     attemptId: claim.attemptId,
     state: uncertain
         ? DesiredStateLifecycle.uncertain
+        : failure.retry == RetryClassification.transient
+        ? DesiredStateLifecycle.pending
         : DesiredStateLifecycle.failed,
     transitionedAt: resolvedAt,
-    failureCode: failure.code,
+    failureCode: uncertain || failure.retry != RetryClassification.transient
+        ? failure.code
+        : null,
   );
 
   @override
@@ -477,9 +551,13 @@ final class DatabaseReadSyncStore implements SyncStore {
     attemptId: claim.attemptId,
     state: uncertain
         ? DesiredStateLifecycle.uncertain
+        : failure.retry == RetryClassification.transient
+        ? DesiredStateLifecycle.pending
         : DesiredStateLifecycle.failed,
     transitionedAt: resolvedAt,
-    failureCode: failure.code,
+    failureCode: uncertain || failure.retry != RetryClassification.transient
+        ? failure.code
+        : null,
   );
 
   @override
@@ -665,9 +743,13 @@ final class DatabaseReadSyncStore implements SyncStore {
     attemptId: claim.attemptId,
     state: uncertain
         ? DesiredStateLifecycle.uncertain
+        : failure.retry == RetryClassification.transient
+        ? DesiredStateLifecycle.pending
         : DesiredStateLifecycle.failed,
     transitionedAt: resolvedAt,
-    failureCode: failure.code,
+    failureCode: uncertain || failure.retry != RetryClassification.transient
+        ? failure.code
+        : null,
   );
 
   @override
@@ -780,9 +862,13 @@ final class DatabaseReadSyncStore implements SyncStore {
     attemptId: claim.attemptId,
     state: uncertain
         ? DesiredStateLifecycle.uncertain
+        : failure.retry == RetryClassification.transient
+        ? DesiredStateLifecycle.pending
         : DesiredStateLifecycle.failed,
     transitionedAt: resolvedAt,
-    failureCode: failure.code,
+    failureCode: uncertain || failure.retry != RetryClassification.transient
+        ? failure.code
+        : null,
   );
 
   @override
@@ -801,7 +887,9 @@ final class DatabaseReadSyncStore implements SyncStore {
             a.google_subject,
             COALESCE(p.sync_enabled, 1) AS sync_enabled,
             COALESCE(f.reauthorization_required, 0)
-              AS reauthorization_required
+              AS reauthorization_required,
+            COALESCE(f.automatic_retry_exhausted, 0)
+              AS automatic_retry_exhausted
           FROM accounts a
           LEFT JOIN account_preferences p ON p.account_id = a.id
           LEFT JOIN sync_facts f ON f.account_id = a.id
@@ -820,6 +908,7 @@ final class DatabaseReadSyncStore implements SyncStore {
         exists: false,
         syncEnabled: false,
         reauthorizationRequired: false,
+        automaticRetryExhausted: false,
         googleSubject: null,
       );
     }
@@ -827,6 +916,7 @@ final class DatabaseReadSyncStore implements SyncStore {
       exists: true,
       syncEnabled: row.read<bool>('sync_enabled'),
       reauthorizationRequired: row.read<bool>('reauthorization_required'),
+      automaticRetryExhausted: row.read<bool>('automatic_retry_exhausted'),
       googleSubject: row.read<String>('google_subject'),
     );
   }
@@ -1277,6 +1367,20 @@ final class DatabaseReadSyncStore implements SyncStore {
           requiredScopeIncomplete: false,
         ),
       );
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        const SyncFactRowsCompanion(
+          retryWaiting: Value<bool>(false),
+          automaticRetryExhausted: Value<bool>(false),
+          retryEpisodeStartedAt: Value<DateTime?>(null),
+          retryEpisodeDeadlineAt: Value<DateTime?>(null),
+          retryNextAttemptAt: Value<DateTime?>(null),
+          retryServerNotBeforeAt: Value<DateTime?>(null),
+          retryLastObservedAt: Value<DateTime?>(null),
+          retryAttemptCount: Value<int>(0),
+        ),
+      );
     });
   }
 
@@ -1634,6 +1738,8 @@ PersistedSyncFacts _copyFacts(
   counts: value.counts,
   retryWaiting: value.retryWaiting,
   automaticRetryExhausted: value.automaticRetryExhausted,
+  retryNextAttemptAt: value.retryNextAttemptAt,
+  retryAttemptCount: value.retryAttemptCount,
   requiredScopeIncomplete:
       requiredScopeIncomplete ?? value.requiredScopeIncomplete,
   followUpRequired: value.followUpRequired,

@@ -67,7 +67,11 @@ void main() {
         authorization: authorization,
         clock: clock,
         scheduler: clock,
+        random: SequenceRandomSource(
+          List<int>.generate(512, (index) => index % 256),
+        ),
         settings: DatabaseSyncSettingsRepository(database),
+        retryStore: DatabaseReadSyncStore(database),
         taskDeleteEligibility: _DeleteEligibility(database),
         run: (request) =>
             SyncEngine(
@@ -75,13 +79,16 @@ void main() {
               googleTasks: remote,
               authorization: authorization,
               clock: clock,
+              scheduler: clock,
               random: SequenceRandomSource(
                 List<int>.generate(256, (index) => index % 256),
               ),
+              retryObserver: request.retryObserver,
               control: request.control,
             ).run(
               SyncRunRequest(
                 accountId: account,
+                deadline: request.deadline,
                 triggers: request.triggers
                     .map((trigger) => trigger.value)
                     .toSet(),
@@ -103,6 +110,7 @@ void main() {
         localEditCommitted: coordinator.localEditCommitted,
         taskDeleteCommitted: coordinator.taskDeleteCommitted,
         refreshRequested: coordinator.refresh,
+        retryRequested: coordinator.retry,
       );
       addTearDown(() async {
         viewModel.dispose();

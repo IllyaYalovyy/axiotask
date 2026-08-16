@@ -102,9 +102,14 @@ void main() {
           diagnosticCode: 'sync.rate_limited.synthetic',
           action: SyncHealthAction.retry,
         ),
+        retryNextAttemptAt: t0.add(const Duration(minutes: 1, seconds: 30)),
+        retryAttemptCount: 2,
       );
 
-      expect(project(facts: facts).outcome, SyncHealthOutcome.failed);
+      final waiting = project(facts: facts);
+      expect(waiting.outcome, SyncHealthOutcome.failed);
+      expect(waiting.action, SyncHealthAction.retry);
+      expect(waiting.reasonLabel, contains('Retry 3 after'));
       final retrying = project(
         facts: facts,
         runtime: const SyncRuntimeFacts(
@@ -114,6 +119,24 @@ void main() {
       );
       expect(retrying.outcome, SyncHealthOutcome.pending);
       expect(retrying.pendingReason, SyncPendingReason.retrying);
+    });
+
+    test('exhaustion remains Failed with immediate Retry action', () {
+      final exhausted = project(
+        facts: PersistedSyncFacts(
+          automaticRetryExhausted: true,
+          latestFailure: SyncFailureFact(
+            reason: SyncFailureReason.remoteFailure,
+            occurredAt: t0.add(const Duration(seconds: 1)),
+            diagnosticCode: 'sync.retry_exhausted.synthetic',
+            action: SyncHealthAction.retry,
+          ),
+        ),
+      );
+
+      expect(exhausted.outcome, SyncHealthOutcome.failed);
+      expect(exhausted.action, SyncHealthAction.retry);
+      expect(exhausted.reasonLabel, 'Automatic retry exhausted');
     });
 
     test('authorization request network failure is Failed, never Inactive', () {

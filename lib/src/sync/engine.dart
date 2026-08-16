@@ -15,6 +15,7 @@ import 'create_operations.dart';
 import 'delete_operations.dart';
 import 'phase.dart';
 import 'read_plan.dart';
+import 'retry/retry_policy.dart';
 import 'run.dart';
 import 'structure_operations.dart';
 import 'update_operations.dart';
@@ -26,21 +27,29 @@ final class SyncEngine {
     required this.authorization,
     required this.clock,
     required this.random,
+    MonotonicScheduler? scheduler,
     this.observer = const NoopSyncRunObserver(),
+    this.retryObserver = const NoopSyncRequestRetryObserver(),
     this.control = const NoopSyncRunControl(),
     this.diagnostics,
-  });
+  }) : scheduler = scheduler ?? _schedulerFromClock(clock),
+       retryPolicy = SyncRetryPolicy(random);
 
   final SyncStore store;
   final GoogleTasksService googleTasks;
   final AuthorizationPort authorization;
   final Clock clock;
   final RandomSource random;
+  final MonotonicScheduler scheduler;
+  final SyncRetryPolicy retryPolicy;
   final SyncRunObserver observer;
+  final SyncRequestRetryObserver retryObserver;
   final SyncRunControl control;
   final DiagnosticSink? diagnostics;
 
   Future<SyncRunReport> run(SyncRunRequest request) async {
+    final runDeadline =
+        request.deadline ?? clock.monotonicElapsed + const Duration(minutes: 2);
     final readCancellation = _readCancellation();
     final runId = _newRunId();
     var taskListPages = 0;
@@ -157,10 +166,13 @@ final class SyncEngine {
       PageToken? token;
       var pageIndex = 0;
       do {
-        final result = await googleTasks.listTasks(
-          taskListRemoteId,
-          pageToken: token,
-          cancellation: readCancellation,
+        final result = await _retryRead(
+          () => googleTasks.listTasks(
+            taskListRemoteId,
+            pageToken: token,
+            cancellation: readCancellation,
+          ),
+          runDeadline,
         );
         switch (result) {
           case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -247,6 +259,12 @@ final class SyncEngine {
         ineligibleReason: SyncRunIneligibleReason.noAuthorization,
       );
     }
+    if (eligibility.automaticRetryExhausted) {
+      return report(
+        SyncRunOutcome.ineligible,
+        ineligibleReason: SyncRunIneligibleReason.automaticRetryExhausted,
+      );
+    }
 
     if (await phase(SyncRunPhase.authorize) case final interruption?) {
       return interruption;
@@ -284,9 +302,12 @@ final class SyncEngine {
     PageToken? listToken;
     var listPageIndex = 0;
     do {
-      final result = await googleTasks.listTaskLists(
-        pageToken: listToken,
-        cancellation: readCancellation,
+      final result = await _retryRead(
+        () => googleTasks.listTaskLists(
+          pageToken: listToken,
+          cancellation: readCancellation,
+        ),
+        runDeadline,
       );
       switch (result) {
         case Failed<RemotePage<RemoteTaskList>>(:final failure):
@@ -343,10 +364,13 @@ final class SyncEngine {
         var pageIndex = 0;
         Failure? scopeFailure;
         do {
-          final result = await googleTasks.listTasks(
-            taskList.remoteId,
-            pageToken: taskToken,
-            cancellation: readCancellation,
+          final result = await _retryRead(
+            () => googleTasks.listTasks(
+              taskList.remoteId,
+              pageToken: taskToken,
+              cancellation: readCancellation,
+            ),
+            runDeadline,
           );
           switch (result) {
             case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -464,11 +488,14 @@ final class SyncEngine {
       deleteOperations += 1;
       final operation = const DeleteOperationMapper().map(claim);
       final result = switch (claim.kind) {
-        DeleteOperationKind.taskList => await googleTasks.deleteTaskList(
-          operation as DeleteTaskListOperation,
+        DeleteOperationKind.taskList => await _retryMutation(
+          () =>
+              googleTasks.deleteTaskList(operation as DeleteTaskListOperation),
+          runDeadline,
         ),
-        DeleteOperationKind.task => await googleTasks.deleteTask(
-          operation as DeleteTaskOperation,
+        DeleteOperationKind.task => await _retryMutation(
+          () => googleTasks.deleteTask(operation as DeleteTaskOperation),
+          runDeadline,
         ),
       };
       switch (result) {
@@ -487,7 +514,11 @@ final class SyncEngine {
             }
             break;
           }
-          final verification = await _verifyTaskDelete(claim, readCancellation);
+          final verification = await _verifyTaskDelete(
+            claim,
+            readCancellation,
+            runDeadline,
+          );
           if (verification case Failed<void>(:final failure)) {
             await store.resolveDeleteFailure(
               accountId: request.accountId,
@@ -519,6 +550,9 @@ final class SyncEngine {
             resolvedAt: clock.now().toUtc(),
           );
           firstFailure ??= error.failure;
+          if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+            stopOperations = true;
+          }
         case UncertainMutation<void>(:final error):
           await store.resolveDeleteFailure(
             accountId: request.accountId,
@@ -559,7 +593,10 @@ final class SyncEngine {
       switch (mapped) {
         case final CreateTaskListOperation operation:
           createOperations += 1;
-          final result = await googleTasks.createTaskList(operation);
+          final result = await _retryMutation(
+            () => googleTasks.createTaskList(operation),
+            runDeadline,
+          );
           switch (result) {
             case CommittedMutation<RemoteTaskList>(:final value):
               if (await interrupted(
@@ -602,6 +639,9 @@ final class SyncEngine {
                 resolvedAt: clock.now().toUtc(),
               );
               firstFailure ??= error.failure;
+              if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+                stopOperations = true;
+              }
             case UncertainMutation<RemoteTaskList>(:final error):
               await store.resolveCreateFailure(
                 accountId: request.accountId,
@@ -614,7 +654,10 @@ final class SyncEngine {
           }
         case final CreateTaskOperation operation:
           createOperations += 1;
-          final result = await googleTasks.createTask(operation);
+          final result = await _retryMutation(
+            () => googleTasks.createTask(operation),
+            runDeadline,
+          );
           switch (result) {
             case CommittedMutation<RemoteTask>(:final value):
               if (value is! RemoteLiveTask ||
@@ -669,6 +712,9 @@ final class SyncEngine {
                 resolvedAt: clock.now().toUtc(),
               );
               firstFailure ??= error.failure;
+              if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+                stopOperations = true;
+              }
             case UncertainMutation<RemoteTask>(:final error):
               await store.resolveCreateFailure(
                 accountId: request.accountId,
@@ -710,8 +756,9 @@ final class SyncEngine {
         return interruption;
       }
       moveOperations += 1;
-      final result = await googleTasks.moveTask(
-        const MoveOperationMapper().map(claim),
+      final result = await _retryMutation(
+        () => googleTasks.moveTask(const MoveOperationMapper().map(claim)),
+        runDeadline,
       );
       switch (result) {
         case CommittedMutation<RemoteTask>(:final value):
@@ -760,6 +807,18 @@ final class SyncEngine {
             return interruption;
           }
         case RejectedMutation<RemoteTask>(:final error):
+          if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+            await store.resolveMoveFailure(
+              accountId: request.accountId,
+              claim: claim,
+              failure: error.failure,
+              uncertain: false,
+              resolvedAt: clock.now().toUtc(),
+            );
+            firstFailure ??= error.failure;
+            stopOperations = true;
+            break;
+          }
           final canReplan =
               error.kind == GoogleTasksErrorKind.conditional ||
               error.kind == GoogleTasksErrorKind.notFound ||
@@ -868,7 +927,10 @@ final class SyncEngine {
       switch (mapped) {
         case final PatchTaskOperation operation:
           updateOperations += 1;
-          final result = await googleTasks.patchTask(operation);
+          final result = await _retryMutation(
+            () => googleTasks.patchTask(operation),
+            runDeadline,
+          );
           switch (result) {
             case CommittedMutation<RemoteTask>(:final value):
               if (value is! RemoteLiveTask ||
@@ -933,6 +995,18 @@ final class SyncEngine {
                 return interruption;
               }
             case RejectedMutation<RemoteTask>(:final error):
+              if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+                await store.resolveUpdateFailure(
+                  accountId: request.accountId,
+                  claim: claim,
+                  failure: error.failure,
+                  uncertain: false,
+                  resolvedAt: clock.now().toUtc(),
+                );
+                firstFailure ??= error.failure;
+                stopOperations = true;
+                break;
+              }
               if (error.kind == GoogleTasksErrorKind.conditional) {
                 final count =
                     (conditionalAttempts[claim.taskRemoteId!] ?? 0) + 1;
@@ -987,7 +1061,10 @@ final class SyncEngine {
           }
         case final RenameTaskListOperation operation:
           updateOperations += 1;
-          final result = await googleTasks.renameTaskList(operation);
+          final result = await _retryMutation(
+            () => googleTasks.renameTaskList(operation),
+            runDeadline,
+          );
           switch (result) {
             case CommittedMutation<RemoteTaskList>(:final value):
               if (value.id != claim.taskListRemoteId) {
@@ -1050,6 +1127,9 @@ final class SyncEngine {
                 resolvedAt: clock.now().toUtc(),
               );
               firstFailure ??= error.failure;
+              if (retryPolicy.isAutomaticallyRetryable(error.failure)) {
+                stopOperations = true;
+              }
             case UncertainMutation<RemoteTaskList>(:final error):
               await store.resolveUpdateFailure(
                 accountId: request.accountId,
@@ -1134,13 +1214,17 @@ final class SyncEngine {
   Future<Outcome<void>> _verifyTaskDelete(
     DeleteOperationClaim claim,
     GoogleTasksReadCancellation? cancellation,
+    Duration runDeadline,
   ) async {
     PageToken? token;
     do {
-      final result = await googleTasks.listTasks(
-        RemoteTaskListId(claim.taskListRemoteId.value),
-        pageToken: token,
-        cancellation: cancellation,
+      final result = await _retryRead(
+        () => googleTasks.listTasks(
+          RemoteTaskListId(claim.taskListRemoteId.value),
+          pageToken: token,
+          cancellation: cancellation,
+        ),
+        runDeadline,
       );
       switch (result) {
         case Failed<RemotePage<RemoteTask>>(:final failure):
@@ -1189,7 +1273,114 @@ final class SyncEngine {
         .join();
     return SyncRunId(value);
   }
+
+  Future<Outcome<T>> _retryRead<T>(
+    Future<Outcome<T>> Function() request,
+    Duration runDeadline,
+  ) async {
+    for (var attempt = 1; attempt <= syncRequestAttemptLimit; attempt += 1) {
+      if (!_attemptFits(runDeadline)) {
+        return Outcome<T>.failure(_requestBudgetFailure);
+      }
+      final result = await request();
+      final failure = switch (result) {
+        Failed<T>(:final failure) => failure,
+        Success<T>() => null,
+      };
+      if (failure == null ||
+          !retryPolicy.isAutomaticallyRetryable(failure) ||
+          attempt == syncRequestAttemptLimit) {
+        return result;
+      }
+      final delay = retryPolicy.requestDelay(
+        attempt,
+        failure,
+        clock.now().toUtc(),
+      );
+      if (!_attemptFits(runDeadline, delay: delay)) {
+        return Outcome<T>.failure(_requestBudgetFailure);
+      }
+      retryObserver.retryStateChanged(
+        SyncRequestRetryState.waiting,
+        failure: failure,
+        attempt: attempt + 1,
+        delay: delay,
+      );
+      await _wait(delay);
+      retryObserver.retryStateChanged(
+        SyncRequestRetryState.executing,
+        failure: failure,
+        attempt: attempt + 1,
+        delay: null,
+      );
+    }
+    throw StateError('The bounded request loop did not return.');
+  }
+
+  Future<GoogleTasksMutationResult<T>> _retryMutation<T>(
+    Future<GoogleTasksMutationResult<T>> Function() request,
+    Duration runDeadline,
+  ) async {
+    for (var attempt = 1; attempt <= syncRequestAttemptLimit; attempt += 1) {
+      if (!_attemptFits(runDeadline)) {
+        return RejectedMutation<T>(_requestBudgetMutationError);
+      }
+      final result = await request();
+      final failure = switch (result) {
+        RejectedMutation<T>(:final error)
+            when error.commitState == MutationCommitState.notCommitted =>
+          error.failure,
+        _ => null,
+      };
+      if (failure == null ||
+          !retryPolicy.isAutomaticallyRetryable(failure) ||
+          attempt == syncRequestAttemptLimit) {
+        return result;
+      }
+      final delay = retryPolicy.requestDelay(
+        attempt,
+        failure,
+        clock.now().toUtc(),
+      );
+      if (!_attemptFits(runDeadline, delay: delay)) {
+        return RejectedMutation<T>(_requestBudgetMutationError);
+      }
+      retryObserver.retryStateChanged(
+        SyncRequestRetryState.waiting,
+        failure: failure,
+        attempt: attempt + 1,
+        delay: delay,
+      );
+      await _wait(delay);
+      retryObserver.retryStateChanged(
+        SyncRequestRetryState.executing,
+        failure: failure,
+        attempt: attempt + 1,
+        delay: null,
+      );
+    }
+    throw StateError('The bounded mutation request loop did not return.');
+  }
+
+  bool _attemptFits(Duration runDeadline, {Duration delay = Duration.zero}) =>
+      clock.monotonicElapsed + delay + syncRequestAttemptTimeout <= runDeadline;
+
+  Future<void> _wait(Duration delay) {
+    if (delay == Duration.zero) return Future<void>.value();
+    final completer = Completer<void>();
+    scheduler.schedule(delay, completer.complete);
+    return completer.future;
+  }
 }
+
+MonotonicScheduler _schedulerFromClock(Clock clock) => switch (clock) {
+  final MonotonicScheduler scheduler => scheduler,
+  _ => throw ArgumentError.value(
+    clock,
+    'clock',
+    'must also implement MonotonicScheduler when scheduler is omitted',
+  ),
+};
 
 const Failure _incompletePublicationFailure = Failure(
   code: 'sync.read_publication_incomplete',
@@ -1199,6 +1390,23 @@ const Failure _incompletePublicationFailure = Failure(
   impact: 'The Google Tasks read did not publish every required page.',
   safeSummary: 'The read run ended without complete scope evidence.',
 );
+
+const Failure _requestBudgetFailure = Failure(
+  code: 'sync.request_budget_exhausted',
+  category: FailureCategory.remote,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.transient,
+  impact: 'Synchronization could not safely start another request in this run.',
+  action: FailureAction.retry,
+  safeSummary: 'The remaining run budget could not contain another request.',
+);
+
+const GoogleTasksMutationError _requestBudgetMutationError =
+    GoogleTasksMutationError(
+      failure: _requestBudgetFailure,
+      kind: GoogleTasksErrorKind.transient,
+      commitState: MutationCommitState.notCommitted,
+    );
 
 const Failure _invalidCreateResponseFailure = Failure(
   code: 'sync.create_response_invalid',

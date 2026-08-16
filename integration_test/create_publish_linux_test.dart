@@ -74,20 +74,27 @@ void main() {
         authorization: authorization,
         clock: clock,
         scheduler: clock,
+        random: SequenceRandomSource(
+          List<int>.generate(512, (index) => index % 256),
+        ),
         settings: settings,
+        retryStore: DatabaseReadSyncStore(database),
         run: (request) =>
             SyncEngine(
               store: DatabaseReadSyncStore(database),
               googleTasks: remote,
               authorization: authorization,
               clock: clock,
+              scheduler: clock,
               random: SequenceRandomSource(
                 List<int>.generate(256, (index) => index % 256),
               ),
+              retryObserver: request.retryObserver,
               control: request.control,
             ).run(
               SyncRunRequest(
                 accountId: account,
+                deadline: request.deadline,
                 triggers: request.triggers
                     .map((trigger) => trigger.value)
                     .toSet(),
@@ -105,6 +112,7 @@ void main() {
           runtime: coordinator,
         ),
         refreshRequested: coordinator.refresh,
+        retryRequested: coordinator.retry,
         stopSyncRequested: coordinator.stop,
         resumeSyncRequested: coordinator.resume,
       );
