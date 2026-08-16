@@ -11,6 +11,7 @@ import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -122,6 +123,25 @@ void main() {
       await tester.pumpAndSettle();
       expect(viewModel.state.selectedTaskId, isNull);
       expect(navigation.state.canHandlePredictiveBack, isFalse);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(viewModel.state.selectedTaskId, parent);
+      expect(find.byKey(const Key('task-detail-title')), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Edit task'),
+        ),
+        findsOneWidget,
+      );
     },
   );
 }

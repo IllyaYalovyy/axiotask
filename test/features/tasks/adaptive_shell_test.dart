@@ -7,12 +7,14 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/policy/smart_views.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -487,6 +489,12 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('task-detail-title')), findsNothing);
     expect(find.text('Long-note parent'), findsOneWidget);
+    expect(
+      Focus.of(
+        tester.element(find.byKey(const Key('desktop-task-row-21'))),
+      ).hasFocus,
+      isTrue,
+    );
   });
 
   testWidgets('detail honors safe padding and two-times text scaling', (
@@ -997,6 +1005,214 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Delete list'));
     await tester.pumpAndSettle();
     expect(lists.deleted.single.taskListId, const TaskListId(7));
+  });
+
+  testWidgets(
+    'PAR-DESKTOP-001 shortcuts are discoverable and do not capture text input',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Keyboard shortcuts'));
+      await tester.pumpAndSettle();
+      expect(find.text('Keyboard shortcuts'), findsOneWidget);
+      expect(find.text('Ctrl+N'), findsOneWidget);
+      expect(find.text('Ctrl+F'), findsOneWidget);
+      expect(find.text('E'), findsOneWidget);
+      expect(find.text('D'), findsOneWidget);
+      expect(find.text('M'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Close'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      final input = find.byKey(const Key('quick-add-input'));
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(of: input, matching: find.byType(EditableText)),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+
+      await tester.enterText(input, 'Edit date move stay literal');
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(find.text('Edit task'), findsNothing);
+      expect(find.text('Choose due date'), findsNothing);
+      expect(find.text('Move task to list'), findsNothing);
+      expect(fixture.tasks.deleted, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'PAR-DESKTOP-001 task focus traverses rows and keyboard actions share routes',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(
+        Focus.of(
+          tester.element(find.byKey(const Key('desktop-navigation-pane'))),
+        ).hasFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(fixture.viewModel.state.selectedSmartView, SmartView.all);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(
+        Focus.of(
+          tester.element(find.byKey(const Key('desktop-task-row-11'))),
+        ).hasFocus,
+        isTrue,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(
+        Focus.of(
+          tester.element(find.byKey(const Key('desktop-task-row-13'))),
+        ).hasFocus,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.text('Leaf task'), findsWidgets);
+      expect(find.byKey(const Key('task-detail-title')), findsOneWidget);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(
+        Focus.of(
+          tester.element(find.byKey(const Key('desktop-detail-pane'))),
+        ).hasFocus,
+        isTrue,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text('Edit task'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.pumpAndSettle();
+      expect(find.text('Choose due date'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+      await tester.pumpAndSettle();
+      expect(find.text('Move task to list'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'PAR-DESKTOP-002 hover and secondary-click actions do not reflow the row',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      final row = find.byKey(const Key('desktop-task-row-11'));
+      final before = tester.getRect(row);
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(row));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(row), before);
+      expect(find.byTooltip('Open Cached parent'), findsOneWidget);
+      expect(find.byTooltip('Task actions for Cached parent'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Task actions for Cached parent'),
+        findsOneWidget,
+      );
+
+      await tester.tapAt(
+        tester.getCenter(row),
+        buttons: kSecondaryMouseButton,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Open details'), findsOneWidget);
+      expect(find.text('Complete task'), findsOneWidget);
+      expect(find.text('Edit task…'), findsOneWidget);
+      expect(find.text('Choose date…'), findsOneWidget);
+      expect(find.text('Move to list…'), findsOneWidget);
+      expect(find.text('Delete task'), findsOneWidget);
+    },
+  );
+
+  testWidgets('desktop panes hold at named widths and high text scaling', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    for (final width in <double>[1024, 1280, 1440]) {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.8)),
+            child: child!,
+          ),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const Key('desktop-navigation-pane')), findsOneWidget);
+      expect(find.byKey(const Key('desktop-task-pane')), findsOneWidget);
+      expect(find.byKey(const Key('desktop-detail-pane')), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'desktop width $width');
+    }
   });
 }
 

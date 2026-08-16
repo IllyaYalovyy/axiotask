@@ -67,7 +67,14 @@ final class TaskSelectionRoute extends AppRoute {
       Object.hash(TaskSelectionRoute, Object.hashAllUnordered(taskIds));
 }
 
-enum AppDialogKind { taskEdit, listEdit, confirmation, date, bulkCapture }
+enum AppDialogKind {
+  taskEdit,
+  listEdit,
+  confirmation,
+  date,
+  bulkCapture,
+  shortcutReference,
+}
 
 final class AppDialogRoute extends AppRoute {
   const AppDialogRoute(this.kind);

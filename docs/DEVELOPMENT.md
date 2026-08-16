@@ -294,6 +294,15 @@ synthetic data and temporary files. The ignored screenshot runner adds
 `search-results-{light,dark}.png`; inspect both actual 1280×720 images after
 capture.
 
+S26A adds no dependency, schema version, OAuth configuration, account access,
+or storage namespace. Its desktop shortcut/focus policy and hover/context
+presentation invoke only existing ViewModel commands. Focused widget and Linux
+integration tests use synthetic repositories or one temporary SQLite file.
+The screenshot entry renders ignored `desktop-interactions-1024-light.png` at
+1024×720 inside the Linux runner and `desktop-interactions-1280-dark.png` at the
+runner's 1280×720 size; neither reads normal storage, preferences, credentials,
+OAuth configuration, or Google.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

@@ -118,7 +118,7 @@ final class _HealthScreenshotSequenceState
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
+    final boundary = RepaintBoundary(
       key: _boundaryKey,
       child: MaterialApp(
         key: ValueKey<String>('app-${_captureScenarios[_index].name}'),
@@ -149,6 +149,14 @@ final class _HealthScreenshotSequenceState
           onHealthAction: (_) {},
         ),
       ),
+    );
+    if (_captureScenarios[_index].name != 'desktop-interactions-1024-light') {
+      return boundary;
+    }
+    final viewSize = MediaQueryData.fromView(View.of(context)).size;
+    return Align(
+      alignment: Alignment.topLeft,
+      child: SizedBox(width: 1024, height: viewSize.height, child: boundary),
     );
   }
 
@@ -364,6 +372,24 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'desktop-interactions-1024-light',
+    snapshot: _taskDetailsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'desktop-interactions-1280-dark',
+    snapshot: _taskDetailsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
   (
     name: 'search-results-light',
     snapshot: _smartViewsSnapshot,

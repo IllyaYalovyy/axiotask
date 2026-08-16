@@ -42,6 +42,10 @@ a reactive search ViewModel/overlay, and one explicit application route stack
 for search, drawer, selection, dialog, and stable-local-ID detail state. The
 shell's nested Navigator participates in predictive back without widget-owned
 surface flags.
+S26A adds a Fedora three-pane composition from 1024 logical pixels, one explicit
+desktop shortcut/focus policy, and task-row hover/secondary-click accelerators.
+All accelerated commands reuse the existing ViewModel/domain command boundary
+and retain visible, focusable button or menu routes.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

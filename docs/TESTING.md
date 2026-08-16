@@ -543,6 +543,16 @@ show a focused title/notes query, non-green sync evidence, the matched subtask,
 its parent context and Google-list label, and the close/back affordance. The
 fixtures contain only fixed synthetic identities and task content.
 
+S26A adds `desktop_interactions_1024_light` and
+`desktop_interactions_1280_dark` curated goldens plus matching isolated Linux
+application captures. The 1024 and 1280 logical-pixel states show all three
+panes, truthful non-green sync health, visible task/detail routes, and the
+reserved task-row action region. Widget tests additionally inspect hover
+geometry before/after pointer entry, secondary-click menus, semantics, F1 and
+header discoverability, text-editor suppression, arrow/Enter focus transitions,
+and 1.8x text at 1024/1280/1440. The Linux integration exercises the same
+keyboard route over a temporary SQLite database with synthetic data.
+
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
 or task data are forbidden.

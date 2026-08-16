@@ -9,6 +9,7 @@ import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -172,6 +173,61 @@ void main() {
       matchesGoldenFile('../../goldens/linux/delete_undo.png'),
     );
   });
+
+  for (final (width, brightness) in <(double, Brightness)>[
+    (1024, Brightness.light),
+    (1280, Brightness.dark),
+  ]) {
+    testWidgets('Linux desktop interactions $width ${brightness.name}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: const _GoldenTasksRepository(),
+        syncHealthRepository: _GoldenHealthRepository(
+          _health(
+            SyncHealthOutcome.pending,
+            pendingReason: SyncPendingReason.verifying,
+            counts: const SyncWorkCounts(pending: 2),
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: brightness,
+            colorSchemeSeed: const Color(0xff315da8),
+            fontFamily: 'GoldenRoboto',
+            useMaterial3: true,
+          ),
+          home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+        ),
+      );
+      await tester.pump();
+      viewModel.selectTask(const TaskId(11));
+      await tester.pump();
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(
+        tester.getCenter(find.byKey(const Key('desktop-task-row-11'))),
+      );
+      await tester.pumpAndSettle();
+
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile(
+          '../../goldens/linux/desktop_interactions_${width.toInt()}_${brightness.name}.png',
+        ),
+      );
+    });
+  }
 }
 
 Future<void> _loadFlutterRoboto() async {

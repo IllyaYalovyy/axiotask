@@ -127,7 +127,7 @@ final class TaskDetailsPane extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed: state.isCommandPending
                       ? null
-                      : () => _showDateDialog(context, viewModel, task),
+                      : () => showTaskDateDialog(context, viewModel, task),
                   icon: const Icon(Icons.calendar_month_outlined),
                   label: const Text('Choose date'),
                 ),
@@ -136,8 +136,7 @@ final class TaskDetailsPane extends StatelessWidget {
                   child: OutlinedButton.icon(
                     onPressed: state.isCommandPending
                         ? null
-                        : () =>
-                              _showTaskContentDialog(context, viewModel, task),
+                        : () => showTaskContentDialog(context, viewModel, task),
                     icon: const Icon(Icons.edit_outlined),
                     label: const Text('Edit task'),
                   ),
@@ -273,7 +272,7 @@ final class TaskDetailsPane extends StatelessWidget {
                   OutlinedButton.icon(
                     onPressed: state.isCommandPending
                         ? null
-                        : () => _showMoveListDialog(
+                        : () => showTaskMoveListDialog(
                             context,
                             viewModel,
                             task,
@@ -422,7 +421,7 @@ final class SubtaskList extends StatelessWidget {
             onSelected: (action) {
               switch (action) {
                 case _SubtaskAction.edit:
-                  _showTaskContentDialog(context, viewModel, child);
+                  showTaskContentDialog(context, viewModel, child);
                 case _SubtaskAction.moveUp:
                   unawaited(viewModel.moveChildUp(child.id));
                 case _SubtaskAction.moveDown:
@@ -535,7 +534,7 @@ final class _CreateSubtaskDialogState extends State<_CreateSubtaskDialog> {
   );
 }
 
-Future<void> _showTaskContentDialog(
+Future<void> showTaskContentDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,
@@ -640,7 +639,7 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
   );
 }
 
-Future<void> _showDateDialog(
+Future<void> showTaskDateDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,
@@ -757,7 +756,7 @@ Future<void> _showParentDialog(
   ),
 );
 
-Future<void> _showMoveListDialog(
+Future<void> showTaskMoveListDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,

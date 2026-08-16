@@ -515,6 +515,7 @@ flutter test test/features/tasks/smart_views_golden_test.dart
 flutter test test/features/tasks/task_details_golden_test.dart
 flutter test test/data/database/search_repository_test.dart
 flutter test test/app/navigation_state_test.dart
+flutter test test/app/desktop_shortcuts_test.dart
 flutter test test/features/search/search_view_model_test.dart
 flutter test test/features/search/search_overlay_test.dart
 flutter test test/features/search/search_navigation_golden_test.dart
@@ -559,7 +560,8 @@ protected-depth failure, fixed-time light/dark smart views, and long-content
 light/dark task details plus effective-date/completion/durable-Undo workflow
 states, plus keyboard-focused light/dark quick-capture previews and validated
 light/dark bulk-capture preview/result states and title/notes search with child
-parent context, into the ignored
+parent context, plus Fedora desktop interactions at 1024×720 light and
+1280×720 dark, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

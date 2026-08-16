@@ -62,6 +62,15 @@ and input capability, not a hard-coded platform switch.
   the sole workflow.
 - Focus, selection, and system-back behavior are explicit state-machine tests.
 
+Fedora presents navigation, collection, and detail panes together at 1024
+logical pixels and wider, with narrower widths retaining the routed collection/
+detail composition. `Ctrl+1`/`Ctrl+2`/`Ctrl+3` move focus between those visible
+regions; `Ctrl+N`, `Ctrl+F`, and `Ctrl+Shift+V` accelerate visible capture,
+search, and paste routes. Focused task rows support Enter, Space, E, D, M, and
+Delete for their matching visible actions. F1 and the always-visible keyboard
+button open the complete reference. Unmodified task commands are suppressed
+while an editable text control has focus.
+
 ## Task hierarchy
 
 Collection views show top-level tasks. Parent rows expose subtask progress and
