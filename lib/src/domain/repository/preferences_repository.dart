@@ -3,6 +3,10 @@ import '../model/preferences.dart';
 import '../model/tasks.dart';
 
 abstract interface class PreferencesRepository {
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  );
+
   Stream<ListPreferences> watchListPreferences(
     AccountId accountId,
     TaskListId taskListId,
@@ -12,6 +16,15 @@ abstract interface class PreferencesRepository {
     AccountId accountId,
     TaskListId taskListId,
     ListPreferences preferences,
+  );
+
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  );
+
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
   );
 
   Stream<ViewPreferences> watchViewPreferences(

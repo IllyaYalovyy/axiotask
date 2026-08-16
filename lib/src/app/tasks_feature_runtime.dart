@@ -13,6 +13,9 @@ import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
 import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
+import '../data/preferences/device_preferences.dart';
+import '../data/preferences/preferences_repository.dart';
+import '../data/preferences/relational_preferences.dart';
 import '../domain/commands/task_commands.dart';
 import '../domain/model/tasks.dart';
 import '../domain/repository/tasks_repository.dart';
@@ -41,6 +44,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.database,
     required this.coordinator,
     required this.transport,
+    required this.devicePreferences,
     required this.storageFailures,
   });
 
@@ -49,6 +53,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
   final AppDatabase database;
   final SyncCoordinator? coordinator;
   final ReadSliceTransport? transport;
+  final DevicePreferencesAdapter? devicePreferences;
   final StreamController<Object> storageFailures;
 
   @override
@@ -64,6 +69,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         injectedDatabase ??
         await openProductionDatabase(composition.boundary.storage.databaseName);
     ReadSliceTransport? transport;
+    DevicePreferencesAdapter? devicePreferences;
     final storageFailures = StreamController<Object>.broadcast();
     try {
       var accounts = await database.allAccounts();
@@ -84,6 +90,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           database: database,
           coordinator: null,
           transport: null,
+          devicePreferences: null,
           storageFailures: storageFailures,
         );
       }
@@ -145,6 +152,15 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         clock: composition.clock,
         runtime: coordinator,
       );
+      devicePreferences = DevicePreferencesAdapter(
+        backend: SharedPreferencesAsyncBackend(),
+        namespace: composition.boundary.storage.preferencesNamespace,
+        diagnostics: composition.diagnostics,
+      );
+      final preferencesRepository = StoredPreferencesRepository(
+        relational: DriftRelationalPreferences(database),
+        device: devicePreferences,
+      );
       return TasksFeatureRuntime._(
         viewModel: TasksViewModel(
           accountId: accountId,
@@ -157,6 +173,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
             clock: composition.clock,
           ),
           syncHealthRepository: healthRepository,
+          preferencesRepository: preferencesRepository,
+          clock: composition.clock,
           localEditCommitted: coordinator.localEditCommitted,
           taskDeleteCommitted: coordinator.taskDeleteCommitted,
           refreshRequested: coordinator.refresh,
@@ -168,11 +186,13 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         database: database,
         coordinator: coordinator,
         transport: openedTransport,
+        devicePreferences: devicePreferences,
         storageFailures: storageFailures,
       );
     } on Object {
       await storageFailures.close();
       await transport?.close();
+      await devicePreferences?.close();
       await database.close();
       rethrow;
     }
@@ -186,6 +206,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     viewModel.dispose();
     await coordinator?.close();
     await transport?.close();
+    await devicePreferences?.close();
     await database.close();
     await storageFailures.close();
   }

@@ -6,10 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'src/app/adaptive_shell.dart';
+import 'src/core/clock.dart';
 import 'src/core/outcome.dart';
 import 'src/domain/commands/task_commands.dart';
 import 'src/domain/commands/task_list_commands.dart';
+import 'src/domain/model/preferences.dart';
 import 'src/domain/model/tasks.dart';
+import 'src/domain/policy/smart_views.dart';
+import 'src/domain/repository/preferences_repository.dart';
 import 'src/domain/repository/task_lists_repository.dart';
 import 'src/domain/repository/tasks_repository.dart';
 import 'src/features/tasks/tasks_view_model.dart';
@@ -48,6 +52,9 @@ final class _HealthScreenshotSequenceState
       await output.create(recursive: true);
       for (var index = 0; index < _captureScenarios.length; index += 1) {
         await _settleFrames();
+        if (_captureScenarios[index].name.startsWith('smart-views-')) {
+          _viewModel.selectSmartView(SmartView.focus);
+        }
         _viewModel.selectTask(const TaskId(11));
         await _settleFrames();
         final scenario = _captureScenarios[index];
@@ -111,6 +118,9 @@ final class _HealthScreenshotSequenceState
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorSchemeSeed: const Color(0xff315da8),
+          brightness: _captureScenarios[_index].name == 'smart-views-dark'
+              ? Brightness.dark
+              : Brightness.light,
           useMaterial3: true,
         ),
         home: AdaptiveShell(
@@ -138,7 +148,9 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
         : const <TaskDeleteUndo>[],
   ),
   taskListsRepository: const _ScreenshotTaskListsRepository(),
+  preferencesRepository: const _ScreenshotPreferencesRepository(),
   syncHealthRepository: _ScreenshotHealthRepository(scenario.health),
+  clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
 );
 
 final class _ScreenshotTasksRepository implements TasksRepository {
@@ -204,6 +216,68 @@ final class _ScreenshotHealthRepository implements SyncHealthRepository {
   Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(health);
 }
 
+final class _ScreenshotPreferencesRepository implements PreferencesRepository {
+  const _ScreenshotPreferencesRepository();
+
+  @override
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  ) => Stream.value(const <TaskListId, ListPreferences>{});
+
+  @override
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
+  ) => Stream.value(const <ViewKey, ViewPreferences>{});
+
+  @override
+  Stream<ListPreferences> watchListPreferences(
+    AccountId accountId,
+    TaskListId taskListId,
+  ) => Stream.value(const ListPreferences.defaults());
+
+  @override
+  Stream<ViewPreferences> watchViewPreferences(
+    AccountId accountId,
+    ViewKey viewKey,
+  ) => Stream.value(const ViewPreferences.defaults());
+
+  @override
+  Future<Outcome<void>> setListPreferences(
+    AccountId accountId,
+    TaskListId taskListId,
+    ListPreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setViewPreferences(
+    AccountId accountId,
+    ViewKey viewKey,
+    ViewPreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Stream<DevicePreferences> watchDevicePreferences() =>
+      Stream.value(const DevicePreferences.defaults());
+
+  @override
+  Future<Outcome<void>> setDensity(DensityPreference density) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setTheme(ThemePreference theme) async =>
+      const Outcome<void>.success(null);
+}
+
 typedef _ScreenshotScenario = ({
   String name,
   SyncHealth health,
@@ -211,6 +285,22 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'smart-views-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
+    ),
+  ),
+  (
+    name: 'smart-views-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
+    ),
+  ),
   (
     name: 'health-cached-pending',
     snapshot: _baseSnapshot,
@@ -501,6 +591,82 @@ final _baseSnapshot = CachedTasksSnapshot(
       notes: 'No personal data is used in this screenshot.',
       status: TaskStatus.needsAction,
       due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _smartViewsSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-smart-inbox'),
+      title: 'Focus lab',
+    ),
+    CachedTaskList(
+      id: TaskListId(8),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-smart-plans'),
+      title: 'Future plans',
+    ),
+  ],
+  tasks: <CachedTask>[
+    CachedTask(
+      id: const TaskId(11),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: null,
+      remoteId: const TaskRemoteId('synthetic-smart-parent'),
+      title: 'Prepare the smart-view review',
+      notes: 'Synthetic projection evidence.',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: const TaskId(12),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: const TaskId(11),
+      remoteId: const TaskRemoteId('synthetic-smart-child'),
+      title: 'Inspect inherited date',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 8, 16),
+    ),
+    CachedTask(
+      id: const TaskId(13),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: null,
+      remoteId: const TaskRemoteId('synthetic-smart-overdue'),
+      title: 'Review overdue section',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 8, 13),
+    ),
+    CachedTask(
+      id: const TaskId(14),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(8),
+      parentTaskId: null,
+      remoteId: const TaskRemoteId('synthetic-smart-today'),
+      title: 'Confirm visible row counts',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 8, 15),
+    ),
+    CachedTask(
+      id: const TaskId(15),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(8),
+      parentTaskId: null,
+      remoteId: const TaskRemoteId('synthetic-smart-future'),
+      title: 'Later than Focus',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: TaskDate(2026, 9, 15),
     ),
   ],
   completeness: CacheCompleteness.complete,

@@ -17,6 +17,11 @@ final class StoredPreferencesRepository implements PreferencesRepository {
   final DevicePreferencesStore _device;
 
   @override
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  ) => _relational.watchAllListPreferences(accountId);
+
+  @override
   Stream<ListPreferences> watchListPreferences(
     AccountId accountId,
     TaskListId taskListId,
@@ -28,6 +33,17 @@ final class StoredPreferencesRepository implements PreferencesRepository {
     TaskListId taskListId,
     ListPreferences preferences,
   ) => _relational.setListPreferences(accountId, taskListId, preferences);
+
+  @override
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  ) => _relational.setSidebarOrder(accountId, orderedTaskListIds);
+
+  @override
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
+  ) => _relational.watchAllViewPreferences(accountId);
 
   @override
   Stream<ViewPreferences> watchViewPreferences(

@@ -8,6 +8,10 @@ import '../../domain/model/tasks.dart';
 import '../database/app_database.dart';
 
 abstract interface class RelationalPreferences {
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  );
+
   Stream<ListPreferences> watchListPreferences(
     AccountId accountId,
     TaskListId taskListId,
@@ -17,6 +21,15 @@ abstract interface class RelationalPreferences {
     AccountId accountId,
     TaskListId taskListId,
     ListPreferences preferences,
+  );
+
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  );
+
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
   );
 
   Stream<ViewPreferences> watchViewPreferences(
@@ -35,6 +48,42 @@ final class DriftRelationalPreferences implements RelationalPreferences {
   const DriftRelationalPreferences(this._database);
 
   final AppDatabase _database;
+
+  @override
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  ) => _database
+      .customSelect(
+        '''
+        SELECT l.id AS task_list_id, p.sidebar_order,
+          COALESCE(p.excluded_from_smart_views, 0)
+            AS excluded_from_smart_views
+        FROM task_lists l
+        LEFT JOIN task_list_preferences p
+          ON p.account_id = l.account_id AND p.task_list_id = l.id
+        WHERE l.account_id = ?1 AND l.projection = 'supported'
+        ORDER BY l.id
+        ''',
+        variables: <Variable<Object>>[Variable<int>(accountId.value)],
+        readsFrom: <ResultSetImplementation<Table, Object?>>{
+          _database.taskListCacheRows,
+          _database.taskListPreferenceRows,
+        },
+      )
+      .watch()
+      .map(
+        (rows) => Map<TaskListId, ListPreferences>.unmodifiable(
+          <TaskListId, ListPreferences>{
+            for (final row in rows)
+              TaskListId(row.read<int>('task_list_id')): ListPreferences(
+                sidebarOrder: row.readNullable<int>('sidebar_order'),
+                excludedFromSmartViews: row.read<bool>(
+                  'excluded_from_smart_views',
+                ),
+              ),
+          },
+        ),
+      );
 
   @override
   Stream<ListPreferences> watchListPreferences(
@@ -106,6 +155,85 @@ final class DriftRelationalPreferences implements RelationalPreferences {
       return const Outcome<void>.failure(_relationalWriteFailure);
     }
   }
+
+  @override
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  ) async {
+    if (orderedTaskListIds.toSet().length != orderedTaskListIds.length) {
+      return const Outcome<void>.failure(_invalidSidebarOrderFailure);
+    }
+    try {
+      await _database.transaction(() async {
+        final account = await (_database.select(
+          _database.accounts,
+        )..where((row) => row.id.equals(accountId.value))).getSingleOrNull();
+        if (account == null) {
+          throw const _RelationalPreferenceException(_accountNotFoundFailure);
+        }
+        for (final taskListId in orderedTaskListIds) {
+          final found =
+              await (_database.select(_database.taskListCacheRows)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.id.equals(taskListId.value) &
+                        row.projection.equals('supported'),
+                  ))
+                  .getSingleOrNull();
+          if (found == null) {
+            throw const _RelationalPreferenceException(_listNotFoundFailure);
+          }
+        }
+        await (_database.update(
+          _database.taskListPreferenceRows,
+        )..where((row) => row.accountId.equals(accountId.value))).write(
+          const TaskListPreferenceRowsCompanion(
+            sidebarOrder: Value<int?>(null),
+          ),
+        );
+        for (var index = 0; index < orderedTaskListIds.length; index += 1) {
+          final taskListId = orderedTaskListIds[index];
+          await _database.customStatement(
+            '''
+            INSERT INTO task_list_preferences (
+              account_id, task_list_id, sidebar_order,
+              excluded_from_smart_views
+            ) VALUES (?1, ?2, ?3, 0)
+            ON CONFLICT(account_id, task_list_id) DO UPDATE SET
+              sidebar_order = excluded.sidebar_order
+            ''',
+            <Object>[accountId.value, taskListId.value, index],
+          );
+        }
+      });
+      return const Outcome<void>.success(null);
+    } on _RelationalPreferenceException catch (error) {
+      return Outcome<void>.failure(error.failure);
+    } on SqliteException {
+      return const Outcome<void>.failure(_relationalWriteFailure);
+    }
+  }
+
+  @override
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
+  ) =>
+      (_database.select(_database.viewPreferenceRows)
+            ..where((row) => row.accountId.equals(accountId.value))
+            ..orderBy([(row) => OrderingTerm.asc(row.viewKey)]))
+          .watch()
+          .map(
+            (rows) => Map<ViewKey, ViewPreferences>.unmodifiable(
+              <ViewKey, ViewPreferences>{
+                for (final row in rows)
+                  ViewKey(row.viewKey): ViewPreferences(
+                    sort: _viewSortFromStorage(row.sortMode),
+                    showCompleted: row.showCompleted,
+                  ),
+              },
+            ),
+          );
 
   @override
   Stream<ViewPreferences> watchViewPreferences(
@@ -232,3 +360,9 @@ const Failure _relationalWriteFailure = Failure(
   impact: 'The application preference was not saved.',
   safeSummary: 'The relational preference write did not commit.',
 );
+
+final class _RelationalPreferenceException implements Exception {
+  const _RelationalPreferenceException(this.failure);
+
+  final Failure failure;
+}

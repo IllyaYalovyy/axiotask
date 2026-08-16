@@ -33,6 +33,13 @@ repository. List order/exclusion and per-view sort/completion filtering remain
 account-scoped in these tables; theme, density, and onboarding dismissal are
 device-only and never enter SQLite.
 
+S22B consumes the relational rows reactively through the same typed repository.
+Unknown/new supported lists use defaults and append after explicitly ordered
+lists; deleted/unsupported lists leave the ordinary projection. Smart-view
+exclusion, per-view completion filtering, and sorting are then applied by one
+pure domain projection, so sidebar counts are the length of the same rows the
+collection renders rather than a separate SQL approximation.
+
 ## Invariants
 
 - Every cache, remote-base, completeness, and relational-preference row carries

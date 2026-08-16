@@ -70,6 +70,14 @@ diagnostics, and issues no repair mutation. General retry, bulk delete, Clear
 completed, Android lifecycle wiring, and
 account connection UI remain later slices.
 
+The desktop shell also projects Focus, Upcoming, Missed, Unscheduled, All, and
+per-list collections from the cached supported task graph. A parent's effective
+date is the earlier of its explicit date and unfinished direct-child dates;
+children remain detail-only rows. Account-scoped SQLite preferences drive list
+order/exclusion plus per-view manual, effective-date, title, or reverse ordering
+and completion visibility. Smart-view badges are the exact lengths of the same
+projections rendered in the collection.
+
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
 completeness. Every repository query requires an account partition. Cached rows
@@ -444,6 +452,8 @@ flutter test test/data/database/sync_settings_repository_test.dart
 flutter test test/data/preferences/relational_preferences_test.dart
 flutter test test/data/preferences/device_preferences_test.dart
 flutter test test/data/preferences/preferences_repository_test.dart
+flutter test test/domain/effective_due_test.dart
+flutter test test/domain/smart_views_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
@@ -460,9 +470,12 @@ flutter test test/sync/auth/sync_reauthorization_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
+flutter test test/features/tasks/smart_views_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
+flutter test test/features/tasks/smart_views_widget_test.dart
 flutter test test/app/database_recovery_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
+flutter test test/features/tasks/smart_views_golden_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
 flutter test test/support/fake_lifecycle_test.dart
@@ -482,6 +495,7 @@ flutter test integration_test/update_publish_linux_test.dart -d linux
 flutter test integration_test/delete_publish_linux_test.dart -d linux
 flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 flutter test integration_test/preferences_native_smoke_test.dart -d linux
+flutter test integration_test/smart_views_restart_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -491,7 +505,7 @@ Capture the isolated synthetic Linux states, including persistent
 no-authorization with Reauthorize and preserved cached/unresolved work, pending
 provisional list and task creates, stopped list/task content edits, active Stop,
 stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
-protected-depth failure, into the ignored
+protected-depth failure, plus fixed-time light/dark smart views, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../domain/model/preferences.dart';
 import '../domain/model/tasks.dart';
+import '../domain/policy/smart_views.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../sync/health/sync_health.dart';
@@ -68,6 +70,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     actions: const <Widget>[SizedBox.shrink()],
                   ),
                 if (state.taskCommandFailureMessage case final message?)
+                  MaterialBanner(
+                    content: Text(message),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
+                if (state.preferenceFailureMessage case final message?)
                   MaterialBanner(
                     content: Text(message),
                     actions: const <Widget>[SizedBox.shrink()],
@@ -241,13 +248,32 @@ final class _ListNavigation extends StatelessWidget {
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: ListView(
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Text(
-                'TASK LISTS',
+                'SMART VIEWS',
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (final smartView in SmartView.values)
+              ListTile(
+                dense: true,
+                selected: state.selectedSmartView == smartView,
+                leading: Icon(_smartViewIcon(smartView)),
+                title: Text(smartView.title),
+                trailing: _CountBadge(
+                  count: state.viewCount(SmartTaskView(smartView)),
+                ),
+                onTap: () => viewModel.selectSmartView(smartView),
+              ),
+            const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'GOOGLE TASK LISTS',
                 style: Theme.of(context).textTheme.labelMedium,
               ),
             ),
@@ -257,20 +283,119 @@ final class _ListNavigation extends StatelessWidget {
                 padding: EdgeInsets.all(12),
                 child: Text('No cached Google task lists'),
               ),
-            for (final list in state.taskLists)
+            for (final list in state.orderedTaskLists)
               ListTile(
                 selected: list.id == state.selectedTaskListId,
-                leading: const Icon(Icons.list_alt_outlined),
+                leading:
+                    state.listPreferences[list.id]?.excludedFromSmartViews ==
+                        true
+                    ? const Tooltip(
+                        message: 'Excluded from smart views',
+                        child: Icon(Icons.visibility_off_outlined),
+                      )
+                    : const Icon(Icons.list_alt_outlined),
                 title: Text(
                   list.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                subtitle: Text(
+                  '${state.viewCount(TaskListView(list.id))} tasks',
+                ),
+                trailing: viewModel.preferencesRepository == null
+                    ? null
+                    : _ListPreferenceMenu(
+                        state: state,
+                        viewModel: viewModel,
+                        taskListId: list.id,
+                      ),
                 onTap: () => viewModel.selectTaskList(list.id),
               ),
           ],
         ),
       ),
+    );
+  }
+}
+
+IconData _smartViewIcon(SmartView view) => switch (view) {
+  SmartView.focus => Icons.center_focus_strong_outlined,
+  SmartView.upcoming => Icons.calendar_month_outlined,
+  SmartView.missed => Icons.history_outlined,
+  SmartView.unscheduled => Icons.event_busy_outlined,
+  SmartView.all => Icons.all_inbox_outlined,
+};
+
+final class _CountBadge extends StatelessWidget {
+  const _CountBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '$count ${count == 1 ? 'task' : 'tasks'}',
+    child: Container(
+      constraints: const BoxConstraints(minWidth: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text('$count', textAlign: TextAlign.center),
+    ),
+  );
+}
+
+enum _ListPreferenceAction { includeOrExclude, moveUp, moveDown }
+
+final class _ListPreferenceMenu extends StatelessWidget {
+  const _ListPreferenceMenu({
+    required this.state,
+    required this.viewModel,
+    required this.taskListId,
+  });
+
+  final TasksViewState state;
+  final TasksViewModel viewModel;
+  final TaskListId taskListId;
+
+  @override
+  Widget build(BuildContext context) {
+    final lists = state.orderedTaskLists;
+    final index = lists.indexWhere((list) => list.id == taskListId);
+    final excluded =
+        state.listPreferences[taskListId]?.excludedFromSmartViews ?? false;
+    return PopupMenuButton<_ListPreferenceAction>(
+      tooltip: 'List view settings',
+      enabled: !state.isPreferenceCommandPending,
+      onSelected: (action) {
+        switch (action) {
+          case _ListPreferenceAction.includeOrExclude:
+            unawaited(viewModel.toggleListExclusion(taskListId));
+          case _ListPreferenceAction.moveUp:
+            unawaited(viewModel.moveTaskList(taskListId, -1));
+          case _ListPreferenceAction.moveDown:
+            unawaited(viewModel.moveTaskList(taskListId, 1));
+        }
+      },
+      itemBuilder: (_) => <PopupMenuEntry<_ListPreferenceAction>>[
+        PopupMenuItem<_ListPreferenceAction>(
+          value: _ListPreferenceAction.includeOrExclude,
+          child: Text(
+            excluded ? 'Include in smart views' : 'Exclude from smart views',
+          ),
+        ),
+        PopupMenuItem<_ListPreferenceAction>(
+          value: _ListPreferenceAction.moveUp,
+          enabled: index > 0,
+          child: const Text('Move list up'),
+        ),
+        PopupMenuItem<_ListPreferenceAction>(
+          value: _ListPreferenceAction.moveDown,
+          enabled: index >= 0 && index < lists.length - 1,
+          child: const Text('Move list down'),
+        ),
+      ],
     );
   }
 }
@@ -283,7 +408,9 @@ final class _TaskCollection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tasks = state.visibleTasks;
+    final projection = state.visibleProjection;
+    final rows = projection.rows;
+    final tasks = rows.map((row) => row.task).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -296,11 +423,49 @@ final class _TaskCollection extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      state.selectedTaskList?.title ?? 'Cached tasks',
+                      switch (state.selectedView) {
+                        SmartTaskView(:final smartView) => smartView.title,
+                        TaskListView() =>
+                          state.selectedTaskList?.title ?? 'Cached tasks',
+                      },
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ),
+                  if (viewModel.preferencesRepository != null) ...<Widget>[
+                    const SizedBox(width: 12),
+                    Semantics(
+                      label: 'Sort tasks',
+                      child: DropdownButton<ViewSort>(
+                        value: state.selectedViewPreferences.sort,
+                        onChanged: state.isPreferenceCommandPending
+                            ? null
+                            : (value) {
+                                if (value != null) {
+                                  unawaited(viewModel.setViewSort(value));
+                                }
+                              },
+                        items: const <DropdownMenuItem<ViewSort>>[
+                          DropdownMenuItem(
+                            value: ViewSort.manual,
+                            child: Text('My order'),
+                          ),
+                          DropdownMenuItem(
+                            value: ViewSort.effectiveDue,
+                            child: Text('Effective due'),
+                          ),
+                          DropdownMenuItem(
+                            value: ViewSort.title,
+                            child: Text('Title'),
+                          ),
+                          DropdownMenuItem(
+                            value: ViewSort.created,
+                            child: Text('Reverse order'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   IconButton(
                     tooltip: 'Create task',
                     onPressed:
@@ -354,11 +519,34 @@ final class _TaskCollection extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 4),
-              Text(
-                '${tasks.length} cached ${tasks.length == 1 ? 'task' : 'tasks'}',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              Row(
+                children: <Widget>[
+                  Text(
+                    '${tasks.length} cached ${tasks.length == 1 ? 'task' : 'tasks'}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  if (viewModel.preferencesRepository != null)
+                    Semantics(
+                      label: 'Show completed tasks',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Checkbox(
+                            value: state.selectedViewPreferences.showCompleted,
+                            onChanged: state.isPreferenceCommandPending
+                                ? null
+                                : (value) => unawaited(
+                                    viewModel.setShowCompleted(value ?? false),
+                                  ),
+                          ),
+                          const Text('Show completed'),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
@@ -373,7 +561,8 @@ final class _TaskCollection extends StatelessWidget {
                   separatorBuilder: (_, _) =>
                       const Divider(height: 1, indent: 72),
                   itemBuilder: (context, index) {
-                    final task = tasks[index];
+                    final row = rows[index];
+                    final task = row.task;
                     final childCount = state.tasks
                         .where((value) => value.parentTaskId == task.id)
                         .length;
@@ -407,6 +596,8 @@ final class _TaskCollection extends StatelessWidget {
                       subtitle: Text(
                         <String>[
                           if (task.due != null) 'Due ${task.due}',
+                          if (row.effectiveDue.fromChildren != null)
+                            'From subtasks ${row.effectiveDue.fromChildren}',
                           if (childCount > 0)
                             '$childCount ${childCount == 1 ? 'subtask' : 'subtasks'}',
                         ].join(' • '),

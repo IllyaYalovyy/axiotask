@@ -2,10 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/clock.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
+import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/smart_views.dart';
+import '../../domain/repository/preferences_repository.dart';
 import '../../domain/repository/task_lists_repository.dart';
 import '../../domain/repository/tasks_repository.dart';
 import '../../sync/health/sync_health.dart';
@@ -19,15 +23,21 @@ final class TasksViewState {
     required this.tasks,
     required this.taskDeleteUndos,
     required this.health,
+    required this.today,
+    this.listPreferences = const <TaskListId, ListPreferences>{},
+    this.viewPreferences = const <ViewKey, ViewPreferences>{},
     this.isSyncControlPending = false,
     this.isListCommandPending = false,
     this.isTaskCommandPending = false,
+    this.isPreferenceCommandPending = false,
+    this.selectedSmartView,
     this.selectedTaskListId,
     this.selectedTaskId,
     this.failureMessage,
     this.syncControlFailureMessage,
     this.listCommandFailureMessage,
     this.taskCommandFailureMessage,
+    this.preferenceFailureMessage,
   });
 
   final bool isLoading;
@@ -36,26 +46,76 @@ final class TasksViewState {
   final List<CachedTask> tasks;
   final List<TaskDeleteUndo> taskDeleteUndos;
   final SyncHealth health;
+  final TaskDate today;
+  final Map<TaskListId, ListPreferences> listPreferences;
+  final Map<ViewKey, ViewPreferences> viewPreferences;
   final bool isSyncControlPending;
   final bool isListCommandPending;
   final bool isTaskCommandPending;
+  final bool isPreferenceCommandPending;
+  final SmartView? selectedSmartView;
   final TaskListId? selectedTaskListId;
   final TaskId? selectedTaskId;
   final String? failureMessage;
   final String? syncControlFailureMessage;
   final String? listCommandFailureMessage;
   final String? taskCommandFailureMessage;
+  final String? preferenceFailureMessage;
+
+  TaskView get selectedView => switch (selectedSmartView) {
+    final value? => SmartTaskView(value),
+    null => switch (selectedTaskListId) {
+      final value? => TaskListView(value),
+      null => const SmartTaskView(SmartView.focus),
+    },
+  };
+
+  ViewPreferences get selectedViewPreferences =>
+      viewPreferences[selectedView.key] ?? const ViewPreferences.defaults();
+
+  Set<TaskListId> get excludedTaskLists => listPreferences.entries
+      .where((entry) => entry.value.excludedFromSmartViews)
+      .map((entry) => entry.key)
+      .toSet();
+
+  List<CachedTaskList> get orderedTaskLists {
+    final indexed = taskLists.indexed.toList(growable: false);
+    indexed.sort((left, right) {
+      final leftOrder = listPreferences[left.$2.id]?.sidebarOrder;
+      final rightOrder = listPreferences[right.$2.id]?.sidebarOrder;
+      if (leftOrder == null && rightOrder == null) {
+        return left.$1.compareTo(right.$1);
+      }
+      if (leftOrder == null) return 1;
+      if (rightOrder == null) return -1;
+      final compared = leftOrder.compareTo(rightOrder);
+      return compared == 0 ? left.$1.compareTo(right.$1) : compared;
+    });
+    return List<CachedTaskList>.unmodifiable(indexed.map((entry) => entry.$2));
+  }
 
   CachedTaskList? get selectedTaskList =>
       _firstWhereOrNull(taskLists, (value) => value.id == selectedTaskListId);
 
-  List<CachedTask> get visibleTasks => List<CachedTask>.unmodifiable(
-    tasks.where(
-      (task) =>
-          task.parentTaskId == null &&
-          (selectedTaskListId == null || task.taskListId == selectedTaskListId),
-    ),
+  TaskViewProjection get visibleProjection => projectTaskView(
+    tasks: tasks,
+    view: selectedView,
+    preferences: selectedViewPreferences,
+    excludedTaskLists: excludedTaskLists,
+    today: today,
   );
+
+  List<CachedTask> get visibleTasks => List<CachedTask>.unmodifiable(
+    visibleProjection.rows.map((row) => row.task),
+  );
+
+  int viewCount(TaskView view) => projectTaskView(
+    tasks: tasks,
+    view: view,
+    preferences: viewPreferences[view.key] ?? const ViewPreferences.defaults(),
+    excludedTaskLists: excludedTaskLists,
+    today: today,
+  ).count;
 
   CachedTask? get selectedTask =>
       _firstWhereOrNull(tasks, (value) => value.id == selectedTaskId);
@@ -71,15 +131,21 @@ final class TasksViewState {
     List<CachedTask>? tasks,
     List<TaskDeleteUndo>? taskDeleteUndos,
     SyncHealth? health,
+    TaskDate? today,
+    Map<TaskListId, ListPreferences>? listPreferences,
+    Map<ViewKey, ViewPreferences>? viewPreferences,
     bool? isSyncControlPending,
     bool? isListCommandPending,
     bool? isTaskCommandPending,
+    bool? isPreferenceCommandPending,
+    Object? selectedSmartView = _notProvided,
     Object? selectedTaskListId = _notProvided,
     Object? selectedTaskId = _notProvided,
     Object? failureMessage = _notProvided,
     Object? syncControlFailureMessage = _notProvided,
     Object? listCommandFailureMessage = _notProvided,
     Object? taskCommandFailureMessage = _notProvided,
+    Object? preferenceFailureMessage = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -87,9 +153,17 @@ final class TasksViewState {
     tasks: tasks ?? this.tasks,
     taskDeleteUndos: taskDeleteUndos ?? this.taskDeleteUndos,
     health: health ?? this.health,
+    today: today ?? this.today,
+    listPreferences: listPreferences ?? this.listPreferences,
+    viewPreferences: viewPreferences ?? this.viewPreferences,
     isSyncControlPending: isSyncControlPending ?? this.isSyncControlPending,
     isListCommandPending: isListCommandPending ?? this.isListCommandPending,
     isTaskCommandPending: isTaskCommandPending ?? this.isTaskCommandPending,
+    isPreferenceCommandPending:
+        isPreferenceCommandPending ?? this.isPreferenceCommandPending,
+    selectedSmartView: identical(selectedSmartView, _notProvided)
+        ? this.selectedSmartView
+        : selectedSmartView as SmartView?,
     selectedTaskListId: identical(selectedTaskListId, _notProvided)
         ? this.selectedTaskListId
         : selectedTaskListId as TaskListId?,
@@ -111,6 +185,9 @@ final class TasksViewState {
         identical(taskCommandFailureMessage, _notProvided)
         ? this.taskCommandFailureMessage
         : taskCommandFailureMessage as String?,
+    preferenceFailureMessage: identical(preferenceFailureMessage, _notProvided)
+        ? this.preferenceFailureMessage
+        : preferenceFailureMessage as String?,
   );
 }
 
@@ -119,6 +196,9 @@ final class TasksViewModel extends ChangeNotifier {
     required this.accountId,
     required this.tasksRepository,
     required this.syncHealthRepository,
+    Clock? clock,
+    MonotonicScheduler? calendarScheduler,
+    this.preferencesRepository,
     this.taskListsRepository,
     this.localEditCommitted,
     this.taskDeleteCommitted,
@@ -127,12 +207,17 @@ final class TasksViewModel extends ChangeNotifier {
     this.reauthorizeRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
-  }) : _state = TasksViewState(
+  }) : clock = clock ?? SystemClock(),
+       calendarScheduler =
+           calendarScheduler ??
+           (clock is MonotonicScheduler ? clock as MonotonicScheduler : null),
+       _state = TasksViewState(
          isLoading: true,
          isRefreshing: false,
          isSyncControlPending: false,
          isListCommandPending: false,
          isTaskCommandPending: false,
+         isPreferenceCommandPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          taskDeleteUndos: const <TaskDeleteUndo>[],
@@ -143,11 +228,15 @@ final class TasksViewModel extends ChangeNotifier {
            lastSuccessfulSyncAt: null,
            evaluatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
          ),
+         today: _localTaskDate((clock ?? SystemClock()).now()),
        );
 
   final AccountId accountId;
   final TasksRepository tasksRepository;
   final SyncHealthRepository syncHealthRepository;
+  final Clock clock;
+  final MonotonicScheduler? calendarScheduler;
+  final PreferencesRepository? preferencesRepository;
   final TaskListsRepository? taskListsRepository;
   final Future<void> Function()? localEditCommitted;
   final Future<void> Function(DateTime notBefore)? taskDeleteCommitted;
@@ -160,17 +249,24 @@ final class TasksViewModel extends ChangeNotifier {
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
   StreamSubscription<List<TaskDeleteUndo>>? _taskDeleteUndoSubscription;
+  StreamSubscription<Map<TaskListId, ListPreferences>>?
+  _listPreferencesSubscription;
+  StreamSubscription<Map<ViewKey, ViewPreferences>>?
+  _viewPreferencesSubscription;
   bool _started = false;
   Future<void>? _refreshInFlight;
   Future<void>? _syncControlInFlight;
   Future<void>? _listCommandInFlight;
   Future<void>? _taskCommandInFlight;
+  Future<void>? _preferenceCommandInFlight;
+  ScheduledTimer? _calendarTimer;
 
   TasksViewState get state => _state;
 
   void start() {
     if (_started) return;
     _started = true;
+    _scheduleNextCalendarBoundary();
     _tasksSubscription = tasksRepository
         .watchTasks(TasksQuery(accountId: accountId))
         .listen(_acceptTasks, onError: _acceptRepositoryError);
@@ -180,23 +276,111 @@ final class TasksViewModel extends ChangeNotifier {
     _taskDeleteUndoSubscription = tasksRepository
         .watchUndoableTaskDeletes(accountId)
         .listen(_acceptTaskDeleteUndos, onError: _acceptTaskDeleteUndoError);
+    _listPreferencesSubscription = preferencesRepository
+        ?.watchAllListPreferences(accountId)
+        .listen(_acceptListPreferences, onError: _acceptPreferenceReadError);
+    _viewPreferencesSubscription = preferencesRepository
+        ?.watchAllViewPreferences(accountId)
+        .listen(_acceptViewPreferences, onError: _acceptPreferenceReadError);
+  }
+
+  void _scheduleNextCalendarBoundary() {
+    final scheduler = calendarScheduler;
+    if (scheduler == null) return;
+    _calendarTimer?.cancel();
+    final local = clock.now().toLocal();
+    final nextMidnight = DateTime(local.year, local.month, local.day + 1);
+    _calendarTimer = scheduler.schedule(nextMidnight.difference(local), () {
+      _replaceState(_state.copyWith(today: _localTaskDate(clock.now())));
+      _scheduleNextCalendarBoundary();
+    });
+  }
+
+  void selectSmartView(SmartView smartView) {
+    _replaceState(
+      _state.copyWith(
+        selectedSmartView: smartView,
+        selectedTaskListId: null,
+        selectedTaskId: null,
+      ),
+    );
   }
 
   void selectTaskList(TaskListId taskListId) {
     if (!_state.taskLists.any((value) => value.id == taskListId)) return;
     _replaceState(
-      _state.copyWith(selectedTaskListId: taskListId, selectedTaskId: null),
+      _state.copyWith(
+        selectedSmartView: null,
+        selectedTaskListId: taskListId,
+        selectedTaskId: null,
+      ),
     );
   }
 
   void selectTask(TaskId taskId) {
     final task = _firstWhereOrNull(_state.tasks, (value) => value.id == taskId);
     if (task == null) return;
-    _replaceState(
-      _state.copyWith(
-        selectedTaskListId: task.taskListId,
-        selectedTaskId: taskId,
+    _replaceState(_state.copyWith(selectedTaskId: taskId));
+  }
+
+  Future<void> setViewSort(ViewSort sort) {
+    final repository = preferencesRepository;
+    if (repository == null) return Future<void>.value();
+    final current = _state.selectedViewPreferences;
+    return _performPreferenceCommand(
+      () => repository.setViewPreferences(
+        accountId,
+        _state.selectedView.key,
+        ViewPreferences(sort: sort, showCompleted: current.showCompleted),
       ),
+    );
+  }
+
+  Future<void> setShowCompleted(bool showCompleted) {
+    final repository = preferencesRepository;
+    if (repository == null) return Future<void>.value();
+    final current = _state.selectedViewPreferences;
+    return _performPreferenceCommand(
+      () => repository.setViewPreferences(
+        accountId,
+        _state.selectedView.key,
+        ViewPreferences(sort: current.sort, showCompleted: showCompleted),
+      ),
+    );
+  }
+
+  Future<void> toggleListExclusion(TaskListId taskListId) {
+    final repository = preferencesRepository;
+    if (repository == null) return Future<void>.value();
+    final current =
+        _state.listPreferences[taskListId] ?? const ListPreferences.defaults();
+    return _performPreferenceCommand(
+      () => repository.setListPreferences(
+        accountId,
+        taskListId,
+        ListPreferences(
+          sidebarOrder: current.sidebarOrder,
+          excludedFromSmartViews: !current.excludedFromSmartViews,
+        ),
+      ),
+    );
+  }
+
+  Future<void> moveTaskList(TaskListId taskListId, int offset) {
+    final repository = preferencesRepository;
+    if (repository == null || (offset != -1 && offset != 1)) {
+      return Future<void>.value();
+    }
+    final ids = _state.orderedTaskLists.map((list) => list.id).toList();
+    final index = ids.indexOf(taskListId);
+    final target = index + offset;
+    if (index < 0 || target < 0 || target >= ids.length) {
+      return Future<void>.value();
+    }
+    final moved = ids.removeAt(index);
+    ids.insert(target, moved);
+    return _performPreferenceCommand(
+      () => repository.setSidebarOrder(accountId, ids),
     );
   }
 
@@ -453,6 +637,41 @@ final class TasksViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> _performPreferenceCommand(
+    Future<Outcome<void>> Function() action,
+  ) {
+    final existing = _preferenceCommandInFlight;
+    if (existing != null) return existing;
+    final operation = _runPreferenceCommand(action);
+    _preferenceCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runPreferenceCommand(
+    Future<Outcome<void>> Function() action,
+  ) async {
+    _replaceState(
+      _state.copyWith(
+        isPreferenceCommandPending: true,
+        preferenceFailureMessage: null,
+      ),
+    );
+    try {
+      final result = await action();
+      if (result case Failed<void>()) {
+        _replaceState(
+          _state.copyWith(
+            preferenceFailureMessage:
+                'The view preference could not be saved safely.',
+          ),
+        );
+      }
+    } finally {
+      _preferenceCommandInFlight = null;
+      _replaceState(_state.copyWith(isPreferenceCommandPending: false));
+    }
+  }
+
   Future<void> handleSyncHealthAction(
     SyncHealthAction action,
   ) => switch (action) {
@@ -495,8 +714,9 @@ final class TasksViewModel extends ChangeNotifier {
 
   void _acceptTasks(CachedTasksSnapshot snapshot) {
     final currentList = _state.selectedTaskListId;
-    final selectedList =
-        snapshot.taskLists.any((value) => value.id == currentList)
+    final selectedList = _state.selectedSmartView != null
+        ? null
+        : snapshot.taskLists.any((value) => value.id == currentList)
         ? currentList
         : snapshot.taskLists.isEmpty
         ? null
@@ -513,6 +733,31 @@ final class TasksViewModel extends ChangeNotifier {
         selectedTaskListId: selectedList,
         selectedTaskId: selectedTask,
         failureMessage: null,
+      ),
+    );
+  }
+
+  void _acceptListPreferences(Map<TaskListId, ListPreferences> values) {
+    _replaceState(
+      _state.copyWith(
+        listPreferences: Map<TaskListId, ListPreferences>.unmodifiable(values),
+      ),
+    );
+  }
+
+  void _acceptViewPreferences(Map<ViewKey, ViewPreferences> values) {
+    _replaceState(
+      _state.copyWith(
+        viewPreferences: Map<ViewKey, ViewPreferences>.unmodifiable(values),
+      ),
+    );
+  }
+
+  void _acceptPreferenceReadError(Object _) {
+    _replaceState(
+      _state.copyWith(
+        preferenceFailureMessage:
+            'Saved view preferences could not be read safely.',
       ),
     );
   }
@@ -556,11 +801,20 @@ final class TasksViewModel extends ChangeNotifier {
     final tasksSubscription = _tasksSubscription;
     final healthSubscription = _healthSubscription;
     final taskDeleteUndoSubscription = _taskDeleteUndoSubscription;
+    final listPreferencesSubscription = _listPreferencesSubscription;
+    final viewPreferencesSubscription = _viewPreferencesSubscription;
     if (tasksSubscription != null) unawaited(tasksSubscription.cancel());
     if (healthSubscription != null) unawaited(healthSubscription.cancel());
     if (taskDeleteUndoSubscription != null) {
       unawaited(taskDeleteUndoSubscription.cancel());
     }
+    if (listPreferencesSubscription != null) {
+      unawaited(listPreferencesSubscription.cancel());
+    }
+    if (viewPreferencesSubscription != null) {
+      unawaited(viewPreferencesSubscription.cancel());
+    }
+    _calendarTimer?.cancel();
     super.dispose();
   }
 }
@@ -572,4 +826,9 @@ T? _firstWhereOrNull<T>(Iterable<T> values, bool Function(T value) predicate) {
     if (predicate(value)) return value;
   }
   return null;
+}
+
+TaskDate _localTaskDate(DateTime value) {
+  final local = value.toLocal();
+  return TaskDate(local.year, local.month, local.day);
 }

@@ -19,7 +19,11 @@ database recovery preserve main/WAL/SHM files, stop Google work when storage is
 unsafe, and present Retry Open instead of invented empty data through S21B.
 Typed account/list/view preferences now use the existing relational schema,
 while namespaced theme, density, and onboarding dismissal use the disposable
-device adapter through one repository boundary in S22A.
+device adapter through one repository boundary in S22A. Pure S22B policy now
+derives effective parent dates and every Focus, Upcoming, Missed, Unscheduled,
+All, and per-list membership/sort projection from cached supported tasks and
+those typed preferences; ViewModels reuse the same projection for rows and
+counts.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

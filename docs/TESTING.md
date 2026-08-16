@@ -344,6 +344,16 @@ and transition to recovery if a running sync can no longer revalidate storage.
 The mid-run persistence test proves no second Google request or mutation begins
 after that loss.
 
+S22B adds pure effective-date and smart-view policy suites covering exact local
+calendar boundaries, unfinished direct-child propagation, top-level-only
+membership, exclusions, completion filtering, Focus overdue partitioning,
+Missed oldest-first behavior, and stable manual/effective-date/title/reverse
+ordering. Relational aggregate tests cover new/deleted lists, atomic sidebar
+ordering, exclusions, reactive view preferences, and file restart. ViewModel
+and widget tests prove every displayed count is the length of the same projected
+rows and that typed controls update the selected view. No test reads normal
+preferences, credentials, task data, or Google.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -412,6 +422,13 @@ engine, widget, and golden tests cover restart cleanup/claim recovery, explicit
 Refresh during grace, subtree/moved-child safety, unrelated accounts/lists,
 durable Undo presentation, and irreversible list-delete confirmation.
 
+S22B adds `integration_test/smart_views_restart_linux_test.dart`. It closes and
+reopens a unique temporary SQLite file, then renders the effective child date,
+restored Focus preferences, restored list exclusion/order, and exact visible
+count through the production task and relational-preference repositories. It
+uses an in-memory device adapter, fixed synthetic identities/content, and no
+Google or normal application storage.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the
@@ -426,6 +443,12 @@ fixed time, and deterministic scenarios. Local scripts launch it at named
 desktop and Android dimensions, capture actual application screenshots, and
 store them under ignored output directories. The developer or agent inspects
 those images in addition to golden diffs.
+
+S22B adds curated fixed-time light/dark desktop goldens at 1280×800 and
+matching actual `smart-views-light` / `smart-views-dark` application scenarios
+at 1280×720. Both show overdue-first Focus membership, an effective date
+inherited from one unfinished direct child, matching badge/row count, per-view
+controls, and only synthetic content.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

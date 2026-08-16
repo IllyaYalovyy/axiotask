@@ -242,6 +242,14 @@ The originals are never deleted, moved, quarantined, or replaced. The isolated
 Linux recovery capture writes only the ignored synthetic
 `screenshots/actual/database-recovery.png` file.
 
+S22B adds no dependency, schema version, OAuth configuration, account access,
+or storage namespace. Cached supported tasks and S22A relational preferences
+feed pure effective-date, membership, and stable-sort policy. The Linux restart
+test reopens one temporary SQLite file and the light/dark screenshot scenarios
+use fixed 2026-08-15 local-calendar data through synthetic repositories only.
+Actual smart-view captures are written as the ignored
+`screenshots/actual/smart-views-{light,dark}.png` files.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the
