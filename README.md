@@ -28,9 +28,15 @@ creates never replay, and uncertain creates remain non-green without content
 matching. Eligible complete task-content updates and list renames also publish
 after enumeration. Base-aware reconciliation selects one whole local or Google
 record, gives Google timestamp ties, fails closed without required conflict
-evidence, and refetches/replans task PATCH precondition races. Delete,
-move/reorder, general retry, Android lifecycle wiring, and account connection UI
-remain later slices.
+evidence, and refetches/replans task PATCH precondition races. Task deletion
+hides a supported task/subtree only after a durable tombstone transaction,
+offers Undo from that durable state for exactly 30 seconds, and cannot issue a
+Google DELETE during the grace window even on Refresh or restart. Expiry strips
+the content snapshot and schedules authoritative deletion with positive task
+tombstone verification. List deletion has an explicit irreversible
+confirmation and no Undo. Move/reorder, general retry, bulk delete, Clear
+completed, Android lifecycle wiring, and account connection UI remain later
+slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -378,6 +384,7 @@ flutter test test/domain/task_commands_test.dart
 flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/task_lists_repository_test.dart
 flutter test test/data/database/task_edits_repository_test.dart
+flutter test test/data/database/delete_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
 flutter test test/data/database/sync_settings_repository_test.dart
@@ -385,6 +392,7 @@ flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
 flutter test test/sync/update_sync_engine_test.dart
+flutter test test/sync/delete_sync_engine_test.dart
 flutter test test/sync/read_sync_process_death_test.dart
 flutter test test/sync/coordinator/sync_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
@@ -407,6 +415,7 @@ flutter test integration_test/offline_task_edits_linux_test.dart -d linux
 flutter test integration_test/read_slice_linux_test.dart -d linux
 flutter test integration_test/create_publish_linux_test.dart -d linux
 flutter test integration_test/update_publish_linux_test.dart -d linux
+flutter test integration_test/delete_publish_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh

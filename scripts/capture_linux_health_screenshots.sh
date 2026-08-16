@@ -15,6 +15,8 @@ scenarios=(
   list-rename-sync-stopped
   task-create-pending
   task-content-sync-stopped
+  delete-undo
+  delete-list-confirmation
 )
 
 for scenario in "${scenarios[@]}"; do

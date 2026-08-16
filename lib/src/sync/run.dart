@@ -2,6 +2,7 @@ import '../core/failure.dart';
 import '../data/google_tasks/dto.dart';
 import '../domain/model/tasks.dart';
 import 'create_operations.dart';
+import 'delete_operations.dart';
 import 'phase.dart';
 import 'update_operations.dart';
 
@@ -55,6 +56,7 @@ final class SyncRunReport {
     required this.resourceProjectionWrites,
     this.createOperations = 0,
     this.updateOperations = 0,
+    this.deleteOperations = 0,
     this.googleWonReplacements = 0,
     this.googleWonReplacementDetails = const <ContentSupersessionResult>[],
     this.confirmedUpdateReadBacks = 0,
@@ -75,6 +77,7 @@ final class SyncRunReport {
   final int resourceProjectionWrites;
   final int createOperations;
   final int updateOperations;
+  final int deleteOperations;
   final int googleWonReplacements;
   final List<ContentSupersessionResult> googleWonReplacementDetails;
   final int confirmedUpdateReadBacks;
@@ -159,7 +162,11 @@ abstract interface class ReadSyncStore {
 }
 
 abstract interface class SyncStore
-    implements ReadSyncStore, CreateSyncStore, UpdateSyncStore {}
+    implements
+        ReadSyncStore,
+        CreateSyncStore,
+        UpdateSyncStore,
+        DeleteSyncStore {}
 
 abstract interface class SyncRunObserver {
   void phaseStarted(SyncRunId runId, SyncRunPhase phase);

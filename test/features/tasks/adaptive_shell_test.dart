@@ -337,6 +337,74 @@ void main() {
     expect(command.taskId, const TaskId(11));
     expect(command.status, TaskStatus.completed);
   });
+
+  testWidgets(
+    'task delete hides through repository and durable Undo restores it',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Delete task'));
+      await tester.pump();
+      expect(fixture.tasks.deleted.single.taskId, const TaskId(11));
+
+      fixture.tasks.undoController.add(<TaskDeleteUndo>[
+        TaskDeleteUndo(
+          taskId: const TaskId(11),
+          title: 'Cached parent',
+          notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+        ),
+      ]);
+      await tester.pump();
+      expect(find.text('“Cached parent” deleted'), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Undo'));
+      await tester.pump();
+      expect(fixture.tasks.undone.single.taskId, const TaskId(11));
+    },
+  );
+
+  testWidgets('task list deletion requires explicit destructive confirmation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final lists = _TaskListsRepository();
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      taskListsRepository: lists,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Delete selected task list'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete “Synthetic inbox”?'), findsOneWidget);
+    expect(find.textContaining('cannot be undone'), findsOneWidget);
+    expect(lists.deleted, isEmpty);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(lists.deleted, isEmpty);
+
+    await tester.tap(find.byTooltip('Delete selected task list'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete list'));
+    await tester.pumpAndSettle();
+    expect(lists.deleted.single.taskListId, const TaskListId(7));
+  });
 }
 
 final class _ShellFixture {
@@ -378,6 +446,7 @@ final class _TaskListsRepository implements TaskListsRepository {
     const Outcome<void>.success(null),
   );
   final List<RenameTaskListCommand> renamed = <RenameTaskListCommand>[];
+  final List<DeleteTaskListCommand> deleted = <DeleteTaskListCommand>[];
   var createCalls = 0;
 
   @override
@@ -391,6 +460,12 @@ final class _TaskListsRepository implements TaskListsRepository {
     renamed.add(command);
     return renameResult;
   }
+
+  @override
+  Future<Outcome<void>> deleteTaskList(DeleteTaskListCommand command) async {
+    deleted.add(command);
+    return const Outcome<void>.success(null);
+  }
 }
 
 final class _TasksRepository implements TasksRepository {
@@ -403,6 +478,9 @@ final class _TasksRepository implements TasksRepository {
   );
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
+  final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
+  final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
+  final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
@@ -419,6 +497,29 @@ final class _TasksRepository implements TasksRepository {
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
       Stream.value(snapshot);
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      undoController.stream;
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(
+    DeleteTaskCommand command,
+  ) async {
+    deleted.add(command);
+    return Outcome<TaskDeleteReceipt>.success(
+      TaskDeleteReceipt(
+        taskId: command.taskId,
+        notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+      ),
+    );
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async {
+    undone.add(command);
+    return const Outcome<void>.success(null);
+  }
 }
 
 final class _HealthRepository implements SyncHealthRepository {

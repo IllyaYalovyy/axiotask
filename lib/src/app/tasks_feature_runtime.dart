@@ -3,6 +3,7 @@ import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
 import '../data/connectivity/connectivity.dart';
 import '../data/database/app_database.dart';
+import '../data/database/delete_state_dao.dart';
 import '../data/database/production_database.dart';
 import '../data/database/read_sync_store.dart';
 import '../data/database/sync_health_dao.dart';
@@ -67,6 +68,10 @@ final class TasksFeatureRuntime {
 
     final accountId = AccountId(accounts.first.id);
     final subject = AccountSubject(accounts.first.googleSubject);
+    await DeleteStateDao(database).cleanupExpiredTaskDeletes(
+      accountId: accountId,
+      now: composition.clock.now().toUtc(),
+    );
     final transport = await composition.createReadTransport(subject);
     final coordinator = SyncCoordinator(
       accountId: accountId,
@@ -74,6 +79,7 @@ final class TasksFeatureRuntime {
       clock: composition.clock,
       scheduler: composition.scheduler,
       settings: DatabaseSyncSettingsRepository(database),
+      taskDeleteEligibility: _DatabaseTaskDeleteEligibilityStore(database),
       lifecycle: lifecycle,
       connectivity: connectivity,
       run: (request) =>
@@ -111,6 +117,7 @@ final class TasksFeatureRuntime {
         ),
         syncHealthRepository: healthRepository,
         localEditCommitted: coordinator.localEditCommitted,
+        taskDeleteCommitted: coordinator.taskDeleteCommitted,
         refreshRequested: coordinator.refresh,
         stopSyncRequested: coordinator.stop,
         resumeSyncRequested: coordinator.resume,
@@ -145,12 +152,44 @@ final class _EmptyTasksRepository implements TasksRepository {
   );
 
   @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      const Stream<List<TaskDeleteUndo>>.empty();
+
+  @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
       Future.value(const Outcome<TaskId>.failure(_noTaskAccountFailure));
 
   @override
   Future<Outcome<void>> apply(ExistingTaskCommand command) =>
       Future.value(const Outcome<void>.failure(_noTaskAccountFailure));
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(DeleteTaskCommand command) =>
+      Future.value(
+        const Outcome<TaskDeleteReceipt>.failure(_noTaskAccountFailure),
+      );
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) =>
+      Future.value(const Outcome<void>.failure(_noTaskAccountFailure));
+}
+
+final class _DatabaseTaskDeleteEligibilityStore
+    implements TaskDeleteEligibilityStore {
+  _DatabaseTaskDeleteEligibilityStore(AppDatabase database)
+    : _deletes = DeleteStateDao(database);
+
+  final DeleteStateDao _deletes;
+
+  @override
+  Future<int> cleanupExpiredTaskDeletes({
+    required AccountId accountId,
+    required DateTime now,
+  }) => _deletes.cleanupExpiredTaskDeletes(accountId: accountId, now: now);
+
+  @override
+  Future<DateTime?> nextTaskDeleteExpiry(AccountId accountId) =>
+      _deletes.nextTaskDeleteExpiry(accountId);
 }
 
 const Failure _noTaskAccountFailure = Failure(

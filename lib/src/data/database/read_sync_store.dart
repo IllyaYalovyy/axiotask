@@ -4,11 +4,13 @@ import '../../core/failure.dart';
 import '../../data/google_tasks/dto.dart';
 import '../../domain/model/tasks.dart';
 import '../../sync/create_operations.dart';
+import '../../sync/delete_operations.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/run.dart';
 import '../../sync/update_operations.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
+import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'sync_health_dao.dart';
 
@@ -21,12 +23,120 @@ final class DatabaseReadSyncStore implements SyncStore {
          _database,
          transactionControl: transactionControl,
        ),
+       _deletes = DeleteStateDao(_database),
        _health = SyncHealthDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
   final DesiredStateDao _desired;
+  final DeleteStateDao _deletes;
   final SyncHealthDao _health;
+
+  @override
+  Future<void> recoverDeletes({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) async {
+    await _desired.recoverInFlightDeletes(
+      accountId: accountId,
+      recoveredAt: recoveredAt,
+    );
+    await _deletes.cleanupExpiredTaskDeletes(
+      accountId: accountId,
+      now: recoveredAt,
+    );
+  }
+
+  @override
+  Future<void> reconcileDeletes({
+    required AccountId accountId,
+    required String runId,
+    required DateTime reconciledAt,
+  }) => _deletes.reconcileDeletes(
+    accountId: accountId,
+    runId: runId,
+    reconciledAt: reconciledAt,
+  );
+
+  @override
+  Future<DeleteOperationClaim?> claimNextDelete({
+    required AccountId accountId,
+    required String runId,
+    required DateTime claimedAt,
+  }) => _database.transaction(() async {
+    final candidate = await _deletes.readNextEligibleDelete(
+      accountId: accountId,
+      now: claimedAt,
+      runId: runId,
+    );
+    if (candidate == null) return null;
+    final attempt = candidate.resourceType == DeleteResourceType.taskList
+        ? await _desired.claimTaskList(
+            accountId: accountId,
+            taskListId: candidate.taskListId,
+            claimedAt: claimedAt,
+          )
+        : await _desired.claimTask(
+            accountId: accountId,
+            taskId: candidate.taskId!,
+            claimedAt: claimedAt,
+          );
+    return DeleteOperationClaim(
+      kind: candidate.resourceType == DeleteResourceType.taskList
+          ? DeleteOperationKind.taskList
+          : DeleteOperationKind.task,
+      attemptId: attempt.id,
+      generation: attempt.generation,
+      taskListId: candidate.taskListId,
+      taskListRemoteId: candidate.taskListRemoteId,
+      taskId: candidate.taskId,
+      taskRemoteId: candidate.taskRemoteId,
+      etag: candidate.etag,
+    );
+  });
+
+  @override
+  Future<void> acknowledgeTaskListDelete({
+    required AccountId accountId,
+    required DeleteOperationClaim claim,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) => _deletes.acknowledgeTaskListDelete(
+    accountId: accountId,
+    claim: claim,
+    observationId: observationId,
+    acknowledgedAt: acknowledgedAt,
+  );
+
+  @override
+  Future<void> acknowledgeTaskDelete({
+    required AccountId accountId,
+    required DeleteOperationClaim claim,
+    required String observationId,
+    required DateTime acknowledgedAt,
+  }) => _deletes.acknowledgeTaskDelete(
+    accountId: accountId,
+    claim: claim,
+    observationId: observationId,
+    acknowledgedAt: acknowledgedAt,
+  );
+
+  @override
+  Future<void> resolveDeleteFailure({
+    required AccountId accountId,
+    required DeleteOperationClaim claim,
+    required Failure failure,
+    required bool uncertain,
+    required DateTime resolvedAt,
+  }) => _desired.transitionAttempt(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    state: uncertain
+        ? DesiredStateLifecycle.uncertain
+        : DesiredStateLifecycle.failed,
+    transitionedAt: resolvedAt,
+    failureCode: failure.code,
+  );
 
   @override
   Future<void> recoverCreateAttempts({
@@ -445,8 +555,26 @@ final class DatabaseReadSyncStore implements SyncStore {
                   ))
                   .getSingleOrNull() !=
               null;
-          final projectionChanged =
-              existing.projection != CacheProjection.supported.name;
+          final hasUnresolvedDelete =
+              await (_database.select(_database.desiredStateRows)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.resourceType.equals('task_list') &
+                        row.targetTaskListId.equals(existing.id) &
+                        row.desiredLifecycle.equals('deleted') &
+                        row.state.isIn(const <String>[
+                          'pending',
+                          'in_flight',
+                          'uncertain',
+                          'failed',
+                        ]),
+                  ))
+                  .getSingleOrNull() !=
+              null;
+          final desiredProjection = hasUnresolvedDelete
+              ? CacheProjection.deleted.name
+              : CacheProjection.supported.name;
+          final projectionChanged = existing.projection != desiredProjection;
           final titleChanged =
               !hasUnresolvedLocalTitle && existing.title != item.title;
           if (titleChanged || projectionChanged) {
@@ -459,14 +587,10 @@ final class DatabaseReadSyncStore implements SyncStore {
                   titleChanged
                       ? TaskListCacheRowsCompanion(
                           title: Value<String>(item.title),
-                          projection: Value<String>(
-                            CacheProjection.supported.name,
-                          ),
+                          projection: Value<String>(desiredProjection),
                         )
                       : TaskListCacheRowsCompanion(
-                          projection: Value<String>(
-                            CacheProjection.supported.name,
-                          ),
+                          projection: Value<String>(desiredProjection),
                         ),
                 );
             writes += 1;
@@ -542,6 +666,17 @@ final class DatabaseReadSyncStore implements SyncStore {
               writes += 1;
             } else {
               localId = TaskId(existing.id);
+              await _deletes.preserveMovedDeleteSurvivor(
+                accountId: accountId,
+                taskId: localId,
+                currentTaskListId: taskList.localId,
+                currentParentTaskId: parentId,
+              );
+              final protectedByDelete = await _deletes
+                  .isTaskProtectedByDeleteSnapshot(
+                    accountId: accountId,
+                    taskId: localId,
+                  );
               final hasUnresolvedLocalContent =
                   await (_database.select(_database.desiredStateRows)..where(
                         (row) =>
@@ -563,7 +698,10 @@ final class DatabaseReadSyncStore implements SyncStore {
                   existing.taskListId != taskList.localId.value ||
                   existing.parentTaskId != parentId?.value ||
                   existing.position != item.position ||
-                  existing.projection != CacheProjection.supported.name;
+                  existing.projection !=
+                      (protectedByDelete
+                          ? CacheProjection.deleted.name
+                          : CacheProjection.supported.name);
               final contentChanged =
                   !hasUnresolvedLocalContent &&
                   (existing.title != item.title ||
@@ -594,7 +732,9 @@ final class DatabaseReadSyncStore implements SyncStore {
                             : Value<int?>(_epochDay(due)),
                         position: Value<String>(item.position),
                         projection: Value<String>(
-                          CacheProjection.supported.name,
+                          protectedByDelete
+                              ? CacheProjection.deleted.name
+                              : CacheProjection.supported.name,
                         ),
                       ),
                     );

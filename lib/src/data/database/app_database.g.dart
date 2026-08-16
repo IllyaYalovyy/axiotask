@@ -4037,6 +4037,17 @@ class $DesiredStateRowsTable extends DesiredStateRows
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _notBeforeMeta = const VerificationMeta(
+    'notBefore',
+  );
+  @override
+  late final GeneratedColumn<DateTime> notBefore = GeneratedColumn<DateTime>(
+    'not_before',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _generationMeta = const VerificationMeta(
     'generation',
   );
@@ -4236,6 +4247,7 @@ class $DesiredStateRowsTable extends DesiredStateRows
     structureDirty,
     lifecycleDirty,
     localModifiedAt,
+    notBefore,
     generation,
     localCausalSequence,
     state,
@@ -4410,6 +4422,12 @@ class $DesiredStateRowsTable extends DesiredStateRows
           data['local_modified_at']!,
           _localModifiedAtMeta,
         ),
+      );
+    }
+    if (data.containsKey('not_before')) {
+      context.handle(
+        _notBeforeMeta,
+        notBefore.isAcceptableOrUnknown(data['not_before']!, _notBeforeMeta),
       );
     }
     if (data.containsKey('generation')) {
@@ -4613,6 +4631,10 @@ class $DesiredStateRowsTable extends DesiredStateRows
         DriftSqlType.dateTime,
         data['${effectivePrefix}local_modified_at'],
       ),
+      notBefore: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}not_before'],
+      ),
       generation: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}generation'],
@@ -4697,6 +4719,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
   final bool structureDirty;
   final bool lifecycleDirty;
   final DateTime? localModifiedAt;
+  final DateTime? notBefore;
   final int generation;
   final int localCausalSequence;
   final String state;
@@ -4730,6 +4753,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     required this.structureDirty,
     required this.lifecycleDirty,
     this.localModifiedAt,
+    this.notBefore,
     required this.generation,
     required this.localCausalSequence,
     required this.state,
@@ -4785,6 +4809,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     map['lifecycle_dirty'] = Variable<bool>(lifecycleDirty);
     if (!nullToAbsent || localModifiedAt != null) {
       map['local_modified_at'] = Variable<DateTime>(localModifiedAt);
+    }
+    if (!nullToAbsent || notBefore != null) {
+      map['not_before'] = Variable<DateTime>(notBefore);
     }
     map['generation'] = Variable<int>(generation);
     map['local_causal_sequence'] = Variable<int>(localCausalSequence);
@@ -4863,6 +4890,9 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       localModifiedAt: localModifiedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(localModifiedAt),
+      notBefore: notBefore == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notBefore),
       generation: Value(generation),
       localCausalSequence: Value(localCausalSequence),
       state: Value(state),
@@ -4927,6 +4957,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       structureDirty: serializer.fromJson<bool>(json['structureDirty']),
       lifecycleDirty: serializer.fromJson<bool>(json['lifecycleDirty']),
       localModifiedAt: serializer.fromJson<DateTime?>(json['localModifiedAt']),
+      notBefore: serializer.fromJson<DateTime?>(json['notBefore']),
       generation: serializer.fromJson<int>(json['generation']),
       localCausalSequence: serializer.fromJson<int>(
         json['localCausalSequence'],
@@ -4971,6 +5002,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       'structureDirty': serializer.toJson<bool>(structureDirty),
       'lifecycleDirty': serializer.toJson<bool>(lifecycleDirty),
       'localModifiedAt': serializer.toJson<DateTime?>(localModifiedAt),
+      'notBefore': serializer.toJson<DateTime?>(notBefore),
       'generation': serializer.toJson<int>(generation),
       'localCausalSequence': serializer.toJson<int>(localCausalSequence),
       'state': serializer.toJson<String>(state),
@@ -5009,6 +5041,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     bool? structureDirty,
     bool? lifecycleDirty,
     Value<DateTime?> localModifiedAt = const Value.absent(),
+    Value<DateTime?> notBefore = const Value.absent(),
     int? generation,
     int? localCausalSequence,
     String? state,
@@ -5052,6 +5085,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     localModifiedAt: localModifiedAt.present
         ? localModifiedAt.value
         : this.localModifiedAt,
+    notBefore: notBefore.present ? notBefore.value : this.notBefore,
     generation: generation ?? this.generation,
     localCausalSequence: localCausalSequence ?? this.localCausalSequence,
     state: state ?? this.state,
@@ -5117,6 +5151,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
       localModifiedAt: data.localModifiedAt.present
           ? data.localModifiedAt.value
           : this.localModifiedAt,
+      notBefore: data.notBefore.present ? data.notBefore.value : this.notBefore,
       generation: data.generation.present
           ? data.generation.value
           : this.generation,
@@ -5173,6 +5208,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           ..write('structureDirty: $structureDirty, ')
           ..write('lifecycleDirty: $lifecycleDirty, ')
           ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('notBefore: $notBefore, ')
           ..write('generation: $generation, ')
           ..write('localCausalSequence: $localCausalSequence, ')
           ..write('state: $state, ')
@@ -5211,6 +5247,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
     structureDirty,
     lifecycleDirty,
     localModifiedAt,
+    notBefore,
     generation,
     localCausalSequence,
     state,
@@ -5248,6 +5285,7 @@ class DesiredStateRow extends DataClass implements Insertable<DesiredStateRow> {
           other.structureDirty == this.structureDirty &&
           other.lifecycleDirty == this.lifecycleDirty &&
           other.localModifiedAt == this.localModifiedAt &&
+          other.notBefore == this.notBefore &&
           other.generation == this.generation &&
           other.localCausalSequence == this.localCausalSequence &&
           other.state == this.state &&
@@ -5283,6 +5321,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
   final Value<bool> structureDirty;
   final Value<bool> lifecycleDirty;
   final Value<DateTime?> localModifiedAt;
+  final Value<DateTime?> notBefore;
   final Value<int> generation;
   final Value<int> localCausalSequence;
   final Value<String> state;
@@ -5316,6 +5355,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.structureDirty = const Value.absent(),
     this.lifecycleDirty = const Value.absent(),
     this.localModifiedAt = const Value.absent(),
+    this.notBefore = const Value.absent(),
     this.generation = const Value.absent(),
     this.localCausalSequence = const Value.absent(),
     this.state = const Value.absent(),
@@ -5350,6 +5390,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     this.structureDirty = const Value.absent(),
     this.lifecycleDirty = const Value.absent(),
     this.localModifiedAt = const Value.absent(),
+    this.notBefore = const Value.absent(),
     required int generation,
     required int localCausalSequence,
     required String state,
@@ -5392,6 +5433,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Expression<bool>? structureDirty,
     Expression<bool>? lifecycleDirty,
     Expression<DateTime>? localModifiedAt,
+    Expression<DateTime>? notBefore,
     Expression<int>? generation,
     Expression<int>? localCausalSequence,
     Expression<String>? state,
@@ -5428,6 +5470,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       if (structureDirty != null) 'structure_dirty': structureDirty,
       if (lifecycleDirty != null) 'lifecycle_dirty': lifecycleDirty,
       if (localModifiedAt != null) 'local_modified_at': localModifiedAt,
+      if (notBefore != null) 'not_before': notBefore,
       if (generation != null) 'generation': generation,
       if (localCausalSequence != null)
         'local_causal_sequence': localCausalSequence,
@@ -5467,6 +5510,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     Value<bool>? structureDirty,
     Value<bool>? lifecycleDirty,
     Value<DateTime?>? localModifiedAt,
+    Value<DateTime?>? notBefore,
     Value<int>? generation,
     Value<int>? localCausalSequence,
     Value<String>? state,
@@ -5502,6 +5546,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
       structureDirty: structureDirty ?? this.structureDirty,
       lifecycleDirty: lifecycleDirty ?? this.lifecycleDirty,
       localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+      notBefore: notBefore ?? this.notBefore,
       generation: generation ?? this.generation,
       localCausalSequence: localCausalSequence ?? this.localCausalSequence,
       state: state ?? this.state,
@@ -5579,6 +5624,9 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
     if (localModifiedAt.present) {
       map['local_modified_at'] = Variable<DateTime>(localModifiedAt.value);
     }
+    if (notBefore.present) {
+      map['not_before'] = Variable<DateTime>(notBefore.value);
+    }
     if (generation.present) {
       map['generation'] = Variable<int>(generation.value);
     }
@@ -5649,6 +5697,7 @@ class DesiredStateRowsCompanion extends UpdateCompanion<DesiredStateRow> {
           ..write('structureDirty: $structureDirty, ')
           ..write('lifecycleDirty: $lifecycleDirty, ')
           ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('notBefore: $notBefore, ')
           ..write('generation: $generation, ')
           ..write('localCausalSequence: $localCausalSequence, ')
           ..write('state: $state, ')
@@ -6311,6 +6360,17 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _notBeforeMeta = const VerificationMeta(
+    'notBefore',
+  );
+  @override
+  late final GeneratedColumn<DateTime> notBefore = GeneratedColumn<DateTime>(
+    'not_before',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _stateMeta = const VerificationMeta('state');
   @override
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
@@ -6384,6 +6444,7 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    notBefore,
     state,
     failureCode,
     claimedAt,
@@ -6535,6 +6596,12 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
         baseTitle.isAcceptableOrUnknown(data['base_title']!, _baseTitleMeta),
       );
     }
+    if (data.containsKey('not_before')) {
+      context.handle(
+        _notBeforeMeta,
+        notBefore.isAcceptableOrUnknown(data['not_before']!, _notBeforeMeta),
+      );
+    }
     if (data.containsKey('state')) {
       context.handle(
         _stateMeta,
@@ -6652,6 +6719,10 @@ class $DesiredStateAttemptRowsTable extends DesiredStateAttemptRows
         DriftSqlType.string,
         data['${effectivePrefix}base_title'],
       ),
+      notBefore: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}not_before'],
+      ),
       state: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}state'],
@@ -6696,6 +6767,7 @@ class DesiredStateAttemptRow extends DataClass
   final DateTime? baseRemoteUpdatedAt;
   final String? baseObservedPublicationId;
   final String? baseTitle;
+  final DateTime? notBefore;
   final String state;
   final String? failureCode;
   final DateTime claimedAt;
@@ -6718,6 +6790,7 @@ class DesiredStateAttemptRow extends DataClass
     this.baseRemoteUpdatedAt,
     this.baseObservedPublicationId,
     this.baseTitle,
+    this.notBefore,
     required this.state,
     this.failureCode,
     required this.claimedAt,
@@ -6768,6 +6841,9 @@ class DesiredStateAttemptRow extends DataClass
     }
     if (!nullToAbsent || baseTitle != null) {
       map['base_title'] = Variable<String>(baseTitle);
+    }
+    if (!nullToAbsent || notBefore != null) {
+      map['not_before'] = Variable<DateTime>(notBefore);
     }
     map['state'] = Variable<String>(state);
     if (!nullToAbsent || failureCode != null) {
@@ -6822,6 +6898,9 @@ class DesiredStateAttemptRow extends DataClass
       baseTitle: baseTitle == null && nullToAbsent
           ? const Value.absent()
           : Value(baseTitle),
+      notBefore: notBefore == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notBefore),
       state: Value(state),
       failureCode: failureCode == null && nullToAbsent
           ? const Value.absent()
@@ -6862,6 +6941,7 @@ class DesiredStateAttemptRow extends DataClass
         json['baseObservedPublicationId'],
       ),
       baseTitle: serializer.fromJson<String?>(json['baseTitle']),
+      notBefore: serializer.fromJson<DateTime?>(json['notBefore']),
       state: serializer.fromJson<String>(json['state']),
       failureCode: serializer.fromJson<String?>(json['failureCode']),
       claimedAt: serializer.fromJson<DateTime>(json['claimedAt']),
@@ -6891,6 +6971,7 @@ class DesiredStateAttemptRow extends DataClass
         baseObservedPublicationId,
       ),
       'baseTitle': serializer.toJson<String?>(baseTitle),
+      'notBefore': serializer.toJson<DateTime?>(notBefore),
       'state': serializer.toJson<String>(state),
       'failureCode': serializer.toJson<String?>(failureCode),
       'claimedAt': serializer.toJson<DateTime>(claimedAt),
@@ -6916,6 +6997,7 @@ class DesiredStateAttemptRow extends DataClass
     Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
     Value<String?> baseObservedPublicationId = const Value.absent(),
     Value<String?> baseTitle = const Value.absent(),
+    Value<DateTime?> notBefore = const Value.absent(),
     String? state,
     Value<String?> failureCode = const Value.absent(),
     DateTime? claimedAt,
@@ -6948,6 +7030,7 @@ class DesiredStateAttemptRow extends DataClass
         ? baseObservedPublicationId.value
         : this.baseObservedPublicationId,
     baseTitle: baseTitle.present ? baseTitle.value : this.baseTitle,
+    notBefore: notBefore.present ? notBefore.value : this.notBefore,
     state: state ?? this.state,
     failureCode: failureCode.present ? failureCode.value : this.failureCode,
     claimedAt: claimedAt ?? this.claimedAt,
@@ -6994,6 +7077,7 @@ class DesiredStateAttemptRow extends DataClass
           ? data.baseObservedPublicationId.value
           : this.baseObservedPublicationId,
       baseTitle: data.baseTitle.present ? data.baseTitle.value : this.baseTitle,
+      notBefore: data.notBefore.present ? data.notBefore.value : this.notBefore,
       state: data.state.present ? data.state.value : this.state,
       failureCode: data.failureCode.present
           ? data.failureCode.value
@@ -7025,6 +7109,7 @@ class DesiredStateAttemptRow extends DataClass
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('notBefore: $notBefore, ')
           ..write('state: $state, ')
           ..write('failureCode: $failureCode, ')
           ..write('claimedAt: $claimedAt, ')
@@ -7052,6 +7137,7 @@ class DesiredStateAttemptRow extends DataClass
     baseRemoteUpdatedAt,
     baseObservedPublicationId,
     baseTitle,
+    notBefore,
     state,
     failureCode,
     claimedAt,
@@ -7078,6 +7164,7 @@ class DesiredStateAttemptRow extends DataClass
           other.baseRemoteUpdatedAt == this.baseRemoteUpdatedAt &&
           other.baseObservedPublicationId == this.baseObservedPublicationId &&
           other.baseTitle == this.baseTitle &&
+          other.notBefore == this.notBefore &&
           other.state == this.state &&
           other.failureCode == this.failureCode &&
           other.claimedAt == this.claimedAt &&
@@ -7103,6 +7190,7 @@ class DesiredStateAttemptRowsCompanion
   final Value<DateTime?> baseRemoteUpdatedAt;
   final Value<String?> baseObservedPublicationId;
   final Value<String?> baseTitle;
+  final Value<DateTime?> notBefore;
   final Value<String> state;
   final Value<String?> failureCode;
   final Value<DateTime> claimedAt;
@@ -7125,6 +7213,7 @@ class DesiredStateAttemptRowsCompanion
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.notBefore = const Value.absent(),
     this.state = const Value.absent(),
     this.failureCode = const Value.absent(),
     this.claimedAt = const Value.absent(),
@@ -7148,6 +7237,7 @@ class DesiredStateAttemptRowsCompanion
     this.baseRemoteUpdatedAt = const Value.absent(),
     this.baseObservedPublicationId = const Value.absent(),
     this.baseTitle = const Value.absent(),
+    this.notBefore = const Value.absent(),
     required String state,
     this.failureCode = const Value.absent(),
     required DateTime claimedAt,
@@ -7177,6 +7267,7 @@ class DesiredStateAttemptRowsCompanion
     Expression<DateTime>? baseRemoteUpdatedAt,
     Expression<String>? baseObservedPublicationId,
     Expression<String>? baseTitle,
+    Expression<DateTime>? notBefore,
     Expression<String>? state,
     Expression<String>? failureCode,
     Expression<DateTime>? claimedAt,
@@ -7204,6 +7295,7 @@ class DesiredStateAttemptRowsCompanion
       if (baseObservedPublicationId != null)
         'base_observed_publication_id': baseObservedPublicationId,
       if (baseTitle != null) 'base_title': baseTitle,
+      if (notBefore != null) 'not_before': notBefore,
       if (state != null) 'state': state,
       if (failureCode != null) 'failure_code': failureCode,
       if (claimedAt != null) 'claimed_at': claimedAt,
@@ -7229,6 +7321,7 @@ class DesiredStateAttemptRowsCompanion
     Value<DateTime?>? baseRemoteUpdatedAt,
     Value<String?>? baseObservedPublicationId,
     Value<String?>? baseTitle,
+    Value<DateTime?>? notBefore,
     Value<String>? state,
     Value<String?>? failureCode,
     Value<DateTime>? claimedAt,
@@ -7254,6 +7347,7 @@ class DesiredStateAttemptRowsCompanion
       baseObservedPublicationId:
           baseObservedPublicationId ?? this.baseObservedPublicationId,
       baseTitle: baseTitle ?? this.baseTitle,
+      notBefore: notBefore ?? this.notBefore,
       state: state ?? this.state,
       failureCode: failureCode ?? this.failureCode,
       claimedAt: claimedAt ?? this.claimedAt,
@@ -7321,6 +7415,9 @@ class DesiredStateAttemptRowsCompanion
     if (baseTitle.present) {
       map['base_title'] = Variable<String>(baseTitle.value);
     }
+    if (notBefore.present) {
+      map['not_before'] = Variable<DateTime>(notBefore.value);
+    }
     if (state.present) {
       map['state'] = Variable<String>(state.value);
     }
@@ -7356,10 +7453,1264 @@ class DesiredStateAttemptRowsCompanion
           ..write('baseRemoteUpdatedAt: $baseRemoteUpdatedAt, ')
           ..write('baseObservedPublicationId: $baseObservedPublicationId, ')
           ..write('baseTitle: $baseTitle, ')
+          ..write('notBefore: $notBefore, ')
           ..write('state: $state, ')
           ..write('failureCode: $failureCode, ')
           ..write('claimedAt: $claimedAt, ')
           ..write('lastTransitionAt: $lastTransitionAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
+    with TableInfo<$TaskDeleteTombstoneRowsTable, TaskDeleteTombstoneRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TaskDeleteTombstoneRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rootTaskIdMeta = const VerificationMeta(
+    'rootTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> rootTaskId = GeneratedColumn<int>(
+    'root_task_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _desiredStateIdMeta = const VerificationMeta(
+    'desiredStateId',
+  );
+  @override
+  late final GeneratedColumn<int> desiredStateId = GeneratedColumn<int>(
+    'desired_state_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _deleteGenerationMeta = const VerificationMeta(
+    'deleteGeneration',
+  );
+  @override
+  late final GeneratedColumn<int> deleteGeneration = GeneratedColumn<int>(
+    'delete_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _notBeforeMeta = const VerificationMeta(
+    'notBefore',
+  );
+  @override
+  late final GeneratedColumn<DateTime> notBefore = GeneratedColumn<DateTime>(
+    'not_before',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _snapshotAvailableMeta = const VerificationMeta(
+    'snapshotAvailable',
+  );
+  @override
+  late final GeneratedColumn<bool> snapshotAvailable = GeneratedColumn<bool>(
+    'snapshot_available',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("snapshot_available" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    rootTaskId,
+    desiredStateId,
+    deleteGeneration,
+    notBefore,
+    snapshotAvailable,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'task_delete_tombstones';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TaskDeleteTombstoneRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('root_task_id')) {
+      context.handle(
+        _rootTaskIdMeta,
+        rootTaskId.isAcceptableOrUnknown(
+          data['root_task_id']!,
+          _rootTaskIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_rootTaskIdMeta);
+    }
+    if (data.containsKey('desired_state_id')) {
+      context.handle(
+        _desiredStateIdMeta,
+        desiredStateId.isAcceptableOrUnknown(
+          data['desired_state_id']!,
+          _desiredStateIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_desiredStateIdMeta);
+    }
+    if (data.containsKey('delete_generation')) {
+      context.handle(
+        _deleteGenerationMeta,
+        deleteGeneration.isAcceptableOrUnknown(
+          data['delete_generation']!,
+          _deleteGenerationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_deleteGenerationMeta);
+    }
+    if (data.containsKey('not_before')) {
+      context.handle(
+        _notBeforeMeta,
+        notBefore.isAcceptableOrUnknown(data['not_before']!, _notBeforeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_notBeforeMeta);
+    }
+    if (data.containsKey('snapshot_available')) {
+      context.handle(
+        _snapshotAvailableMeta,
+        snapshotAvailable.isAcceptableOrUnknown(
+          data['snapshot_available']!,
+          _snapshotAvailableMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_snapshotAvailableMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, id},
+    {accountId, rootTaskId},
+  ];
+  @override
+  TaskDeleteTombstoneRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TaskDeleteTombstoneRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      rootTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}root_task_id'],
+      )!,
+      desiredStateId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}desired_state_id'],
+      )!,
+      deleteGeneration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}delete_generation'],
+      )!,
+      notBefore: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}not_before'],
+      )!,
+      snapshotAvailable: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}snapshot_available'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TaskDeleteTombstoneRowsTable createAlias(String alias) {
+    return $TaskDeleteTombstoneRowsTable(attachedDatabase, alias);
+  }
+}
+
+class TaskDeleteTombstoneRow extends DataClass
+    implements Insertable<TaskDeleteTombstoneRow> {
+  final int id;
+  final int accountId;
+  final int rootTaskId;
+  final int desiredStateId;
+  final int deleteGeneration;
+  final DateTime notBefore;
+  final bool snapshotAvailable;
+  final DateTime createdAt;
+  const TaskDeleteTombstoneRow({
+    required this.id,
+    required this.accountId,
+    required this.rootTaskId,
+    required this.desiredStateId,
+    required this.deleteGeneration,
+    required this.notBefore,
+    required this.snapshotAvailable,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['root_task_id'] = Variable<int>(rootTaskId);
+    map['desired_state_id'] = Variable<int>(desiredStateId);
+    map['delete_generation'] = Variable<int>(deleteGeneration);
+    map['not_before'] = Variable<DateTime>(notBefore);
+    map['snapshot_available'] = Variable<bool>(snapshotAvailable);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  TaskDeleteTombstoneRowsCompanion toCompanion(bool nullToAbsent) {
+    return TaskDeleteTombstoneRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      rootTaskId: Value(rootTaskId),
+      desiredStateId: Value(desiredStateId),
+      deleteGeneration: Value(deleteGeneration),
+      notBefore: Value(notBefore),
+      snapshotAvailable: Value(snapshotAvailable),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory TaskDeleteTombstoneRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TaskDeleteTombstoneRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      rootTaskId: serializer.fromJson<int>(json['rootTaskId']),
+      desiredStateId: serializer.fromJson<int>(json['desiredStateId']),
+      deleteGeneration: serializer.fromJson<int>(json['deleteGeneration']),
+      notBefore: serializer.fromJson<DateTime>(json['notBefore']),
+      snapshotAvailable: serializer.fromJson<bool>(json['snapshotAvailable']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'rootTaskId': serializer.toJson<int>(rootTaskId),
+      'desiredStateId': serializer.toJson<int>(desiredStateId),
+      'deleteGeneration': serializer.toJson<int>(deleteGeneration),
+      'notBefore': serializer.toJson<DateTime>(notBefore),
+      'snapshotAvailable': serializer.toJson<bool>(snapshotAvailable),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  TaskDeleteTombstoneRow copyWith({
+    int? id,
+    int? accountId,
+    int? rootTaskId,
+    int? desiredStateId,
+    int? deleteGeneration,
+    DateTime? notBefore,
+    bool? snapshotAvailable,
+    DateTime? createdAt,
+  }) => TaskDeleteTombstoneRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    rootTaskId: rootTaskId ?? this.rootTaskId,
+    desiredStateId: desiredStateId ?? this.desiredStateId,
+    deleteGeneration: deleteGeneration ?? this.deleteGeneration,
+    notBefore: notBefore ?? this.notBefore,
+    snapshotAvailable: snapshotAvailable ?? this.snapshotAvailable,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  TaskDeleteTombstoneRow copyWithCompanion(
+    TaskDeleteTombstoneRowsCompanion data,
+  ) {
+    return TaskDeleteTombstoneRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      rootTaskId: data.rootTaskId.present
+          ? data.rootTaskId.value
+          : this.rootTaskId,
+      desiredStateId: data.desiredStateId.present
+          ? data.desiredStateId.value
+          : this.desiredStateId,
+      deleteGeneration: data.deleteGeneration.present
+          ? data.deleteGeneration.value
+          : this.deleteGeneration,
+      notBefore: data.notBefore.present ? data.notBefore.value : this.notBefore,
+      snapshotAvailable: data.snapshotAvailable.present
+          ? data.snapshotAvailable.value
+          : this.snapshotAvailable,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteTombstoneRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('rootTaskId: $rootTaskId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('deleteGeneration: $deleteGeneration, ')
+          ..write('notBefore: $notBefore, ')
+          ..write('snapshotAvailable: $snapshotAvailable, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    rootTaskId,
+    desiredStateId,
+    deleteGeneration,
+    notBefore,
+    snapshotAvailable,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TaskDeleteTombstoneRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.rootTaskId == this.rootTaskId &&
+          other.desiredStateId == this.desiredStateId &&
+          other.deleteGeneration == this.deleteGeneration &&
+          other.notBefore == this.notBefore &&
+          other.snapshotAvailable == this.snapshotAvailable &&
+          other.createdAt == this.createdAt);
+}
+
+class TaskDeleteTombstoneRowsCompanion
+    extends UpdateCompanion<TaskDeleteTombstoneRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> rootTaskId;
+  final Value<int> desiredStateId;
+  final Value<int> deleteGeneration;
+  final Value<DateTime> notBefore;
+  final Value<bool> snapshotAvailable;
+  final Value<DateTime> createdAt;
+  const TaskDeleteTombstoneRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.rootTaskId = const Value.absent(),
+    this.desiredStateId = const Value.absent(),
+    this.deleteGeneration = const Value.absent(),
+    this.notBefore = const Value.absent(),
+    this.snapshotAvailable = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  TaskDeleteTombstoneRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int rootTaskId,
+    required int desiredStateId,
+    required int deleteGeneration,
+    required DateTime notBefore,
+    required bool snapshotAvailable,
+    required DateTime createdAt,
+  }) : accountId = Value(accountId),
+       rootTaskId = Value(rootTaskId),
+       desiredStateId = Value(desiredStateId),
+       deleteGeneration = Value(deleteGeneration),
+       notBefore = Value(notBefore),
+       snapshotAvailable = Value(snapshotAvailable),
+       createdAt = Value(createdAt);
+  static Insertable<TaskDeleteTombstoneRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? rootTaskId,
+    Expression<int>? desiredStateId,
+    Expression<int>? deleteGeneration,
+    Expression<DateTime>? notBefore,
+    Expression<bool>? snapshotAvailable,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (rootTaskId != null) 'root_task_id': rootTaskId,
+      if (desiredStateId != null) 'desired_state_id': desiredStateId,
+      if (deleteGeneration != null) 'delete_generation': deleteGeneration,
+      if (notBefore != null) 'not_before': notBefore,
+      if (snapshotAvailable != null) 'snapshot_available': snapshotAvailable,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  TaskDeleteTombstoneRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? rootTaskId,
+    Value<int>? desiredStateId,
+    Value<int>? deleteGeneration,
+    Value<DateTime>? notBefore,
+    Value<bool>? snapshotAvailable,
+    Value<DateTime>? createdAt,
+  }) {
+    return TaskDeleteTombstoneRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      rootTaskId: rootTaskId ?? this.rootTaskId,
+      desiredStateId: desiredStateId ?? this.desiredStateId,
+      deleteGeneration: deleteGeneration ?? this.deleteGeneration,
+      notBefore: notBefore ?? this.notBefore,
+      snapshotAvailable: snapshotAvailable ?? this.snapshotAvailable,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (rootTaskId.present) {
+      map['root_task_id'] = Variable<int>(rootTaskId.value);
+    }
+    if (desiredStateId.present) {
+      map['desired_state_id'] = Variable<int>(desiredStateId.value);
+    }
+    if (deleteGeneration.present) {
+      map['delete_generation'] = Variable<int>(deleteGeneration.value);
+    }
+    if (notBefore.present) {
+      map['not_before'] = Variable<DateTime>(notBefore.value);
+    }
+    if (snapshotAvailable.present) {
+      map['snapshot_available'] = Variable<bool>(snapshotAvailable.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteTombstoneRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('rootTaskId: $rootTaskId, ')
+          ..write('desiredStateId: $desiredStateId, ')
+          ..write('deleteGeneration: $deleteGeneration, ')
+          ..write('notBefore: $notBefore, ')
+          ..write('snapshotAvailable: $snapshotAvailable, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TaskDeleteSnapshotRowsTable extends TaskDeleteSnapshotRows
+    with TableInfo<$TaskDeleteSnapshotRowsTable, TaskDeleteSnapshotRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TaskDeleteSnapshotRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tombstoneIdMeta = const VerificationMeta(
+    'tombstoneId',
+  );
+  @override
+  late final GeneratedColumn<int> tombstoneId = GeneratedColumn<int>(
+    'tombstone_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _taskIdMeta = const VerificationMeta('taskId');
+  @override
+  late final GeneratedColumn<int> taskId = GeneratedColumn<int>(
+    'task_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _taskListIdMeta = const VerificationMeta(
+    'taskListId',
+  );
+  @override
+  late final GeneratedColumn<int> taskListId = GeneratedColumn<int>(
+    'task_list_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _parentTaskIdMeta = const VerificationMeta(
+    'parentTaskId',
+  );
+  @override
+  late final GeneratedColumn<int> parentTaskId = GeneratedColumn<int>(
+    'parent_task_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _remoteIdMeta = const VerificationMeta(
+    'remoteId',
+  );
+  @override
+  late final GeneratedColumn<String> remoteId = GeneratedColumn<String>(
+    'remote_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+    'title',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _notesMeta = const VerificationMeta('notes');
+  @override
+  late final GeneratedColumn<String> notes = GeneratedColumn<String>(
+    'notes',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    check: () => status.isIn(const <String>['needs_action', 'completed']),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _dueEpochDayMeta = const VerificationMeta(
+    'dueEpochDay',
+  );
+  @override
+  late final GeneratedColumn<int> dueEpochDay = GeneratedColumn<int>(
+    'due_epoch_day',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _positionMeta = const VerificationMeta(
+    'position',
+  );
+  @override
+  late final GeneratedColumn<String> position = GeneratedColumn<String>(
+    'position',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    tombstoneId,
+    taskId,
+    taskListId,
+    parentTaskId,
+    remoteId,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    position,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'task_delete_snapshots';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TaskDeleteSnapshotRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('tombstone_id')) {
+      context.handle(
+        _tombstoneIdMeta,
+        tombstoneId.isAcceptableOrUnknown(
+          data['tombstone_id']!,
+          _tombstoneIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_tombstoneIdMeta);
+    }
+    if (data.containsKey('task_id')) {
+      context.handle(
+        _taskIdMeta,
+        taskId.isAcceptableOrUnknown(data['task_id']!, _taskIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_taskIdMeta);
+    }
+    if (data.containsKey('task_list_id')) {
+      context.handle(
+        _taskListIdMeta,
+        taskListId.isAcceptableOrUnknown(
+          data['task_list_id']!,
+          _taskListIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_taskListIdMeta);
+    }
+    if (data.containsKey('parent_task_id')) {
+      context.handle(
+        _parentTaskIdMeta,
+        parentTaskId.isAcceptableOrUnknown(
+          data['parent_task_id']!,
+          _parentTaskIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('remote_id')) {
+      context.handle(
+        _remoteIdMeta,
+        remoteId.isAcceptableOrUnknown(data['remote_id']!, _remoteIdMeta),
+      );
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('notes')) {
+      context.handle(
+        _notesMeta,
+        notes.isAcceptableOrUnknown(data['notes']!, _notesMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_statusMeta);
+    }
+    if (data.containsKey('due_epoch_day')) {
+      context.handle(
+        _dueEpochDayMeta,
+        dueEpochDay.isAcceptableOrUnknown(
+          data['due_epoch_day']!,
+          _dueEpochDayMeta,
+        ),
+      );
+    }
+    if (data.containsKey('position')) {
+      context.handle(
+        _positionMeta,
+        position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_positionMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, tombstoneId, taskId},
+  ];
+  @override
+  TaskDeleteSnapshotRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TaskDeleteSnapshotRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      tombstoneId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}tombstone_id'],
+      )!,
+      taskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}task_id'],
+      )!,
+      taskListId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}task_list_id'],
+      )!,
+      parentTaskId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}parent_task_id'],
+      ),
+      remoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}remote_id'],
+      ),
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      )!,
+      notes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}notes'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      dueEpochDay: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}due_epoch_day'],
+      ),
+      position: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}position'],
+      )!,
+    );
+  }
+
+  @override
+  $TaskDeleteSnapshotRowsTable createAlias(String alias) {
+    return $TaskDeleteSnapshotRowsTable(attachedDatabase, alias);
+  }
+}
+
+class TaskDeleteSnapshotRow extends DataClass
+    implements Insertable<TaskDeleteSnapshotRow> {
+  final int id;
+  final int accountId;
+  final int tombstoneId;
+  final int taskId;
+  final int taskListId;
+  final int? parentTaskId;
+  final String? remoteId;
+  final String title;
+  final String? notes;
+  final String status;
+  final int? dueEpochDay;
+  final String position;
+  const TaskDeleteSnapshotRow({
+    required this.id,
+    required this.accountId,
+    required this.tombstoneId,
+    required this.taskId,
+    required this.taskListId,
+    this.parentTaskId,
+    this.remoteId,
+    required this.title,
+    this.notes,
+    required this.status,
+    this.dueEpochDay,
+    required this.position,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['tombstone_id'] = Variable<int>(tombstoneId);
+    map['task_id'] = Variable<int>(taskId);
+    map['task_list_id'] = Variable<int>(taskListId);
+    if (!nullToAbsent || parentTaskId != null) {
+      map['parent_task_id'] = Variable<int>(parentTaskId);
+    }
+    if (!nullToAbsent || remoteId != null) {
+      map['remote_id'] = Variable<String>(remoteId);
+    }
+    map['title'] = Variable<String>(title);
+    if (!nullToAbsent || notes != null) {
+      map['notes'] = Variable<String>(notes);
+    }
+    map['status'] = Variable<String>(status);
+    if (!nullToAbsent || dueEpochDay != null) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay);
+    }
+    map['position'] = Variable<String>(position);
+    return map;
+  }
+
+  TaskDeleteSnapshotRowsCompanion toCompanion(bool nullToAbsent) {
+    return TaskDeleteSnapshotRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      tombstoneId: Value(tombstoneId),
+      taskId: Value(taskId),
+      taskListId: Value(taskListId),
+      parentTaskId: parentTaskId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(parentTaskId),
+      remoteId: remoteId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteId),
+      title: Value(title),
+      notes: notes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notes),
+      status: Value(status),
+      dueEpochDay: dueEpochDay == null && nullToAbsent
+          ? const Value.absent()
+          : Value(dueEpochDay),
+      position: Value(position),
+    );
+  }
+
+  factory TaskDeleteSnapshotRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TaskDeleteSnapshotRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      tombstoneId: serializer.fromJson<int>(json['tombstoneId']),
+      taskId: serializer.fromJson<int>(json['taskId']),
+      taskListId: serializer.fromJson<int>(json['taskListId']),
+      parentTaskId: serializer.fromJson<int?>(json['parentTaskId']),
+      remoteId: serializer.fromJson<String?>(json['remoteId']),
+      title: serializer.fromJson<String>(json['title']),
+      notes: serializer.fromJson<String?>(json['notes']),
+      status: serializer.fromJson<String>(json['status']),
+      dueEpochDay: serializer.fromJson<int?>(json['dueEpochDay']),
+      position: serializer.fromJson<String>(json['position']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'tombstoneId': serializer.toJson<int>(tombstoneId),
+      'taskId': serializer.toJson<int>(taskId),
+      'taskListId': serializer.toJson<int>(taskListId),
+      'parentTaskId': serializer.toJson<int?>(parentTaskId),
+      'remoteId': serializer.toJson<String?>(remoteId),
+      'title': serializer.toJson<String>(title),
+      'notes': serializer.toJson<String?>(notes),
+      'status': serializer.toJson<String>(status),
+      'dueEpochDay': serializer.toJson<int?>(dueEpochDay),
+      'position': serializer.toJson<String>(position),
+    };
+  }
+
+  TaskDeleteSnapshotRow copyWith({
+    int? id,
+    int? accountId,
+    int? tombstoneId,
+    int? taskId,
+    int? taskListId,
+    Value<int?> parentTaskId = const Value.absent(),
+    Value<String?> remoteId = const Value.absent(),
+    String? title,
+    Value<String?> notes = const Value.absent(),
+    String? status,
+    Value<int?> dueEpochDay = const Value.absent(),
+    String? position,
+  }) => TaskDeleteSnapshotRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    tombstoneId: tombstoneId ?? this.tombstoneId,
+    taskId: taskId ?? this.taskId,
+    taskListId: taskListId ?? this.taskListId,
+    parentTaskId: parentTaskId.present ? parentTaskId.value : this.parentTaskId,
+    remoteId: remoteId.present ? remoteId.value : this.remoteId,
+    title: title ?? this.title,
+    notes: notes.present ? notes.value : this.notes,
+    status: status ?? this.status,
+    dueEpochDay: dueEpochDay.present ? dueEpochDay.value : this.dueEpochDay,
+    position: position ?? this.position,
+  );
+  TaskDeleteSnapshotRow copyWithCompanion(
+    TaskDeleteSnapshotRowsCompanion data,
+  ) {
+    return TaskDeleteSnapshotRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      tombstoneId: data.tombstoneId.present
+          ? data.tombstoneId.value
+          : this.tombstoneId,
+      taskId: data.taskId.present ? data.taskId.value : this.taskId,
+      taskListId: data.taskListId.present
+          ? data.taskListId.value
+          : this.taskListId,
+      parentTaskId: data.parentTaskId.present
+          ? data.parentTaskId.value
+          : this.parentTaskId,
+      remoteId: data.remoteId.present ? data.remoteId.value : this.remoteId,
+      title: data.title.present ? data.title.value : this.title,
+      notes: data.notes.present ? data.notes.value : this.notes,
+      status: data.status.present ? data.status.value : this.status,
+      dueEpochDay: data.dueEpochDay.present
+          ? data.dueEpochDay.value
+          : this.dueEpochDay,
+      position: data.position.present ? data.position.value : this.position,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteSnapshotRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('tombstoneId: $tombstoneId, ')
+          ..write('taskId: $taskId, ')
+          ..write('taskListId: $taskListId, ')
+          ..write('parentTaskId: $parentTaskId, ')
+          ..write('remoteId: $remoteId, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('position: $position')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    tombstoneId,
+    taskId,
+    taskListId,
+    parentTaskId,
+    remoteId,
+    title,
+    notes,
+    status,
+    dueEpochDay,
+    position,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TaskDeleteSnapshotRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.tombstoneId == this.tombstoneId &&
+          other.taskId == this.taskId &&
+          other.taskListId == this.taskListId &&
+          other.parentTaskId == this.parentTaskId &&
+          other.remoteId == this.remoteId &&
+          other.title == this.title &&
+          other.notes == this.notes &&
+          other.status == this.status &&
+          other.dueEpochDay == this.dueEpochDay &&
+          other.position == this.position);
+}
+
+class TaskDeleteSnapshotRowsCompanion
+    extends UpdateCompanion<TaskDeleteSnapshotRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> tombstoneId;
+  final Value<int> taskId;
+  final Value<int> taskListId;
+  final Value<int?> parentTaskId;
+  final Value<String?> remoteId;
+  final Value<String> title;
+  final Value<String?> notes;
+  final Value<String> status;
+  final Value<int?> dueEpochDay;
+  final Value<String> position;
+  const TaskDeleteSnapshotRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.tombstoneId = const Value.absent(),
+    this.taskId = const Value.absent(),
+    this.taskListId = const Value.absent(),
+    this.parentTaskId = const Value.absent(),
+    this.remoteId = const Value.absent(),
+    this.title = const Value.absent(),
+    this.notes = const Value.absent(),
+    this.status = const Value.absent(),
+    this.dueEpochDay = const Value.absent(),
+    this.position = const Value.absent(),
+  });
+  TaskDeleteSnapshotRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int tombstoneId,
+    required int taskId,
+    required int taskListId,
+    this.parentTaskId = const Value.absent(),
+    this.remoteId = const Value.absent(),
+    required String title,
+    this.notes = const Value.absent(),
+    required String status,
+    this.dueEpochDay = const Value.absent(),
+    required String position,
+  }) : accountId = Value(accountId),
+       tombstoneId = Value(tombstoneId),
+       taskId = Value(taskId),
+       taskListId = Value(taskListId),
+       title = Value(title),
+       status = Value(status),
+       position = Value(position);
+  static Insertable<TaskDeleteSnapshotRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? tombstoneId,
+    Expression<int>? taskId,
+    Expression<int>? taskListId,
+    Expression<int>? parentTaskId,
+    Expression<String>? remoteId,
+    Expression<String>? title,
+    Expression<String>? notes,
+    Expression<String>? status,
+    Expression<int>? dueEpochDay,
+    Expression<String>? position,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (tombstoneId != null) 'tombstone_id': tombstoneId,
+      if (taskId != null) 'task_id': taskId,
+      if (taskListId != null) 'task_list_id': taskListId,
+      if (parentTaskId != null) 'parent_task_id': parentTaskId,
+      if (remoteId != null) 'remote_id': remoteId,
+      if (title != null) 'title': title,
+      if (notes != null) 'notes': notes,
+      if (status != null) 'status': status,
+      if (dueEpochDay != null) 'due_epoch_day': dueEpochDay,
+      if (position != null) 'position': position,
+    });
+  }
+
+  TaskDeleteSnapshotRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? tombstoneId,
+    Value<int>? taskId,
+    Value<int>? taskListId,
+    Value<int?>? parentTaskId,
+    Value<String?>? remoteId,
+    Value<String>? title,
+    Value<String?>? notes,
+    Value<String>? status,
+    Value<int?>? dueEpochDay,
+    Value<String>? position,
+  }) {
+    return TaskDeleteSnapshotRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      tombstoneId: tombstoneId ?? this.tombstoneId,
+      taskId: taskId ?? this.taskId,
+      taskListId: taskListId ?? this.taskListId,
+      parentTaskId: parentTaskId ?? this.parentTaskId,
+      remoteId: remoteId ?? this.remoteId,
+      title: title ?? this.title,
+      notes: notes ?? this.notes,
+      status: status ?? this.status,
+      dueEpochDay: dueEpochDay ?? this.dueEpochDay,
+      position: position ?? this.position,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (tombstoneId.present) {
+      map['tombstone_id'] = Variable<int>(tombstoneId.value);
+    }
+    if (taskId.present) {
+      map['task_id'] = Variable<int>(taskId.value);
+    }
+    if (taskListId.present) {
+      map['task_list_id'] = Variable<int>(taskListId.value);
+    }
+    if (parentTaskId.present) {
+      map['parent_task_id'] = Variable<int>(parentTaskId.value);
+    }
+    if (remoteId.present) {
+      map['remote_id'] = Variable<String>(remoteId.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (notes.present) {
+      map['notes'] = Variable<String>(notes.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (dueEpochDay.present) {
+      map['due_epoch_day'] = Variable<int>(dueEpochDay.value);
+    }
+    if (position.present) {
+      map['position'] = Variable<String>(position.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteSnapshotRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('tombstoneId: $tombstoneId, ')
+          ..write('taskId: $taskId, ')
+          ..write('taskListId: $taskListId, ')
+          ..write('parentTaskId: $parentTaskId, ')
+          ..write('remoteId: $remoteId, ')
+          ..write('title: $title, ')
+          ..write('notes: $notes, ')
+          ..write('status: $status, ')
+          ..write('dueEpochDay: $dueEpochDay, ')
+          ..write('position: $position')
           ..write(')'))
         .toString();
   }
@@ -9068,6 +10419,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $DesiredStateDependencyRowsTable(this);
   late final $DesiredStateAttemptRowsTable desiredStateAttemptRows =
       $DesiredStateAttemptRowsTable(this);
+  late final $TaskDeleteTombstoneRowsTable taskDeleteTombstoneRows =
+      $TaskDeleteTombstoneRowsTable(this);
+  late final $TaskDeleteSnapshotRowsTable taskDeleteSnapshotRows =
+      $TaskDeleteSnapshotRowsTable(this);
   late final $SyncFactRowsTable syncFactRows = $SyncFactRowsTable(this);
   late final $TaskListPreferenceRowsTable taskListPreferenceRows =
       $TaskListPreferenceRowsTable(this);
@@ -9088,6 +10443,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     desiredStateRows,
     desiredStateDependencyRows,
     desiredStateAttemptRows,
+    taskDeleteTombstoneRows,
+    taskDeleteSnapshotRows,
     syncFactRows,
     taskListPreferenceRows,
     viewPreferenceRows,
@@ -11027,6 +12384,7 @@ typedef $$DesiredStateRowsTableCreateCompanionBuilder =
       Value<bool> structureDirty,
       Value<bool> lifecycleDirty,
       Value<DateTime?> localModifiedAt,
+      Value<DateTime?> notBefore,
       required int generation,
       required int localCausalSequence,
       required String state,
@@ -11062,6 +12420,7 @@ typedef $$DesiredStateRowsTableUpdateCompanionBuilder =
       Value<bool> structureDirty,
       Value<bool> lifecycleDirty,
       Value<DateTime?> localModifiedAt,
+      Value<DateTime?> notBefore,
       Value<int> generation,
       Value<int> localCausalSequence,
       Value<String> state,
@@ -11174,6 +12533,11 @@ class $$DesiredStateRowsTableFilterComposer
 
   ColumnFilters<DateTime> get localModifiedAt => $composableBuilder(
     column: $table.localModifiedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -11347,6 +12711,11 @@ class $$DesiredStateRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get generation => $composableBuilder(
     column: $table.generation,
     builder: (column) => ColumnOrderings(column),
@@ -11505,6 +12874,9 @@ class $$DesiredStateRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get notBefore =>
+      $composableBuilder(column: $table.notBefore, builder: (column) => column);
+
   GeneratedColumn<int> get generation => $composableBuilder(
     column: $table.generation,
     builder: (column) => column,
@@ -11621,6 +12993,7 @@ class $$DesiredStateRowsTableTableManager
                 Value<bool> structureDirty = const Value.absent(),
                 Value<bool> lifecycleDirty = const Value.absent(),
                 Value<DateTime?> localModifiedAt = const Value.absent(),
+                Value<DateTime?> notBefore = const Value.absent(),
                 Value<int> generation = const Value.absent(),
                 Value<int> localCausalSequence = const Value.absent(),
                 Value<String> state = const Value.absent(),
@@ -11654,6 +13027,7 @@ class $$DesiredStateRowsTableTableManager
                 structureDirty: structureDirty,
                 lifecycleDirty: lifecycleDirty,
                 localModifiedAt: localModifiedAt,
+                notBefore: notBefore,
                 generation: generation,
                 localCausalSequence: localCausalSequence,
                 state: state,
@@ -11689,6 +13063,7 @@ class $$DesiredStateRowsTableTableManager
                 Value<bool> structureDirty = const Value.absent(),
                 Value<bool> lifecycleDirty = const Value.absent(),
                 Value<DateTime?> localModifiedAt = const Value.absent(),
+                Value<DateTime?> notBefore = const Value.absent(),
                 required int generation,
                 required int localCausalSequence,
                 required String state,
@@ -11722,6 +13097,7 @@ class $$DesiredStateRowsTableTableManager
                 structureDirty: structureDirty,
                 lifecycleDirty: lifecycleDirty,
                 localModifiedAt: localModifiedAt,
+                notBefore: notBefore,
                 generation: generation,
                 localCausalSequence: localCausalSequence,
                 state: state,
@@ -12021,6 +13397,7 @@ typedef $$DesiredStateAttemptRowsTableCreateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<DateTime?> notBefore,
       required String state,
       Value<String?> failureCode,
       required DateTime claimedAt,
@@ -12045,6 +13422,7 @@ typedef $$DesiredStateAttemptRowsTableUpdateCompanionBuilder =
       Value<DateTime?> baseRemoteUpdatedAt,
       Value<String?> baseObservedPublicationId,
       Value<String?> baseTitle,
+      Value<DateTime?> notBefore,
       Value<String> state,
       Value<String?> failureCode,
       Value<DateTime> claimedAt,
@@ -12142,6 +13520,11 @@ class $$DesiredStateAttemptRowsTableFilterComposer
 
   ColumnFilters<String> get baseTitle => $composableBuilder(
     column: $table.baseTitle,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -12260,6 +13643,11 @@ class $$DesiredStateAttemptRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get state => $composableBuilder(
     column: $table.state,
     builder: (column) => ColumnOrderings(column),
@@ -12361,6 +13749,9 @@ class $$DesiredStateAttemptRowsTableAnnotationComposer
   GeneratedColumn<String> get baseTitle =>
       $composableBuilder(column: $table.baseTitle, builder: (column) => column);
 
+  GeneratedColumn<DateTime> get notBefore =>
+      $composableBuilder(column: $table.notBefore, builder: (column) => column);
+
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
 
@@ -12441,6 +13832,7 @@ class $$DesiredStateAttemptRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<DateTime?> notBefore = const Value.absent(),
                 Value<String> state = const Value.absent(),
                 Value<String?> failureCode = const Value.absent(),
                 Value<DateTime> claimedAt = const Value.absent(),
@@ -12463,6 +13855,7 @@ class $$DesiredStateAttemptRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                notBefore: notBefore,
                 state: state,
                 failureCode: failureCode,
                 claimedAt: claimedAt,
@@ -12487,6 +13880,7 @@ class $$DesiredStateAttemptRowsTableTableManager
                 Value<DateTime?> baseRemoteUpdatedAt = const Value.absent(),
                 Value<String?> baseObservedPublicationId = const Value.absent(),
                 Value<String?> baseTitle = const Value.absent(),
+                Value<DateTime?> notBefore = const Value.absent(),
                 required String state,
                 Value<String?> failureCode = const Value.absent(),
                 required DateTime claimedAt,
@@ -12509,6 +13903,7 @@ class $$DesiredStateAttemptRowsTableTableManager
                 baseRemoteUpdatedAt: baseRemoteUpdatedAt,
                 baseObservedPublicationId: baseObservedPublicationId,
                 baseTitle: baseTitle,
+                notBefore: notBefore,
                 state: state,
                 failureCode: failureCode,
                 claimedAt: claimedAt,
@@ -12541,6 +13936,638 @@ typedef $$DesiredStateAttemptRowsTableProcessedTableManager =
         >,
       ),
       DesiredStateAttemptRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TaskDeleteTombstoneRowsTableCreateCompanionBuilder =
+    TaskDeleteTombstoneRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int rootTaskId,
+      required int desiredStateId,
+      required int deleteGeneration,
+      required DateTime notBefore,
+      required bool snapshotAvailable,
+      required DateTime createdAt,
+    });
+typedef $$TaskDeleteTombstoneRowsTableUpdateCompanionBuilder =
+    TaskDeleteTombstoneRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> rootTaskId,
+      Value<int> desiredStateId,
+      Value<int> deleteGeneration,
+      Value<DateTime> notBefore,
+      Value<bool> snapshotAvailable,
+      Value<DateTime> createdAt,
+    });
+
+class $$TaskDeleteTombstoneRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $TaskDeleteTombstoneRowsTable> {
+  $$TaskDeleteTombstoneRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get rootTaskId => $composableBuilder(
+    column: $table.rootTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get deleteGeneration => $composableBuilder(
+    column: $table.deleteGeneration,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TaskDeleteTombstoneRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TaskDeleteTombstoneRowsTable> {
+  $$TaskDeleteTombstoneRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get rootTaskId => $composableBuilder(
+    column: $table.rootTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get deleteGeneration => $composableBuilder(
+    column: $table.deleteGeneration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TaskDeleteTombstoneRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TaskDeleteTombstoneRowsTable> {
+  $$TaskDeleteTombstoneRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get rootTaskId => $composableBuilder(
+    column: $table.rootTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get desiredStateId => $composableBuilder(
+    column: $table.desiredStateId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get deleteGeneration => $composableBuilder(
+    column: $table.deleteGeneration,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get notBefore =>
+      $composableBuilder(column: $table.notBefore, builder: (column) => column);
+
+  GeneratedColumn<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$TaskDeleteTombstoneRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TaskDeleteTombstoneRowsTable,
+          TaskDeleteTombstoneRow,
+          $$TaskDeleteTombstoneRowsTableFilterComposer,
+          $$TaskDeleteTombstoneRowsTableOrderingComposer,
+          $$TaskDeleteTombstoneRowsTableAnnotationComposer,
+          $$TaskDeleteTombstoneRowsTableCreateCompanionBuilder,
+          $$TaskDeleteTombstoneRowsTableUpdateCompanionBuilder,
+          (
+            TaskDeleteTombstoneRow,
+            BaseReferences<
+              _$AppDatabase,
+              $TaskDeleteTombstoneRowsTable,
+              TaskDeleteTombstoneRow
+            >,
+          ),
+          TaskDeleteTombstoneRow,
+          PrefetchHooks Function()
+        > {
+  $$TaskDeleteTombstoneRowsTableTableManager(
+    _$AppDatabase db,
+    $TaskDeleteTombstoneRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TaskDeleteTombstoneRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$TaskDeleteTombstoneRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$TaskDeleteTombstoneRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> rootTaskId = const Value.absent(),
+                Value<int> desiredStateId = const Value.absent(),
+                Value<int> deleteGeneration = const Value.absent(),
+                Value<DateTime> notBefore = const Value.absent(),
+                Value<bool> snapshotAvailable = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => TaskDeleteTombstoneRowsCompanion(
+                id: id,
+                accountId: accountId,
+                rootTaskId: rootTaskId,
+                desiredStateId: desiredStateId,
+                deleteGeneration: deleteGeneration,
+                notBefore: notBefore,
+                snapshotAvailable: snapshotAvailable,
+                createdAt: createdAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int rootTaskId,
+                required int desiredStateId,
+                required int deleteGeneration,
+                required DateTime notBefore,
+                required bool snapshotAvailable,
+                required DateTime createdAt,
+              }) => TaskDeleteTombstoneRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                rootTaskId: rootTaskId,
+                desiredStateId: desiredStateId,
+                deleteGeneration: deleteGeneration,
+                notBefore: notBefore,
+                snapshotAvailable: snapshotAvailable,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TaskDeleteTombstoneRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TaskDeleteTombstoneRowsTable,
+      TaskDeleteTombstoneRow,
+      $$TaskDeleteTombstoneRowsTableFilterComposer,
+      $$TaskDeleteTombstoneRowsTableOrderingComposer,
+      $$TaskDeleteTombstoneRowsTableAnnotationComposer,
+      $$TaskDeleteTombstoneRowsTableCreateCompanionBuilder,
+      $$TaskDeleteTombstoneRowsTableUpdateCompanionBuilder,
+      (
+        TaskDeleteTombstoneRow,
+        BaseReferences<
+          _$AppDatabase,
+          $TaskDeleteTombstoneRowsTable,
+          TaskDeleteTombstoneRow
+        >,
+      ),
+      TaskDeleteTombstoneRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TaskDeleteSnapshotRowsTableCreateCompanionBuilder =
+    TaskDeleteSnapshotRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int tombstoneId,
+      required int taskId,
+      required int taskListId,
+      Value<int?> parentTaskId,
+      Value<String?> remoteId,
+      required String title,
+      Value<String?> notes,
+      required String status,
+      Value<int?> dueEpochDay,
+      required String position,
+    });
+typedef $$TaskDeleteSnapshotRowsTableUpdateCompanionBuilder =
+    TaskDeleteSnapshotRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> tombstoneId,
+      Value<int> taskId,
+      Value<int> taskListId,
+      Value<int?> parentTaskId,
+      Value<String?> remoteId,
+      Value<String> title,
+      Value<String?> notes,
+      Value<String> status,
+      Value<int?> dueEpochDay,
+      Value<String> position,
+    });
+
+class $$TaskDeleteSnapshotRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $TaskDeleteSnapshotRowsTable> {
+  $$TaskDeleteSnapshotRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get tombstoneId => $composableBuilder(
+    column: $table.tombstoneId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get taskListId => $composableBuilder(
+    column: $table.taskListId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get parentTaskId => $composableBuilder(
+    column: $table.parentTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TaskDeleteSnapshotRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TaskDeleteSnapshotRowsTable> {
+  $$TaskDeleteSnapshotRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get tombstoneId => $composableBuilder(
+    column: $table.tombstoneId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get taskId => $composableBuilder(
+    column: $table.taskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get taskListId => $composableBuilder(
+    column: $table.taskListId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get parentTaskId => $composableBuilder(
+    column: $table.parentTaskId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get notes => $composableBuilder(
+    column: $table.notes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get position => $composableBuilder(
+    column: $table.position,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TaskDeleteSnapshotRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TaskDeleteSnapshotRowsTable> {
+  $$TaskDeleteSnapshotRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get tombstoneId => $composableBuilder(
+    column: $table.tombstoneId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get taskId =>
+      $composableBuilder(column: $table.taskId, builder: (column) => column);
+
+  GeneratedColumn<int> get taskListId => $composableBuilder(
+    column: $table.taskListId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get parentTaskId => $composableBuilder(
+    column: $table.parentTaskId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get remoteId =>
+      $composableBuilder(column: $table.remoteId, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get notes =>
+      $composableBuilder(column: $table.notes, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get dueEpochDay => $composableBuilder(
+    column: $table.dueEpochDay,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get position =>
+      $composableBuilder(column: $table.position, builder: (column) => column);
+}
+
+class $$TaskDeleteSnapshotRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TaskDeleteSnapshotRowsTable,
+          TaskDeleteSnapshotRow,
+          $$TaskDeleteSnapshotRowsTableFilterComposer,
+          $$TaskDeleteSnapshotRowsTableOrderingComposer,
+          $$TaskDeleteSnapshotRowsTableAnnotationComposer,
+          $$TaskDeleteSnapshotRowsTableCreateCompanionBuilder,
+          $$TaskDeleteSnapshotRowsTableUpdateCompanionBuilder,
+          (
+            TaskDeleteSnapshotRow,
+            BaseReferences<
+              _$AppDatabase,
+              $TaskDeleteSnapshotRowsTable,
+              TaskDeleteSnapshotRow
+            >,
+          ),
+          TaskDeleteSnapshotRow,
+          PrefetchHooks Function()
+        > {
+  $$TaskDeleteSnapshotRowsTableTableManager(
+    _$AppDatabase db,
+    $TaskDeleteSnapshotRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TaskDeleteSnapshotRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$TaskDeleteSnapshotRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$TaskDeleteSnapshotRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> tombstoneId = const Value.absent(),
+                Value<int> taskId = const Value.absent(),
+                Value<int> taskListId = const Value.absent(),
+                Value<int?> parentTaskId = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String?> notes = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int?> dueEpochDay = const Value.absent(),
+                Value<String> position = const Value.absent(),
+              }) => TaskDeleteSnapshotRowsCompanion(
+                id: id,
+                accountId: accountId,
+                tombstoneId: tombstoneId,
+                taskId: taskId,
+                taskListId: taskListId,
+                parentTaskId: parentTaskId,
+                remoteId: remoteId,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                position: position,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int tombstoneId,
+                required int taskId,
+                required int taskListId,
+                Value<int?> parentTaskId = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
+                required String title,
+                Value<String?> notes = const Value.absent(),
+                required String status,
+                Value<int?> dueEpochDay = const Value.absent(),
+                required String position,
+              }) => TaskDeleteSnapshotRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                tombstoneId: tombstoneId,
+                taskId: taskId,
+                taskListId: taskListId,
+                parentTaskId: parentTaskId,
+                remoteId: remoteId,
+                title: title,
+                notes: notes,
+                status: status,
+                dueEpochDay: dueEpochDay,
+                position: position,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TaskDeleteSnapshotRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TaskDeleteSnapshotRowsTable,
+      TaskDeleteSnapshotRow,
+      $$TaskDeleteSnapshotRowsTableFilterComposer,
+      $$TaskDeleteSnapshotRowsTableOrderingComposer,
+      $$TaskDeleteSnapshotRowsTableAnnotationComposer,
+      $$TaskDeleteSnapshotRowsTableCreateCompanionBuilder,
+      $$TaskDeleteSnapshotRowsTableUpdateCompanionBuilder,
+      (
+        TaskDeleteSnapshotRow,
+        BaseReferences<
+          _$AppDatabase,
+          $TaskDeleteSnapshotRowsTable,
+          TaskDeleteSnapshotRow
+        >,
+      ),
+      TaskDeleteSnapshotRow,
       PrefetchHooks Function()
     >;
 typedef $$SyncFactRowsTableCreateCompanionBuilder =
@@ -13389,6 +15416,16 @@ class $AppDatabaseManager {
       $$DesiredStateAttemptRowsTableTableManager(
         _db,
         _db.desiredStateAttemptRows,
+      );
+  $$TaskDeleteTombstoneRowsTableTableManager get taskDeleteTombstoneRows =>
+      $$TaskDeleteTombstoneRowsTableTableManager(
+        _db,
+        _db.taskDeleteTombstoneRows,
+      );
+  $$TaskDeleteSnapshotRowsTableTableManager get taskDeleteSnapshotRows =>
+      $$TaskDeleteSnapshotRowsTableTableManager(
+        _db,
+        _db.taskDeleteSnapshotRows,
       );
   $$SyncFactRowsTableTableManager get syncFactRows =>
       $$SyncFactRowsTableTableManager(_db, _db.syncFactRows);

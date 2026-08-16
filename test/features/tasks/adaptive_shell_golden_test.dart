@@ -91,6 +91,52 @@ void main() {
       );
     });
   }
+
+  testWidgets('Linux durable delete Undo', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _GoldenTasksRepository(
+        hideDeletedSubtree: true,
+        undos: <TaskDeleteUndo>[
+          TaskDeleteUndo(
+            taskId: const TaskId(11),
+            title: 'Prepare the synthetic review',
+            notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+          ),
+        ],
+      ),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.verifying,
+          counts: const SyncWorkCounts(pending: 1),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+      ),
+    );
+    await tester.pump();
+
+    await expectLater(
+      find.byType(AdaptiveShell),
+      matchesGoldenFile('../../goldens/linux/delete_undo.png'),
+    );
+  });
 }
 
 Future<void> _loadFlutterRoboto() async {
@@ -122,7 +168,13 @@ Future<void> _loadFlutterRoboto() async {
 }
 
 final class _GoldenTasksRepository implements TasksRepository {
-  const _GoldenTasksRepository();
+  const _GoldenTasksRepository({
+    this.undos = const <TaskDeleteUndo>[],
+    this.hideDeletedSubtree = false,
+  });
+
+  final List<TaskDeleteUndo> undos;
+  final bool hideDeletedSubtree;
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
@@ -151,28 +203,30 @@ final class _GoldenTasksRepository implements TasksRepository {
         ),
       ],
       tasks: <CachedTask>[
-        CachedTask(
-          id: const TaskId(11),
-          accountId: const AccountId(1),
-          taskListId: const TaskListId(7),
-          parentTaskId: null,
-          remoteId: const TaskRemoteId('synthetic-parent'),
-          title: 'Prepare the synthetic review',
-          notes: 'This cached note is synthetic and safe for visual testing.',
-          status: TaskStatus.needsAction,
-          due: TaskDate(2026, 8, 16),
-        ),
-        const CachedTask(
-          id: TaskId(12),
-          accountId: AccountId(1),
-          taskListId: TaskListId(7),
-          parentTaskId: TaskId(11),
-          remoteId: TaskRemoteId('synthetic-child'),
-          title: 'Check the task details pane',
-          notes: null,
-          status: TaskStatus.needsAction,
-          due: null,
-        ),
+        if (!hideDeletedSubtree) ...<CachedTask>[
+          CachedTask(
+            id: const TaskId(11),
+            accountId: const AccountId(1),
+            taskListId: const TaskListId(7),
+            parentTaskId: null,
+            remoteId: const TaskRemoteId('synthetic-parent'),
+            title: 'Prepare the synthetic review',
+            notes: 'This cached note is synthetic and safe for visual testing.',
+            status: TaskStatus.needsAction,
+            due: TaskDate(2026, 8, 16),
+          ),
+          const CachedTask(
+            id: TaskId(12),
+            accountId: AccountId(1),
+            taskListId: TaskListId(7),
+            parentTaskId: TaskId(11),
+            remoteId: TaskRemoteId('synthetic-child'),
+            title: 'Check the task details pane',
+            notes: null,
+            status: TaskStatus.needsAction,
+            due: null,
+          ),
+        ],
         const CachedTask(
           id: TaskId(13),
           accountId: AccountId(1),
@@ -188,6 +242,21 @@ final class _GoldenTasksRepository implements TasksRepository {
       completeness: CacheCompleteness.complete,
     ),
   );
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      Stream<List<TaskDeleteUndo>>.value(undos);
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(
+    DeleteTaskCommand command,
+  ) async => Outcome<TaskDeleteReceipt>.success(
+    TaskDeleteReceipt(taskId: command.taskId, notBefore: DateTime.utc(2026)),
+  );
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async =>
+      const Outcome<void>.success(null);
 }
 
 final class _GoldenHealthRepository implements SyncHealthRepository {

@@ -102,6 +102,111 @@ void main() {
     },
   );
 
+  test(
+    'RUN-016 task delete eligibility fires exactly at durable expiry',
+    () async {
+      final eligibility = _MemoryTaskDeleteEligibility();
+      final harness = _Harness(
+        startedAt: startedAt,
+        autoComplete: true,
+        deleteEligibility: eligibility,
+      );
+      addTearDown(harness.close);
+      await harness.coordinator.start();
+      harness.runner.clearCompleted();
+
+      final notBefore = startedAt.add(const Duration(seconds: 30));
+      eligibility.nextExpiry = notBefore;
+      await harness.coordinator.taskDeleteCommitted(notBefore);
+      harness.clock.advance(const Duration(seconds: 29, milliseconds: 999));
+      await _flushMicrotasks();
+      expect(harness.runner.invocations, isEmpty);
+      expect(eligibility.cleanupCalls, 2);
+
+      harness.clock.advance(const Duration(milliseconds: 1));
+      await pumpEventQueue();
+      await harness.coordinator.whenIdle;
+      expect(eligibility.cleanupCalls, 3);
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.deleteEligible,
+      });
+    },
+  );
+
+  test(
+    'RUN-016 startup cleans expired delete snapshots before its run',
+    () async {
+      final eligibility = _MemoryTaskDeleteEligibility(
+        nextExpiry: startedAt.subtract(const Duration(seconds: 1)),
+      );
+      final harness = _Harness(
+        startedAt: startedAt,
+        autoComplete: true,
+        deleteEligibility: eligibility,
+      );
+      addTearDown(harness.close);
+
+      await harness.coordinator.start();
+
+      expect(eligibility.cleanupCalls, 1);
+      expect(eligibility.lastCleanupAt, startedAt);
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.startup,
+      });
+    },
+  );
+
+  test(
+    'RUN-016 a later task delete never postpones an earlier expiry',
+    () async {
+      final firstExpiry = startedAt.add(const Duration(seconds: 20));
+      final eligibility = _MemoryTaskDeleteEligibility(nextExpiry: firstExpiry);
+      final harness = _Harness(
+        startedAt: startedAt,
+        autoComplete: true,
+        deleteEligibility: eligibility,
+      );
+      addTearDown(harness.close);
+      await harness.coordinator.start();
+      harness.runner.clearCompleted();
+
+      await harness.coordinator.taskDeleteCommitted(
+        startedAt.add(const Duration(seconds: 30)),
+      );
+      harness.clock.advance(const Duration(seconds: 20));
+      await pumpEventQueue();
+      await harness.coordinator.whenIdle;
+
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.deleteEligible,
+      });
+    },
+  );
+
+  test(
+    'RUN-016 stopped sync still expires Undo without a Google run',
+    () async {
+      final expiry = startedAt.add(const Duration(seconds: 30));
+      final eligibility = _MemoryTaskDeleteEligibility(nextExpiry: expiry);
+      final harness = _Harness(
+        startedAt: startedAt,
+        autoComplete: true,
+        deleteEligibility: eligibility,
+        settings: _MemorySyncSettingsRepository()..syncEnabled = false,
+      );
+      addTearDown(harness.close);
+
+      await harness.coordinator.start();
+      expect(eligibility.cleanupCalls, 1);
+      harness.clock.advance(const Duration(seconds: 30));
+      await pumpEventQueue();
+      await harness.coordinator.whenIdle;
+
+      expect(eligibility.cleanupCalls, 2);
+      expect(harness.runner.invocations, isEmpty);
+    },
+  );
+
   test('RUN-004 cadence fires exactly five minutes after completion', () async {
     final harness = _Harness(startedAt: startedAt, autoComplete: true);
     addTearDown(harness.close);
@@ -116,6 +221,7 @@ void main() {
     expect(harness.runner.invocations, isEmpty);
 
     harness.clock.advance(const Duration(milliseconds: 1));
+    await pumpEventQueue();
     await harness.coordinator.whenIdle;
     expect(harness.runner.invocations, hasLength(1));
     expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
@@ -448,6 +554,7 @@ final class _Harness {
     FakeConnectivity? connectivity,
     SyncSettingsRepository? settings,
     bool autoComplete = false,
+    TaskDeleteEligibilityStore? deleteEligibility,
   }) : clock = FakeClock(startedAt),
        runner = _ControlledRunner(autoComplete: autoComplete) {
     coordinator = SyncCoordinator(
@@ -458,6 +565,7 @@ final class _Harness {
       lifecycle: lifecycle,
       connectivity: connectivity,
       settings: settings ?? _MemorySyncSettingsRepository(),
+      taskDeleteEligibility: deleteEligibility,
       run: runner.call,
     );
   }
@@ -467,6 +575,32 @@ final class _Harness {
   late final SyncCoordinator coordinator;
 
   Future<void> close() => coordinator.close();
+}
+
+final class _MemoryTaskDeleteEligibility implements TaskDeleteEligibilityStore {
+  _MemoryTaskDeleteEligibility({this.nextExpiry});
+
+  DateTime? nextExpiry;
+  int cleanupCalls = 0;
+  DateTime? lastCleanupAt;
+
+  @override
+  Future<int> cleanupExpiredTaskDeletes({
+    required AccountId accountId,
+    required DateTime now,
+  }) async {
+    cleanupCalls += 1;
+    lastCleanupAt = now;
+    if (nextExpiry != null && !now.isBefore(nextExpiry!)) {
+      nextExpiry = null;
+      return 1;
+    }
+    return 0;
+  }
+
+  @override
+  Future<DateTime?> nextTaskDeleteExpiry(AccountId accountId) async =>
+      nextExpiry;
 }
 
 final class _ControlledRunner {

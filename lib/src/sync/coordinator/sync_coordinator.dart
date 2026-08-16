@@ -24,6 +24,7 @@ enum SyncTrigger {
   refresh,
   resumeSync,
   localEdit,
+  deleteEligible,
   cadence,
 }
 
@@ -35,6 +36,7 @@ extension SyncTriggerValue on SyncTrigger {
     SyncTrigger.refresh => 'refresh',
     SyncTrigger.resumeSync => 'resume_sync',
     SyncTrigger.localEdit => 'local_edit',
+    SyncTrigger.deleteEligible => 'delete_eligible',
     SyncTrigger.cadence => 'cadence',
   };
 }
@@ -87,6 +89,15 @@ final class SyncCoordinatorRun {
 typedef CoordinatedSyncRun =
     Future<SyncRunReport> Function(SyncCoordinatorRun request);
 
+abstract interface class TaskDeleteEligibilityStore {
+  Future<int> cleanupExpiredTaskDeletes({
+    required AccountId accountId,
+    required DateTime now,
+  });
+
+  Future<DateTime?> nextTaskDeleteExpiry(AccountId accountId);
+}
+
 /// Serializes foreground synchronization requests for one configured account.
 ///
 /// Trigger notifications are transient facts. Durable local work remains owned
@@ -100,6 +111,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     required this.scheduler,
     required this.settings,
     required this.run,
+    this.taskDeleteEligibility,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
   }) : _connectivity = connectivity,
@@ -126,6 +138,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   final MonotonicScheduler scheduler;
   final SyncSettingsRepository settings;
   final CoordinatedSyncRun run;
+  final TaskDeleteEligibilityStore? taskDeleteEligibility;
   final ConnectivityPort? _connectivity;
   final StreamController<SyncRuntimeFacts> _facts =
       StreamController<SyncRuntimeFacts>.broadcast(sync: true);
@@ -136,8 +149,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
   StreamSubscription<ConnectivityHint>? _connectivitySubscription;
   SyncRuntimeFacts _currentFacts;
   Future<void>? _drain;
+  Future<void>? _lifecycleOperation;
   ScheduledTimer? _localEditTimer;
   ScheduledTimer? _cadenceTimer;
+  ScheduledTimer? _deleteEligibilityTimer;
   Duration? _localEditBurstStartedAt;
   SyncCoordinatorRunControl? _activeControl;
   var _activeGeneration = 0;
@@ -157,7 +172,17 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   /// Completes when immediate and active work is drained. Future cadence and
   /// debounce timers deliberately do not keep this future pending.
-  Future<void> get whenIdle => _drain ?? Future<void>.value();
+  Future<void> get whenIdle => _waitForIdle();
+
+  Future<void> _waitForIdle() async {
+    while (true) {
+      final lifecycleOperation = _lifecycleOperation;
+      if (lifecycleOperation != null) await lifecycleOperation;
+      final drain = _drain;
+      if (drain != null) await drain;
+      if (_lifecycleOperation == null && _drain == null) return;
+    }
+  }
 
   Future<void> start() async {
     if (_started) return whenIdle;
@@ -175,6 +200,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       );
       rethrow;
     }
+    await _refreshTaskDeleteEligibility();
     if (_syncEnabled != true) {
       _emit(_with(activity: SyncActivity.idle, verificationRequired: false));
       return;
@@ -182,7 +208,10 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     await _requestImmediate(SyncTrigger.startup);
   }
 
-  Future<void> refresh() => _requestImmediate(SyncTrigger.refresh);
+  Future<void> refresh() async {
+    await _refreshTaskDeleteEligibility();
+    await _requestImmediate(SyncTrigger.refresh);
+  }
 
   Future<void> stop() => _changeSyncEnabled(false);
 
@@ -218,6 +247,46 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
       _with(activity: SyncActivity.debouncing, verificationRequired: false),
     );
     return whenIdle;
+  }
+
+  Future<void> taskDeleteCommitted(DateTime notBefore) async {
+    _requireOpen();
+    if (taskDeleteEligibility != null) {
+      await _refreshTaskDeleteEligibility();
+    } else {
+      _scheduleTaskDeleteEligibility(notBefore.toUtc());
+    }
+  }
+
+  Future<void> _refreshTaskDeleteEligibility() async {
+    final store = taskDeleteEligibility;
+    if (store == null || _closed) return;
+    await store.cleanupExpiredTaskDeletes(
+      accountId: accountId,
+      now: clock.now().toUtc(),
+    );
+    _scheduleTaskDeleteEligibility(await store.nextTaskDeleteExpiry(accountId));
+  }
+
+  void _scheduleTaskDeleteEligibility(DateTime? notBefore) {
+    _deleteEligibilityTimer?.cancel();
+    _deleteEligibilityTimer = null;
+    if (notBefore == null || _shutdownRequested || _closed) {
+      return;
+    }
+    final delay = notBefore.toUtc().difference(clock.now().toUtc());
+    _deleteEligibilityTimer = scheduler.schedule(
+      delay.isNegative ? Duration.zero : delay,
+      () {
+        _deleteEligibilityTimer = null;
+        unawaited(_onTaskDeleteEligible());
+      },
+    );
+  }
+
+  Future<void> _onTaskDeleteEligible() async {
+    await _refreshTaskDeleteEligibility();
+    await _requestImmediate(SyncTrigger.deleteEligible);
   }
 
   Future<void> _requestImmediate(SyncTrigger trigger) {
@@ -496,7 +565,24 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     if (_closed) return;
     switch (fact) {
       case LifecycleForegrounded():
-        unawaited(_requestImmediate(SyncTrigger.foregroundResume));
+        final operation = _resumeForeground();
+        _lifecycleOperation = operation;
+        unawaited(
+          operation.then<void>(
+            (_) => _clearLifecycleOperation(operation),
+            onError: (Object _, StackTrace _) {
+              _clearLifecycleOperation(operation);
+              _emit(
+                _with(
+                  activity: SyncActivity.idle,
+                  verificationRequired: false,
+                  detectedFailureReason: SyncFailureReason.applicationFailure,
+                  diagnosticCode: 'sync.resume_cleanup_failed',
+                ),
+              );
+            },
+          ),
+        );
       case ProcessExitRequested():
         _shutdownRequested = true;
         _activeGeneration += 1;
@@ -507,11 +593,24 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
         _localEditBurstStartedAt = null;
         _cadenceTimer?.cancel();
         _cadenceTimer = null;
+        _deleteEligibilityTimer?.cancel();
+        _deleteEligibilityTimer = null;
         _activeControl?.requestCancellation();
       case LifecycleBackgrounded() || WindowFocusChanged():
         // Android background eligibility is deliberately owned by S27B.
         // Linux window visibility and focus never suspend synchronization.
         break;
+    }
+  }
+
+  Future<void> _resumeForeground() async {
+    await _refreshTaskDeleteEligibility();
+    await _requestImmediate(SyncTrigger.foregroundResume);
+  }
+
+  void _clearLifecycleOperation(Future<void> operation) {
+    if (identical(_lifecycleOperation, operation)) {
+      _lifecycleOperation = null;
     }
   }
 
@@ -575,6 +674,7 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
     _syncEnabled = true;
     _stopRequested = false;
     _shutdownRequested = false;
+    await _refreshTaskDeleteEligibility();
     await _requestImmediate(SyncTrigger.resumeSync);
   }
 
@@ -622,14 +722,21 @@ final class SyncCoordinator implements SyncRuntimeFactsSource {
 
   Future<void> close() async {
     if (_closed) return;
-    _closed = true;
+    _shutdownRequested = true;
     _activeGeneration += 1;
     _activeControl?.requestCancellation();
     _localEditTimer?.cancel();
     _cadenceTimer?.cancel();
+    _deleteEligibilityTimer?.cancel();
     await _authorizationSubscription.cancel();
     await _lifecycleSubscription?.cancel();
     await _connectivitySubscription?.cancel();
+    try {
+      await _lifecycleOperation;
+    } on Object {
+      // The safe failure projection was emitted by the lifecycle listener.
+    }
+    _closed = true;
     await _facts.close();
   }
 }

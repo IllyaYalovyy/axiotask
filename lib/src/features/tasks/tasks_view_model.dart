@@ -17,6 +17,7 @@ final class TasksViewState {
     required this.isRefreshing,
     required this.taskLists,
     required this.tasks,
+    required this.taskDeleteUndos,
     required this.health,
     this.isSyncControlPending = false,
     this.isListCommandPending = false,
@@ -33,6 +34,7 @@ final class TasksViewState {
   final bool isRefreshing;
   final List<CachedTaskList> taskLists;
   final List<CachedTask> tasks;
+  final List<TaskDeleteUndo> taskDeleteUndos;
   final SyncHealth health;
   final bool isSyncControlPending;
   final bool isListCommandPending;
@@ -67,6 +69,7 @@ final class TasksViewState {
     bool? isRefreshing,
     List<CachedTaskList>? taskLists,
     List<CachedTask>? tasks,
+    List<TaskDeleteUndo>? taskDeleteUndos,
     SyncHealth? health,
     bool? isSyncControlPending,
     bool? isListCommandPending,
@@ -82,6 +85,7 @@ final class TasksViewState {
     isRefreshing: isRefreshing ?? this.isRefreshing,
     taskLists: taskLists ?? this.taskLists,
     tasks: tasks ?? this.tasks,
+    taskDeleteUndos: taskDeleteUndos ?? this.taskDeleteUndos,
     health: health ?? this.health,
     isSyncControlPending: isSyncControlPending ?? this.isSyncControlPending,
     isListCommandPending: isListCommandPending ?? this.isListCommandPending,
@@ -117,6 +121,7 @@ final class TasksViewModel extends ChangeNotifier {
     required this.syncHealthRepository,
     this.taskListsRepository,
     this.localEditCommitted,
+    this.taskDeleteCommitted,
     this.refreshRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
@@ -128,6 +133,7 @@ final class TasksViewModel extends ChangeNotifier {
          isTaskCommandPending: false,
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
+         taskDeleteUndos: const <TaskDeleteUndo>[],
          health: SyncHealth(
            outcome: SyncHealthOutcome.pending,
            pendingReason: SyncPendingReason.checkingAuthorization,
@@ -142,12 +148,14 @@ final class TasksViewModel extends ChangeNotifier {
   final SyncHealthRepository syncHealthRepository;
   final TaskListsRepository? taskListsRepository;
   final Future<void> Function()? localEditCommitted;
+  final Future<void> Function(DateTime notBefore)? taskDeleteCommitted;
   final Future<void> Function()? refreshRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
+  StreamSubscription<List<TaskDeleteUndo>>? _taskDeleteUndoSubscription;
   bool _started = false;
   Future<void>? _refreshInFlight;
   Future<void>? _syncControlInFlight;
@@ -165,6 +173,9 @@ final class TasksViewModel extends ChangeNotifier {
     _healthSubscription = syncHealthRepository
         .watchHealth(accountId)
         .listen(_acceptHealth, onError: _acceptRepositoryError);
+    _taskDeleteUndoSubscription = tasksRepository
+        .watchUndoableTaskDeletes(accountId)
+        .listen(_acceptTaskDeleteUndos, onError: _acceptTaskDeleteUndoError);
   }
 
   void selectTaskList(TaskListId taskListId) {
@@ -237,6 +248,16 @@ final class TasksViewModel extends ChangeNotifier {
     );
   }
 
+  Future<void> deleteTaskList(TaskListId taskListId) {
+    final repository = taskListsRepository;
+    if (repository == null) return Future<void>.value();
+    return _performListCommand(
+      () => repository.deleteTaskList(
+        DeleteTaskListCommand(accountId: accountId, taskListId: taskListId),
+      ),
+    );
+  }
+
   Future<void> createTask({
     required TaskListId taskListId,
     required String title,
@@ -286,15 +307,36 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       );
 
-  Future<void> _performTaskCommand<T>(Future<Outcome<T>> Function() action) {
+  Future<void> deleteTask(TaskId taskId) => _performTaskCommand(
+    () => tasksRepository.deleteTask(
+      DeleteTaskCommand(accountId: accountId, taskId: taskId),
+    ),
+    onSuccess: (receipt) async {
+      await taskDeleteCommitted?.call(receipt.notBefore);
+    },
+  );
+
+  Future<void> undoTaskDelete(TaskId taskId) => _performTaskCommand(
+    () => tasksRepository.undoTaskDelete(
+      UndoTaskDeleteCommand(accountId: accountId, taskId: taskId),
+    ),
+  );
+
+  Future<void> _performTaskCommand<T>(
+    Future<Outcome<T>> Function() action, {
+    Future<void> Function(T value)? onSuccess,
+  }) {
     final existing = _taskCommandInFlight;
     if (existing != null) return existing;
-    final operation = _runTaskCommand(action);
+    final operation = _runTaskCommand(action, onSuccess: onSuccess);
     _taskCommandInFlight = operation;
     return operation;
   }
 
-  Future<void> _runTaskCommand<T>(Future<Outcome<T>> Function() action) async {
+  Future<void> _runTaskCommand<T>(
+    Future<Outcome<T>> Function() action, {
+    Future<void> Function(T value)? onSuccess,
+  }) async {
     _replaceState(
       _state.copyWith(
         isTaskCommandPending: true,
@@ -304,8 +346,12 @@ final class TasksViewModel extends ChangeNotifier {
     try {
       final result = await action();
       switch (result) {
-        case Success<T>():
-          await localEditCommitted?.call();
+        case Success<T>(:final value):
+          if (onSuccess case final callback?) {
+            await callback(value);
+          } else {
+            await localEditCommitted?.call();
+          }
         case Failed<T>(:final failure):
           _replaceState(
             _state.copyWith(
@@ -429,6 +475,22 @@ final class TasksViewModel extends ChangeNotifier {
     _replaceState(_state.copyWith(health: health));
   }
 
+  void _acceptTaskDeleteUndos(List<TaskDeleteUndo> values) {
+    _replaceState(
+      _state.copyWith(
+        taskDeleteUndos: List<TaskDeleteUndo>.unmodifiable(values),
+      ),
+    );
+  }
+
+  void _acceptTaskDeleteUndoError(Object _) {
+    _replaceState(
+      _state.copyWith(
+        taskCommandFailureMessage: 'Undo state could not be read safely.',
+      ),
+    );
+  }
+
   void _acceptRepositoryError(Object _) {
     _replaceState(
       _state.copyWith(
@@ -447,8 +509,12 @@ final class TasksViewModel extends ChangeNotifier {
   void dispose() {
     final tasksSubscription = _tasksSubscription;
     final healthSubscription = _healthSubscription;
+    final taskDeleteUndoSubscription = _taskDeleteUndoSubscription;
     if (tasksSubscription != null) unawaited(tasksSubscription.cancel());
     if (healthSubscription != null) unawaited(healthSubscription.cancel());
+    if (taskDeleteUndoSubscription != null) {
+      unawaited(taskDeleteUndoSubscription.cancel());
+    }
     super.dispose();
   }
 }

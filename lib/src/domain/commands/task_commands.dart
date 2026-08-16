@@ -88,6 +88,36 @@ final class UpdateTaskContentCommand extends ExistingTaskCommand {
   final TaskDate? due;
 }
 
+final class DeleteTaskCommand extends ExistingTaskCommand {
+  const DeleteTaskCommand({required super.accountId, required super.taskId});
+}
+
+final class UndoTaskDeleteCommand extends ExistingTaskCommand {
+  const UndoTaskDeleteCommand({
+    required super.accountId,
+    required super.taskId,
+  });
+}
+
+final class TaskDeleteReceipt {
+  const TaskDeleteReceipt({required this.taskId, required this.notBefore});
+
+  final TaskId taskId;
+  final DateTime notBefore;
+}
+
+final class TaskDeleteUndo {
+  const TaskDeleteUndo({
+    required this.taskId,
+    required this.title,
+    required this.notBefore,
+  });
+
+  final TaskId taskId;
+  final String title;
+  final DateTime notBefore;
+}
+
 Failure? validateTaskCommand(TaskCommand command) {
   final title = switch (command) {
     CreateTaskCommand(:final title) ||

@@ -6,7 +6,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 const int currentDatabaseSchemaVersion = 1;
 const String expectedSchemaFingerprint =
-    'axiotask-schema-v1:account-cache-sync-health-and-durable-desired-state';
+    'axiotask-schema-v1:account-cache-sync-health-desired-state-and-delete-tombstones';
 
 final class SchemaVerificationException implements Exception {
   const SchemaVerificationException(this.code);
@@ -130,6 +130,8 @@ const List<String> _expectedTableNames = <String>[
   'desired_states',
   'scope_completeness',
   'sync_facts',
+  'task_delete_snapshots',
+  'task_delete_tombstones',
   'task_list_preferences',
   'task_list_remote_bases',
   'task_lists',
@@ -139,4 +141,4 @@ const List<String> _expectedTableNames = <String>[
 ];
 
 const String _expectedSchemaDigest =
-    'a16031fbb6d60854a9bd957583ddf1b80d3d3b493f5ed7e16f56dfd78d6f7755';
+    '5ce40761aa8c772bc111ab87a1178b3bc7e93cd8cd5ccce4d767d692be20e4c8';

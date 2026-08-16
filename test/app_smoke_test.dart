@@ -50,6 +50,21 @@ final class _EmptyTasksRepository implements TasksRepository {
       completeness: CacheCompleteness.unobserved,
     ),
   );
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      const Stream<List<TaskDeleteUndo>>.empty();
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(
+    DeleteTaskCommand command,
+  ) async => Outcome<TaskDeleteReceipt>.success(
+    TaskDeleteReceipt(taskId: command.taskId, notBefore: DateTime.utc(2026)),
+  );
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async =>
+      const Outcome<void>.success(null);
 }
 
 final class _InactiveHealthRepository implements SyncHealthRepository {

@@ -257,6 +257,70 @@ void main() {
       expect(notifications, 0);
     },
   );
+
+  test(
+    'task delete exposes durable Undo and schedules only its expiry',
+    () async {
+      final tasks = _TasksRepository();
+      final notBefore = DateTime.utc(2026, 8, 15, 12, 0, 30);
+      tasks.deleteResult = Future.value(
+        Outcome<TaskDeleteReceipt>.success(
+          TaskDeleteReceipt(taskId: const TaskId(11), notBefore: notBefore),
+        ),
+      );
+      var localEdits = 0;
+      DateTime? scheduledExpiry;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: () async => localEdits += 1,
+        taskDeleteCommitted: (value) async => scheduledExpiry = value,
+      );
+      addTearDown(viewModel.dispose);
+      viewModel.start();
+      tasks.undoController.add(<TaskDeleteUndo>[
+        TaskDeleteUndo(
+          taskId: const TaskId(11),
+          title: 'Cached parent',
+          notBefore: notBefore,
+        ),
+      ]);
+      await pumpEventQueue();
+
+      await viewModel.deleteTask(const TaskId(11));
+
+      expect(tasks.deleted.single.taskId, const TaskId(11));
+      expect(viewModel.state.taskDeleteUndos.single.title, 'Cached parent');
+      expect(scheduledExpiry, notBefore);
+      expect(localEdits, 0, reason: 'refresh must not bypass delete grace');
+
+      await viewModel.undoTaskDelete(const TaskId(11));
+      expect(tasks.undone.single.taskId, const TaskId(11));
+      expect(localEdits, 1);
+    },
+  );
+
+  test(
+    'confirmed list delete is non-undoable and schedules publication',
+    () async {
+      final lists = _TaskListsRepository();
+      var localEdits = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: _TasksRepository(),
+        taskListsRepository: lists,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: () async => localEdits += 1,
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.deleteTaskList(const TaskListId(7));
+
+      expect(lists.deleted.single.taskListId, const TaskListId(7));
+      expect(localEdits, 1);
+    },
+  );
 }
 
 final class _TasksRepository implements TasksRepository {
@@ -269,6 +333,20 @@ final class _TasksRepository implements TasksRepository {
   );
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
+  final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
+  Future<Outcome<TaskDeleteReceipt>> deleteResult = Future.value(
+    Outcome<TaskDeleteReceipt>.success(
+      TaskDeleteReceipt(
+        taskId: const TaskId(99),
+        notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+      ),
+    ),
+  );
+  Future<Outcome<void>> undoResult = Future.value(
+    const Outcome<void>.success(null),
+  );
+  final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
+  final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
   var createCalls = 0;
 
   @override
@@ -286,6 +364,22 @@ final class _TasksRepository implements TasksRepository {
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => controller.stream;
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      undoController.stream;
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(DeleteTaskCommand command) {
+    deleted.add(command);
+    return deleteResult;
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) {
+    undone.add(command);
+    return undoResult;
+  }
 }
 
 final class _HealthRepository implements SyncHealthRepository {
@@ -304,6 +398,7 @@ final class _TaskListsRepository implements TaskListsRepository {
   );
   final List<CreateTaskListCommand> created = <CreateTaskListCommand>[];
   final List<RenameTaskListCommand> renamed = <RenameTaskListCommand>[];
+  final List<DeleteTaskListCommand> deleted = <DeleteTaskListCommand>[];
   var createCalls = 0;
 
   @override
@@ -317,6 +412,12 @@ final class _TaskListsRepository implements TaskListsRepository {
   Future<Outcome<void>> renameTaskList(RenameTaskListCommand command) {
     renamed.add(command);
     return renameResult;
+  }
+
+  @override
+  Future<Outcome<void>> deleteTaskList(DeleteTaskListCommand command) {
+    deleted.add(command);
+    return Future.value(const Outcome<void>.success(null));
   }
 }
 

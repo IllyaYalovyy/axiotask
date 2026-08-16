@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -31,6 +32,7 @@ final class _HealthScreenshotSequence extends StatefulWidget {
 final class _HealthScreenshotSequenceState
     extends State<_HealthScreenshotSequence> {
   final GlobalKey _boundaryKey = GlobalKey();
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   var _index = 0;
   late TasksViewModel _viewModel = _createViewModel(_captureScenarios.first);
 
@@ -48,6 +50,19 @@ final class _HealthScreenshotSequenceState
         await _settleFrames();
         _viewModel.selectTask(const TaskId(11));
         await _settleFrames();
+        final scenario = _captureScenarios[index];
+        if (scenario.name == 'delete-list-confirmation') {
+          unawaited(
+            showDialog<void>(
+              context: _navigatorKey.currentContext!,
+              builder: (_) => DeleteTaskListConfirmationDialog(
+                viewModel: _viewModel,
+                taskList: scenario.snapshot.taskLists.first,
+              ),
+            ),
+          );
+          await _settleFrames();
+        }
         final boundary =
             _boundaryKey.currentContext!.findRenderObject()!
                 as RenderRepaintBoundary;
@@ -88,16 +103,17 @@ final class _HealthScreenshotSequenceState
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      key: ValueKey<String>('app-${_captureScenarios[_index].name}'),
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xff315da8),
-        useMaterial3: true,
-      ),
-      home: RepaintBoundary(
-        key: _boundaryKey,
-        child: AdaptiveShell(
+    return RepaintBoundary(
+      key: _boundaryKey,
+      child: MaterialApp(
+        key: ValueKey<String>('app-${_captureScenarios[_index].name}'),
+        navigatorKey: _navigatorKey,
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xff315da8),
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(
           key: ValueKey<String>(_captureScenarios[_index].name),
           viewModel: _viewModel,
           onHealthAction: (_) {},
@@ -109,15 +125,30 @@ final class _HealthScreenshotSequenceState
 
 TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   accountId: const AccountId(1),
-  tasksRepository: _ScreenshotTasksRepository(scenario.snapshot),
+  tasksRepository: _ScreenshotTasksRepository(
+    scenario.snapshot,
+    undos: scenario.name == 'delete-undo'
+        ? <TaskDeleteUndo>[
+            TaskDeleteUndo(
+              taskId: const TaskId(11),
+              title: 'Cached synthetic task',
+              notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+            ),
+          ]
+        : const <TaskDeleteUndo>[],
+  ),
   taskListsRepository: const _ScreenshotTaskListsRepository(),
   syncHealthRepository: _ScreenshotHealthRepository(scenario.health),
 );
 
 final class _ScreenshotTasksRepository implements TasksRepository {
-  const _ScreenshotTasksRepository(this.snapshot);
+  const _ScreenshotTasksRepository(
+    this.snapshot, {
+    this.undos = const <TaskDeleteUndo>[],
+  });
 
   final CachedTasksSnapshot snapshot;
+  final List<TaskDeleteUndo> undos;
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
@@ -130,6 +161,21 @@ final class _ScreenshotTasksRepository implements TasksRepository {
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
       Stream.value(snapshot);
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      Stream<List<TaskDeleteUndo>>.value(undos);
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(
+    DeleteTaskCommand command,
+  ) async => Outcome<TaskDeleteReceipt>.success(
+    TaskDeleteReceipt(taskId: command.taskId, notBefore: DateTime.utc(2026)),
+  );
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async =>
+      const Outcome<void>.success(null);
 }
 
 final class _ScreenshotTaskListsRepository implements TaskListsRepository {
@@ -142,6 +188,10 @@ final class _ScreenshotTaskListsRepository implements TaskListsRepository {
 
   @override
   Future<Outcome<void>> renameTaskList(RenameTaskListCommand command) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> deleteTaskList(DeleteTaskListCommand command) async =>
       const Outcome<void>.success(null);
 }
 
@@ -345,6 +395,28 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
       inactiveReason: SyncInactiveReason.syncStopped,
       action: SyncHealthAction.resume,
       counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'delete-undo',
+    snapshot: CachedTasksSnapshot(
+      accountId: const AccountId(1),
+      taskLists: _baseSnapshot.taskLists,
+      tasks: const <CachedTask>[],
+      completeness: CacheCompleteness.complete,
+    ),
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'delete-list-confirmation',
+    snapshot: _baseSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.verifying,
     ),
   ),
 ];

@@ -11,6 +11,7 @@ import '../data/google_tasks/request.dart';
 import '../data/google_tasks/service.dart';
 import '../domain/model/tasks.dart';
 import 'create_operations.dart';
+import 'delete_operations.dart';
 import 'phase.dart';
 import 'read_plan.dart';
 import 'run.dart';
@@ -45,6 +46,7 @@ final class SyncEngine {
     var resourceProjectionWrites = 0;
     var createOperations = 0;
     var updateOperations = 0;
+    var deleteOperations = 0;
     var googleWonReplacements = 0;
     final googleWonReplacementCounts = <ContentSupersessionKind, int>{};
     var confirmedUpdateReadBacks = 0;
@@ -70,6 +72,7 @@ final class SyncEngine {
       resourceProjectionWrites: resourceProjectionWrites,
       createOperations: createOperations,
       updateOperations: updateOperations,
+      deleteOperations: deleteOperations,
       googleWonReplacements: googleWonReplacements,
       googleWonReplacementDetails: ContentSupersessionKind.values
           .where((kind) => (googleWonReplacementCounts[kind] ?? 0) > 0)
@@ -185,6 +188,10 @@ final class SyncEngine {
       recoveredAt: clock.now().toUtc(),
     );
     await store.recoverUpdateAttempts(
+      accountId: request.accountId,
+      recoveredAt: clock.now().toUtc(),
+    );
+    await store.recoverDeletes(
       accountId: request.accountId,
       recoveredAt: clock.now().toUtc(),
     );
@@ -371,6 +378,11 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.reconcileAndPlan) case final interruption?) {
       return interruption;
     }
+    await store.reconcileDeletes(
+      accountId: request.accountId,
+      runId: runId.value,
+      reconciledAt: clock.now().toUtc(),
+    );
     final reconciliation = await store.reconcileContent(
       accountId: request.accountId,
       runId: runId.value,
@@ -383,6 +395,99 @@ final class SyncEngine {
       return interruption;
     }
     var stopOperations = false;
+    while (!stopOperations) {
+      if (await interrupted(
+            const SyncRunBoundary(
+              kind: SyncRunBoundaryKind.beforeOperationClaim,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+      final claim = await store.claimNextDelete(
+        accountId: request.accountId,
+        runId: runId.value,
+        claimedAt: clock.now().toUtc(),
+      );
+      if (claim == null) break;
+      if (await interrupted(
+            SyncRunBoundary(
+              kind: SyncRunBoundaryKind.afterOperationClaim,
+              operationAttemptId: claim.attemptId,
+            ),
+          )
+          case final interruption?) {
+        return interruption;
+      }
+      deleteOperations += 1;
+      final operation = const DeleteOperationMapper().map(claim);
+      final result = switch (claim.kind) {
+        DeleteOperationKind.taskList => await googleTasks.deleteTaskList(
+          operation as DeleteTaskListOperation,
+        ),
+        DeleteOperationKind.task => await googleTasks.deleteTask(
+          operation as DeleteTaskOperation,
+        ),
+      };
+      switch (result) {
+        case CommittedMutation<void>():
+          if (claim.kind == DeleteOperationKind.taskList) {
+            try {
+              await store.acknowledgeTaskListDelete(
+                accountId: request.accountId,
+                claim: claim,
+                observationId: 'mutation:${runId.value}:${claim.attemptId}',
+                acknowledgedAt: clock.now().toUtc(),
+              );
+            } on Object {
+              firstFailure ??= _deleteAcknowledgementFailure;
+              stopOperations = true;
+            }
+            break;
+          }
+          final verification = await _verifyTaskDelete(claim, readCancellation);
+          if (verification case Failed<void>(:final failure)) {
+            await store.resolveDeleteFailure(
+              accountId: request.accountId,
+              claim: claim,
+              failure: failure,
+              uncertain: true,
+              resolvedAt: clock.now().toUtc(),
+            );
+            firstFailure ??= failure;
+            break;
+          }
+          try {
+            await store.acknowledgeTaskDelete(
+              accountId: request.accountId,
+              claim: claim,
+              observationId: 'mutation:${runId.value}:${claim.attemptId}',
+              acknowledgedAt: clock.now().toUtc(),
+            );
+          } on Object {
+            firstFailure ??= _deleteAcknowledgementFailure;
+            stopOperations = true;
+          }
+        case RejectedMutation<void>(:final error):
+          await store.resolveDeleteFailure(
+            accountId: request.accountId,
+            claim: claim,
+            failure: error.failure,
+            uncertain: false,
+            resolvedAt: clock.now().toUtc(),
+          );
+          firstFailure ??= error.failure;
+        case UncertainMutation<void>(:final error):
+          await store.resolveDeleteFailure(
+            accountId: request.accountId,
+            claim: claim,
+            failure: error.failure,
+            uncertain: true,
+            resolvedAt: clock.now().toUtc(),
+          );
+          firstFailure ??= error.failure;
+      }
+    }
     while (!stopOperations) {
       if (await interrupted(
             const SyncRunBoundary(
@@ -838,6 +943,33 @@ final class SyncEngine {
     }
   }
 
+  Future<Outcome<void>> _verifyTaskDelete(
+    DeleteOperationClaim claim,
+    GoogleTasksReadCancellation? cancellation,
+  ) async {
+    PageToken? token;
+    do {
+      final result = await googleTasks.listTasks(
+        RemoteTaskListId(claim.taskListRemoteId.value),
+        pageToken: token,
+        cancellation: cancellation,
+      );
+      switch (result) {
+        case Failed<RemotePage<RemoteTask>>(:final failure):
+          return Outcome<void>.failure(failure);
+        case Success<RemotePage<RemoteTask>>(:final value):
+          for (final task in value.items) {
+            if (task.id.value != claim.taskRemoteId!.value) continue;
+            return task is RemoteTaskTombstone
+                ? const Outcome<void>.success(null)
+                : const Outcome<void>.failure(_deleteVerificationFailure);
+          }
+          token = value.nextPageToken;
+      }
+    } while (token != null);
+    return const Outcome<void>.failure(_deleteVerificationFailure);
+  }
+
   Future<bool> _interrupted(SyncRunBoundary boundary) async =>
       await control.reach(boundary) == SyncRunControlDecision.interrupt;
 
@@ -914,6 +1046,24 @@ const Failure _updateAcknowledgementFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'A Google update could not be confirmed locally.',
   safeSummary: 'The update acknowledgement transaction did not commit.',
+);
+
+const Failure _deleteAcknowledgementFailure = Failure(
+  code: 'sync.delete_acknowledgement_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'A Google deletion could not be confirmed locally.',
+  safeSummary: 'The delete acknowledgement transaction did not commit.',
+);
+
+const Failure _deleteVerificationFailure = Failure(
+  code: 'sync.task_delete_unverified',
+  category: FailureCategory.remote,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'A task deletion could not yet be verified.',
+  safeSummary: 'Positive task tombstone evidence was not available.',
 );
 
 const int _maximumConditionalReplans = 3;

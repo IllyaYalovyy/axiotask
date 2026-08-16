@@ -307,6 +307,14 @@ after full finalization, and verifies partial-page failure, malformed data, and
 absent authorization without Google access. All content and identities are
 synthetic; Android composition/lifecycle remains outside this slice.
 
+S17 adds `integration_test/delete_publish_linux_test.dart`. It uses a temporary
+SQLite file and stateful synthetic Google service to verify task delete → Undo
+with unchanged identities, zero Google DELETE calls through 29.999 seconds,
+and one tombstone-verified DELETE at 30.000 seconds. Focused store, coordinator,
+engine, widget, and golden tests cover restart cleanup/claim recovery, explicit
+Refresh during grace, subtree/moved-child safety, unrelated accounts/lists,
+durable Undo presentation, and irreversible list-delete confirmation.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the

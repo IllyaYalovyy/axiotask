@@ -6,4 +6,6 @@ abstract interface class TaskListsRepository {
   Future<Outcome<TaskListId>> createTaskList(CreateTaskListCommand command);
 
   Future<Outcome<void>> renameTaskList(RenameTaskListCommand command);
+
+  Future<Outcome<void>> deleteTaskList(DeleteTaskListCommand command);
 }

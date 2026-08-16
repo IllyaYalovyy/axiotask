@@ -18,6 +18,8 @@ enum DesiredStateLifecycle {
   superseded,
 }
 
+enum DesiredLifecycle { present, deleted }
+
 enum DesiredStateTransactionBoundary {
   afterProjectionWrite,
   afterDesiredStateWrite,
@@ -54,6 +56,7 @@ final class TaskListDesiredStateRecord {
     required this.generation,
     required this.localCausalSequence,
     required this.state,
+    required this.desiredLifecycle,
     required this.baseRemoteId,
     required this.baseEtag,
     required this.baseRemoteUpdatedAt,
@@ -71,6 +74,7 @@ final class TaskListDesiredStateRecord {
   final int generation;
   final int localCausalSequence;
   final DesiredStateLifecycle state;
+  final DesiredLifecycle desiredLifecycle;
   final TaskListRemoteId? baseRemoteId;
   final String? baseEtag;
   final DateTime? baseRemoteUpdatedAt;
@@ -95,6 +99,7 @@ final class TaskDesiredStateRecord {
     required this.generation,
     required this.localCausalSequence,
     required this.state,
+    required this.desiredLifecycle,
     required this.baseRemoteId,
     required this.baseEtag,
     required this.baseRemoteUpdatedAt,
@@ -120,6 +125,7 @@ final class TaskDesiredStateRecord {
   final int generation;
   final int localCausalSequence;
   final DesiredStateLifecycle state;
+  final DesiredLifecycle desiredLifecycle;
   final TaskRemoteId? baseRemoteId;
   final String? baseEtag;
   final DateTime? baseRemoteUpdatedAt;
@@ -970,6 +976,7 @@ final class DesiredStateDao {
                 (row) =>
                     row.accountId.equals(accountId.value) &
                     row.state.equals('in_flight') &
+                    row.desiredLifecycle.equals('present') &
                     row.baseRemoteId.isNotNull(),
               ))
               .get();
@@ -993,6 +1000,52 @@ final class DesiredStateDao {
               DesiredStateRowsCompanion(
                 state: const Value<String>('uncertain'),
                 failureCode: const Value<String>('sync.update_interrupted'),
+                lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+              ),
+            );
+      }
+      await _recomputeCounts(accountId);
+      return attempts.length;
+    });
+  }
+
+  Future<int> recoverInFlightDeletes({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) {
+    return _database.transaction(() async {
+      final accountExists = await (_database.select(
+        _database.accounts,
+      )..where((row) => row.id.equals(accountId.value))).getSingleOrNull();
+      if (accountExists == null) return 0;
+      final attempts =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.state.equals('in_flight') &
+                    row.desiredLifecycle.equals('deleted'),
+              ))
+              .get();
+      for (final attempt in attempts) {
+        await (_database.update(
+          _database.desiredStateAttemptRows,
+        )..where((row) => row.id.equals(attempt.id))).write(
+          DesiredStateAttemptRowsCompanion(
+            state: const Value<String>('uncertain'),
+            failureCode: const Value<String>('sync.delete_interrupted'),
+            lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
+          ),
+        );
+        await (_database.update(_database.desiredStateRows)..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.id.equals(attempt.desiredStateId) &
+                  row.generation.equals(attempt.generation),
+            ))
+            .write(
+              DesiredStateRowsCompanion(
+                state: const Value<String>('uncertain'),
+                failureCode: const Value<String>('sync.delete_interrupted'),
                 lastTransitionAt: Value<DateTime>(recoveredAt.toUtc()),
               ),
             );
@@ -1888,6 +1941,7 @@ TaskListDesiredStateRecord _mapTaskList(DesiredStateRow row) =>
       generation: row.generation,
       localCausalSequence: row.localCausalSequence,
       state: _state(row.state),
+      desiredLifecycle: _desiredLifecycle(row.desiredLifecycle),
       baseRemoteId: row.baseRemoteId == null
           ? null
           : TaskListRemoteId(row.baseRemoteId!),
@@ -1915,6 +1969,7 @@ TaskDesiredStateRecord _mapTask(DesiredStateRow row) => TaskDesiredStateRecord(
   generation: row.generation,
   localCausalSequence: row.localCausalSequence,
   state: _state(row.state),
+  desiredLifecycle: _desiredLifecycle(row.desiredLifecycle),
   baseRemoteId: row.baseRemoteId == null
       ? null
       : TaskRemoteId(row.baseRemoteId!),
@@ -2022,6 +2077,12 @@ DesiredStateLifecycle _state(String state) => switch (state) {
   'confirmed' => DesiredStateLifecycle.confirmed,
   'superseded' => DesiredStateLifecycle.superseded,
   _ => throw const DesiredStateInvariantException('unknown_lifecycle_state'),
+};
+
+DesiredLifecycle _desiredLifecycle(String value) => switch (value) {
+  'present' => DesiredLifecycle.present,
+  'deleted' => DesiredLifecycle.deleted,
+  _ => throw const DesiredStateInvariantException('unknown_desired_lifecycle'),
 };
 
 String _statusValue(TaskStatus status) => switch (status) {

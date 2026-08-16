@@ -11,6 +11,7 @@ import '../../domain/model/tasks.dart';
 import '../../domain/repository/task_lists_repository.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
+import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 
 final class DatabaseTaskListsRepository implements TaskListsRepository {
@@ -20,11 +21,13 @@ final class DatabaseTaskListsRepository implements TaskListsRepository {
     this.transactionControl,
   }) : _database = database,
        _cache = CacheDao(database),
-       _desired = DesiredStateDao(database);
+       _desired = DesiredStateDao(database),
+       _deletes = DeleteStateDao(database);
 
   final AppDatabase _database;
   final CacheDao _cache;
   final DesiredStateDao _desired;
+  final DeleteStateDao _deletes;
   final Clock clock;
   final DesiredStateTransactionControl? transactionControl;
 
@@ -110,6 +113,26 @@ final class DatabaseTaskListsRepository implements TaskListsRepository {
       return Outcome<void>.failure(error.failure);
     } on DesiredStatePersistenceException {
       return const Outcome<void>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<void>> deleteTaskList(DeleteTaskListCommand command) async {
+    try {
+      await _deletes.createTaskListDelete(
+        accountId: command.accountId,
+        taskListId: command.taskListId,
+        acknowledgedAt: clock.now(),
+      );
+      return const Outcome<void>.success(null);
+    } on DeleteStateException catch (error) {
+      return Outcome<void>.failure(
+        error.code == 'task_list_not_found'
+            ? _taskListNotFoundFailure
+            : _persistenceFailure,
+      );
     } on SqliteException {
       return const Outcome<void>.failure(_persistenceFailure);
     }

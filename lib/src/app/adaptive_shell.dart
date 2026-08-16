@@ -72,6 +72,21 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                     content: Text(message),
                     actions: const <Widget>[SizedBox.shrink()],
                   ),
+                if (state.taskDeleteUndos.firstOrNull case final undo?)
+                  MaterialBanner(
+                    leading: const Icon(Icons.delete_outline),
+                    content: Text('“${undo.title}” deleted'),
+                    actions: <Widget>[
+                      TextButton(
+                        onPressed: state.isTaskCommandPending
+                            ? null
+                            : () => unawaited(
+                                widget.viewModel.undoTaskDelete(undo.taskId),
+                              ),
+                        child: const Text('Undo'),
+                      ),
+                    ],
+                  ),
                 Expanded(
                   child: LayoutBuilder(
                     builder: (context, constraints) => _ShellBody(
@@ -322,6 +337,20 @@ final class _TaskCollection extends StatelessWidget {
                           ),
                     icon: const Icon(Icons.edit_outlined),
                   ),
+                  IconButton(
+                    tooltip: 'Delete selected task list',
+                    onPressed:
+                        state.isListCommandPending ||
+                            viewModel.taskListsRepository == null ||
+                            state.selectedTaskList == null
+                        ? null
+                        : () => _showDeleteTaskListConfirmation(
+                            context,
+                            viewModel,
+                            state.selectedTaskList!,
+                          ),
+                    icon: const Icon(Icons.delete_forever_outlined),
+                  ),
                 ],
               ),
               const SizedBox(height: 4),
@@ -558,6 +587,13 @@ final class _TaskDetails extends StatelessWidget {
               icon: const Icon(Icons.edit_outlined),
             ),
             IconButton(
+              tooltip: 'Delete task',
+              onPressed: state.isTaskCommandPending
+                  ? null
+                  : () => unawaited(viewModel.deleteTask(task.id)),
+              icon: const Icon(Icons.delete_outline),
+            ),
+            IconButton(
               tooltip: 'Close details',
               onPressed: viewModel.clearTaskSelection,
               icon: const Icon(Icons.close),
@@ -600,6 +636,53 @@ Future<void> _showTaskContentDialog(
   context: context,
   builder: (_) => _TaskContentDialog(viewModel: viewModel, task: task),
 );
+
+Future<void> _showDeleteTaskListConfirmation(
+  BuildContext context,
+  TasksViewModel viewModel,
+  CachedTaskList taskList,
+) => showDialog<void>(
+  context: context,
+  builder: (_) => DeleteTaskListConfirmationDialog(
+    viewModel: viewModel,
+    taskList: taskList,
+  ),
+);
+
+final class DeleteTaskListConfirmationDialog extends StatelessWidget {
+  const DeleteTaskListConfirmationDialog({
+    required this.viewModel,
+    required this.taskList,
+    super.key,
+  });
+
+  final TasksViewModel viewModel;
+  final CachedTaskList taskList;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Delete “${taskList.title}”?'),
+    content: const Text(
+      'This deletes the Google task list and its tasks. This action cannot be undone.',
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () async {
+          await viewModel.deleteTaskList(taskList.id);
+          if (context.mounted &&
+              viewModel.state.listCommandFailureMessage == null) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: const Text('Delete list'),
+      ),
+    ],
+  );
+}
 
 final class _CreateTaskDialog extends StatefulWidget {
   const _CreateTaskDialog({required this.viewModel, required this.taskListId});

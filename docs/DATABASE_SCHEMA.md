@@ -20,9 +20,11 @@ replaced with an empty cache.
 | `scope_completeness` | Account list-enumeration or per-list task-enumeration page-chain state, including the opaque next-page token while incomplete. |
 | `account_preferences` | Relational account settings: sync-enabled control, optional account-owned default list reference, and the next account-scoped causal sequence for durable desired state. |
 | `sync_facts` | Account-scoped last verified success, newest failure, unresolved-work counts, reauthorization/retry/scope/follow-up facts used by the truthful health projection. Runtime authorization, connectivity, and active phase remain injected observations rather than durable guesses. |
-| `desired_states` | One coalesced account/resource intent with stable local target, optional bound Google ID, original confirmed whole-content base snapshot, full desired list/task fields, dirty facets, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content; S16 compares the preserved base during reconciliation. |
+| `desired_states` | One coalesced account/resource intent with stable local target, present/deleted lifecycle, optional bound Google ID, original confirmed whole-content base snapshot, full desired list/task fields, dirty facets, exact delete `not_before`, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content; S16 compares the preserved base during reconciliation; S17 records authoritative delete intent. |
 | `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. Provisional task creates record their list and optional parent references; list edits need no edge. |
-| `desired_state_attempts` | Immutable claimed generation/payload snapshots with request identity and durable lifecycle/failure, uncertainty, confirmation, or supersession evidence. A 412 may supersede one attempt and create a fresh attempt for the same desired generation after refetch/replan. |
+| `desired_state_attempts` | Immutable claimed generation/payload snapshots with present/deleted lifecycle, request identity, optional delete eligibility boundary, and durable lifecycle/failure, uncertainty, confirmation, or supersession evidence. A 412 may supersede one attempt and create a fresh attempt for the same desired generation after refetch/replan. |
+| `task_delete_tombstones` | One account/root-task durable Undo and deletion record, tied to the exact desired generation with its 30-second `not_before` boundary and snapshot-availability bit. |
+| `task_delete_snapshots` | Account-scoped bounded task/subtree snapshots preserving stable local/remote identity and supported content until Undo expiry; cleanup strips content while retaining minimal deletion/scope evidence. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
 
@@ -91,6 +93,18 @@ application adapter and device-only preferences remain the S22A slice.
   older attempt cannot clear a newer coalesced generation. Atomic create
   acknowledgement binds the Google ID and canonical base/projection while
   resolving only the matching generation.
+- Task deletion atomically hides the supported root and descendants, stores one
+  tombstone plus bounded snapshots, and records a deleted desired generation
+  whose `not_before` is exactly 30 seconds after acknowledgement. Before that
+  boundary Undo restores the same local and Google identities and supersedes
+  the unclaimed deletion. At and after the boundary cleanup removes Undo
+  content and only then permits a claim. A claimed delete recovered after
+  process death becomes uncertain, never implicitly successful.
+- Task DELETE acknowledgement requires a positive Google tombstone for the
+  stable task ID. A moved child is removed from a parent snapshot before the
+  parent cascade is applied, preserving the same identity in its observed
+  surviving list. List deletion has no snapshot/Undo and hides only its
+  account-scoped list after explicit UI confirmation.
 - S15A selects only pending unbound create generations after complete applicable
   enumeration. It claims lists before top-level tasks before children; resolved
   dependency Google IDs are read from account-scoped cache rows. A conclusive

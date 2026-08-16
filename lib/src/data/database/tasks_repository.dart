@@ -11,6 +11,7 @@ import '../../domain/model/tasks.dart';
 import '../../domain/repository/tasks_repository.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
+import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 
 final class DatabaseTasksRepository implements TasksRepository {
@@ -20,11 +21,13 @@ final class DatabaseTasksRepository implements TasksRepository {
     this.transactionControl,
   }) : clock = clock ?? SystemClock(),
        _cache = CacheDao(_database),
-       _desired = DesiredStateDao(_database);
+       _desired = DesiredStateDao(_database),
+       _deletes = DeleteStateDao(_database);
 
   final AppDatabase _database;
   final CacheDao _cache;
   final DesiredStateDao _desired;
+  final DeleteStateDao _deletes;
   final Clock clock;
   final DesiredStateTransactionControl? transactionControl;
 
@@ -160,6 +163,45 @@ final class DatabaseTasksRepository implements TasksRepository {
       return Outcome<void>.failure(error.failure);
     } on DesiredStatePersistenceException {
       return const Outcome<void>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(
+    DeleteTaskCommand command,
+  ) async {
+    try {
+      final tombstone = await _deletes.createTaskDelete(
+        accountId: command.accountId,
+        rootTaskId: command.taskId,
+        acknowledgedAt: clock.now(),
+      );
+      return Outcome<TaskDeleteReceipt>.success(
+        TaskDeleteReceipt(
+          taskId: command.taskId,
+          notBefore: tombstone.notBefore,
+        ),
+      );
+    } on DeleteStateException catch (error) {
+      return Outcome<TaskDeleteReceipt>.failure(_deleteFailure(error.code));
+    } on SqliteException {
+      return const Outcome<TaskDeleteReceipt>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) async {
+    try {
+      await _deletes.undoTaskDelete(
+        accountId: command.accountId,
+        rootTaskId: command.taskId,
+        now: clock.now(),
+      );
+      return const Outcome<void>.success(null);
+    } on DeleteStateException catch (error) {
+      return Outcome<void>.failure(_deleteFailure(error.code));
     } on SqliteException {
       return const Outcome<void>.failure(_persistenceFailure);
     }
@@ -304,6 +346,10 @@ final class DatabaseTasksRepository implements TasksRepository {
     );
     return result.watch().map((rows) => _mapSnapshot(query.accountId, rows));
   }
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      _deletes.watchAvailableTaskUndos(accountId);
 
   Future<void> _requireAccount(AccountId accountId) async {
     final account = await (_database.select(
@@ -568,3 +614,30 @@ const Failure _persistenceFailure = Failure(
   impact: 'The task was not saved.',
   safeSummary: 'The task transaction did not commit.',
 );
+
+Failure _deleteFailure(String code) => switch (code) {
+  'delete_undo_expired' => const Failure(
+    code: 'task.delete_undo_expired',
+    category: FailureCategory.internal,
+    operation: FailureOperation.write,
+    retry: RetryClassification.permanent,
+    impact: 'The task can no longer be restored.',
+    safeSummary: 'The durable task delete grace has expired.',
+  ),
+  'delete_already_dispatched' => const Failure(
+    code: 'task.delete_already_dispatched',
+    category: FailureCategory.internal,
+    operation: FailureOperation.write,
+    retry: RetryClassification.permanent,
+    impact: 'The task can no longer be restored.',
+    safeSummary: 'The authoritative task delete was already dispatched.',
+  ),
+  _ => const Failure(
+    code: 'task.delete_unavailable',
+    category: FailureCategory.internal,
+    operation: FailureOperation.write,
+    retry: RetryClassification.permanent,
+    impact: 'The task deletion could not be changed.',
+    safeSummary: 'The task delete target or Undo snapshot was unavailable.',
+  ),
+};

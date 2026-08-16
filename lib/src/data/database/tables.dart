@@ -301,6 +301,8 @@ class DesiredStateRows extends Table {
 
   DateTimeColumn get localModifiedAt => dateTime().nullable()();
 
+  DateTimeColumn get notBefore => dateTime().nullable()();
+
   IntColumn get generation =>
       integer().check(generation.isBiggerThanValue(0))();
 
@@ -378,6 +380,89 @@ class DesiredStateRows extends Table {
         'AND target_task_list_id IS NULL AND target_task_id IS NOT NULL))',
     "CHECK (desired_lifecycle = 'deleted' OR title IS NOT NULL)",
     'CHECK (content_dirty = 1 OR structure_dirty = 1 OR lifecycle_dirty = 1)',
+  ];
+}
+
+class TaskDeleteTombstoneRows extends Table {
+  @override
+  String get tableName => 'task_delete_tombstones';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get rootTaskId => integer()();
+
+  IntColumn get desiredStateId => integer()();
+
+  IntColumn get deleteGeneration => integer()();
+
+  DateTimeColumn get notBefore => dateTime()();
+
+  BoolColumn get snapshotAvailable => boolean()();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, id},
+    <Column<Object>>{accountId, rootTaskId},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, root_task_id) '
+        'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, desired_state_id) '
+        'REFERENCES desired_states(account_id, id) ON DELETE CASCADE',
+  ];
+}
+
+class TaskDeleteSnapshotRows extends Table {
+  @override
+  String get tableName => 'task_delete_snapshots';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get tombstoneId => integer()();
+
+  IntColumn get taskId => integer()();
+
+  IntColumn get taskListId => integer()();
+
+  IntColumn get parentTaskId => integer().nullable()();
+
+  TextColumn get remoteId => text().nullable()();
+
+  TextColumn get title => text()();
+
+  TextColumn get notes => text().nullable()();
+
+  TextColumn get status =>
+      text().check(status.isIn(const <String>['needs_action', 'completed']))();
+
+  IntColumn get dueEpochDay => integer().nullable()();
+
+  TextColumn get position => text()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, tombstoneId, taskId},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id, tombstone_id) '
+        'REFERENCES task_delete_tombstones(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, task_id) '
+        'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, task_list_id) '
+        'REFERENCES task_lists(account_id, id)',
+    'FOREIGN KEY (account_id, parent_task_id) '
+        'REFERENCES tasks(account_id, id)',
   ];
 }
 
@@ -467,6 +552,8 @@ class DesiredStateAttemptRows extends Table {
   TextColumn get baseObservedPublicationId => text().nullable()();
 
   TextColumn get baseTitle => text().nullable()();
+
+  DateTimeColumn get notBefore => dateTime().nullable()();
 
   TextColumn get state => text().check(
     state.isIn(const <String>[
