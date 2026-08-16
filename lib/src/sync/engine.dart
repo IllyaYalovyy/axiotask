@@ -51,7 +51,7 @@ final class SyncEngine {
     final runDeadline =
         request.deadline ?? clock.monotonicElapsed + const Duration(minutes: 2);
     final readCancellation = _readCancellation();
-    final runId = _newRunId();
+    var runId = _newRunId();
     var taskListPages = 0;
     var taskPages = 0;
     var remoteTaskLists = 0;
@@ -139,12 +139,13 @@ final class SyncEngine {
         _ => null,
       };
       if (begun && failure != null) {
-        await store.finalizeReadFailure(
+        final finalized = await store.finalizeReadFailure(
           accountId: request.accountId,
           runId: runId,
           failedAt: clock.now().toUtc(),
           failure: failure,
         );
+        if (!finalized) return report(SyncRunOutcome.interrupted);
         return report(SyncRunOutcome.failed, failure: failure);
       }
       return report(SyncRunOutcome.interrupted);
@@ -226,19 +227,11 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.recover) case final interruption?) {
       return interruption;
     }
-    await store.recoverReadRun(request.accountId);
-    final recoverableCreateAttemptIds = await store.recoverCreateAttempts(
+    final recovery = await store.recoverStartup(
       accountId: request.accountId,
       recoveredAt: clock.now().toUtc(),
     );
-    await store.recoverUpdateAttempts(
-      accountId: request.accountId,
-      recoveredAt: clock.now().toUtc(),
-    );
-    await store.recoverDeletes(
-      accountId: request.accountId,
-      recoveredAt: clock.now().toUtc(),
-    );
+    final recoverableCreateAttemptIds = recovery.recoverableCreateAttemptIds;
 
     if (await phase(SyncRunPhase.checkEligibility) case final interruption?) {
       return interruption;
@@ -293,7 +286,7 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.begin) case final interruption?) {
       return interruption;
     }
-    await store.beginReadRun(
+    runId = await store.beginReadRun(
       accountId: request.accountId,
       runId: runId,
       triggers: request.triggers,
@@ -1340,12 +1333,13 @@ final class SyncEngine {
     }
 
     if (firstFailure case final failure?) {
-      await store.finalizeReadFailure(
+      final finalized = await store.finalizeReadFailure(
         accountId: request.accountId,
         runId: runId,
         failedAt: clock.now().toUtc(),
         failure: failure,
       );
+      if (!finalized) return report(SyncRunOutcome.interrupted);
       return report(SyncRunOutcome.failed, failure: failure);
     }
 
@@ -1355,19 +1349,21 @@ final class SyncEngine {
     );
     if (!complete) {
       final failure = _incompletePublicationFailure;
-      await store.finalizeReadFailure(
+      final finalized = await store.finalizeReadFailure(
         accountId: request.accountId,
         runId: runId,
         failedAt: clock.now().toUtc(),
         failure: failure,
       );
+      if (!finalized) return report(SyncRunOutcome.interrupted);
       return report(SyncRunOutcome.failed, failure: failure);
     }
-    await store.finalizeReadSuccess(
+    final finalized = await store.finalizeReadSuccess(
       accountId: request.accountId,
       runId: runId,
       completedAt: clock.now().toUtc(),
     );
+    if (!finalized) return report(SyncRunOutcome.interrupted);
     return report(SyncRunOutcome.succeeded, complete: true);
   }
 

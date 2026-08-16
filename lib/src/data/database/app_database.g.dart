@@ -8025,6 +8025,495 @@ class DesiredStateAttemptRowsCompanion
   }
 }
 
+class $SyncRunRowsTable extends SyncRunRows
+    with TableInfo<$SyncRunRowsTable, SyncRunRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncRunRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
+  @override
+  late final GeneratedColumn<String> runId = GeneratedColumn<String>(
+    'run_id',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(runId.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _triggersJsonMeta = const VerificationMeta(
+    'triggersJson',
+  );
+  @override
+  late final GeneratedColumn<String> triggersJson = GeneratedColumn<String>(
+    'triggers_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateMeta = const VerificationMeta('state');
+  @override
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    check: () => state.isIn(const <String>[
+      'in_progress',
+      'interrupted',
+      'succeeded',
+      'failed',
+    ]),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> startedAt = GeneratedColumn<DateTime>(
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _finishedAtMeta = const VerificationMeta(
+    'finishedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> finishedAt = GeneratedColumn<DateTime>(
+    'finished_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failureCodeMeta = const VerificationMeta(
+    'failureCode',
+  );
+  @override
+  late final GeneratedColumn<String> failureCode = GeneratedColumn<String>(
+    'failure_code',
+    aliasedName,
+    true,
+    check: () =>
+        failureCode.isNull() |
+        ComparableExpr(failureCode.length).isBiggerThanValue(0),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountId,
+    runId,
+    triggersJson,
+    state,
+    startedAt,
+    finishedAt,
+    failureCode,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_runs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<SyncRunRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('run_id')) {
+      context.handle(
+        _runIdMeta,
+        runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_runIdMeta);
+    }
+    if (data.containsKey('triggers_json')) {
+      context.handle(
+        _triggersJsonMeta,
+        triggersJson.isAcceptableOrUnknown(
+          data['triggers_json']!,
+          _triggersJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_triggersJsonMeta);
+    }
+    if (data.containsKey('state')) {
+      context.handle(
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('finished_at')) {
+      context.handle(
+        _finishedAtMeta,
+        finishedAt.isAcceptableOrUnknown(data['finished_at']!, _finishedAtMeta),
+      );
+    }
+    if (data.containsKey('failure_code')) {
+      context.handle(
+        _failureCodeMeta,
+        failureCode.isAcceptableOrUnknown(
+          data['failure_code']!,
+          _failureCodeMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountId, runId};
+  @override
+  SyncRunRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncRunRow(
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      runId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}run_id'],
+      )!,
+      triggersJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}triggers_json'],
+      )!,
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}started_at'],
+      )!,
+      finishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}finished_at'],
+      ),
+      failureCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_code'],
+      ),
+    );
+  }
+
+  @override
+  $SyncRunRowsTable createAlias(String alias) {
+    return $SyncRunRowsTable(attachedDatabase, alias);
+  }
+}
+
+class SyncRunRow extends DataClass implements Insertable<SyncRunRow> {
+  final int accountId;
+  final String runId;
+  final String triggersJson;
+  final String state;
+  final DateTime startedAt;
+  final DateTime? finishedAt;
+  final String? failureCode;
+  const SyncRunRow({
+    required this.accountId,
+    required this.runId,
+    required this.triggersJson,
+    required this.state,
+    required this.startedAt,
+    this.finishedAt,
+    this.failureCode,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_id'] = Variable<int>(accountId);
+    map['run_id'] = Variable<String>(runId);
+    map['triggers_json'] = Variable<String>(triggersJson);
+    map['state'] = Variable<String>(state);
+    map['started_at'] = Variable<DateTime>(startedAt);
+    if (!nullToAbsent || finishedAt != null) {
+      map['finished_at'] = Variable<DateTime>(finishedAt);
+    }
+    if (!nullToAbsent || failureCode != null) {
+      map['failure_code'] = Variable<String>(failureCode);
+    }
+    return map;
+  }
+
+  SyncRunRowsCompanion toCompanion(bool nullToAbsent) {
+    return SyncRunRowsCompanion(
+      accountId: Value(accountId),
+      runId: Value(runId),
+      triggersJson: Value(triggersJson),
+      state: Value(state),
+      startedAt: Value(startedAt),
+      finishedAt: finishedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(finishedAt),
+      failureCode: failureCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failureCode),
+    );
+  }
+
+  factory SyncRunRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncRunRow(
+      accountId: serializer.fromJson<int>(json['accountId']),
+      runId: serializer.fromJson<String>(json['runId']),
+      triggersJson: serializer.fromJson<String>(json['triggersJson']),
+      state: serializer.fromJson<String>(json['state']),
+      startedAt: serializer.fromJson<DateTime>(json['startedAt']),
+      finishedAt: serializer.fromJson<DateTime?>(json['finishedAt']),
+      failureCode: serializer.fromJson<String?>(json['failureCode']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountId': serializer.toJson<int>(accountId),
+      'runId': serializer.toJson<String>(runId),
+      'triggersJson': serializer.toJson<String>(triggersJson),
+      'state': serializer.toJson<String>(state),
+      'startedAt': serializer.toJson<DateTime>(startedAt),
+      'finishedAt': serializer.toJson<DateTime?>(finishedAt),
+      'failureCode': serializer.toJson<String?>(failureCode),
+    };
+  }
+
+  SyncRunRow copyWith({
+    int? accountId,
+    String? runId,
+    String? triggersJson,
+    String? state,
+    DateTime? startedAt,
+    Value<DateTime?> finishedAt = const Value.absent(),
+    Value<String?> failureCode = const Value.absent(),
+  }) => SyncRunRow(
+    accountId: accountId ?? this.accountId,
+    runId: runId ?? this.runId,
+    triggersJson: triggersJson ?? this.triggersJson,
+    state: state ?? this.state,
+    startedAt: startedAt ?? this.startedAt,
+    finishedAt: finishedAt.present ? finishedAt.value : this.finishedAt,
+    failureCode: failureCode.present ? failureCode.value : this.failureCode,
+  );
+  SyncRunRow copyWithCompanion(SyncRunRowsCompanion data) {
+    return SyncRunRow(
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      runId: data.runId.present ? data.runId.value : this.runId,
+      triggersJson: data.triggersJson.present
+          ? data.triggersJson.value
+          : this.triggersJson,
+      state: data.state.present ? data.state.value : this.state,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      finishedAt: data.finishedAt.present
+          ? data.finishedAt.value
+          : this.finishedAt,
+      failureCode: data.failureCode.present
+          ? data.failureCode.value
+          : this.failureCode,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncRunRow(')
+          ..write('accountId: $accountId, ')
+          ..write('runId: $runId, ')
+          ..write('triggersJson: $triggersJson, ')
+          ..write('state: $state, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('finishedAt: $finishedAt, ')
+          ..write('failureCode: $failureCode')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    accountId,
+    runId,
+    triggersJson,
+    state,
+    startedAt,
+    finishedAt,
+    failureCode,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncRunRow &&
+          other.accountId == this.accountId &&
+          other.runId == this.runId &&
+          other.triggersJson == this.triggersJson &&
+          other.state == this.state &&
+          other.startedAt == this.startedAt &&
+          other.finishedAt == this.finishedAt &&
+          other.failureCode == this.failureCode);
+}
+
+class SyncRunRowsCompanion extends UpdateCompanion<SyncRunRow> {
+  final Value<int> accountId;
+  final Value<String> runId;
+  final Value<String> triggersJson;
+  final Value<String> state;
+  final Value<DateTime> startedAt;
+  final Value<DateTime?> finishedAt;
+  final Value<String?> failureCode;
+  final Value<int> rowid;
+  const SyncRunRowsCompanion({
+    this.accountId = const Value.absent(),
+    this.runId = const Value.absent(),
+    this.triggersJson = const Value.absent(),
+    this.state = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.finishedAt = const Value.absent(),
+    this.failureCode = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncRunRowsCompanion.insert({
+    required int accountId,
+    required String runId,
+    required String triggersJson,
+    required String state,
+    required DateTime startedAt,
+    this.finishedAt = const Value.absent(),
+    this.failureCode = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : accountId = Value(accountId),
+       runId = Value(runId),
+       triggersJson = Value(triggersJson),
+       state = Value(state),
+       startedAt = Value(startedAt);
+  static Insertable<SyncRunRow> custom({
+    Expression<int>? accountId,
+    Expression<String>? runId,
+    Expression<String>? triggersJson,
+    Expression<String>? state,
+    Expression<DateTime>? startedAt,
+    Expression<DateTime>? finishedAt,
+    Expression<String>? failureCode,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountId != null) 'account_id': accountId,
+      if (runId != null) 'run_id': runId,
+      if (triggersJson != null) 'triggers_json': triggersJson,
+      if (state != null) 'state': state,
+      if (startedAt != null) 'started_at': startedAt,
+      if (finishedAt != null) 'finished_at': finishedAt,
+      if (failureCode != null) 'failure_code': failureCode,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncRunRowsCompanion copyWith({
+    Value<int>? accountId,
+    Value<String>? runId,
+    Value<String>? triggersJson,
+    Value<String>? state,
+    Value<DateTime>? startedAt,
+    Value<DateTime?>? finishedAt,
+    Value<String?>? failureCode,
+    Value<int>? rowid,
+  }) {
+    return SyncRunRowsCompanion(
+      accountId: accountId ?? this.accountId,
+      runId: runId ?? this.runId,
+      triggersJson: triggersJson ?? this.triggersJson,
+      state: state ?? this.state,
+      startedAt: startedAt ?? this.startedAt,
+      finishedAt: finishedAt ?? this.finishedAt,
+      failureCode: failureCode ?? this.failureCode,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (runId.present) {
+      map['run_id'] = Variable<String>(runId.value);
+    }
+    if (triggersJson.present) {
+      map['triggers_json'] = Variable<String>(triggersJson.value);
+    }
+    if (state.present) {
+      map['state'] = Variable<String>(state.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<DateTime>(startedAt.value);
+    }
+    if (finishedAt.present) {
+      map['finished_at'] = Variable<DateTime>(finishedAt.value);
+    }
+    if (failureCode.present) {
+      map['failure_code'] = Variable<String>(failureCode.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncRunRowsCompanion(')
+          ..write('accountId: $accountId, ')
+          ..write('runId: $runId, ')
+          ..write('triggersJson: $triggersJson, ')
+          ..write('state: $state, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('finishedAt: $finishedAt, ')
+          ..write('failureCode: $failureCode, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
     with TableInfo<$TaskDeleteTombstoneRowsTable, TaskDeleteTombstoneRow> {
   @override
@@ -11353,6 +11842,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $DesiredStateDependencyRowsTable(this);
   late final $DesiredStateAttemptRowsTable desiredStateAttemptRows =
       $DesiredStateAttemptRowsTable(this);
+  late final $SyncRunRowsTable syncRunRows = $SyncRunRowsTable(this);
   late final $TaskDeleteTombstoneRowsTable taskDeleteTombstoneRows =
       $TaskDeleteTombstoneRowsTable(this);
   late final $TaskDeleteSnapshotRowsTable taskDeleteSnapshotRows =
@@ -11377,6 +11867,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     desiredStateRows,
     desiredStateDependencyRows,
     desiredStateAttemptRows,
+    syncRunRows,
     taskDeleteTombstoneRows,
     taskDeleteSnapshotRows,
     syncFactRows,
@@ -15082,6 +15573,250 @@ typedef $$DesiredStateAttemptRowsTableProcessedTableManager =
       DesiredStateAttemptRow,
       PrefetchHooks Function()
     >;
+typedef $$SyncRunRowsTableCreateCompanionBuilder =
+    SyncRunRowsCompanion Function({
+      required int accountId,
+      required String runId,
+      required String triggersJson,
+      required String state,
+      required DateTime startedAt,
+      Value<DateTime?> finishedAt,
+      Value<String?> failureCode,
+      Value<int> rowid,
+    });
+typedef $$SyncRunRowsTableUpdateCompanionBuilder =
+    SyncRunRowsCompanion Function({
+      Value<int> accountId,
+      Value<String> runId,
+      Value<String> triggersJson,
+      Value<String> state,
+      Value<DateTime> startedAt,
+      Value<DateTime?> finishedAt,
+      Value<String?> failureCode,
+      Value<int> rowid,
+    });
+
+class $$SyncRunRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $SyncRunRowsTable> {
+  $$SyncRunRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get runId => $composableBuilder(
+    column: $table.runId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get triggersJson => $composableBuilder(
+    column: $table.triggersJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$SyncRunRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $SyncRunRowsTable> {
+  $$SyncRunRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get runId => $composableBuilder(
+    column: $table.runId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get triggersJson => $composableBuilder(
+    column: $table.triggersJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get state => $composableBuilder(
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$SyncRunRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SyncRunRowsTable> {
+  $$SyncRunRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get runId =>
+      $composableBuilder(column: $table.runId, builder: (column) => column);
+
+  GeneratedColumn<String> get triggersJson => $composableBuilder(
+    column: $table.triggersJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get state =>
+      $composableBuilder(column: $table.state, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get finishedAt => $composableBuilder(
+    column: $table.finishedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get failureCode => $composableBuilder(
+    column: $table.failureCode,
+    builder: (column) => column,
+  );
+}
+
+class $$SyncRunRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $SyncRunRowsTable,
+          SyncRunRow,
+          $$SyncRunRowsTableFilterComposer,
+          $$SyncRunRowsTableOrderingComposer,
+          $$SyncRunRowsTableAnnotationComposer,
+          $$SyncRunRowsTableCreateCompanionBuilder,
+          $$SyncRunRowsTableUpdateCompanionBuilder,
+          (
+            SyncRunRow,
+            BaseReferences<_$AppDatabase, $SyncRunRowsTable, SyncRunRow>,
+          ),
+          SyncRunRow,
+          PrefetchHooks Function()
+        > {
+  $$SyncRunRowsTableTableManager(_$AppDatabase db, $SyncRunRowsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncRunRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncRunRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncRunRowsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> accountId = const Value.absent(),
+                Value<String> runId = const Value.absent(),
+                Value<String> triggersJson = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<DateTime> startedAt = const Value.absent(),
+                Value<DateTime?> finishedAt = const Value.absent(),
+                Value<String?> failureCode = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SyncRunRowsCompanion(
+                accountId: accountId,
+                runId: runId,
+                triggersJson: triggersJson,
+                state: state,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                failureCode: failureCode,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required int accountId,
+                required String runId,
+                required String triggersJson,
+                required String state,
+                required DateTime startedAt,
+                Value<DateTime?> finishedAt = const Value.absent(),
+                Value<String?> failureCode = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SyncRunRowsCompanion.insert(
+                accountId: accountId,
+                runId: runId,
+                triggersJson: triggersJson,
+                state: state,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                failureCode: failureCode,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$SyncRunRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $SyncRunRowsTable,
+      SyncRunRow,
+      $$SyncRunRowsTableFilterComposer,
+      $$SyncRunRowsTableOrderingComposer,
+      $$SyncRunRowsTableAnnotationComposer,
+      $$SyncRunRowsTableCreateCompanionBuilder,
+      $$SyncRunRowsTableUpdateCompanionBuilder,
+      (
+        SyncRunRow,
+        BaseReferences<_$AppDatabase, $SyncRunRowsTable, SyncRunRow>,
+      ),
+      SyncRunRow,
+      PrefetchHooks Function()
+    >;
 typedef $$TaskDeleteTombstoneRowsTableCreateCompanionBuilder =
     TaskDeleteTombstoneRowsCompanion Function({
       Value<int> id,
@@ -16687,6 +17422,8 @@ class $AppDatabaseManager {
         _db,
         _db.desiredStateAttemptRows,
       );
+  $$SyncRunRowsTableTableManager get syncRunRows =>
+      $$SyncRunRowsTableTableManager(_db, _db.syncRunRows);
   $$TaskDeleteTombstoneRowsTableTableManager get taskDeleteTombstoneRows =>
       $$TaskDeleteTombstoneRowsTableTableManager(
         _db,

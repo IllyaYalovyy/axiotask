@@ -292,6 +292,20 @@ moved-task deletion, and unrelated-resource assertions prevent invented
 success and collateral deletion. Release diagnostics expose only safe aggregate
 resolution counts and stable failure codes; the UI contract is unchanged.
 
+S21A adds `test/sync/restart_recovery_test.dart` across `CRS-001`–`CRS-011`
+and stale-finalizer `RUN-014`. Temporary-file reopen proves committed local
+intent and partial page tokens survive without an exit callback. Transaction
+fault injection proves abandoned-run interruption, all in-flight attempt
+transitions, delete-expiry cleanup, count recomputation, and the verification
+obligation commit together or not at all. Repeating recovery preserves exact
+transition timestamps, newer desired generations, reauthorization and retry
+exhaustion latches, while durable run identity prevents an older finalizer from
+changing success or failure facts after a newer run begins. Existing
+create/update/delete recovery and acknowledgement-boundary suites remain the
+operation-specific and no-half-acknowledgement regressions. This is
+transaction/barrier and reopen evidence; killed mutation-process qualification
+remains S21B.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

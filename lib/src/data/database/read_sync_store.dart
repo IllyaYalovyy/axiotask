@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 
 import '../../core/failure.dart';
@@ -17,10 +20,22 @@ import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'sync_health_dao.dart';
 
+enum SyncRecoveryTransactionBoundary { beforeCommit }
+
+typedef SyncRecoveryTransactionControl =
+    FutureOr<void> Function(SyncRecoveryTransactionBoundary boundary);
+
+final class SyncRecoveryPersistenceException implements Exception {
+  const SyncRecoveryPersistenceException(this.code);
+
+  final String code;
+}
+
 final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   DatabaseReadSyncStore(
     this._database, {
     DesiredStateTransactionControl? transactionControl,
+    this.recoveryTransactionControl,
   }) : _cache = CacheDao(_database),
        _desired = DesiredStateDao(
          _database,
@@ -34,6 +49,7 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
   final SyncHealthDao _health;
+  final SyncRecoveryTransactionControl? recoveryTransactionControl;
 
   @override
   Future<bool> readReauthorizationRequired(AccountId accountId) async =>
@@ -1195,10 +1211,90 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   );
 
   @override
-  Future<void> recoverReadRun(AccountId accountId) async {
-    // Read requests have no remote side effect. An interrupted publication is
-    // deliberately left incomplete and a new run starts a fresh publication.
-    await readEligibility(accountId);
+  Future<SyncStartupRecovery> recoverStartup({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  }) {
+    return _database.transaction(() async {
+      final accountExists = await (_database.select(
+        _database.accounts,
+      )..where((row) => row.id.equals(accountId.value))).getSingleOrNull();
+      if (accountExists == null) {
+        return SyncStartupRecovery(
+          interruptedRuns: 0,
+          recoveredAttempts: 0,
+          recoverableCreateAttemptIds: const <int>[],
+        );
+      }
+      final transitionAt = recoveredAt.toUtc();
+      final interruptedRuns =
+          await (_database.update(_database.syncRunRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.state.equals('in_progress'),
+              ))
+              .write(
+                SyncRunRowsCompanion(
+                  state: const Value<String>('interrupted'),
+                  finishedAt: Value<DateTime>(transitionAt),
+                ),
+              );
+      final attempts =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.state.equals('in_flight'),
+              ))
+              .get();
+      for (final attempt in attempts) {
+        final failureCode = _interruptedAttemptCode(attempt);
+        await (_database.update(
+          _database.desiredStateAttemptRows,
+        )..where((row) => row.id.equals(attempt.id))).write(
+          DesiredStateAttemptRowsCompanion(
+            state: const Value<String>('uncertain'),
+            failureCode: Value<String>(failureCode),
+            lastTransitionAt: Value<DateTime>(transitionAt),
+          ),
+        );
+        await (_database.update(_database.desiredStateRows)..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.id.equals(attempt.desiredStateId) &
+                  row.generation.equals(attempt.generation),
+            ))
+            .write(
+              DesiredStateRowsCompanion(
+                state: const Value<String>('uncertain'),
+                failureCode: Value<String>(failureCode),
+                lastTransitionAt: Value<DateTime>(transitionAt),
+              ),
+            );
+      }
+      await _deletes.cleanupExpiredTaskDeletes(
+        accountId: accountId,
+        now: transitionAt,
+      );
+      await _ensureSyncFacts(accountId);
+      await (_database.update(
+        _database.syncFactRows,
+      )..where((row) => row.accountId.equals(accountId.value))).write(
+        const SyncFactRowsCompanion(
+          requiredScopeIncomplete: Value<bool>(true),
+          followUpRequired: Value<bool>(true),
+        ),
+      );
+      await _desired.recomputeCounts(accountId);
+      await recoveryTransactionControl?.call(
+        SyncRecoveryTransactionBoundary.beforeCommit,
+      );
+      return SyncStartupRecovery(
+        interruptedRuns: interruptedRuns,
+        recoveredAttempts: attempts.length,
+        recoverableCreateAttemptIds: await _desired
+            .readRecoverableCreateAttemptIds(accountId),
+      );
+    });
   }
 
   @override
@@ -1245,18 +1341,40 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   }
 
   @override
-  Future<void> beginReadRun({
+  Future<SyncRunId> beginReadRun({
     required AccountId accountId,
     required SyncRunId runId,
     required Set<String> triggers,
     required DateTime startedAt,
   }) {
-    // Schema v1 uses the publication ID as the durable read-run identity. The
-    // trigger set and start time are intentionally not persisted until the
-    // accepted sync-attempt schema lands in its owning slice.
     return _database.transaction(() async {
       await _requireAccount(accountId);
       await _ensureSyncFacts(accountId);
+      final transitionAt = startedAt.toUtc();
+      await (_database.update(_database.syncRunRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.state.equals('in_progress'),
+          ))
+          .write(
+            SyncRunRowsCompanion(
+              state: const Value<String>('interrupted'),
+              finishedAt: Value<DateTime>(transitionAt),
+            ),
+          );
+      final effectiveRunId = await _unusedRunId(accountId, runId);
+      final orderedTriggers = triggers.toList()..sort();
+      await _database
+          .into(_database.syncRunRows)
+          .insert(
+            SyncRunRowsCompanion.insert(
+              accountId: accountId.value,
+              runId: effectiveRunId.value,
+              triggersJson: jsonEncode(orderedTriggers),
+              state: 'in_progress',
+              startedAt: transitionAt,
+            ),
+          );
       await (_database.update(
         _database.syncFactRows,
       )..where((row) => row.accountId.equals(accountId.value))).write(
@@ -1265,10 +1383,30 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
       await _cache.putScopeCompleteness(
         accountId: accountId,
         scope: const CacheScope.taskLists(),
-        publicationId: runId.value,
+        publicationId: effectiveRunId.value,
         isComplete: false,
       );
+      return effectiveRunId;
     });
+  }
+
+  Future<SyncRunId> _unusedRunId(
+    AccountId accountId,
+    SyncRunId proposed,
+  ) async {
+    var suffix = 1;
+    var candidate = proposed.value;
+    while (await (_database.select(_database.syncRunRows)..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.runId.equals(candidate),
+            ))
+            .getSingleOrNull() !=
+        null) {
+      suffix += 1;
+      candidate = '${proposed.value}-$suffix';
+    }
+    return SyncRunId(candidate);
   }
 
   @override
@@ -1671,12 +1809,13 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   }
 
   @override
-  Future<void> finalizeReadSuccess({
+  Future<bool> finalizeReadSuccess({
     required AccountId accountId,
     required SyncRunId runId,
     required DateTime completedAt,
   }) async {
-    await _database.transaction(() async {
+    return _database.transaction(() async {
+      if (!await _isActiveRun(accountId, runId)) return false;
       if (!await isPublicationComplete(accountId: accountId, runId: runId)) {
         throw const CacheInvariantException('publication_not_complete');
       }
@@ -1688,6 +1827,7 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
           lastSuccessfulSyncAt: completedAt.toUtc(),
           clearFailure: true,
           requiredScopeIncomplete: false,
+          followUpRequired: false,
         ),
       );
       await (_database.update(
@@ -1702,33 +1842,75 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
           retryServerNotBeforeAt: Value<DateTime?>(null),
           retryLastObservedAt: Value<DateTime?>(null),
           retryAttemptCount: Value<int>(0),
+          followUpRequired: Value<bool>(false),
         ),
       );
+      await (_database.update(_database.syncRunRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.runId.equals(runId.value) &
+                row.state.equals('in_progress'),
+          ))
+          .write(
+            SyncRunRowsCompanion(
+              state: const Value<String>('succeeded'),
+              finishedAt: Value<DateTime>(completedAt.toUtc()),
+            ),
+          );
+      return true;
     });
   }
 
   @override
-  Future<void> finalizeReadFailure({
+  Future<bool> finalizeReadFailure({
     required AccountId accountId,
     required SyncRunId runId,
     required DateTime failedAt,
     required Failure failure,
-  }) async {
-    final prior = await _health.watchFacts(accountId).first;
-    await _health.writeFacts(
-      accountId,
-      _copyFacts(
-        prior,
-        latestFailure: SyncFailureFact(
-          reason: _syncFailureReason(failure),
-          occurredAt: failedAt.toUtc(),
-          diagnosticCode: failure.code,
-          action: _failureAction(failure),
+  }) {
+    return _database.transaction(() async {
+      if (!await _isActiveRun(accountId, runId)) return false;
+      final prior = await _health.watchFacts(accountId).first;
+      await _health.writeFacts(
+        accountId,
+        _copyFacts(
+          prior,
+          latestFailure: SyncFailureFact(
+            reason: _syncFailureReason(failure),
+            occurredAt: failedAt.toUtc(),
+            diagnosticCode: failure.code,
+            action: _failureAction(failure),
+          ),
+          requiredScopeIncomplete: true,
+          followUpRequired: false,
         ),
-        requiredScopeIncomplete: true,
-      ),
-    );
+      );
+      await (_database.update(_database.syncRunRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.runId.equals(runId.value) &
+                row.state.equals('in_progress'),
+          ))
+          .write(
+            SyncRunRowsCompanion(
+              state: const Value<String>('failed'),
+              finishedAt: Value<DateTime>(failedAt.toUtc()),
+              failureCode: Value<String>(failure.code),
+            ),
+          );
+      return true;
+    });
   }
+
+  Future<bool> _isActiveRun(AccountId accountId, SyncRunId runId) async =>
+      await (_database.select(_database.syncRunRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.runId.equals(runId.value) &
+                row.state.equals('in_progress'),
+          ))
+          .getSingleOrNull() !=
+      null;
 
   Future<TaskStructureSnapshot?> _structureSnapshot(
     TaskRemoteBase task, {
@@ -2053,6 +2235,7 @@ PersistedSyncFacts _copyFacts(
   SyncFailureFact? latestFailure,
   bool clearFailure = false,
   bool? requiredScopeIncomplete,
+  bool? followUpRequired,
 }) => PersistedSyncFacts(
   syncEnabled: value.syncEnabled,
   reauthorizationRequired: value.reauthorizationRequired,
@@ -2065,8 +2248,14 @@ PersistedSyncFacts _copyFacts(
   retryAttemptCount: value.retryAttemptCount,
   requiredScopeIncomplete:
       requiredScopeIncomplete ?? value.requiredScopeIncomplete,
-  followUpRequired: value.followUpRequired,
+  followUpRequired: followUpRequired ?? value.followUpRequired,
 );
+
+String _interruptedAttemptCode(DesiredStateAttemptRow attempt) {
+  if (attempt.desiredLifecycle == 'deleted') return 'sync.delete_interrupted';
+  if (attempt.baseRemoteId == null) return 'sync.create_interrupted';
+  return 'sync.update_interrupted';
+}
 
 SyncFailureReason _syncFailureReason(Failure failure) =>
     switch (failure.category) {

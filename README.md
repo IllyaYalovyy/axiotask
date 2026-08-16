@@ -45,6 +45,12 @@ the stable task tombstone in its current list, while response-lost list deletes
 use an exact list-identity read: only a direct 404 confirms deletion, and a live
 identity permits one newly claimed replay followed by the same positive check.
 Unresolved or failed read-back stays non-green and never acknowledges success.
+Every synchronization run now has a durable account-scoped lifecycle. Startup
+atomically marks abandoned runs interrupted, converts every claimed mutation to
+operation-specific uncertainty, retains partial-page checkpoints and newer
+desired generations, and restores one verification obligation before Google
+work. Repeating recovery is idempotent, and a late finalizer cannot overwrite a
+newer run or advance last verified success.
 The task detail pane can create a direct subtask,
 promote a child, demote a leaf, reorder siblings, or move a stable task/subtree
 between Google lists. Structure changes commit durably, survive restart, and
@@ -65,8 +71,8 @@ are always labeled unverified; even a complete recorded page walk is not a
 freshness or healthy-sync claim. Durable account-scoped health facts retain the
 last verified success, newest failure, unresolved counts, and scheduler latches;
 runtime authorization/connectivity/activity facts are projected separately.
-Read walks use the existing publication/completeness rows as their durable walk
-identity and update last success only during complete finalization. Durable
+Read walks use durable run rows plus publication/completeness checkpoints and
+update last success only during the matching complete finalization. Durable
 list/task desired state, dependency metadata, and immutable attempt snapshots
 are part of schema version 1; unresolved local work keeps health non-green until
 remote confirmation. The exact schema-v1 contract is documented in

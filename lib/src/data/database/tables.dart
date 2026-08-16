@@ -620,6 +620,48 @@ class DesiredStateAttemptRows extends Table {
   ];
 }
 
+class SyncRunRows extends Table {
+  @override
+  String get tableName => 'sync_runs';
+
+  IntColumn get accountId => integer()();
+
+  TextColumn get runId => text().check(runId.length.isBiggerThanValue(0))();
+
+  TextColumn get triggersJson => text()();
+
+  TextColumn get state => text().check(
+    state.isIn(const <String>[
+      'in_progress',
+      'interrupted',
+      'succeeded',
+      'failed',
+    ]),
+  )();
+
+  DateTimeColumn get startedAt => dateTime()();
+
+  DateTimeColumn get finishedAt => dateTime().nullable()();
+
+  TextColumn get failureCode => text().nullable().check(
+    failureCode.isNull() | failureCode.length.isBiggerThanValue(0),
+  )();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{accountId, runId};
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    "CHECK ((state = 'in_progress' AND finished_at IS NULL "
+        'AND failure_code IS NULL) OR '
+        "(state IN ('interrupted', 'succeeded') AND finished_at IS NOT NULL "
+        'AND failure_code IS NULL) OR '
+        "(state = 'failed' AND finished_at IS NOT NULL "
+        'AND length(failure_code) > 0))',
+  ];
+}
+
 class SyncFactRows extends Table {
   @override
   String get tableName => 'sync_facts';

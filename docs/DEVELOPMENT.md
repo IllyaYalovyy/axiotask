@@ -215,6 +215,17 @@ permits one newly claimed replay and another read-back, and every failure or
 unknown result remains uncertain. Focused engine/store/restart/multi-host,
 adapter-contract, and fake-application checks remain isolated and synthetic.
 
+S21A adds no dependency, OAuth configuration, live-account step, platform
+storage namespace, or visual surface. Schema-v1 `sync_runs` rows make the run
+lifecycle durable alongside the existing page checkpoints. At each engine
+entry, one SQLite transaction interrupts abandoned runs, changes every claimed
+mutation to its conservative uncertain state, expires eligible delete snapshots,
+recomputes counts, and retains retry/reauthorization latches and newer desired
+generations. A failed recovery transaction rolls back completely; retrying it is
+idempotent. Focused recovery and reopen checks use only temporary or in-memory
+SQLite with synthetic subjects and no Google, credential, normal-storage, or
+exit-callback dependency.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

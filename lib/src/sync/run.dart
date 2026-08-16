@@ -125,6 +125,20 @@ final class PagePublicationResult<T> {
   final int resourceWrites;
 }
 
+final class SyncStartupRecovery {
+  SyncStartupRecovery({
+    required this.interruptedRuns,
+    required this.recoveredAttempts,
+    required List<int> recoverableCreateAttemptIds,
+  }) : recoverableCreateAttemptIds = List<int>.unmodifiable(
+         recoverableCreateAttemptIds,
+       );
+
+  final int interruptedRuns;
+  final int recoveredAttempts;
+  final List<int> recoverableCreateAttemptIds;
+}
+
 abstract interface class SyncReauthorizationStore {
   Future<bool> readReauthorizationRequired(AccountId accountId);
 
@@ -136,11 +150,14 @@ abstract interface class SyncReauthorizationStore {
 }
 
 abstract interface class ReadSyncStore implements SyncReauthorizationStore {
-  Future<void> recoverReadRun(AccountId accountId);
+  Future<SyncStartupRecovery> recoverStartup({
+    required AccountId accountId,
+    required DateTime recoveredAt,
+  });
 
   Future<ReadSyncEligibility> readEligibility(AccountId accountId);
 
-  Future<void> beginReadRun({
+  Future<SyncRunId> beginReadRun({
     required AccountId accountId,
     required SyncRunId runId,
     required Set<String> triggers,
@@ -169,13 +186,13 @@ abstract interface class ReadSyncStore implements SyncReauthorizationStore {
     required SyncRunId runId,
   });
 
-  Future<void> finalizeReadSuccess({
+  Future<bool> finalizeReadSuccess({
     required AccountId accountId,
     required SyncRunId runId,
     required DateTime completedAt,
   });
 
-  Future<void> finalizeReadFailure({
+  Future<bool> finalizeReadFailure({
     required AccountId accountId,
     required SyncRunId runId,
     required DateTime failedAt,

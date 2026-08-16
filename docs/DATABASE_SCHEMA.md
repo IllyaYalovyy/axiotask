@@ -135,6 +135,17 @@ application adapter and device-only preferences remain the S22A slice.
   supersedes that attempt before one new delete claim, whose success is read
   back again. Read failure or ambiguity leaves uncertainty durable and health
   non-green.
+- S21A stores each run ID, sorted trigger set, start time, terminal state/time,
+  and safe failure code in account-scoped `sync_runs`. Beginning a run
+  interrupts any older unfinished row before establishing its first incomplete
+  page checkpoint. Startup recovery transactionally interrupts abandoned rows,
+  maps all `in_flight` attempts to operation-specific `uncertain` evidence,
+  preserves a newer desired generation, performs eligible delete cleanup,
+  recomputes unresolved counts, and records a verification obligation without
+  clearing retry, exhaustion, or reauthorization latches. A repeated recovery
+  changes nothing. Success/failure finalization requires the same run to remain
+  active, so an older finalizer cannot alter last success, current failure, or
+  checkpoint authority after a newer run begins.
 - S15B confirms an eligible pending content generation without a mutation only
   when the complete current scope proves Google already holds the exact desired
   title or task snapshot. Otherwise, unchanged confirmed bases allow immutable
