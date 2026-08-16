@@ -172,7 +172,9 @@ void main() {
           prefsProvider.overrideWithValue(
             const Prefs(sortPerView: {'all': 'alpha'}),
           ),
-          commandsProvider.overrideWithValue(fake),
+          // No commandsProvider override here: runtime.overrides now mounts
+          // the runtime's own mutation-triggering Commands (#209), and this
+          // test only reads rows from the stream override below.
           allTasksProvider.overrideWith((ref) => fake.tasksStream),
           listsProvider.overrideWith((ref) => Stream.value([list('L1', 'L')])),
         ],

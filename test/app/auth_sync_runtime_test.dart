@@ -16,6 +16,7 @@ import 'package:axiotask/src/app/authed_api.dart';
 import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/logging.dart';
+import 'package:axiotask/src/app/providers.dart' show commandsProvider;
 import 'package:axiotask/src/auth/auth_controller.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart' show OAuthConfig;
 import 'package:axiotask/src/auth/token_provider.dart';
@@ -24,6 +25,7 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -332,6 +334,41 @@ void main() {
       expect(env.runtime.scheduler.status.totalSyncs, 0);
       expect(env.client.callCount(Method.listTasklists), 0);
     });
+  });
+
+  // #209: a local change must start the debounced sync — the periodic cycle
+  // (60s here, untouched) exists to pick up REMOTE edits. Observable outcome:
+  // with the background loop running, one mutation through the runtime-mounted
+  // commandsProvider reaches the fake server within the debounce (zero in this
+  // harness), decades before the periodic cycle could.
+  test('a local mutation through the mounted commands triggers the debounced '
+      'sync (#209)', () async {
+    final env = await makeEnv(
+      tokenProvider: FakeTokenProvider.withToken('access-1'),
+      autoSyncOnStart: false,
+    );
+    await env.runtime.restoreAndAutoSync();
+    expect(env.runtime.scheduler.status.totalSyncs, 0);
+
+    env.runtime.startLoop();
+    final container = ProviderContainer(overrides: env.runtime.overrides);
+    addTearDown(container.dispose);
+
+    await container.read(commandsProvider).createList('local change');
+
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (env.runtime.scheduler.status.totalSyncs == 0 &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(
+      env.runtime.scheduler.status.totalSyncs,
+      greaterThan(0),
+      reason:
+          'the mutation must trigger a sync at the debounce, '
+          'not wait for the periodic cycle',
+    );
+    expect(env.client.callCount(Method.listTasklists), greaterThan(0));
   });
 }
 

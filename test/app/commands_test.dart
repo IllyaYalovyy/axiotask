@@ -1808,6 +1808,130 @@ void main() {
       expect(afterRestart.heldCreateId, isNull);
     });
   });
+
+  // #209: every successful mutating command must fire the onMutation seam —
+  // the composition root points it at the sync scheduler's trigger, which is
+  // what makes a local change sync within seconds instead of waiting out the
+  // periodic cycle. The reference fires schedule_sync() after every mutating
+  // command; this pins the Dart equivalent, including the no-op paths that
+  // must stay silent.
+  group('onMutation trigger (#209)', () {
+    test('fires once per successful mutating command', () async {
+      final store = await freshStore();
+      await seedList(store, 'L1');
+      await seedList(store, 'L2');
+      var fired = 0;
+      final commands = Commands(store, onMutation: () => fired++);
+
+      // At-least-once per command: composed undos (undoMoveToList replays a
+      // delete + restore) legitimately notify per inner command, and the
+      // scheduler's notify coalesces them into one trigger anyway.
+      Future<void> expectFires(String label, Future<void> Function() op) async {
+        final before = fired;
+        await op();
+        expect(fired, greaterThan(before), reason: '$label must notify');
+      }
+
+      late StoredTask created;
+      await expectFires('createTask', () async {
+        created = await commands.createTask(listId: 'L1', title: 'a');
+      });
+      await expectFires(
+        'renameTask',
+        () => commands.renameTask(created.task.id, 'b'),
+      );
+      await expectFires(
+        'setNotes',
+        () => commands.setNotes(created.task.id, 'n'),
+      );
+      await expectFires(
+        'setDueRaw',
+        () => commands.setDueRaw(created.task.id, '2026-08-20'),
+      );
+      late CompleteToken completeToken;
+      await expectFires('toggleComplete', () async {
+        completeToken = await commands.toggleComplete(created.task.id);
+      });
+      await expectFires(
+        'undoToggleComplete',
+        () => commands.undoToggleComplete(completeToken),
+      );
+      late MoveToListToken? moveToken;
+      await expectFires('moveTaskToList', () async {
+        moveToken = await commands.moveTaskToList(created.task.id, 'L2');
+      });
+      await expectFires(
+        'undoMoveToList',
+        () => commands.undoMoveToList(moveToken!),
+      );
+      late DeleteToken deleteToken;
+      await expectFires('deleteTask', () async {
+        deleteToken = await commands.deleteTask(created.task.id);
+      });
+      await expectFires('undoDelete', () => commands.undoDelete(deleteToken));
+      late StoredTaskList createdList;
+      await expectFires('createList', () async {
+        createdList = await commands.createList('New list');
+      });
+      await expectFires(
+        'renameList',
+        () => commands.renameList(createdList.list.id, 'Renamed'),
+      );
+      await expectFires(
+        'deleteList',
+        () => commands.deleteList(createdList.list.id),
+      );
+    });
+
+    test(
+      'reorder and clear-completed fire on change, stay silent on no-ops',
+      () async {
+        final store = await freshStore();
+        await seedList(store, 'L1');
+        await seedTask(store, 'A', 'L1', 'first', position: '1');
+        await seedTask(store, 'B', 'L1', 'second', position: '2');
+        var fired = 0;
+        final commands = Commands(store, onMutation: () => fired++);
+
+        await commands.reorderTaskAfter('A', 'B');
+        expect(fired, 1, reason: 'a real reorder notifies');
+
+        await commands.reorderTaskAfter('A', 'B');
+        expect(
+          fired,
+          1,
+          reason: 'reorder to the current slot is a silent no-op',
+        );
+
+        await commands.clearCompleted('L1');
+        expect(fired, 1, reason: 'clearing zero completed rows is a no-op');
+
+        await commands.toggleComplete('A');
+        final beforeClear = fired;
+        await commands.clearCompleted('L1');
+        expect(
+          fired,
+          greaterThan(beforeClear),
+          reason: 'a real clear notifies',
+        );
+      },
+    );
+
+    test('a refused command does not notify', () async {
+      final store = await freshStore();
+      await seedList(store, 'L1');
+      await seedTask(store, 'P', 'L1', 'parent');
+      await seedTask(store, 'C', 'L1', 'child', parent: 'P');
+      var fired = 0;
+      final commands = Commands(store, onMutation: () => fired++);
+
+      await expectLater(
+        commands.createTask(listId: 'L1', title: 'x', parentId: 'C'),
+        throwsA(isA<CommandError>()),
+      );
+      expect(fired, 0, reason: 'nothing was written, nothing to sync');
+    });
+  });
 }
 
 /// A store whose [recordMove] always faults — stands in for the process dying

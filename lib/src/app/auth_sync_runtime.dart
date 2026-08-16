@@ -57,8 +57,7 @@ class AuthSyncRuntime {
     required this._buildClient,
     Duration debounce = kSyncDebounce,
     Duration period = kSyncPeriod,
-  }) : _commands = Commands(store),
-       auth = AuthController(tokenProvider) {
+  }) : auth = AuthController(tokenProvider) {
     scheduler = SyncScheduler(
       store: store,
       client: _currentClient,
@@ -67,11 +66,17 @@ class AuthSyncRuntime {
       debounce: debounce,
       period: period,
     );
+    // The ONE Commands instance the app drives (mounted via commandsProvider):
+    // every local mutation kicks the scheduler's debounced trigger, so a local
+    // change syncs within seconds while the periodic cycle exists to pick up
+    // REMOTE edits (#209 — the reference fires schedule_sync() after every
+    // mutating command; the port had dropped all of those call sites).
+    _commands = Commands(store, onMutation: scheduler.scheduleSync);
   }
 
   final ConfigController _config;
   final TasksApi? Function(String accessToken) _buildClient;
-  final Commands _commands;
+  late final Commands _commands;
 
   /// The auth state machine (signed out / signed in / needs-reauth). Public so
   /// the entry point and tests can read the live state.
@@ -123,6 +128,10 @@ class AuthSyncRuntime {
     signInActionProvider.overrideWithValue(_signInAction),
     signOutActionProvider.overrideWithValue(_signOutAction),
     sidebarFooterProvider.overrideWithValue(const SidebarAuthSyncFooter()),
+    // Mount THE mutation-triggering Commands (#209): without this override the
+    // UI would build its own untriggered instance from the default provider and
+    // local changes would wait out the periodic cycle.
+    commandsProvider.overrideWithValue(_commands),
   ];
 
   // Seed the CURRENT snapshot first (the `changes` broadcast stream has no

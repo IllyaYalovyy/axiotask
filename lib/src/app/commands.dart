@@ -248,12 +248,22 @@ class SetDueResult {
 /// The mutation surface the UI drives. Cheap to hold; wraps the [Store].
 class Commands {
   /// Build over an open [store]; [newId] is injectable so tests pin the local
-  /// ids a create assigns.
-  Commands(this._store, {String Function()? newId})
+  /// ids a create assigns. Callers pass `onMutation:` — the underscore is
+  /// stripped from the initializing formal's external name.
+  Commands(this._store, {String Function()? newId, this._onMutation})
     : _newId = newId ?? newLocalId;
 
   final Store _store;
   final String Function() _newId;
+
+  /// Fired after every successful state-changing command (#209). The
+  /// composition root points this at the sync scheduler's trigger, so a local
+  /// change starts the debounced sync instead of waiting out the periodic
+  /// cycle — the Dart seat of the reference's per-command `schedule_sync()`.
+  /// Fires are coalesced downstream; no-op commands stay silent.
+  final void Function()? _onMutation;
+
+  void _notifyMutation() => _onMutation?.call();
 
   /// The task the UI is holding, for the sync engine's held-create deferral.
   /// Process memory only — never persisted (see [setEditing]).
@@ -305,6 +315,7 @@ class Commands {
       pendingOp: 'create',
     );
     await _store.upsertTask(stored);
+    _notifyMutation();
     return stored;
   }
 
@@ -322,6 +333,7 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
+    _notifyMutation();
   }
 
   /// Flip a task's completion. Completing a PARENT cascades completion to its
@@ -348,6 +360,7 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
+    _notifyMutation();
     if (!completing) {
       return CompleteToken(id: id, wasCompleting: false);
     }
@@ -412,6 +425,7 @@ class Commands {
           ),
         );
       }
+      _notifyMutation();
       return;
     }
     final t = await _store.findTaskAny(token.id);
@@ -425,6 +439,7 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
+    _notifyMutation();
   }
 
   /// Overwrite a task's notes and mark it dirty (`''` clears the field, matching
@@ -443,6 +458,7 @@ class Commands {
         pendingOp: dirtyOp(t.task.etag),
       ),
     );
+    _notifyMutation();
   }
 
   /// Set a task's due date via a one-keystroke [move] (RFC-008), resolved
@@ -533,6 +549,7 @@ class Commands {
       }
     }
 
+    _notifyMutation();
     return SetDueResult(
       undo: undo,
       cascaded: undo.length - 1,
@@ -552,6 +569,7 @@ class Commands {
       if (t == null || t.syncState == SyncState.deleted) continue;
       await _writeDue(t, e.due);
     }
+    _notifyMutation();
   }
 
   /// Write a new due date onto a row as a local edit and persist it. Marks the
@@ -609,6 +627,7 @@ class Commands {
       }
       count += 1;
     }
+    if (count > 0) _notifyMutation();
     return count;
   }
 
@@ -660,6 +679,7 @@ class Commands {
         );
       }
     }
+    _notifyMutation();
     return DeleteToken(
       id: root.task.id,
       listId: root.listId,
@@ -731,6 +751,7 @@ class Commands {
       ),
     );
     await _restoreSubtree(token, now);
+    _notifyMutation();
   }
 
   /// Restore the captured descendants (parents before children, so each row's
@@ -793,6 +814,7 @@ class Commands {
       localOnly: localOnly,
     );
     await _store.upsertList(stored);
+    _notifyMutation();
     return stored;
   }
 
@@ -817,6 +839,7 @@ class Commands {
         localOnly: l.localOnly,
       ),
     );
+    _notifyMutation();
   }
 
   /// Delete list [id]. A list the server has seen (has an etag) is TOMBSTONED so
@@ -847,6 +870,7 @@ class Commands {
     } else {
       await _store.deleteListHard(id);
     }
+    _notifyMutation();
   }
 
   /// Find a list by id or raise the reference's `"list not found"` shape.
@@ -915,6 +939,7 @@ class Commands {
       ),
     );
     await _store.recordMove(id, t.listId, parentId, previousId);
+    _notifyMutation();
   }
 
   /// Move [id] so it immediately FOLLOWS [previousId] among its siblings (same
@@ -988,6 +1013,11 @@ class Commands {
       );
     }
 
+    // An unchanged order (the row already follows this anchor) is the doc'd
+    // no-op: no position write, no queued wire move, no sync trigger. A real
+    // move always repositions at least the moved row itself.
+    if (repositioned.isEmpty) return;
+
     // The sibling the moved task now follows in the NEW order (== previousId,
     // recomputed here so the front/removal cases share one path).
     final newPrevious = insertAt == 0 ? null : reordered[insertAt - 1].task.id;
@@ -998,6 +1028,7 @@ class Commands {
       parentId: t.task.parent,
       previousId: newPrevious,
     );
+    _notifyMutation();
   }
 
   /// Move [id]'s whole subtree to [targetListId] and return the new root id.
@@ -1080,6 +1111,7 @@ class Commands {
       tombstones: tombstones,
       hardDeletes: hardDeletes,
     );
+    _notifyMutation();
     return MoveToListToken(
       newRootId: newRootId,
       targetListId: targetListId,
@@ -1139,6 +1171,7 @@ class Commands {
   /// job (wired in T5.5+), driven by the caller after this clears the cache.
   Future<void> freshSync() async {
     await _store.clearSynced();
+    _notifyMutation();
   }
 
   /// The task the UI is actively holding (inline editor row or open detail
