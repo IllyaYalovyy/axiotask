@@ -25,7 +25,11 @@ is durably claimed first; a canonical response atomically binds the Google ID
 and remote base without changing local identity. Independent creates continue
 after a conclusive failure, failed dependencies remain unattempted, confirmed
 creates never replay, and uncertain creates remain non-green without content
-matching. Eligible complete task-content updates and list renames also publish
+matching until a later run retries the original create generation. Recovery
+binds only the first returned Google ID received durably, preserves any newer
+edit/move/delete generation, and diagnoses the accepted possibility that an
+earlier response-lost create remains as a separate Google resource. Eligible
+complete task-content updates and list renames also publish
 after enumeration. Base-aware reconciliation selects one whole local or Google
 record, gives Google timestamp ties, fails closed without required conflict
 evidence, and refetches/replans task PATCH precondition races. Task deletion

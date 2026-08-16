@@ -272,6 +272,15 @@ mutation-side auth-like response remain non-replayed and fail closed. Linux
 authorization contracts retain `invalid_grant`, scope, subject, cancellation,
 DPoP, and secure replacement coverage.
 
+S20A extends the create engine/store suite with `REL-013`, `API-004`, and
+`CRS-004`–`CRS-007` recovery cases. It covers commit-before-loss and
+not-dispatched restart boundaries, repeated response loss, returned-ID binding,
+newer edit/move/delete generations, list/parent dependencies, and two-host
+duplicate ingestion. Identical content remains independent. The accepted
+duplicate diagnostic exposes only resource kind/count/generation in release
+history while the sensitive development composition may retain the synthetic
+title; neither path uses content to resolve identity.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

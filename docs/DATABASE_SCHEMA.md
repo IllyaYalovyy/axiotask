@@ -118,6 +118,12 @@ application adapter and device-only preferences remain the S22A slice.
   dependency Google IDs are read from account-scoped cache rows. A conclusive
   rejection stores a failed code, while an interrupted or ambiguous create
   stores an uncertain code and is not selected again by this non-retry slice.
+- S20A startup/run recovery preserves every uncertain unbound-create attempt and
+  selects only the latest unresolved attempt in that original generation for one
+  recovery replay per run. Recovery never compares content. A canonical response
+  atomically binds its returned Google ID while older uncertain attempts remain
+  evidence; a newer edit, move, or delete generation remains pending against the
+  new base. List and parent dependencies still resolve before task recovery.
 - S15B confirms an eligible pending content generation without a mutation only
   when the complete current scope proves Google already holds the exact desired
   title or task snapshot. Otherwise, unchanged confirmed bases allow immutable

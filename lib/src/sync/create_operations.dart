@@ -11,6 +11,7 @@ final class CreateOperationClaim {
     required this.generation,
     required this.taskListId,
     required this.title,
+    this.recoveryUncertainAttempts = 0,
   }) : kind = CreateOperationKind.taskList,
        taskId = null,
        parentTaskId = null,
@@ -36,6 +37,7 @@ final class CreateOperationClaim {
     required this.notes,
     required this.status,
     required this.due,
+    this.recoveryUncertainAttempts = 0,
   }) : kind = CreateOperationKind.task;
 
   final CreateOperationKind kind;
@@ -52,6 +54,9 @@ final class CreateOperationClaim {
   final String? notes;
   final TaskStatus? status;
   final TaskDate? due;
+  final int recoveryUncertainAttempts;
+
+  bool get isRecovery => recoveryUncertainAttempts > 0;
 }
 
 final class CreateOperationMapper {
@@ -80,9 +85,16 @@ final class CreateOperationMapper {
 }
 
 abstract interface class CreateSyncStore {
-  Future<void> recoverCreateAttempts({
+  Future<List<int>> recoverCreateAttempts({
     required AccountId accountId,
     required DateTime recoveredAt,
+  });
+
+  Future<CreateOperationClaim?> claimCreateRecovery({
+    required AccountId accountId,
+    required int sourceAttemptId,
+    required String runId,
+    required DateTime claimedAt,
   });
 
   Future<CreateOperationClaim?> claimNextCreate({

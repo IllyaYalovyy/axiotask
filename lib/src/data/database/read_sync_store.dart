@@ -194,6 +194,17 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
         if (currentBase == null) continue;
         final remote = await _structureSnapshot(currentBase, runId: runId);
         if (remote == null) continue;
+        if (desired.baseObservedPublicationId?.startsWith('mutation:') ??
+            false) {
+          await _rebasePendingStructure(
+            desired: desired,
+            currentBase: currentBase,
+            remote: remote,
+            transitionedAt: reconciledAt,
+          );
+          localMovesPending += 1;
+          continue;
+        }
         final base = TaskStructureSnapshot(
           taskListId: TaskListId(desired.baseTaskListId!),
           parentTaskId: desired.baseParentTaskId == null
@@ -602,7 +613,7 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   );
 
   @override
-  Future<void> recoverCreateAttempts({
+  Future<List<int>> recoverCreateAttempts({
     required AccountId accountId,
     required DateTime recoveredAt,
   }) async {
@@ -610,6 +621,56 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
       accountId: accountId,
       recoveredAt: recoveredAt,
     );
+    return _desired.readRecoverableCreateAttemptIds(accountId);
+  }
+
+  @override
+  Future<CreateOperationClaim?> claimCreateRecovery({
+    required AccountId accountId,
+    required int sourceAttemptId,
+    required String runId,
+    required DateTime claimedAt,
+  }) async {
+    final recovery = await _desired.claimCreateRecovery(
+      accountId: accountId,
+      sourceAttemptId: sourceAttemptId,
+      runId: runId,
+      claimedAt: claimedAt,
+    );
+    if (recovery == null) return null;
+    final candidate = recovery.candidate;
+    final attempt = recovery.attempt;
+    switch (candidate.resourceType) {
+      case DesiredCreateResourceType.taskList:
+        return CreateOperationClaim.taskList(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          title: attempt.title!,
+          recoveryUncertainAttempts: recovery.uncertainAttemptCount,
+        );
+      case DesiredCreateResourceType.task:
+        return CreateOperationClaim.task(
+          attemptId: attempt.id,
+          generation: attempt.generation,
+          taskListId: candidate.taskListId,
+          taskId: candidate.taskId!,
+          parentTaskId: candidate.parentTaskId,
+          taskListRemoteId: RemoteTaskListId(candidate.taskListRemoteId!.value),
+          parentRemoteId: candidate.parentRemoteId == null
+              ? null
+              : RemoteTaskId(candidate.parentRemoteId!.value),
+          previousTaskId: candidate.previousTaskId,
+          previousRemoteId: candidate.previousRemoteId == null
+              ? null
+              : RemoteTaskId(candidate.previousRemoteId!.value),
+          title: attempt.title!,
+          notes: attempt.notes,
+          status: attempt.status!,
+          due: attempt.due,
+          recoveryUncertainAttempts: recovery.uncertainAttemptCount,
+        );
+    }
   }
 
   @override

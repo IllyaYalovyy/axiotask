@@ -198,6 +198,14 @@ visible, health is Inactive, and Reauthorize is prominent at 1280×720. The
 ignored actual capture uses no OAuth configuration, credentials, Google access,
 or normal application storage.
 
+S20A adds no dependency, namespace, OAuth configuration, or live-account step.
+At the beginning of a run, interrupted unbound creates become uncertain and the
+latest unresolved attempt from the original create generation is eligible for
+one replay after complete applicable enumeration. A response received durably
+binds its returned ID; earlier possibly committed objects remain independent.
+Focused recovery, restart, dependency, and multi-host checks use only temporary
+SQLite stores and the strict synthetic Google service.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

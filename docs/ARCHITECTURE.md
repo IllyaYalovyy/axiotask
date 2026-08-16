@@ -7,8 +7,9 @@ publication, whole-record content reconciliation, and Google-authoritative
 one-level structure reconciliation are implemented through S18B. Bounded
 request retry, durable between-run backoff/exhaustion, explicit Retry recovery,
 refresh-once authorization recovery, and durable reauthorization are implemented
-through S19B. Android lifecycle control and other later mutations remain later
-slices.**
+through S19B. Operation-specific uncertain-create recovery, returned-ID binding,
+and accepted-duplicate diagnostics are implemented through S20A. Android
+lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
 [Stage 4 synchronization specification](SYNC_SPEC.md) supplies the detailed

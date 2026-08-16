@@ -227,7 +227,7 @@ final class SyncEngine {
       return interruption;
     }
     await store.recoverReadRun(request.accountId);
-    await store.recoverCreateAttempts(
+    final recoverableCreateAttemptIds = await store.recoverCreateAttempts(
       accountId: request.accountId,
       recoveredAt: clock.now().toUtc(),
     );
@@ -472,6 +472,7 @@ final class SyncEngine {
       return interruption;
     }
     var stopOperations = false;
+    var createRecoveryIndex = 0;
     while (!stopOperations) {
       if (await interrupted(
             const SyncRunBoundary(
@@ -586,7 +587,17 @@ final class SyncEngine {
           case final interruption?) {
         return interruption;
       }
-      final claim = await store.claimNextCreate(
+      CreateOperationClaim? claim;
+      while (claim == null &&
+          createRecoveryIndex < recoverableCreateAttemptIds.length) {
+        claim = await store.claimCreateRecovery(
+          accountId: request.accountId,
+          sourceAttemptId: recoverableCreateAttemptIds[createRecoveryIndex++],
+          runId: runId.value,
+          claimedAt: clock.now().toUtc(),
+        );
+      }
+      claim ??= await store.claimNextCreate(
         accountId: request.accountId,
         runId: runId.value,
         claimedAt: clock.now().toUtc(),
@@ -602,6 +613,23 @@ final class SyncEngine {
         return interruption;
       }
 
+      if (claim.isRecovery) {
+        diagnostics?.record(
+          DiagnosticEvent(
+            code: 'sync.create_recovery_duplicate_possible',
+            operation: 'recover_create',
+            fields: <DiagnosticField>[
+              DiagnosticField.safe('resource_kind', claim.kind.name),
+              DiagnosticField.safe(
+                'uncertain_attempts',
+                claim.recoveryUncertainAttempts,
+              ),
+              DiagnosticField.safe('generation', claim.generation),
+              DiagnosticField.private('title', claim.title),
+            ],
+          ),
+        );
+      }
       final mapped = const CreateOperationMapper().map(claim);
       switch (mapped) {
         case final CreateTaskListOperation operation:

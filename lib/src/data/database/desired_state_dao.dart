@@ -209,6 +209,18 @@ final class DesiredCreateCandidate {
   final TaskRemoteId? previousRemoteId;
 }
 
+final class DesiredCreateRecoveryRecord {
+  const DesiredCreateRecoveryRecord({
+    required this.attempt,
+    required this.candidate,
+    required this.uncertainAttemptCount,
+  });
+
+  final DesiredStateAttemptRecord attempt;
+  final DesiredCreateCandidate candidate;
+  final int uncertainAttemptCount;
+}
+
 enum DesiredUpdateResourceType { task, taskList }
 
 final class DesiredUpdateCandidate {
@@ -308,6 +320,14 @@ final class DesiredStateDao {
             AND d.desired_lifecycle = 'present'
             AND d.state = 'pending'
             AND d.base_remote_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM desired_state_attempts uncertain_create
+              WHERE uncertain_create.account_id = d.account_id
+                AND uncertain_create.desired_state_id = d.id
+                AND uncertain_create.base_remote_id IS NULL
+                AND uncertain_create.state = 'uncertain'
+            )
             AND (
               (d.resource_type = 'task_list'
                 AND target_list.remote_id IS NULL)
@@ -359,6 +379,7 @@ final class DesiredStateDao {
             _database.taskCacheRows,
             _database.scopeCompletenessRows,
             _database.taskListRemoteBases,
+            _database.desiredStateAttemptRows,
           },
         )
         .getSingleOrNull();
@@ -996,6 +1017,297 @@ final class DesiredStateDao {
       }
       await _recomputeCounts(accountId);
       return attempts.length;
+    });
+  }
+
+  Future<List<int>> readRecoverableCreateAttemptIds(AccountId accountId) async {
+    final rows = await _database
+        .customSelect(
+          '''
+      SELECT a.id
+      FROM desired_state_attempts a
+      JOIN desired_states d
+        ON d.account_id = a.account_id
+       AND d.id = a.desired_state_id
+      LEFT JOIN task_lists target_list
+        ON target_list.account_id = d.account_id
+       AND target_list.id = d.target_task_list_id
+      LEFT JOIN tasks target_task
+        ON target_task.account_id = d.account_id
+       AND target_task.id = d.target_task_id
+      WHERE a.account_id = ?1
+        AND a.base_remote_id IS NULL
+        AND a.state IN ('pending', 'uncertain')
+        AND ((d.resource_type = 'task_list' AND target_list.remote_id IS NULL)
+          OR (d.resource_type = 'task' AND target_task.remote_id IS NULL))
+        AND EXISTS (
+          SELECT 1
+          FROM desired_state_attempts uncertain
+          WHERE uncertain.account_id = a.account_id
+            AND uncertain.desired_state_id = a.desired_state_id
+            AND uncertain.generation = a.generation
+            AND uncertain.base_remote_id IS NULL
+            AND uncertain.state = 'uncertain'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM desired_state_attempts newer
+          WHERE newer.account_id = a.account_id
+            AND newer.desired_state_id = a.desired_state_id
+            AND newer.generation = a.generation
+            AND newer.id > a.id
+        )
+      ORDER BY
+        CASE
+          WHEN d.resource_type = 'task_list' THEN 0
+          WHEN a.desired_parent_task_id IS NULL THEN 1
+          ELSE 2
+        END,
+        d.local_causal_sequence,
+        a.id
+      ''',
+          variables: <Variable<Object>>[Variable<int>(accountId.value)],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            _database.desiredStateAttemptRows,
+            _database.desiredStateRows,
+            _database.taskListCacheRows,
+            _database.taskCacheRows,
+          },
+        )
+        .get();
+    return rows.map((row) => row.read<int>('id')).toList(growable: false);
+  }
+
+  Future<DesiredCreateRecoveryRecord?> claimCreateRecovery({
+    required AccountId accountId,
+    required int sourceAttemptId,
+    required String runId,
+    required DateTime claimedAt,
+  }) {
+    return _database.transaction(() async {
+      final source =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(sourceAttemptId) &
+                    row.baseRemoteId.isNull() &
+                    row.state.isIn(const <String>['pending', 'uncertain']),
+              ))
+              .getSingleOrNull();
+      if (source == null) return null;
+      final newer =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.desiredStateId.equals(source.desiredStateId) &
+                    row.generation.equals(source.generation) &
+                    row.id.isBiggerThanValue(source.id),
+              ))
+              .getSingleOrNull();
+      if (newer != null) return null;
+      final uncertainCountExpression = _database.desiredStateAttemptRows.id
+          .count();
+      final uncertainCountQuery =
+          _database.selectOnly(_database.desiredStateAttemptRows)
+            ..addColumns(<Expression<Object>>[uncertainCountExpression])
+            ..where(
+              _database.desiredStateAttemptRows.accountId.equals(
+                    accountId.value,
+                  ) &
+                  _database.desiredStateAttemptRows.desiredStateId.equals(
+                    source.desiredStateId,
+                  ) &
+                  _database.desiredStateAttemptRows.generation.equals(
+                    source.generation,
+                  ) &
+                  _database.desiredStateAttemptRows.state.equals('uncertain'),
+            );
+      final uncertainCount =
+          (await uncertainCountQuery.getSingle()).read(
+            uncertainCountExpression,
+          ) ??
+          0;
+      if (uncertainCount == 0) return null;
+
+      final desired =
+          await (_database.select(_database.desiredStateRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(source.desiredStateId),
+              ))
+              .getSingleOrNull();
+      if (desired == null) return null;
+
+      late final DesiredCreateCandidate candidate;
+      if (desired.resourceType == 'task_list') {
+        final taskListId = desired.targetTaskListId;
+        if (taskListId == null || !await _listScopeComplete(accountId, runId)) {
+          return null;
+        }
+        final target =
+            await (_database.select(_database.taskListCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.id.equals(taskListId),
+                ))
+                .getSingleOrNull();
+        if (target == null || target.remoteId != null) return null;
+        candidate = DesiredCreateCandidate(
+          resourceType: DesiredCreateResourceType.taskList,
+          taskListId: TaskListId(taskListId),
+          taskId: null,
+          parentTaskId: null,
+          taskListRemoteId: null,
+          parentRemoteId: null,
+          previousTaskId: null,
+          previousRemoteId: null,
+        );
+      } else if (desired.resourceType == 'task') {
+        final taskId = desired.targetTaskId;
+        final taskListId = source.desiredTaskListId;
+        if (taskId == null || taskListId == null) return null;
+        final target =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.id.equals(taskId),
+                ))
+                .getSingleOrNull();
+        final taskList =
+            await (_database.select(_database.taskListCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.id.equals(taskListId),
+                ))
+                .getSingleOrNull();
+        final taskListRemoteId = taskList?.remoteId;
+        if (target == null ||
+            target.remoteId != null ||
+            taskListRemoteId == null) {
+          return null;
+        }
+        final scopeComplete = await _taskScopeComplete(
+          accountId,
+          TaskListId(taskListId),
+          runId,
+        );
+        final listCreatedThisRun =
+            await (_database.select(_database.taskListRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskListId.equals(taskListId) &
+                      row.observedPublicationId.like('mutation:$runId:%'),
+                ))
+                .getSingleOrNull() !=
+            null;
+        if (!scopeComplete && !listCreatedThisRun) return null;
+
+        TaskRemoteId? parentRemoteId;
+        if (source.desiredParentTaskId case final parentId?) {
+          final parent =
+              await (_database.select(_database.taskCacheRows)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.id.equals(parentId),
+                  ))
+                  .getSingleOrNull();
+          if (parent?.remoteId == null) return null;
+          parentRemoteId = TaskRemoteId(parent!.remoteId!);
+        }
+        TaskRemoteId? previousRemoteId;
+        if (source.desiredPreviousTaskId case final previousId?) {
+          final previous =
+              await (_database.select(_database.taskCacheRows)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.id.equals(previousId),
+                  ))
+                  .getSingleOrNull();
+          if (previous?.remoteId == null) return null;
+          previousRemoteId = TaskRemoteId(previous!.remoteId!);
+        }
+        candidate = DesiredCreateCandidate(
+          resourceType: DesiredCreateResourceType.task,
+          taskListId: TaskListId(taskListId),
+          taskId: TaskId(taskId),
+          parentTaskId: source.desiredParentTaskId == null
+              ? null
+              : TaskId(source.desiredParentTaskId!),
+          taskListRemoteId: TaskListRemoteId(taskListRemoteId),
+          parentRemoteId: parentRemoteId,
+          previousTaskId: source.desiredPreviousTaskId == null
+              ? null
+              : TaskId(source.desiredPreviousTaskId!),
+          previousRemoteId: previousRemoteId,
+        );
+      } else {
+        throw const DesiredStateInvariantException('unknown_resource_type');
+      }
+
+      if (source.state == 'pending') {
+        await (_database.update(
+          _database.desiredStateAttemptRows,
+        )..where((row) => row.id.equals(source.id))).write(
+          DesiredStateAttemptRowsCompanion(
+            state: const Value<String>('superseded'),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(claimedAt.toUtc()),
+          ),
+        );
+      }
+      final recoveryAttemptId = await _database
+          .into(_database.desiredStateAttemptRows)
+          .insert(
+            DesiredStateAttemptRowsCompanion.insert(
+              accountId: source.accountId,
+              desiredStateId: source.desiredStateId,
+              generation: source.generation,
+              desiredLifecycle: source.desiredLifecycle,
+              title: Value<String?>(source.title),
+              notes: Value<String?>(source.notes),
+              status: Value<String?>(source.status),
+              dueEpochDay: Value<int?>(source.dueEpochDay),
+              desiredTaskListId: Value<int?>(source.desiredTaskListId),
+              desiredParentTaskId: Value<int?>(source.desiredParentTaskId),
+              desiredPreviousTaskId: Value<int?>(source.desiredPreviousTaskId),
+              baseRemoteId: const Value<String?>(null),
+              baseEtag: Value<String?>(source.baseEtag),
+              baseRemoteUpdatedAt: Value<DateTime?>(source.baseRemoteUpdatedAt),
+              baseObservedPublicationId: Value<String?>(
+                source.baseObservedPublicationId,
+              ),
+              baseTitle: Value<String?>(source.baseTitle),
+              baseTaskListId: Value<int?>(source.baseTaskListId),
+              baseParentTaskId: Value<int?>(source.baseParentTaskId),
+              basePreviousTaskId: Value<int?>(source.basePreviousTaskId),
+              basePosition: Value<String?>(source.basePosition),
+              baseSiblingOrder: Value<String?>(source.baseSiblingOrder),
+              notBefore: Value<DateTime?>(source.notBefore),
+              state: 'in_flight',
+              claimedAt: claimedAt.toUtc(),
+              lastTransitionAt: claimedAt.toUtc(),
+            ),
+          );
+      if (desired.generation == source.generation) {
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            state: const Value<String>('in_flight'),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(claimedAt.toUtc()),
+          ),
+        );
+      }
+      await _recomputeCounts(accountId);
+      final attempt = await (_database.select(
+        _database.desiredStateAttemptRows,
+      )..where((row) => row.id.equals(recoveryAttemptId))).getSingle();
+      return DesiredCreateRecoveryRecord(
+        attempt: _mapAttempt(attempt),
+        candidate: candidate,
+        uncertainAttemptCount: uncertainCount,
+      );
     });
   }
 
@@ -1876,6 +2188,34 @@ final class DesiredStateDao {
         etag: etag,
         remoteUpdatedAt: remoteUpdatedAt,
       );
+      final siblings =
+          await (_database.select(_database.taskRemoteBases)
+                ..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskListId.equals(taskListId.value) &
+                      (parentTaskId == null
+                          ? row.parentTaskId.isNull()
+                          : row.parentTaskId.equals(parentTaskId.value)) &
+                      row.deleted.equals(false),
+                )
+                ..orderBy(<OrderingTerm Function($TaskRemoteBasesTable)>[
+                  (row) => OrderingTerm.asc(row.position),
+                  (row) => OrderingTerm.asc(row.taskId),
+                ]))
+              .get();
+      final siblingIndex = siblings.indexWhere((row) => row.taskId == taskId);
+      if (siblingIndex < 0) {
+        throw const DesiredStateInvariantException(
+          'create_structure_base_missing',
+        );
+      }
+      final basePreviousTaskId = siblingIndex == 0
+          ? null
+          : siblings[siblingIndex - 1].taskId;
+      final baseSiblingOrder = siblings
+          .map((row) => '${row.taskId}:${row.position}')
+          .join('|');
       await _reach(DesiredStateTransactionBoundary.afterRemoteBaseWrite);
       await (_database.update(
         _database.desiredStateAttemptRows,
@@ -1905,12 +2245,30 @@ final class DesiredStateDao {
             baseNotes: Value<String?>(notes),
             baseStatus: Value<String>(_statusValue(status)),
             baseDueEpochDay: Value<int?>(_epochDay(due)),
+            baseTaskListId: Value<int>(taskListId.value),
+            baseParentTaskId: Value<int?>(parentTaskId?.value),
+            basePreviousTaskId: Value<int?>(basePreviousTaskId),
+            basePosition: Value<String>(position),
+            baseSiblingOrder: Value<String>(baseSiblingOrder),
             state: Value<String>(_stateValue(resolution)),
             failureCode: const Value<String?>(null),
             lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
           ),
         );
       } else {
+        final createdPlacementStillDesired =
+            desired.desiredLifecycle == 'present' &&
+            desired.desiredTaskListId == taskListId.value &&
+            desired.desiredParentTaskId == parentTaskId?.value &&
+            desired.desiredPreviousTaskId == basePreviousTaskId;
+        final structureRemainsDirty =
+            desired.structureDirty && !createdPlacementStillDesired;
+        final currentState =
+            desired.contentDirty ||
+                structureRemainsDirty ||
+                desired.lifecycleDirty
+            ? 'pending'
+            : 'confirmed';
         await (_database.update(
           _database.desiredStateRows,
         )..where((row) => row.id.equals(desired.id))).write(
@@ -1923,6 +2281,15 @@ final class DesiredStateDao {
             baseNotes: Value<String?>(notes),
             baseStatus: Value<String>(_statusValue(status)),
             baseDueEpochDay: Value<int?>(_epochDay(due)),
+            baseTaskListId: Value<int>(taskListId.value),
+            baseParentTaskId: Value<int?>(parentTaskId?.value),
+            basePreviousTaskId: Value<int?>(basePreviousTaskId),
+            basePosition: Value<String>(position),
+            baseSiblingOrder: Value<String>(baseSiblingOrder),
+            structureDirty: Value<bool>(structureRemainsDirty),
+            state: Value<String>(currentState),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(acknowledgedAt.toUtc()),
           ),
         );
       }
