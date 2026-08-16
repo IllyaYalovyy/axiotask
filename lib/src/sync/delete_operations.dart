@@ -15,6 +15,7 @@ final class DeleteOperationClaim {
     required this.taskId,
     required this.taskRemoteId,
     required this.etag,
+    this.requiresReadBack = false,
   });
 
   final DeleteOperationKind kind;
@@ -25,6 +26,7 @@ final class DeleteOperationClaim {
   final TaskId? taskId;
   final TaskRemoteId? taskRemoteId;
   final String? etag;
+  final bool requiresReadBack;
 }
 
 final class DeleteOperationMapper {
@@ -48,6 +50,16 @@ abstract interface class DeleteSyncStore {
   Future<void> recoverDeletes({
     required AccountId accountId,
     required DateTime recoveredAt,
+  });
+
+  Future<List<DeleteOperationClaim>> readUncertainTaskListDeletes({
+    required AccountId accountId,
+  });
+
+  Future<void> prepareTaskListDeleteReplay({
+    required AccountId accountId,
+    required DeleteOperationClaim claim,
+    required DateTime preparedAt,
   });
 
   Future<void> reconcileDeletes({

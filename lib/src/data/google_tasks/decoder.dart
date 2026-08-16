@@ -7,6 +7,16 @@ import 'dto.dart';
 final class GoogleTasksDecoder {
   const GoogleTasksDecoder();
 
+  Outcome<RemoteTaskList> decodeTaskListReadResource(List<int> bytes) {
+    try {
+      return Outcome<RemoteTaskList>.success(_taskList(_decodeRoot(bytes)));
+    } on _DecodeFailure catch (error) {
+      return Outcome<RemoteTaskList>.failure(error.failure);
+    } on FormatException {
+      return Outcome<RemoteTaskList>.failure(_malformedSuccessFailure());
+    }
+  }
+
   Outcome<RemoteTaskList> decodeTaskListResource(List<int> bytes) {
     try {
       return Outcome<RemoteTaskList>.success(_taskList(_decodeRoot(bytes)));

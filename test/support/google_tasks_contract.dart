@@ -201,6 +201,7 @@ void defineGoogleTasksServiceContract(
     );
 
     test('uses task tombstones and removes deleted lists', () async {
+      final recovery = service as GoogleTasksRecoveryService;
       final list = _committed(
         await service.createTaskList(
           const CreateTaskListOperation(title: 'Synthetic deletion'),
@@ -225,6 +226,10 @@ void defineGoogleTasksServiceContract(
             parentId: parent.id,
           ),
         ),
+      );
+      expect(
+        (await recovery.getTaskList(list.id) as Success<RemoteTaskList?>).value,
+        isNotNull,
       );
 
       expect(
@@ -272,6 +277,10 @@ void defineGoogleTasksServiceContract(
       );
       final lists = _success(await service.listTaskLists());
       expect(lists.items, isEmpty);
+      expect(
+        (await recovery.getTaskList(list.id) as Success<RemoteTaskList?>).value,
+        isNull,
+      );
       expect(
         await service.listTasks(list.id),
         isA<Failed<RemotePage<RemoteTask>>>(),

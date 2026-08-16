@@ -281,6 +281,17 @@ duplicate diagnostic exposes only resource kind/count/generation in release
 history while the sensitive development composition may retain the synthetic
 title; neither path uses content to resolve identity.
 
+S20B extends the update, delete, shared-adapter, restart, and multi-host suites
+with `REL-014`–`REL-017`, `REL-020`, `API-004`, `API-009`, and
+`CRS-004`–`CRS-007`. Landed, not-landed, and unknown response-loss variants
+prove separate whole-content, list-title, stable-placement, task-tombstone, and
+exact-list-identity rules. Repeated loss and newer edit/move/delete cases prove
+that the old attempt is resolved before the newer generation can publish.
+Direct-list 404, live-list replay, malformed read-back, file-backed restart,
+moved-task deletion, and unrelated-resource assertions prevent invented
+success and collateral deletion. Release diagnostics expose only safe aggregate
+resolution counts and stable failure codes; the UI contract is unchanged.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

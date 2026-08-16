@@ -124,6 +124,17 @@ application adapter and device-only preferences remain the S22A slice.
   atomically binds its returned Google ID while older uncertain attempts remain
   evidence; a newer edit, move, or delete generation remains pending against the
   new base. List and parent dependencies still resolve before task recovery.
+- S20B blocks a newer content or structure generation while an older attempt is
+  in flight or uncertain. After complete enumeration, exact whole-content or
+  stable-placement evidence resolves the older attempt and rebases only its
+  facet; the newer generation remains pending when it still differs. A
+  non-matching observation supersedes the old attempt and the existing
+  reconciliation policy decides the current generation. Task-delete recovery
+  retains the stable-ID/current-list tombstone rule. An uncertain list delete is
+  confirmed only by a direct exact-identity 404; a live identity transactionally
+  supersedes that attempt before one new delete claim, whose success is read
+  back again. Read failure or ambiguity leaves uncertainty durable and health
+  non-green.
 - S15B confirms an eligible pending content generation without a mutation only
   when the complete current scope proves Google already holds the exact desired
   title or task snapshot. Otherwise, unchanged confirmed bases allow immutable

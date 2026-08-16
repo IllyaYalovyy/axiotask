@@ -90,6 +90,46 @@ void main() {
     });
 
     test(
+      'REL-020 direct task-list read-back distinguishes live and 404',
+      () async {
+        var call = 0;
+        late HttpRequest seen;
+        final server = await ScriptedServer.start((request) async {
+          call += 1;
+          seen = request;
+          if (call == 1) {
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(jsonEncode(_taskListJson('list identity')));
+          } else {
+            request.response.statusCode = HttpStatus.notFound;
+            request.response.headers.contentType = ContentType.json;
+            request.response.write('{"error":{"code":404}}');
+          }
+          await request.response.close();
+        });
+        addTearDown(server.close);
+        final service = _service(server: server);
+        addTearDown(service.close);
+
+        final live = await service.getTaskList(
+          const RemoteTaskListId('list identity'),
+        );
+        final missing = await service.getTaskList(
+          const RemoteTaskListId('list identity'),
+        );
+
+        expect(
+          (live as Success<RemoteTaskList?>).value?.id.value,
+          'list identity',
+        );
+        expect((missing as Success<RemoteTaskList?>).value, isNull);
+        expect(seen.method, 'GET');
+        expect(seen.uri.path, '/tasks/v1/users/@me/lists/list%20identity');
+        expect(seen.uri.queryParameters, isEmpty);
+      },
+    );
+
+    test(
       'uses returned page token without treating a page as a snapshot',
       () async {
         var call = 0;
@@ -185,6 +225,35 @@ void main() {
   });
 
   group('HttpGoogleTasksService failures', () {
+    test('REL-017 malformed task-list read-back fails closed', () async {
+      final history = InMemoryDiagnosticHistory();
+      final server = await ScriptedServer.start((request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{"kind":"tasks#taskList","id":7}');
+        await request.response.close();
+      });
+      addTearDown(server.close);
+      final service = _service(
+        server: server,
+        diagnostics: ProductionDiagnosticSink(history),
+      );
+      addTearDown(service.close);
+
+      final result = await service.getTaskList(
+        const RemoteTaskListId('malformed-list'),
+      );
+
+      expect(result, isA<Failed<RemoteTaskList?>>());
+      expect(
+        history.records.map((record) => record.code),
+        contains('google_tasks.read_failed'),
+      );
+      expect(
+        history.records.map((record) => record.renderedText).join('\n'),
+        isNot(contains('malformed-list')),
+      );
+    });
+
     test(
       'AUTH-006 classifies only the observed malformed-bearer shape as refreshable',
       () async {

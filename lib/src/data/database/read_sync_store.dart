@@ -277,6 +277,146 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   }
 
   @override
+  Future<UncertainMutationResolutionSummary> resolveOlderUncertainMoves({
+    required AccountId accountId,
+    required String runId,
+    required DateTime resolvedAt,
+  }) {
+    return _database.transaction(() async {
+      var confirmed = 0;
+      var superseded = 0;
+      final attempts = await _database
+          .customSelect(
+            '''
+        SELECT a.id AS attempt_id, a.desired_state_id,
+               a.desired_task_list_id AS attempt_list_id,
+               a.desired_parent_task_id AS attempt_parent_id,
+               a.desired_previous_task_id AS attempt_previous_id,
+               a.base_task_list_id AS attempt_base_list_id,
+               a.base_parent_task_id AS attempt_base_parent_id,
+               a.base_previous_task_id AS attempt_base_previous_id,
+               d.target_task_id
+        FROM desired_state_attempts a
+        JOIN desired_states d
+          ON d.account_id = a.account_id AND d.id = a.desired_state_id
+        WHERE a.account_id = ?1
+          AND a.state = 'uncertain'
+          AND a.desired_lifecycle = 'present'
+          AND a.base_remote_id IS NOT NULL
+          AND a.generation < d.generation
+          AND d.resource_type = 'task'
+          AND a.base_task_list_id IS NOT NULL
+          AND (a.desired_task_list_id IS NOT a.base_task_list_id
+            OR a.desired_parent_task_id IS NOT a.base_parent_task_id
+            OR a.desired_previous_task_id IS NOT a.base_previous_task_id)
+        ORDER BY a.id
+        ''',
+            variables: <Variable<Object>>[Variable<int>(accountId.value)],
+            readsFrom: <ResultSetImplementation<Table, Object?>>{
+              _database.desiredStateAttemptRows,
+              _database.desiredStateRows,
+            },
+          )
+          .get();
+      final transitionedAt = resolvedAt.toUtc();
+      for (final attempt in attempts) {
+        final desired =
+            await (_database.select(_database.desiredStateRows)..where(
+                  (row) => row.id.equals(attempt.read<int>('desired_state_id')),
+                ))
+                .getSingle();
+        final attemptId = attempt.read<int>('attempt_id');
+        if (desired.desiredLifecycle == 'deleted') {
+          await _resolveAttempt(
+            attemptId,
+            state: 'superseded',
+            transitionedAt: transitionedAt,
+          );
+          superseded += 1;
+          continue;
+        }
+        final current =
+            await (_database.select(_database.taskRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskId.equals(attempt.read<int>('target_task_id')) &
+                      row.deleted.equals(false) &
+                      row.observedPublicationId.equals(runId),
+                ))
+                .getSingleOrNull();
+        if (current == null) continue;
+        final remote = await _structureSnapshot(current, runId: runId);
+        if (remote == null) continue;
+        final exact =
+            remote.taskListId.value == attempt.read<int>('attempt_list_id') &&
+            remote.parentTaskId?.value ==
+                attempt.readNullable<int>('attempt_parent_id') &&
+            remote.previousTaskId?.value ==
+                attempt.readNullable<int>('attempt_previous_id');
+        await _resolveAttempt(
+          attemptId,
+          state: exact ? 'confirmed' : 'superseded',
+          transitionedAt: transitionedAt,
+        );
+        if (!exact) {
+          superseded += 1;
+          continue;
+        }
+        final structureDirty =
+            desired.desiredTaskListId != current.taskListId ||
+            desired.desiredParentTaskId != current.parentTaskId ||
+            desired.desiredPreviousTaskId != remote.previousTaskId?.value;
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            structureDirty: Value<bool>(structureDirty),
+            baseRemoteId: Value<String>(current.remoteId),
+            baseEtag: Value<String?>(current.etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(
+              current.remoteUpdatedAt?.toUtc(),
+            ),
+            baseObservedPublicationId: Value<String>(runId),
+            baseTaskListId: Value<int>(current.taskListId),
+            baseParentTaskId: Value<int?>(current.parentTaskId),
+            basePreviousTaskId: Value<int?>(remote.previousTaskId?.value),
+            basePosition: Value<String?>(current.position),
+            baseSiblingOrder: Value<String>(remote.siblingOrderFingerprint),
+            state: Value<String>(
+              structureDirty || desired.contentDirty || desired.lifecycleDirty
+                  ? 'pending'
+                  : 'confirmed',
+            ),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(transitionedAt),
+          ),
+        );
+        confirmed += 1;
+      }
+      await _desired.recomputeCounts(accountId);
+      return UncertainMutationResolutionSummary(
+        confirmed: confirmed,
+        superseded: superseded,
+      );
+    });
+  }
+
+  Future<void> _resolveAttempt(
+    int attemptId, {
+    required String state,
+    required DateTime transitionedAt,
+  }) =>
+      (_database.update(
+        _database.desiredStateAttemptRows,
+      )..where((row) => row.id.equals(attemptId))).write(
+        DesiredStateAttemptRowsCompanion(
+          state: Value<String>(state),
+          failureCode: const Value<String?>(null),
+          lastTransitionAt: Value<DateTime>(transitionedAt),
+        ),
+      );
+
+  @override
   Future<MoveOperationClaim?> claimNextMove({
     required AccountId accountId,
     required String runId,
@@ -306,6 +446,16 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
                 ]))
               .get();
       for (final desired in rows) {
+        final unresolvedAttempt =
+            await (_database.select(_database.desiredStateAttemptRows)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.desiredStateId.equals(desired.id) &
+                      row.baseRemoteId.isNotNull() &
+                      row.state.isIn(const <String>['in_flight', 'uncertain']),
+                ))
+                .getSingleOrNull();
+        if (unresolvedAttempt != null) continue;
         final current =
             await (_database.select(_database.taskRemoteBases)..where(
                   (row) =>
@@ -518,6 +668,65 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
   }
 
   @override
+  Future<List<DeleteOperationClaim>> readUncertainTaskListDeletes({
+    required AccountId accountId,
+  }) async {
+    final rows = await _database
+        .customSelect(
+          '''
+      SELECT a.id AS attempt_id, a.generation,
+             d.target_task_list_id, l.remote_id
+      FROM desired_state_attempts a
+      JOIN desired_states d
+        ON d.account_id = a.account_id AND d.id = a.desired_state_id
+      JOIN task_lists l
+        ON l.account_id = d.account_id AND l.id = d.target_task_list_id
+      WHERE a.account_id = ?1
+        AND a.state = 'uncertain'
+        AND a.desired_lifecycle = 'deleted'
+        AND d.resource_type = 'task_list'
+        AND d.desired_lifecycle = 'deleted'
+        AND d.generation = a.generation
+        AND l.remote_id = a.base_remote_id
+      ORDER BY a.id
+      ''',
+          variables: <Variable<Object>>[Variable<int>(accountId.value)],
+          readsFrom: <ResultSetImplementation<Table, Object?>>{
+            _database.desiredStateAttemptRows,
+            _database.desiredStateRows,
+            _database.taskListCacheRows,
+          },
+        )
+        .get();
+    return rows
+        .map(
+          (row) => DeleteOperationClaim(
+            kind: DeleteOperationKind.taskList,
+            attemptId: row.read<int>('attempt_id'),
+            generation: row.read<int>('generation'),
+            taskListId: TaskListId(row.read<int>('target_task_list_id')),
+            taskListRemoteId: TaskListRemoteId(row.read<String>('remote_id')),
+            taskId: null,
+            taskRemoteId: null,
+            etag: null,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> prepareTaskListDeleteReplay({
+    required AccountId accountId,
+    required DeleteOperationClaim claim,
+    required DateTime preparedAt,
+  }) => _desired.prepareUncertainAttemptReplay(
+    accountId: accountId,
+    attemptId: claim.attemptId,
+    generation: claim.generation,
+    preparedAt: preparedAt,
+  );
+
+  @override
   Future<void> reconcileDeletes({
     required AccountId accountId,
     required String runId,
@@ -562,6 +771,7 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
       taskId: candidate.taskId,
       taskRemoteId: candidate.taskRemoteId,
       etag: candidate.etag,
+      requiresReadBack: candidate.hasPriorAttempt,
     );
   });
 
@@ -683,6 +893,17 @@ final class DatabaseReadSyncStore implements SyncStore, SyncRetryEpisodeStore {
       recoveredAt: recoveredAt,
     );
   }
+
+  @override
+  Future<UncertainMutationResolutionSummary> resolveOlderUncertainUpdates({
+    required AccountId accountId,
+    required String runId,
+    required DateTime resolvedAt,
+  }) => _desired.resolveOlderUncertainUpdates(
+    accountId: accountId,
+    runId: runId,
+    resolvedAt: resolvedAt,
+  );
 
   @override
   Future<int> confirmNoOpUpdates({

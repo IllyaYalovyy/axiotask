@@ -468,6 +468,14 @@ final class DesiredStateDao {
             AND d.structure_dirty = 0
             AND d.lifecycle_dirty = 0
             AND d.base_remote_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM desired_state_attempts unresolved_attempt
+              WHERE unresolved_attempt.account_id = d.account_id
+                AND unresolved_attempt.desired_state_id = d.id
+                AND unresolved_attempt.state IN ('in_flight', 'uncertain')
+                AND unresolved_attempt.base_remote_id IS NOT NULL
+            )
             AND (
               (d.resource_type = 'task'
                 AND target_task.remote_id = d.base_remote_id
@@ -529,6 +537,7 @@ final class DesiredStateDao {
             _database.taskListRemoteBases,
             _database.taskRemoteBases,
             _database.scopeCompletenessRows,
+            _database.desiredStateAttemptRows,
           },
         )
         .getSingleOrNull();
@@ -1358,6 +1367,196 @@ final class DesiredStateDao {
     });
   }
 
+  Future<UncertainMutationResolutionSummary> resolveOlderUncertainUpdates({
+    required AccountId accountId,
+    required String runId,
+    required DateTime resolvedAt,
+  }) {
+    return _database.transaction(() async {
+      var confirmed = 0;
+      var superseded = 0;
+      final attempts = await _database
+          .customSelect(
+            '''
+        SELECT a.id AS attempt_id, a.desired_state_id,
+               a.title AS attempt_title, a.notes AS attempt_notes,
+               a.status AS attempt_status,
+               a.due_epoch_day AS attempt_due_epoch_day,
+               a.desired_task_list_id AS attempt_list_id,
+               a.desired_parent_task_id AS attempt_parent_id,
+               a.desired_previous_task_id AS attempt_previous_id,
+               a.base_task_list_id AS attempt_base_list_id,
+               a.base_parent_task_id AS attempt_base_parent_id,
+               a.base_previous_task_id AS attempt_base_previous_id,
+               d.resource_type, d.target_task_list_id, d.target_task_id
+        FROM desired_state_attempts a
+        JOIN desired_states d
+          ON d.account_id = a.account_id AND d.id = a.desired_state_id
+        WHERE a.account_id = ?1
+          AND a.state = 'uncertain'
+          AND a.desired_lifecycle = 'present'
+          AND a.base_remote_id IS NOT NULL
+          AND a.generation < d.generation
+        ORDER BY a.id
+        ''',
+            variables: <Variable<Object>>[Variable<int>(accountId.value)],
+            readsFrom: <ResultSetImplementation<Table, Object?>>{
+              _database.desiredStateAttemptRows,
+              _database.desiredStateRows,
+            },
+          )
+          .get();
+      final transitionedAt = resolvedAt.toUtc();
+      for (final attempt in attempts) {
+        final isMove =
+            attempt.read<String>('resource_type') == 'task' &&
+            attempt.readNullable<int>('attempt_base_list_id') != null &&
+            (attempt.readNullable<int>('attempt_list_id') !=
+                    attempt.readNullable<int>('attempt_base_list_id') ||
+                attempt.readNullable<int>('attempt_parent_id') !=
+                    attempt.readNullable<int>('attempt_base_parent_id') ||
+                attempt.readNullable<int>('attempt_previous_id') !=
+                    attempt.readNullable<int>('attempt_base_previous_id'));
+        if (isMove) continue;
+        final desired =
+            await (_database.select(_database.desiredStateRows)..where(
+                  (row) => row.id.equals(attempt.read<int>('desired_state_id')),
+                ))
+                .getSingle();
+        if (desired.desiredLifecycle == 'deleted') {
+          await _resolveAttemptRow(
+            attempt.read<int>('attempt_id'),
+            'superseded',
+            transitionedAt,
+          );
+          superseded += 1;
+          continue;
+        }
+        if (desired.resourceType == 'task_list') {
+          final current =
+              await (_database.select(_database.taskListRemoteBases)..where(
+                    (row) =>
+                        row.accountId.equals(accountId.value) &
+                        row.taskListId.equals(desired.targetTaskListId!) &
+                        row.deleted.equals(false) &
+                        row.observedPublicationId.equals(runId),
+                  ))
+                  .getSingleOrNull();
+          if (current == null) continue;
+          final exact = current.title == attempt.read<String>('attempt_title');
+          await _resolveAttemptRow(
+            attempt.read<int>('attempt_id'),
+            exact ? 'confirmed' : 'superseded',
+            transitionedAt,
+          );
+          if (!exact) {
+            superseded += 1;
+            continue;
+          }
+          final contentDirty = desired.title != current.title;
+          await (_database.update(
+            _database.desiredStateRows,
+          )..where((row) => row.id.equals(desired.id))).write(
+            DesiredStateRowsCompanion(
+              contentDirty: Value<bool>(contentDirty),
+              baseRemoteId: Value<String>(current.remoteId),
+              baseEtag: Value<String?>(current.etag),
+              baseRemoteUpdatedAt: Value<DateTime?>(
+                current.remoteUpdatedAt?.toUtc(),
+              ),
+              baseObservedPublicationId: Value<String>(runId),
+              baseTitle: Value<String>(current.title),
+              state: Value<String>(
+                contentDirty || desired.lifecycleDirty
+                    ? 'pending'
+                    : 'confirmed',
+              ),
+              failureCode: const Value<String?>(null),
+              lastTransitionAt: Value<DateTime>(transitionedAt),
+            ),
+          );
+          confirmed += 1;
+          continue;
+        }
+        final current =
+            await (_database.select(_database.taskRemoteBases)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.taskId.equals(desired.targetTaskId!) &
+                      row.deleted.equals(false) &
+                      row.observedPublicationId.equals(runId),
+                ))
+                .getSingleOrNull();
+        if (current == null) continue;
+        final exact =
+            current.title == attempt.read<String>('attempt_title') &&
+            current.notes == attempt.readNullable<String>('attempt_notes') &&
+            current.status == attempt.read<String>('attempt_status') &&
+            current.dueEpochDay ==
+                attempt.readNullable<int>('attempt_due_epoch_day');
+        await _resolveAttemptRow(
+          attempt.read<int>('attempt_id'),
+          exact ? 'confirmed' : 'superseded',
+          transitionedAt,
+        );
+        if (!exact) {
+          superseded += 1;
+          continue;
+        }
+        final contentDirty =
+            desired.title != current.title ||
+            desired.notes != current.notes ||
+            desired.status != current.status ||
+            desired.dueEpochDay != current.dueEpochDay;
+        await (_database.update(
+          _database.desiredStateRows,
+        )..where((row) => row.id.equals(desired.id))).write(
+          DesiredStateRowsCompanion(
+            contentDirty: Value<bool>(contentDirty),
+            baseRemoteId: Value<String>(current.remoteId),
+            baseEtag: Value<String?>(current.etag),
+            baseRemoteUpdatedAt: Value<DateTime?>(
+              current.remoteUpdatedAt?.toUtc(),
+            ),
+            baseObservedPublicationId: Value<String>(runId),
+            baseTitle: Value<String>(current.title!),
+            baseNotes: Value<String?>(current.notes),
+            baseStatus: Value<String>(current.status!),
+            baseDueEpochDay: Value<int?>(current.dueEpochDay),
+            state: Value<String>(
+              contentDirty || desired.structureDirty || desired.lifecycleDirty
+                  ? 'pending'
+                  : 'confirmed',
+            ),
+            failureCode: const Value<String?>(null),
+            lastTransitionAt: Value<DateTime>(transitionedAt),
+          ),
+        );
+        confirmed += 1;
+      }
+      await _recomputeCounts(accountId);
+      return UncertainMutationResolutionSummary(
+        confirmed: confirmed,
+        superseded: superseded,
+      );
+    });
+  }
+
+  Future<void> _resolveAttemptRow(
+    int attemptId,
+    String state,
+    DateTime transitionedAt,
+  ) =>
+      (_database.update(
+        _database.desiredStateAttemptRows,
+      )..where((row) => row.id.equals(attemptId))).write(
+        DesiredStateAttemptRowsCompanion(
+          state: Value<String>(state),
+          failureCode: const Value<String?>(null),
+          lastTransitionAt: Value<DateTime>(transitionedAt),
+        ),
+      );
+
   Future<int> recoverInFlightDeletes({
     required AccountId accountId,
     required DateTime recoveredAt,
@@ -1986,6 +2185,63 @@ final class DesiredStateDao {
           ),
         );
       }
+      await _recomputeCounts(accountId);
+    });
+  }
+
+  Future<void> prepareUncertainAttemptReplay({
+    required AccountId accountId,
+    required int attemptId,
+    required int generation,
+    required DateTime preparedAt,
+  }) {
+    return _database.transaction(() async {
+      final attempt =
+          await (_database.select(_database.desiredStateAttemptRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(attemptId) &
+                    row.generation.equals(generation) &
+                    row.state.equals('uncertain'),
+              ))
+              .getSingleOrNull();
+      if (attempt == null) {
+        throw const DesiredStateInvariantException(
+          'uncertain_attempt_not_replayable',
+        );
+      }
+      final desired =
+          await (_database.select(_database.desiredStateRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(attempt.desiredStateId) &
+                    row.generation.equals(generation),
+              ))
+              .getSingleOrNull();
+      if (desired == null) {
+        throw const DesiredStateInvariantException(
+          'uncertain_generation_not_current',
+        );
+      }
+      final at = preparedAt.toUtc();
+      await (_database.update(
+        _database.desiredStateAttemptRows,
+      )..where((row) => row.id.equals(attempt.id))).write(
+        DesiredStateAttemptRowsCompanion(
+          state: const Value<String>('superseded'),
+          failureCode: const Value<String?>(null),
+          lastTransitionAt: Value<DateTime>(at),
+        ),
+      );
+      await (_database.update(
+        _database.desiredStateRows,
+      )..where((row) => row.id.equals(desired.id))).write(
+        DesiredStateRowsCompanion(
+          state: const Value<String>('pending'),
+          failureCode: const Value<String?>(null),
+          lastTransitionAt: Value<DateTime>(at),
+        ),
+      );
       await _recomputeCounts(accountId);
     });
   }

@@ -15,6 +15,7 @@ import 'barriers.dart';
 
 enum FakeGoogleTasksMethod {
   listTaskLists,
+  getTaskList,
   listTasks,
   createTaskList,
   renameTaskList,
@@ -47,7 +48,8 @@ final class FakeGoogleTasksCall {
 
 /// A strict deterministic model of only the Google Tasks behavior admitted by
 /// docs/GOOGLE_TASKS_API_CONTRACT.md. It is test support, not sync policy.
-final class FakeGoogleTasksService implements GoogleTasksService {
+final class FakeGoogleTasksService
+    implements GoogleTasksService, GoogleTasksRecoveryService {
   FakeGoogleTasksService({this.taskListPageSize = 2, this.taskPageSize = 2}) {
     if (taskListPageSize <= 0 || taskListPageSize > 1000) {
       throw ArgumentError.value(taskListPageSize, 'taskListPageSize');
@@ -108,6 +110,28 @@ final class FakeGoogleTasksService implements GoogleTasksService {
         collectionEtag: 'fake-task-lists-v$_listCollectionRevision',
         nextPageToken: _nextPageToken('lists', end, end < resources.length),
       ),
+    );
+  }
+
+  @override
+  Future<Outcome<RemoteTaskList?>> getTaskList(
+    RemoteTaskListId taskListId, {
+    GoogleTasksReadCancellation? cancellation,
+  }) async {
+    _record(
+      FakeGoogleTasksCall(
+        operation: FakeGoogleTasksMethod.getTaskList,
+        method: 'GET',
+        path: '/tasks/v1/users/@me/lists/${_path(taskListId.value)}',
+      ),
+    );
+    final unavailable = _readUnavailable<RemoteTaskList>(cancellation);
+    if (unavailable case Failed<RemotePage<RemoteTaskList>>(:final failure)) {
+      return Outcome<RemoteTaskList?>.failure(failure);
+    }
+    final list = _lists[taskListId.value];
+    return Outcome<RemoteTaskList?>.success(
+      list == null ? null : _taskListDto(list),
     );
   }
 
@@ -726,6 +750,7 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
           'lists',
         ])) {
       return switch (request.method) {
+        'GET' => _getTaskList(request, segments[5]),
         'PATCH' => _renameTaskList(request, segments[5], bodyBytes),
         'DELETE' => _deleteTaskList(request, segments[5], bodyBytes),
         _ => _error(HttpStatus.methodNotAllowed),
@@ -792,6 +817,7 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
           'lists',
         ])) {
       return switch (request.method) {
+        'GET' => FakeGoogleTasksMethod.getTaskList,
         'PATCH' => FakeGoogleTasksMethod.renameTaskList,
         'DELETE' => FakeGoogleTasksMethod.deleteTaskList,
         _ => null,
@@ -837,6 +863,23 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
       pageToken: _pageToken(request.url.queryParameters['pageToken']),
     );
     return _readPageResponse(result, _taskListJson, 'tasks#taskLists');
+  }
+
+  Future<http.StreamedResponse> _getTaskList(
+    http.BaseRequest request,
+    String listId,
+  ) async {
+    if (request.url.queryParameters.isNotEmpty) {
+      return _error(HttpStatus.badRequest);
+    }
+    return switch (await backend.getTaskList(RemoteTaskListId(listId))) {
+      Success<RemoteTaskList?>(value: final value?) => _jsonResponse(
+        HttpStatus.ok,
+        _taskListJson(value),
+      ),
+      Success<RemoteTaskList?>(value: null) => _error(HttpStatus.notFound),
+      Failed<RemoteTaskList?>(:final failure) => _failureResponse(failure),
+    };
   }
 
   Future<http.StreamedResponse> _listTasks(

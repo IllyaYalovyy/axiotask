@@ -17,7 +17,8 @@ import 'service.dart';
 
 typedef TimeoutSignal = Future<void> Function(Duration duration);
 
-final class HttpGoogleTasksService implements GoogleTasksService {
+final class HttpGoogleTasksService
+    implements GoogleTasksService, GoogleTasksRecoveryService {
   factory HttpGoogleTasksService({
     required http.Client client,
     required AuthorizationPort authorization,
@@ -120,6 +121,118 @@ final class HttpGoogleTasksService implements GoogleTasksService {
     ),
     decode: _decoder.decodeTaskPage,
   );
+
+  @override
+  Future<Outcome<RemoteTaskList?>> getTaskList(
+    RemoteTaskListId taskListId, {
+    GoogleTasksReadCancellation? cancellation,
+  }) async {
+    const resourceType = 'taskListReadBack';
+    final eligibility = _verifyEligibility(FailureOperation.read);
+    if (eligibility case Failed<void>(:final failure)) {
+      _recordFailure(resourceType, failure);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    }
+    if (cancellation?.isCancelled ?? false) {
+      final failure = _cancelledFailure();
+      _recordFailure(resourceType, failure);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    }
+    final abortReason = Completer<_AbortReason>();
+    void abort(_AbortReason reason) {
+      if (!abortReason.isCompleted) abortReason.complete(reason);
+    }
+
+    unawaited(
+      cancellation?.whenCancelled.then((_) => abort(_AbortReason.cancelled)),
+    );
+    unawaited(
+      _timeoutSignal(_requestTimeout).then((_) => abort(_AbortReason.timeout)),
+    );
+    final request = _requestFactory.taskList(
+      taskListId: taskListId,
+      abortTrigger: abortReason.future.then<void>((_) {}),
+    );
+    try {
+      final response = await _client.send(request);
+      final bytes = await _readBounded(response);
+      if (response.statusCode == HttpStatus.notFound) {
+        _diagnostics.record(
+          DiagnosticEvent(
+            code: 'google_tasks.task_list_readback_missing',
+            operation: 'read',
+            fields: <DiagnosticField>[
+              const DiagnosticField.safe('resourceType', resourceType),
+              DiagnosticField.safe('status', response.statusCode),
+              DiagnosticField.private('requestUri', request.url),
+            ],
+          ),
+        );
+        return const Outcome<RemoteTaskList?>.success(null);
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final failure = _mapHttpFailure(
+          response.statusCode,
+          bytes,
+          response.headers,
+        );
+        _recordFailure(
+          resourceType,
+          failure,
+          requestUri: request.url,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return Outcome<RemoteTaskList?>.failure(failure);
+      }
+      if (response.statusCode != HttpStatus.ok ||
+          !_isJson(response.headers['content-type'])) {
+        final failure = _malformedContentTypeFailure();
+        _recordFailure(
+          resourceType,
+          failure,
+          requestUri: request.url,
+          responseBody: bytes,
+          statusCode: response.statusCode,
+        );
+        return Outcome<RemoteTaskList?>.failure(failure);
+      }
+      switch (_decoder.decodeTaskListReadResource(bytes)) {
+        case Success<RemoteTaskList>(:final value):
+          return Outcome<RemoteTaskList?>.success(value);
+        case Failed<RemoteTaskList>(:final failure):
+          _recordFailure(
+            resourceType,
+            failure,
+            requestUri: request.url,
+            responseBody: bytes,
+            statusCode: response.statusCode,
+          );
+          return Outcome<RemoteTaskList?>.failure(failure);
+      }
+    } on _ResponseTooLarge {
+      final failure = _responseTooLargeFailure();
+      _recordFailure(resourceType, failure, requestUri: request.url);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    } on http.RequestAbortedException {
+      final reason = abortReason.isCompleted ? await abortReason.future : null;
+      final failure = switch (reason) {
+        _AbortReason.cancelled => _cancelledFailure(),
+        _AbortReason.timeout => _timeoutFailure(),
+        null => _transportFailure(),
+      };
+      _recordFailure(resourceType, failure, requestUri: request.url);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    } on TimeoutException {
+      final failure = _timeoutFailure();
+      _recordFailure(resourceType, failure, requestUri: request.url);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    } on http.ClientException {
+      final failure = _transportFailure();
+      _recordFailure(resourceType, failure, requestUri: request.url);
+      return Outcome<RemoteTaskList?>.failure(failure);
+    }
+  }
 
   @override
   Future<GoogleTasksMutationResult<RemoteTaskList>> createTaskList(

@@ -45,3 +45,13 @@ abstract interface class GoogleTasksService {
 
   void close();
 }
+
+/// Targeted identity read-back used only by operation-specific uncertainty
+/// recovery. A successful null result is the positive direct-404 evidence for
+/// a previously confirmed, non-movable task-list identity.
+abstract interface class GoogleTasksRecoveryService {
+  Future<Outcome<RemoteTaskList?>> getTaskList(
+    RemoteTaskListId taskListId, {
+    GoogleTasksReadCancellation? cancellation,
+  });
+}

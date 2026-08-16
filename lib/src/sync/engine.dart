@@ -444,6 +444,98 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.reconcileAndPlan) case final interruption?) {
       return interruption;
     }
+    final uncertainListDeletes = await store.readUncertainTaskListDeletes(
+      accountId: request.accountId,
+    );
+    if (uncertainListDeletes.isNotEmpty) {
+      switch (googleTasks) {
+        case final GoogleTasksRecoveryService recovery:
+          for (final claim in uncertainListDeletes) {
+            final readBack = await _retryRead(
+              () => recovery.getTaskList(
+                RemoteTaskListId(claim.taskListRemoteId.value),
+                cancellation: readCancellation,
+              ),
+              runDeadline,
+              accountId: request.accountId,
+              expectedSubject: subject,
+            );
+            switch (readBack) {
+              case Failed<RemoteTaskList?>(:final failure):
+                firstFailure ??= failure;
+              case Success<RemoteTaskList?>(value: null):
+                try {
+                  await store.acknowledgeTaskListDelete(
+                    accountId: request.accountId,
+                    claim: claim,
+                    observationId: 'readback:${runId.value}:${claim.attemptId}',
+                    acknowledgedAt: clock.now().toUtc(),
+                  );
+                  diagnostics?.record(
+                    const DiagnosticEvent(
+                      code: 'sync.uncertain_list_delete_confirmed_missing',
+                      operation: 'recover_list_delete',
+                    ),
+                  );
+                } on Object {
+                  firstFailure ??= _deleteAcknowledgementFailure;
+                }
+              case Success<RemoteTaskList?>(value: final live?):
+                if (live.id.value != claim.taskListRemoteId.value) {
+                  firstFailure ??= _taskListReadBackIdentityFailure;
+                  break;
+                }
+                await store.prepareTaskListDeleteReplay(
+                  accountId: request.accountId,
+                  claim: claim,
+                  preparedAt: clock.now().toUtc(),
+                );
+                diagnostics?.record(
+                  const DiagnosticEvent(
+                    code: 'sync.uncertain_list_delete_live_replay',
+                    operation: 'recover_list_delete',
+                  ),
+                );
+            }
+          }
+        default:
+          firstFailure ??= _taskListReadBackUnavailableFailure;
+      }
+    }
+    final olderUpdateRecovery = await store.resolveOlderUncertainUpdates(
+      accountId: request.accountId,
+      runId: runId.value,
+      resolvedAt: clock.now().toUtc(),
+    );
+    final olderMoveRecovery = await store.resolveOlderUncertainMoves(
+      accountId: request.accountId,
+      runId: runId.value,
+      resolvedAt: clock.now().toUtc(),
+    );
+    if (olderUpdateRecovery.total > 0) {
+      diagnostics?.record(
+        DiagnosticEvent(
+          code: 'sync.uncertain_update_readback_resolved',
+          operation: 'recover_update',
+          fields: <DiagnosticField>[
+            DiagnosticField.safe('confirmed', olderUpdateRecovery.confirmed),
+            DiagnosticField.safe('superseded', olderUpdateRecovery.superseded),
+          ],
+        ),
+      );
+    }
+    if (olderMoveRecovery.total > 0) {
+      diagnostics?.record(
+        DiagnosticEvent(
+          code: 'sync.uncertain_move_readback_resolved',
+          operation: 'recover_move',
+          fields: <DiagnosticField>[
+            DiagnosticField.safe('confirmed', olderMoveRecovery.confirmed),
+            DiagnosticField.safe('superseded', olderMoveRecovery.superseded),
+          ],
+        ),
+      );
+    }
     await store.reconcileDeletes(
       accountId: request.accountId,
       runId: runId.value,
@@ -513,6 +605,51 @@ final class SyncEngine {
       switch (result) {
         case CommittedMutation<void>():
           if (claim.kind == DeleteOperationKind.taskList) {
+            if (claim.requiresReadBack) {
+              final verification = switch (googleTasks) {
+                final GoogleTasksRecoveryService recovery => await _retryRead(
+                  () => recovery.getTaskList(
+                    RemoteTaskListId(claim.taskListRemoteId.value),
+                    cancellation: readCancellation,
+                  ),
+                  runDeadline,
+                  accountId: request.accountId,
+                  expectedSubject: subject,
+                ),
+                _ => const Outcome<RemoteTaskList?>.failure(
+                  _taskListReadBackUnavailableFailure,
+                ),
+              };
+              switch (verification) {
+                case Failed<RemoteTaskList?>(:final failure):
+                  await store.resolveDeleteFailure(
+                    accountId: request.accountId,
+                    claim: claim,
+                    failure: failure,
+                    uncertain: true,
+                    resolvedAt: clock.now().toUtc(),
+                  );
+                  firstFailure ??= failure;
+                  break;
+                case Success<RemoteTaskList?>(value: RemoteTaskList()):
+                  await store.resolveDeleteFailure(
+                    accountId: request.accountId,
+                    claim: claim,
+                    failure: _taskListDeleteVerificationFailure,
+                    uncertain: true,
+                    resolvedAt: clock.now().toUtc(),
+                  );
+                  firstFailure ??= _taskListDeleteVerificationFailure;
+                  break;
+                case Success<RemoteTaskList?>(value: null):
+                  break;
+              }
+              if (verification case Success<RemoteTaskList?>(value: null)) {
+                // Positive direct-404 evidence permits acknowledgement below.
+              } else {
+                break;
+              }
+            }
             try {
               await store.acknowledgeTaskListDelete(
                 accountId: request.accountId,
@@ -1551,6 +1688,34 @@ const Failure _deleteVerificationFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'A task deletion could not yet be verified.',
   safeSummary: 'Positive task tombstone evidence was not available.',
+);
+
+const Failure _taskListReadBackUnavailableFailure = Failure(
+  code: 'sync.task_list_readback_unavailable',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.permanent,
+  impact: 'A task-list deletion could not be resolved safely.',
+  safeSummary:
+      'The Google adapter did not provide task-list identity read-back.',
+);
+
+const Failure _taskListReadBackIdentityFailure = Failure(
+  code: 'sync.task_list_readback_identity_mismatch',
+  category: FailureCategory.internal,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.permanent,
+  impact: 'A task-list deletion could not be resolved safely.',
+  safeSummary: 'The task-list read-back returned a different identity.',
+);
+
+const Failure _taskListDeleteVerificationFailure = Failure(
+  code: 'sync.task_list_delete_unverified',
+  category: FailureCategory.remote,
+  operation: FailureOperation.synchronize,
+  retry: RetryClassification.unknown,
+  impact: 'A task-list deletion could not yet be verified.',
+  safeSummary: 'The task-list identity remained live after the delete replay.',
 );
 
 const int _maximumConditionalReplans = 3;

@@ -8,7 +8,10 @@ one-level structure reconciliation are implemented through S18B. Bounded
 request retry, durable between-run backoff/exhaustion, explicit Retry recovery,
 refresh-once authorization recovery, and durable reauthorization are implemented
 through S19B. Operation-specific uncertain-create recovery, returned-ID binding,
-and accepted-duplicate diagnostics are implemented through S20A. Android
+and accepted-duplicate diagnostics are implemented through S20A. Separate
+complete-record, stable-placement, task-tombstone, and exact-list-identity
+read-back/replay rules recover uncertain non-create mutations through S20B
+without generic replay or false acknowledgement. Android
 lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

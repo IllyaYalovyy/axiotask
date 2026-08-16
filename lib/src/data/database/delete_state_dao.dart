@@ -43,6 +43,7 @@ final class DeleteCandidate {
     required this.taskRemoteId,
     required this.etag,
     required this.state,
+    required this.hasPriorAttempt,
   });
 
   final DeleteResourceType resourceType;
@@ -54,6 +55,7 @@ final class DeleteCandidate {
   final TaskRemoteId? taskRemoteId;
   final String? etag;
   final DesiredStateLifecycle state;
+  final bool hasPriorAttempt;
 }
 
 final class DeleteStateDao {
@@ -626,7 +628,13 @@ final class DeleteStateDao {
              COALESCE(d.target_task_list_id, task.task_list_id) AS task_list_id,
              list.remote_id AS task_list_remote_id,
              d.target_task_id, task.remote_id AS task_remote_id,
-             task_base.etag AS task_etag
+             task_base.etag AS task_etag,
+             EXISTS (
+               SELECT 1 FROM desired_state_attempts prior_attempt
+               WHERE prior_attempt.account_id = d.account_id
+                 AND prior_attempt.desired_state_id = d.id
+                 AND prior_attempt.desired_lifecycle = 'deleted'
+             ) AS has_prior_attempt
       FROM desired_states d
       LEFT JOIN tasks task
         ON task.account_id = d.account_id AND task.id = d.target_task_id
@@ -676,6 +684,7 @@ final class DeleteStateDao {
             _database.taskCacheRows,
             _database.taskRemoteBases,
             _database.scopeCompletenessRows,
+            _database.desiredStateAttemptRows,
           },
         )
         .getSingleOrNull();
@@ -697,6 +706,7 @@ final class DeleteStateDao {
       taskRemoteId: taskRemoteId == null ? null : TaskRemoteId(taskRemoteId),
       etag: row.readNullable<String>('task_etag'),
       state: _lifecycle(row.read<String>('state')),
+      hasPriorAttempt: row.read<bool>('has_prior_attempt'),
     );
   }
 

@@ -38,7 +38,14 @@ offers Undo from that durable state for exactly 30 seconds, and cannot issue a
 Google DELETE during the grace window even on Refresh or restart. Expiry strips
 the content snapshot and schedules authoritative deletion with positive task
 tombstone verification. List deletion has an explicit irreversible
-confirmation and no Undo. The task detail pane can create a direct subtask,
+confirmation and no Undo. Response-lost content updates, list renames, and
+stable-ID moves are read back by their own complete-record or placement rules
+before a newer generation can publish. Response-lost task deletes still require
+the stable task tombstone in its current list, while response-lost list deletes
+use an exact list-identity read: only a direct 404 confirms deletion, and a live
+identity permits one newly claimed replay followed by the same positive check.
+Unresolved or failed read-back stays non-green and never acknowledges success.
+The task detail pane can create a direct subtask,
 promote a child, demote a leaf, reorder siblings, or move a stable task/subtree
 between Google lists. Structure changes commit durably, survive restart, and
 publish through Google MOVE with valid remote `parent`/`previous` anchors.
@@ -196,7 +203,10 @@ encodes due dates at UTC midnight, uses the live-proven JSON `null` spelling to
 clear notes and due, and requires canonical 200 resource or empty 204 responses.
 It performs no retries or reconciliation: response loss, malformed success,
 unknown responses, and possibly stale source-list paths remain explicit
-uncertain results. The engine consumes ordered list/task creates, eligible
+uncertain results. A separate recovery capability performs the exact task-list
+identity GET required to distinguish a live list from a direct 404 without
+making generic collection absence into delete evidence. The engine consumes
+ordered list/task creates, eligible
 complete task-content PATCHes and list-title updates, deletion work, and
 structure MOVE work. Confirmed operations and read-proven no-ops are not
 replayed; cross-list MOVE keeps the same Google task ID and subtree.
@@ -442,6 +452,7 @@ flutter test test/support/replay_seed_test.dart
 flutter test test/data/google_tasks/decoder_test.dart
 flutter test test/data/google_tasks/http_service_test.dart
 flutter test test/data/google_tasks/mutation_http_service_test.dart
+flutter test test/data/google_tasks/google_tasks_shared_contract_test.dart
 flutter test integration_test/offline_list_edits_linux_test.dart -d linux
 flutter test integration_test/offline_task_edits_linux_test.dart -d linux
 flutter test integration_test/read_slice_linux_test.dart -d linux

@@ -206,6 +206,15 @@ binds its returned ID; earlier possibly committed objects remain independent.
 Focused recovery, restart, dependency, and multi-host checks use only temporary
 SQLite stores and the strict synthetic Google service.
 
+S20B likewise adds no dependency, namespace, OAuth configuration, or
+live-account step. Complete enumeration supplies operation-specific evidence
+for response-lost task content, list title, and stable-ID move attempts before a
+newer generation can publish. Task deletes retain current-list tombstone proof.
+List deletes use a targeted identity GET: direct 404 confirms, a live identity
+permits one newly claimed replay and another read-back, and every failure or
+unknown result remains uncertain. Focused engine/store/restart/multi-host,
+adapter-contract, and fake-application checks remain isolated and synthetic.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

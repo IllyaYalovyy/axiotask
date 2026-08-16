@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
@@ -214,6 +217,71 @@ void main() {
   );
 
   test(
+    'REL-015/API-009 live moved task is deleted only at its current list',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UncertainDeleteService(backend)
+        ..loseNextTaskDeleteBeforeCommit = true;
+      final harness = await _DeleteHarness.open(remote, subject, startedAt);
+      addTearDown(harness.close);
+      final seeded = await harness.seed(secondList: true);
+      await harness.deleteTask(seeded.parent);
+      harness.clock.advance(const Duration(seconds: 30));
+
+      expect((await harness.run()).outcome, SyncRunOutcome.failed);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 0);
+      final live = (await harness.remoteTasks(seeded.listRemoteId))
+          .whereType<RemoteLiveTask>()
+          .singleWhere((task) => task.id == seeded.parentRemoteId);
+      expect(
+        await backend.moveTask(
+          MoveTaskOperation(
+            sourceTaskListId: seeded.listRemoteId,
+            destinationTaskListId: seeded.secondListRemoteId,
+            taskId: seeded.parentRemoteId,
+            etag: live.etag!,
+            pathFreshness: MutationPathFreshness.current,
+          ),
+        ),
+        isA<CommittedMutation<RemoteTask>>(),
+      );
+
+      harness.clock.advance(const Duration(minutes: 1));
+      final repeatedLoss = await harness.run();
+
+      expect(repeatedLoss.outcome, SyncRunOutcome.failed);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
+      expect(
+        await DeleteStateDao(
+          harness.database,
+        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        DesiredStateLifecycle.uncertain,
+      );
+      harness.clock.advance(const Duration(minutes: 1));
+      final recovered = await harness.run();
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
+      expect(
+        await DeleteStateDao(
+          harness.database,
+        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        DesiredStateLifecycle.confirmed,
+      );
+      expect(
+        (await backend.listTaskLists() as Success<RemotePage<RemoteTaskList>>)
+            .value
+            .items
+            .map((list) => list.id),
+        containsAll(<RemoteTaskListId>[
+          seeded.listRemoteId,
+          seeded.secondListRemoteId!,
+        ]),
+      );
+    },
+  );
+
+  test(
     'REL-020 list delete is immediate and leaves unrelated list intact',
     () async {
       final remote = FakeGoogleTasksService();
@@ -243,18 +311,90 @@ void main() {
       expect(remoteLists.map((list) => list.id), <RemoteTaskListId>[
         seeded.secondListRemoteId!,
       ]);
+
+      harness.clock.advance(const Duration(minutes: 1));
+      final recovered = await harness.run();
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTaskList(harness.accountId, seeded.list))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
+      expect(remote.callCount(FakeGoogleTasksMethod.deleteTaskList), 1);
+    },
+  );
+
+  test(
+    'REL-020 live list read-back replays once and verifies deletion',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UncertainDeleteService(backend)
+        ..loseNextTaskDeleteResponse = false
+        ..loseNextListDeleteBeforeCommit = true;
+      final harness = await _DeleteHarness.open(remote, subject, startedAt);
+      addTearDown(harness.close);
+      final seeded = await harness.seed(secondList: true);
+
+      await DatabaseTaskListsRepository(
+        database: harness.database,
+        clock: harness.clock,
+      ).deleteTaskList(
+        DeleteTaskListCommand(
+          accountId: harness.accountId,
+          taskListId: seeded.list,
+        ),
+      );
+      expect((await harness.run()).outcome, SyncRunOutcome.failed);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTaskList), 0);
+
+      harness.clock.advance(const Duration(minutes: 1));
+      final history = InMemoryDiagnosticHistory();
+      final recovered = await harness.run(
+        diagnostics: ProductionDiagnosticSink(history),
+      );
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTaskList), 1);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTaskList(harness.accountId, seeded.list))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
+      final remaining = switch (await backend.listTaskLists()) {
+        Success<RemotePage<RemoteTaskList>>(:final value) => value.items,
+        _ => throw StateError('Synthetic list read failed.'),
+      };
+      expect(remaining.map((list) => list.id), <RemoteTaskListId>[
+        seeded.secondListRemoteId!,
+      ]);
+      expect(
+        history.records.map((record) => record.code),
+        contains('sync.uncertain_list_delete_live_replay'),
+      );
     },
   );
 
   test(
     'REL-020 uncertain list delete retains evidence and unrelated scope',
     () async {
+      final root = await Directory.systemTemp.createTemp(
+        'axiotask-s20b-list-delete-restart-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final file = File('${root.path}/isolated.sqlite');
       final backend = FakeGoogleTasksService();
       addTearDown(backend.close);
       final remote = _UncertainDeleteService(backend)
         ..loseNextTaskDeleteResponse = false
         ..loseNextListDeleteResponse = true;
-      final harness = await _DeleteHarness.open(remote, subject, startedAt);
+      var harness = await _DeleteHarness.openFile(
+        file,
+        remote,
+        subject,
+        startedAt,
+      );
       addTearDown(harness.close);
       final seeded = await harness.seed(secondList: true);
 
@@ -284,8 +424,61 @@ void main() {
       expect(remoteLists.map((list) => list.id), <RemoteTaskListId>[
         seeded.secondListRemoteId!,
       ]);
+
+      await harness.close();
+      harness = await _DeleteHarness.reopen(
+        file,
+        remote,
+        subject,
+        harness.clock,
+      );
+      harness.clock.advance(const Duration(minutes: 1));
+      final recovered = await harness.run();
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTaskList(harness.accountId, seeded.list))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTaskList), 1);
     },
   );
+
+  test('REL-017 malformed list read-back retains uncertainty', () async {
+    final backend = FakeGoogleTasksService();
+    addTearDown(backend.close);
+    final remote = _UncertainDeleteService(backend)
+      ..loseNextTaskDeleteResponse = false
+      ..loseNextListDeleteBeforeCommit = true;
+    final harness = await _DeleteHarness.open(remote, subject, startedAt);
+    addTearDown(harness.close);
+    final seeded = await harness.seed(secondList: true);
+    await DatabaseTaskListsRepository(
+      database: harness.database,
+      clock: harness.clock,
+    ).deleteTaskList(
+      DeleteTaskListCommand(
+        accountId: harness.accountId,
+        taskListId: seeded.list,
+      ),
+    );
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+
+    remote.failNextListReadBack = true;
+    harness.clock.advance(const Duration(minutes: 1));
+    final malformed = await harness.run();
+
+    expect(malformed.outcome, SyncRunOutcome.failed);
+    expect(malformed.failure?.code, 'synthetic.list_readback_malformed');
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTaskList(harness.accountId, seeded.list))?.state,
+      DesiredStateLifecycle.uncertain,
+    );
+    expect(backend.callCount(FakeGoogleTasksMethod.deleteTaskList), 0);
+  });
 }
 
 final class _DeleteHarness {
@@ -316,6 +509,40 @@ final class _DeleteHarness {
       subject,
       FakeClock(startedAt),
       accountId,
+    );
+  }
+
+  static Future<_DeleteHarness> openFile(
+    File file,
+    GoogleTasksService remote,
+    AccountSubject subject,
+    DateTime startedAt,
+  ) async {
+    final database = await AppDatabase.openFile(file);
+    final accountId = AccountId(await database.createAccount(subject.value));
+    return _DeleteHarness(
+      database,
+      remote,
+      subject,
+      FakeClock(startedAt),
+      accountId,
+    );
+  }
+
+  static Future<_DeleteHarness> reopen(
+    File file,
+    GoogleTasksService remote,
+    AccountSubject subject,
+    FakeClock clock,
+  ) async {
+    final database = await AppDatabase.openFile(file);
+    final accounts = await database.allAccounts();
+    return _DeleteHarness(
+      database,
+      remote,
+      subject,
+      clock,
+      AccountId(accounts.single.id),
     );
   }
 
@@ -408,7 +635,7 @@ final class _DeleteHarness {
     clock: clock,
   ).watchTasks(TasksQuery(accountId: accountId)).first;
 
-  Future<SyncRunReport> run() => SyncEngine(
+  Future<SyncRunReport> run({DiagnosticSink? diagnostics}) => SyncEngine(
     store: DatabaseReadSyncStore(database),
     googleTasks: remote,
     authorization: SyntheticAuthorization(subject),
@@ -416,6 +643,7 @@ final class _DeleteHarness {
     random: SequenceRandomSource(
       List<int>.generate(256, (index) => index % 256),
     ),
+    diagnostics: diagnostics,
   ).run(SyncRunRequest(accountId: accountId));
 
   Future<void> close() => database.close();
@@ -443,17 +671,25 @@ final class _Seeded {
   final RemoteTaskListId? secondListRemoteId;
 }
 
-final class _UncertainDeleteService implements GoogleTasksService {
+final class _UncertainDeleteService
+    implements GoogleTasksService, GoogleTasksRecoveryService {
   _UncertainDeleteService(this.delegate);
 
   final FakeGoogleTasksService delegate;
   var loseNextTaskDeleteResponse = true;
+  var loseNextTaskDeleteBeforeCommit = false;
   var loseNextListDeleteResponse = false;
+  var loseNextListDeleteBeforeCommit = false;
+  var failNextListReadBack = false;
 
   @override
   Future<GoogleTasksMutationResult<void>> deleteTaskList(
     DeleteTaskListOperation operation,
   ) async {
+    if (loseNextListDeleteBeforeCommit) {
+      loseNextListDeleteBeforeCommit = false;
+      return const UncertainMutation<void>(_uncertainDeleteError);
+    }
     final result = await delegate.deleteTaskList(operation);
     if (loseNextListDeleteResponse) {
       loseNextListDeleteResponse = false;
@@ -466,6 +702,10 @@ final class _UncertainDeleteService implements GoogleTasksService {
   Future<GoogleTasksMutationResult<void>> deleteTask(
     DeleteTaskOperation operation,
   ) async {
+    if (loseNextTaskDeleteBeforeCommit) {
+      loseNextTaskDeleteBeforeCommit = false;
+      return const UncertainMutation<void>(_uncertainDeleteError);
+    }
     final result = await delegate.deleteTask(operation);
     if (loseNextTaskDeleteResponse) {
       loseNextTaskDeleteResponse = false;
@@ -480,6 +720,20 @@ final class _UncertainDeleteService implements GoogleTasksService {
     GoogleTasksReadCancellation? cancellation,
   }) =>
       delegate.listTaskLists(pageToken: pageToken, cancellation: cancellation);
+
+  @override
+  Future<Outcome<RemoteTaskList?>> getTaskList(
+    RemoteTaskListId taskListId, {
+    GoogleTasksReadCancellation? cancellation,
+  }) {
+    if (failNextListReadBack) {
+      failNextListReadBack = false;
+      return Future<Outcome<RemoteTaskList?>>.value(
+        const Outcome<RemoteTaskList?>.failure(_malformedListReadBackFailure),
+      );
+    }
+    return delegate.getTaskList(taskListId, cancellation: cancellation);
+  }
 
   @override
   Future<Outcome<RemotePage<RemoteTask>>> listTasks(
@@ -534,4 +788,13 @@ const GoogleTasksMutationError _uncertainDeleteError = GoogleTasksMutationError(
   failure: _uncertainDeleteFailure,
   kind: GoogleTasksErrorKind.transient,
   commitState: MutationCommitState.uncertain,
+);
+
+const Failure _malformedListReadBackFailure = Failure(
+  code: 'synthetic.list_readback_malformed',
+  category: FailureCategory.internal,
+  operation: FailureOperation.read,
+  retry: RetryClassification.unknown,
+  impact: 'The synthetic list read-back was malformed.',
+  safeSummary: 'Synthetic malformed list read-back.',
 );

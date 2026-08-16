@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
@@ -19,6 +20,7 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/run.dart';
 import 'package:axiotask/src/sync/update_operations.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fake_clock.dart';
@@ -585,6 +587,12 @@ void main() {
       harness.clock.advance(const Duration(minutes: 1));
       await harness.run();
       expect(remote.updateLedger, <String>['task:Possibly landed content']);
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
     },
   );
 
@@ -617,6 +625,213 @@ void main() {
     harness.clock.advance(const Duration(minutes: 1));
     await harness.run();
     expect(remote.updateLedger, <String>['list:Possibly landed rename']);
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTaskList(harness.accountId, seeded.listId))?.state,
+      DesiredStateLifecycle.confirmed,
+    );
+  });
+
+  test('REL-014 not-landed task update replays once after read-back', () async {
+    final backend = FakeGoogleTasksService();
+    addTearDown(backend.close);
+    final remote = _UpdateInterceptService(backend)
+      ..uncertainNextPatchBeforeCommit = true;
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Not-landed update list',
+      taskTitle: 'Before not-landed update',
+    );
+    await harness.updateTask(
+      seeded.taskId,
+      title: 'Replayed after read-back',
+      notes: 'Complete desired snapshot',
+      status: TaskStatus.needsAction,
+      due: null,
+    );
+
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+
+    expect(remote.updateLedger, <String>[
+      'task:Replayed after read-back',
+      'task:Replayed after read-back',
+    ]);
+    expect(
+      (await harness.readRemoteTask(seeded)).title,
+      'Replayed after read-back',
+    );
+  });
+
+  test('REL-014 not-landed list title replays once after read-back', () async {
+    final backend = FakeGoogleTasksService();
+    addTearDown(backend.close);
+    final remote = _UpdateInterceptService(backend)
+      ..uncertainNextRenameBeforeCommit = true;
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Before not-landed rename',
+      taskTitle: 'Unchanged task',
+    );
+    await harness.renameList(seeded.listId, 'Replayed list title');
+
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+
+    expect(remote.updateLedger, <String>[
+      'list:Replayed list title',
+      'list:Replayed list title',
+    ]);
+    final lists = switch (await backend.listTaskLists()) {
+      Success<RemotePage<RemoteTaskList>>(:final value) => value.items,
+      _ => throw StateError('Synthetic list read failed.'),
+    };
+    expect(lists.single.title, 'Replayed list title');
+  });
+
+  test(
+    'REL-014 landed older update rebases and publishes the newer generation',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UpdateInterceptService(backend)
+        ..uncertainNextPatchAfterCommit = true;
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Generation recovery list',
+        taskTitle: 'Generation zero',
+      );
+      remote.afterNextPatchCommit = () async {
+        harness.clock.advance(const Duration(seconds: 1));
+        await harness.updateTask(
+          seeded.taskId,
+          title: 'Generation two',
+          notes: 'Newest desired content',
+          status: TaskStatus.needsAction,
+          due: null,
+        );
+        return null;
+      };
+      await harness.updateTask(
+        seeded.taskId,
+        title: 'Generation one',
+        notes: null,
+        status: TaskStatus.needsAction,
+        due: null,
+      );
+
+      expect((await harness.run()).outcome, SyncRunOutcome.failed);
+      harness.clock.advance(const Duration(minutes: 1));
+      final history = InMemoryDiagnosticHistory();
+      final recovered = await harness.run(
+        diagnostics: ProductionDiagnosticSink(history),
+      );
+
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(remote.updateLedger, <String>[
+        'task:Generation one',
+        'task:Generation two',
+      ]);
+      expect((await harness.readRemoteTask(seeded)).title, 'Generation two');
+      expect(
+        (await DesiredStateDao(
+          harness.database,
+        ).readTask(harness.accountId, seeded.taskId))?.state,
+        DesiredStateLifecycle.confirmed,
+      );
+      final unresolvedOlder =
+          await (harness.database.select(
+                harness.database.desiredStateAttemptRows,
+              )..where(
+                (row) =>
+                    row.accountId.equals(harness.accountId.value) &
+                    row.generation.equals(1) &
+                    row.state.equals('uncertain'),
+              ))
+              .get();
+      expect(unresolvedOlder, isEmpty);
+      final diagnostic = history.records.singleWhere(
+        (record) => record.code == 'sync.uncertain_update_readback_resolved',
+      );
+      expect(diagnostic.fields, <String, String>{
+        'confirmed': '1',
+        'superseded': '0',
+      });
+      expect(diagnostic.renderedText, isNot(contains('Generation')));
+    },
+  );
+
+  test('REL-014 newer delete wins over an uncertain landed update', () async {
+    final backend = FakeGoogleTasksService();
+    addTearDown(backend.close);
+    final remote = _UpdateInterceptService(backend)
+      ..uncertainNextPatchAfterCommit = true;
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Delete-wins recovery list',
+      taskTitle: 'Before uncertain update',
+    );
+    remote.afterNextPatchCommit = () async {
+      final deleted =
+          await DatabaseTasksRepository(
+            harness.database,
+            clock: harness.clock,
+          ).deleteTask(
+            DeleteTaskCommand(
+              accountId: harness.accountId,
+              taskId: seeded.taskId,
+            ),
+          );
+      expect(deleted, isA<Success<TaskDeleteReceipt>>());
+      return null;
+    };
+    await harness.updateTask(
+      seeded.taskId,
+      title: 'Possibly landed before delete',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    );
+
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    harness.clock.advance(const Duration(seconds: 30));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+
+    expect(remote.updateLedger, <String>['task:Possibly landed before delete']);
+    expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
+    expect((await harness.snapshot()).tasks, isEmpty);
+    final uncertainOlder =
+        await (harness.database.select(harness.database.desiredStateAttemptRows)
+              ..where(
+                (row) =>
+                    row.accountId.equals(harness.accountId.value) &
+                    row.state.equals('uncertain'),
+              ))
+            .get();
+    expect(uncertainOlder, isEmpty);
   });
 
   test(
@@ -1290,6 +1505,146 @@ void main() {
       expect(remote.callCount(FakeGoogleTasksMethod.moveTask), movesBefore);
     },
   );
+
+  test(
+    'REL-016 landed older move rebases and publishes the newer move',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UpdateInterceptService(backend)
+        ..uncertainNextMoveAfterCommit = true;
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Move generation source',
+        taskTitle: 'Move generation target',
+      );
+      final destinationOne = switch (await remote.createTaskList(
+        const CreateTaskListOperation(title: 'Move destination one'),
+      )) {
+        CommittedMutation<RemoteTaskList>(:final value) => value,
+        _ => throw StateError('Synthetic destination setup failed.'),
+      };
+      final destinationTwo = switch (await remote.createTaskList(
+        const CreateTaskListOperation(title: 'Move destination two'),
+      )) {
+        CommittedMutation<RemoteTaskList>(:final value) => value,
+        _ => throw StateError('Synthetic destination setup failed.'),
+      };
+      await harness.run();
+      final listed = await harness.snapshot();
+      final destinationOneId = listed.taskLists
+          .singleWhere(
+            (list) => list.remoteId?.value == destinationOne.id.value,
+          )
+          .id;
+      final destinationTwoId = listed.taskLists
+          .singleWhere(
+            (list) => list.remoteId?.value == destinationTwo.id.value,
+          )
+          .id;
+      remote.afterNextMoveCommit = () => harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: destinationTwoId,
+      );
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: destinationOneId,
+      );
+
+      expect((await harness.run()).outcome, SyncRunOutcome.failed);
+      harness.clock.advance(const Duration(minutes: 1));
+      final history = InMemoryDiagnosticHistory();
+      final recovered = await harness.run(
+        diagnostics: ProductionDiagnosticSink(history),
+      );
+
+      expect(recovered.outcome, SyncRunOutcome.succeeded);
+      expect(remote.moveLedger, <String>[
+        destinationOne.id.value,
+        destinationTwo.id.value,
+      ]);
+      expect(
+        (await harness.snapshot()).tasks
+            .singleWhere((task) => task.id == seeded.taskId)
+            .taskListId,
+        destinationTwoId,
+      );
+      final destinationRemoteTasks = switch (await backend.listTasks(
+        destinationTwo.id,
+      )) {
+        Success<RemotePage<RemoteTask>>(:final value) => value.items,
+        _ => throw StateError('Synthetic destination read failed.'),
+      };
+      expect(
+        destinationRemoteTasks.whereType<RemoteLiveTask>().map(
+          (task) => task.id,
+        ),
+        contains(seeded.taskRemoteId),
+      );
+      final diagnostic = history.records.singleWhere(
+        (record) => record.code == 'sync.uncertain_move_readback_resolved',
+      );
+      expect(diagnostic.fields, <String, String>{
+        'confirmed': '1',
+        'superseded': '0',
+      });
+      expect(diagnostic.renderedText, isNot(contains('Move generation')));
+    },
+  );
+
+  test(
+    'REL-016 not-landed move replays once after placement read-back',
+    () async {
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _UpdateInterceptService(backend)
+        ..uncertainNextMoveBeforeCommit = true;
+      final harness = await _UpdateHarness.open(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final seeded = await harness.seedRemote(
+        listTitle: 'Not-landed move source',
+        taskTitle: 'Not-landed move target',
+      );
+      final destination = switch (await remote.createTaskList(
+        const CreateTaskListOperation(title: 'Not-landed move destination'),
+      )) {
+        CommittedMutation<RemoteTaskList>(:final value) => value,
+        _ => throw StateError('Synthetic destination setup failed.'),
+      };
+      await harness.run();
+      final destinationId = (await harness.snapshot()).taskLists
+          .singleWhere((list) => list.remoteId?.value == destination.id.value)
+          .id;
+      await harness.moveTask(
+        seeded.taskId,
+        destinationTaskListId: destinationId,
+      );
+
+      expect((await harness.run()).outcome, SyncRunOutcome.failed);
+      harness.clock.advance(const Duration(minutes: 1));
+      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+
+      expect(remote.moveLedger, <String>[
+        destination.id.value,
+        destination.id.value,
+      ]);
+      expect(
+        (await harness.snapshot()).tasks
+            .singleWhere((task) => task.id == seeded.taskId)
+            .taskListId,
+        destinationId,
+      );
+    },
+  );
 }
 
 final class _SeededRemote {
@@ -1528,6 +1883,7 @@ final class _UpdateHarness {
   Future<SyncRunReport> run({
     SyncRunControl control = const NoopSyncRunControl(),
     DesiredStateTransactionControl? transactionControl,
+    DiagnosticSink? diagnostics,
   }) => SyncEngine(
     store: DatabaseReadSyncStore(
       database,
@@ -1540,6 +1896,7 @@ final class _UpdateHarness {
       List<int>.generate(256, (index) => index % 256),
     ),
     control: control,
+    diagnostics: diagnostics,
   ).run(SyncRunRequest(accountId: accountId));
 
   Future<CachedTasksSnapshot> snapshot() => DatabaseTasksRepository(
@@ -1572,10 +1929,16 @@ final class _UpdateInterceptService implements GoogleTasksService {
   final List<String> updateLedger = <String>[];
   bool rejectFirstPatch = false;
   bool uncertainNextPatchAfterCommit = false;
+  bool uncertainNextPatchBeforeCommit = false;
   bool uncertainNextRenameAfterCommit = false;
+  bool uncertainNextRenameBeforeCommit = false;
+  bool uncertainNextMoveAfterCommit = false;
+  bool uncertainNextMoveBeforeCommit = false;
   bool stripTaskUpdatedOnRead = false;
   Future<Object?> Function(PatchTaskOperation operation)? beforeNextPatch;
   Future<Object?> Function()? afterNextPatchCommit;
+  Future<Object?> Function()? afterNextMoveCommit;
+  final List<String> moveLedger = <String>[];
   var _patchCalls = 0;
 
   @override
@@ -1626,6 +1989,10 @@ final class _UpdateInterceptService implements GoogleTasksService {
     RenameTaskListOperation operation,
   ) async {
     updateLedger.add('list:${operation.title}');
+    if (uncertainNextRenameBeforeCommit) {
+      uncertainNextRenameBeforeCommit = false;
+      return const UncertainMutation<RemoteTaskList>(_uncertainUpdateError);
+    }
     final result = await delegate.renameTaskList(operation);
     if (uncertainNextRenameAfterCommit) {
       uncertainNextRenameAfterCommit = false;
@@ -1640,6 +2007,10 @@ final class _UpdateInterceptService implements GoogleTasksService {
   ) async {
     updateLedger.add('task:${operation.title}');
     _patchCalls += 1;
+    if (uncertainNextPatchBeforeCommit) {
+      uncertainNextPatchBeforeCommit = false;
+      return const UncertainMutation<RemoteTask>(_uncertainUpdateError);
+    }
     if (rejectFirstPatch && _patchCalls == 1) {
       return const RejectedMutation<RemoteTask>(_rejectedUpdateError);
     }
@@ -1670,7 +2041,25 @@ final class _UpdateInterceptService implements GoogleTasksService {
   @override
   Future<GoogleTasksMutationResult<RemoteTask>> moveTask(
     MoveTaskOperation operation,
-  ) => delegate.moveTask(operation);
+  ) async {
+    moveLedger.add(
+      operation.destinationTaskListId?.value ??
+          operation.sourceTaskListId.value,
+    );
+    if (uncertainNextMoveBeforeCommit) {
+      uncertainNextMoveBeforeCommit = false;
+      return const UncertainMutation<RemoteTask>(_uncertainUpdateError);
+    }
+    final result = await delegate.moveTask(operation);
+    final callback = afterNextMoveCommit;
+    afterNextMoveCommit = null;
+    await callback?.call();
+    if (uncertainNextMoveAfterCommit) {
+      uncertainNextMoveAfterCommit = false;
+      return const UncertainMutation<RemoteTask>(_uncertainUpdateError);
+    }
+    return result;
+  }
 
   @override
   void close() {}

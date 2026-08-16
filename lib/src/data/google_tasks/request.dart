@@ -48,6 +48,20 @@ final class GoogleTasksReadRequestFactory {
     abortTrigger,
   );
 
+  http.AbortableRequest taskList({
+    required RemoteTaskListId taskListId,
+    required Future<void> abortTrigger,
+  }) {
+    if (taskListId.value.isEmpty) {
+      throw ArgumentError.value(taskListId, 'taskListId', 'must not be empty');
+    }
+    return _get(
+      <String>['users', '@me', 'lists', taskListId.value],
+      const <String, String>{},
+      abortTrigger,
+    );
+  }
+
   http.AbortableRequest tasks({
     required RemoteTaskListId taskListId,
     required PageToken? pageToken,

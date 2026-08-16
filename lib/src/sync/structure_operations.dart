@@ -2,6 +2,7 @@ import '../core/failure.dart';
 import '../data/google_tasks/dto.dart';
 import '../data/google_tasks/mutation.dart';
 import '../domain/model/tasks.dart';
+import 'update_operations.dart';
 
 enum StructureSupersessionKind { taskPlacement, deleteWon }
 
@@ -76,6 +77,12 @@ final class MoveOperationMapper {
 }
 
 abstract interface class StructureSyncStore {
+  Future<UncertainMutationResolutionSummary> resolveOlderUncertainMoves({
+    required AccountId accountId,
+    required String runId,
+    required DateTime resolvedAt,
+  });
+
   Future<StructureReconciliationSummary> reconcileStructure({
     required AccountId accountId,
     required String runId,

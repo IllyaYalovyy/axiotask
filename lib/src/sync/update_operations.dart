@@ -32,6 +32,18 @@ final class ContentReconciliationSummary {
       supersessions.fold<int>(0, (total, result) => total + result.count);
 }
 
+final class UncertainMutationResolutionSummary {
+  const UncertainMutationResolutionSummary({
+    this.confirmed = 0,
+    this.superseded = 0,
+  });
+
+  final int confirmed;
+  final int superseded;
+
+  int get total => confirmed + superseded;
+}
+
 final class UpdateOperationClaim {
   const UpdateOperationClaim.taskList({
     required this.attemptId,
@@ -115,6 +127,12 @@ abstract interface class UpdateSyncStore {
   Future<void> recoverUpdateAttempts({
     required AccountId accountId,
     required DateTime recoveredAt,
+  });
+
+  Future<UncertainMutationResolutionSummary> resolveOlderUncertainUpdates({
+    required AccountId accountId,
+    required String runId,
+    required DateTime resolvedAt,
   });
 
   Future<int> confirmNoOpUpdates({
