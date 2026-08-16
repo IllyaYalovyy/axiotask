@@ -250,6 +250,14 @@ use fixed 2026-08-15 local-calendar data through synthetic repositories only.
 Actual smart-view captures are written as the ignored
 `screenshots/actual/smart-views-{light,dark}.png` files.
 
+S23A adds no dependency, schema version, OAuth configuration, account access,
+or storage namespace. `integration_test/task_details_linux_test.dart` uses one
+unique temporary SQLite file and synthetic identities/content to verify notes,
+direct-child progress, create, and restart. Curated long-content detail goldens
+and ignored `task-details-{light,dark}.png` captures exercise the 1280-pixel
+Fedora layout without reading normal storage, preferences, credentials, or
+Google.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

@@ -57,9 +57,14 @@ constructs no Google transport, and shows Tasks unavailable instead of an
 empty account. Retry Open repeats the same non-destructive validation. If
 storage becomes unreadable during synchronization, no later Google operation
 starts and the same recovery surface replaces the task UI.
-The task detail pane can create a direct subtask,
-promote a child, demote a leaf, reorder siblings, or move a stable task/subtree
-between Google lists. Structure changes commit durably, survive restart, and
+The responsive desktop task detail pane reads and edits long multiline notes
+as untrusted plain text, preserves null, intentionally empty, and Unicode
+content, and shows completed/total progress for direct children. It can create,
+edit, delete, promote, demote, or reorder a direct subtask, or move a stable
+task/subtree between Google lists. Narrow desktop details provide explicit
+Back/Escape behavior, while the wide layout keeps the detail pane visible.
+Every action routes through the shared durable task commands. Structure changes
+commit durably, survive restart, and
 publish through Google MOVE with valid remote `parent`/`previous` anchors.
 Canonical response positions replace projected order; competing Google
 placement wins without replay while content edits remain independent. Invalid
@@ -454,6 +459,7 @@ flutter test test/data/preferences/device_preferences_test.dart
 flutter test test/data/preferences/preferences_repository_test.dart
 flutter test test/domain/effective_due_test.dart
 flutter test test/domain/smart_views_test.dart
+flutter test test/domain/subtask_progress_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
 flutter test test/sync/create_sync_engine_test.dart
@@ -470,12 +476,14 @@ flutter test test/sync/auth/sync_reauthorization_coordinator_test.dart
 flutter test test/app/foreground_read_coordinator_test.dart
 flutter test test/app/linux_platform_adapters_test.dart
 flutter test test/features/tasks/tasks_view_model_test.dart
+flutter test test/features/tasks/task_detail_view_model_test.dart
 flutter test test/features/tasks/smart_views_view_model_test.dart
 flutter test test/features/tasks/adaptive_shell_test.dart
 flutter test test/features/tasks/smart_views_widget_test.dart
 flutter test test/app/database_recovery_test.dart
 flutter test test/features/tasks/adaptive_shell_golden_test.dart
 flutter test test/features/tasks/smart_views_golden_test.dart
+flutter test test/features/tasks/task_details_golden_test.dart
 flutter test test/data/auth/linux/secure_credentials_test.dart
 flutter test test/support/fake_auth_test.dart
 flutter test test/support/fake_lifecycle_test.dart
@@ -496,6 +504,7 @@ flutter test integration_test/delete_publish_linux_test.dart -d linux
 flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 flutter test integration_test/preferences_native_smoke_test.dart -d linux
 flutter test integration_test/smart_views_restart_linux_test.dart -d linux
+flutter test integration_test/task_details_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -505,8 +514,9 @@ Capture the isolated synthetic Linux states, including persistent
 no-authorization with Reauthorize and preserved cached/unresolved work, pending
 provisional list and task creates, stopped list/task content edits, active Stop,
 stopped Resume, retry waiting/execution/exhaustion, hierarchy controls, and
-protected-depth failure, plus fixed-time light/dark smart views, into the ignored
-`screenshots/actual/` directory, then inspect each PNG:
+protected-depth failure, fixed-time light/dark smart views, and long-content
+light/dark task details into the ignored `screenshots/actual/` directory, then
+inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh

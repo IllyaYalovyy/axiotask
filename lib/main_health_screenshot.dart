@@ -118,7 +118,7 @@ final class _HealthScreenshotSequenceState
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           colorSchemeSeed: const Color(0xff315da8),
-          brightness: _captureScenarios[_index].name == 'smart-views-dark'
+          brightness: _captureScenarios[_index].name.endsWith('-dark')
               ? Brightness.dark
               : Brightness.light,
           useMaterial3: true,
@@ -285,6 +285,24 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'task-details-light',
+    snapshot: _taskDetailsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'task-details-dark',
+    snapshot: _taskDetailsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
   (
     name: 'smart-views-light',
     snapshot: _smartViewsSnapshot,
@@ -589,6 +607,65 @@ final _baseSnapshot = CachedTasksSnapshot(
       remoteId: TaskRemoteId('synthetic-task'),
       title: 'Cached synthetic task',
       notes: 'No personal data is used in this screenshot.',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _taskDetailsSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-detail-list'),
+      title: 'Detail review',
+    ),
+    CachedTaskList(
+      id: TaskListId(8),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-detail-archive'),
+      title: 'Synthetic archive',
+    ),
+  ],
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(11),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-detail-parent'),
+      title: 'Prepare a complete task-detail review',
+      notes:
+          'Planning notes — café, naïve, résumé.\n'
+          'Keep multiline text exact and readable.\n'
+          'Task text stays plain: <b>not markup</b>.\n'
+          'The detail pane scrolls for longer content.\n'
+          'No real account or personal data is present.',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(12),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(11),
+      remoteId: TaskRemoteId('synthetic-detail-child-a'),
+      title: 'Inspect multiline notes',
+      notes: '',
+      status: TaskStatus.completed,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(13),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(11),
+      remoteId: TaskRemoteId('synthetic-detail-child-b'),
+      title: 'Exercise subtask actions',
+      notes: null,
       status: TaskStatus.needsAction,
       due: null,
     ),

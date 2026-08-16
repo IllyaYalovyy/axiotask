@@ -101,11 +101,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Durable 🌍'), findsOneWidget);
     expect(find.text('Sync stopped'), findsWidgets);
     expect(find.text('2 unresolved'), findsOneWidget);
-    await tester.tap(find.text('Durable 🌍'));
+    viewModel.selectTask(task);
     await tester.pump();
+    expect(find.text('Durable 🌍'), findsOneWidget);
     expect(find.text('離線ノート\nsecond line'), findsOneWidget);
     expect(find.text('Completed'), findsOneWidget);
     expect(find.text('2026-08-20'), findsOneWidget);

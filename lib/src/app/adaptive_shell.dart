@@ -1,12 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../domain/model/preferences.dart';
 import '../domain/model/tasks.dart';
 import '../domain/policy/smart_views.dart';
+import '../domain/policy/subtask_progress.dart';
+import '../features/tasks/task_detail_view_model.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
+import '../features/tasks/widgets/task_details.dart';
 import '../sync/health/sync_health.dart';
 
 final class AdaptiveShell extends StatefulWidget {
@@ -44,66 +48,72 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
           animation: widget.viewModel,
           builder: (context, _) {
             final state = widget.viewModel.state;
-            return Column(
-              children: <Widget>[
-                _ApplicationHeader(
-                  health: state.health,
-                  onHealthAction: state.isSyncControlPending
-                      ? null
-                      : widget.onHealthAction ??
-                            (action) => unawaited(
-                              widget.viewModel.handleSyncHealthAction(action),
-                            ),
-                  isRefreshing: state.isRefreshing,
-                  isSyncControlPending: state.isSyncControlPending,
-                  onRefresh: widget.viewModel.refresh,
-                  onStopSync: widget.viewModel.stopSync,
-                ),
-                if (state.syncControlFailureMessage case final message?)
-                  MaterialBanner(
-                    content: Text(message),
-                    actions: const <Widget>[SizedBox.shrink()],
-                  ),
-                if (state.listCommandFailureMessage case final message?)
-                  MaterialBanner(
-                    content: Text(message),
-                    actions: const <Widget>[SizedBox.shrink()],
-                  ),
-                if (state.taskCommandFailureMessage case final message?)
-                  MaterialBanner(
-                    content: Text(message),
-                    actions: const <Widget>[SizedBox.shrink()],
-                  ),
-                if (state.preferenceFailureMessage case final message?)
-                  MaterialBanner(
-                    content: Text(message),
-                    actions: const <Widget>[SizedBox.shrink()],
-                  ),
-                if (state.taskDeleteUndos.firstOrNull case final undo?)
-                  MaterialBanner(
-                    leading: const Icon(Icons.delete_outline),
-                    content: Text('“${undo.title}” deleted'),
-                    actions: <Widget>[
-                      TextButton(
-                        onPressed: state.isTaskCommandPending
-                            ? null
-                            : () => unawaited(
-                                widget.viewModel.undoTaskDelete(undo.taskId),
+            return PopScope(
+              canPop: state.selectedTaskId == null,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop) widget.viewModel.backFromTaskDetail();
+              },
+              child: Column(
+                children: <Widget>[
+                  _ApplicationHeader(
+                    health: state.health,
+                    onHealthAction: state.isSyncControlPending
+                        ? null
+                        : widget.onHealthAction ??
+                              (action) => unawaited(
+                                widget.viewModel.handleSyncHealthAction(action),
                               ),
-                        child: const Text('Undo'),
-                      ),
-                    ],
+                    isRefreshing: state.isRefreshing,
+                    isSyncControlPending: state.isSyncControlPending,
+                    onRefresh: widget.viewModel.refresh,
+                    onStopSync: widget.viewModel.stopSync,
                   ),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) => _ShellBody(
-                      state: state,
-                      viewModel: widget.viewModel,
-                      wide: constraints.maxWidth >= 900,
+                  if (state.syncControlFailureMessage case final message?)
+                    MaterialBanner(
+                      content: Text(message),
+                      actions: const <Widget>[SizedBox.shrink()],
+                    ),
+                  if (state.listCommandFailureMessage case final message?)
+                    MaterialBanner(
+                      content: Text(message),
+                      actions: const <Widget>[SizedBox.shrink()],
+                    ),
+                  if (state.taskCommandFailureMessage case final message?)
+                    MaterialBanner(
+                      content: Text(message),
+                      actions: const <Widget>[SizedBox.shrink()],
+                    ),
+                  if (state.preferenceFailureMessage case final message?)
+                    MaterialBanner(
+                      content: Text(message),
+                      actions: const <Widget>[SizedBox.shrink()],
+                    ),
+                  if (state.taskDeleteUndos.firstOrNull case final undo?)
+                    MaterialBanner(
+                      leading: const Icon(Icons.delete_outline),
+                      content: Text('“${undo.title}” deleted'),
+                      actions: <Widget>[
+                        TextButton(
+                          onPressed: state.isTaskCommandPending
+                              ? null
+                              : () => unawaited(
+                                  widget.viewModel.undoTaskDelete(undo.taskId),
+                                ),
+                          child: const Text('Undo'),
+                        ),
+                      ],
+                    ),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => _ShellBody(
+                        state: state,
+                        viewModel: widget.viewModel,
+                        wide: constraints.maxWidth >= 900,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             );
           },
         ),
@@ -212,26 +222,34 @@ final class _ShellBody extends StatelessWidget {
     if (state.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (!wide) {
-      return _TaskCollection(state: state, viewModel: viewModel);
-    }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        SizedBox(
-          width: 244,
-          child: _ListNavigation(state: state, viewModel: viewModel),
-        ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: _TaskCollection(state: state, viewModel: viewModel),
-        ),
-        const VerticalDivider(width: 1),
-        SizedBox(
-          width: 360,
-          child: _TaskDetails(state: state, viewModel: viewModel),
-        ),
-      ],
+    final detail = TaskDetailViewModel.fromTasks(viewModel);
+    final body = !wide
+        ? detail.state == null
+              ? _TaskCollection(state: state, viewModel: viewModel)
+              : TaskDetailsPane(viewModel: detail, compact: true)
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              SizedBox(
+                width: 244,
+                child: _ListNavigation(state: state, viewModel: viewModel),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: _TaskCollection(state: state, viewModel: viewModel),
+              ),
+              const VerticalDivider(width: 1),
+              SizedBox(
+                width: 360,
+                child: TaskDetailsPane(viewModel: detail, compact: false),
+              ),
+            ],
+          );
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.escape): detail.back,
+      },
+      child: body,
     );
   }
 }
@@ -563,9 +581,10 @@ final class _TaskCollection extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final row = rows[index];
                     final task = row.task;
-                    final childCount = state.tasks
-                        .where((value) => value.parentTaskId == task.id)
-                        .length;
+                    final progress = projectDirectChildProgress(
+                      parentTaskId: task.id,
+                      tasks: state.tasks,
+                    );
                     return ListTile(
                       selected: task.id == state.selectedTaskId,
                       contentPadding: const EdgeInsets.symmetric(
@@ -598,8 +617,7 @@ final class _TaskCollection extends StatelessWidget {
                           if (task.due != null) 'Due ${task.due}',
                           if (row.effectiveDue.fromChildren != null)
                             'From subtasks ${row.effectiveDue.fromChildren}',
-                          if (childCount > 0)
-                            '$childCount ${childCount == 1 ? 'subtask' : 'subtasks'}',
+                          if (progress.total > 0) progress.label,
                         ].join(' • '),
                       ),
                       trailing: const Icon(Icons.chevron_right),
@@ -732,317 +750,6 @@ final class _TaskListEditDialogState extends State<_TaskListEditDialog> {
   }
 }
 
-final class _TaskDetails extends StatelessWidget {
-  const _TaskDetails({required this.state, required this.viewModel});
-
-  final TasksViewState state;
-  final TasksViewModel viewModel;
-
-  @override
-  Widget build(BuildContext context) {
-    final task = state.selectedTask;
-    if (task == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                Icons.task_alt,
-                size: 44,
-                color: Theme.of(context).colorScheme.outline,
-              ),
-              const SizedBox(height: 12),
-              const Text('Select a cached task to view details'),
-            ],
-          ),
-        ),
-      );
-    }
-    final hasChildren = state.selectedTaskChildren.isNotEmpty;
-    final parentCandidates = state.tasks
-        .where(
-          (candidate) =>
-              candidate.id != task.id &&
-              candidate.taskListId == task.taskListId &&
-              candidate.parentTaskId == null,
-        )
-        .toList(growable: false);
-    final alternateParentCandidates = parentCandidates
-        .where((candidate) => candidate.id != task.parentTaskId)
-        .toList(growable: false);
-    final siblings = state.tasks
-        .where(
-          (candidate) =>
-              candidate.taskListId == task.taskListId &&
-              candidate.parentTaskId == task.parentTaskId,
-        )
-        .toList(growable: false);
-    final siblingIndex = siblings.indexWhere(
-      (candidate) => candidate.id == task.id,
-    );
-    final destinationLists = state.taskLists
-        .where((candidate) => candidate.id != task.taskListId)
-        .toList(growable: false);
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: <Widget>[
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: Text(
-                task.title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-            IconButton(
-              tooltip: 'Edit task content',
-              onPressed: state.isTaskCommandPending
-                  ? null
-                  : () => _showTaskContentDialog(context, viewModel, task),
-              icon: const Icon(Icons.edit_outlined),
-            ),
-            IconButton(
-              tooltip: 'Delete task',
-              onPressed: state.isTaskCommandPending
-                  ? null
-                  : () => unawaited(viewModel.deleteTask(task.id)),
-              icon: const Icon(Icons.delete_outline),
-            ),
-            IconButton(
-              tooltip: 'Close details',
-              onPressed: viewModel.clearTaskSelection,
-              icon: const Icon(Icons.close),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        _DetailLabel(label: 'Status', value: _statusLabel(task.status)),
-        if (task.due != null)
-          _DetailLabel(label: 'Due', value: task.due.toString()),
-        const SizedBox(height: 18),
-        Text('Notes', style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 6),
-        Text(task.notes?.isNotEmpty == true ? task.notes! : 'No notes'),
-        const SizedBox(height: 22),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            if (task.parentTaskId == null)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => _showCreateTaskDialog(
-                        context,
-                        viewModel,
-                        task.taskListId,
-                        parentTaskId: task.id,
-                      ),
-                icon: const Icon(Icons.add),
-                label: const Text('Add subtask'),
-              ),
-            if (task.parentTaskId == null &&
-                !hasChildren &&
-                parentCandidates.isNotEmpty)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => _showDemoteTaskDialog(
-                        context,
-                        viewModel,
-                        task,
-                        parentCandidates,
-                      ),
-                icon: const Icon(Icons.subdirectory_arrow_right),
-                label: const Text('Make subtask'),
-              ),
-            if (task.parentTaskId != null)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => unawaited(viewModel.promoteTask(task.id)),
-                icon: const Icon(Icons.arrow_upward),
-                label: const Text('Promote'),
-              ),
-            if (task.parentTaskId != null &&
-                alternateParentCandidates.isNotEmpty)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => _showDemoteTaskDialog(
-                        context,
-                        viewModel,
-                        task,
-                        alternateParentCandidates,
-                      ),
-                icon: const Icon(Icons.account_tree_outlined),
-                label: const Text('Change parent'),
-              ),
-            if (siblingIndex > 0)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => unawaited(
-                        viewModel.moveTask(
-                          taskId: task.id,
-                          destinationTaskListId: task.taskListId,
-                          parentTaskId: task.parentTaskId,
-                          previousTaskId: siblingIndex == 1
-                              ? null
-                              : siblings[siblingIndex - 2].id,
-                        ),
-                      ),
-                icon: const Icon(Icons.arrow_upward),
-                label: const Text('Move up'),
-              ),
-            if (siblingIndex >= 0 && siblingIndex < siblings.length - 1)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => unawaited(
-                        viewModel.moveTask(
-                          taskId: task.id,
-                          destinationTaskListId: task.taskListId,
-                          parentTaskId: task.parentTaskId,
-                          previousTaskId: siblings[siblingIndex + 1].id,
-                        ),
-                      ),
-                icon: const Icon(Icons.arrow_downward),
-                label: const Text('Move down'),
-              ),
-            if (destinationLists.isNotEmpty)
-              OutlinedButton.icon(
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => _showMoveTaskDialog(
-                        context,
-                        viewModel,
-                        task,
-                        destinationLists,
-                      ),
-                icon: const Icon(Icons.drive_file_move_outline),
-                label: const Text('Move to list'),
-              ),
-          ],
-        ),
-        if (state.selectedTaskChildren.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 28),
-          Text('Subtasks', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          for (final child in state.selectedTaskChildren)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(
-                child.status == TaskStatus.completed
-                    ? Icons.check_circle
-                    : Icons.radio_button_unchecked,
-              ),
-              title: Text(child.title),
-              trailing: IconButton(
-                tooltip: 'Promote subtask',
-                onPressed: state.isTaskCommandPending
-                    ? null
-                    : () => unawaited(viewModel.promoteTask(child.id)),
-                icon: const Icon(Icons.arrow_upward),
-              ),
-              onTap: () => viewModel.selectTask(child.id),
-            ),
-        ],
-      ],
-    );
-  }
-}
-
-Future<void> _showTaskContentDialog(
-  BuildContext context,
-  TasksViewModel viewModel,
-  CachedTask task,
-) => showDialog<void>(
-  context: context,
-  builder: (_) => _TaskContentDialog(viewModel: viewModel, task: task),
-);
-
-Future<void> _showDemoteTaskDialog(
-  BuildContext context,
-  TasksViewModel viewModel,
-  CachedTask task,
-  List<CachedTask> candidates,
-) => showDialog<void>(
-  context: context,
-  builder: (dialogContext) => AlertDialog(
-    title: const Text('Choose parent task'),
-    content: SizedBox(
-      width: 360,
-      child: ListView(
-        shrinkWrap: true,
-        children: <Widget>[
-          for (final parent in candidates)
-            ListTile(
-              title: Text(parent.title),
-              onTap: () async {
-                await viewModel.demoteTask(task.id, parent.id);
-                if (dialogContext.mounted &&
-                    viewModel.state.taskCommandFailureMessage == null) {
-                  Navigator.of(dialogContext).pop();
-                }
-              },
-            ),
-        ],
-      ),
-    ),
-    actions: <Widget>[
-      TextButton(
-        onPressed: () => Navigator.of(dialogContext).pop(),
-        child: const Text('Cancel'),
-      ),
-    ],
-  ),
-);
-
-Future<void> _showMoveTaskDialog(
-  BuildContext context,
-  TasksViewModel viewModel,
-  CachedTask task,
-  List<CachedTaskList> destinations,
-) => showDialog<void>(
-  context: context,
-  builder: (dialogContext) => AlertDialog(
-    title: const Text('Move task to list'),
-    content: SizedBox(
-      width: 360,
-      child: ListView(
-        shrinkWrap: true,
-        children: <Widget>[
-          for (final destination in destinations)
-            ListTile(
-              title: Text(destination.title),
-              onTap: () {
-                Navigator.of(dialogContext).pop();
-                unawaited(
-                  viewModel.moveTask(
-                    taskId: task.id,
-                    destinationTaskListId: destination.id,
-                  ),
-                );
-              },
-            ),
-        ],
-      ),
-    ),
-    actions: <Widget>[
-      TextButton(
-        onPressed: () => Navigator.of(dialogContext).pop(),
-        child: const Text('Cancel'),
-      ),
-    ],
-  ),
-);
-
 Future<void> _showDeleteTaskListConfirmation(
   BuildContext context,
   TasksViewModel viewModel,
@@ -1163,163 +870,3 @@ final class _CreateTaskDialogState extends State<_CreateTaskDialog> {
     ),
   );
 }
-
-final class _TaskContentDialog extends StatefulWidget {
-  const _TaskContentDialog({required this.viewModel, required this.task});
-
-  final TasksViewModel viewModel;
-  final CachedTask task;
-
-  @override
-  State<_TaskContentDialog> createState() => _TaskContentDialogState();
-}
-
-final class _TaskContentDialogState extends State<_TaskContentDialog> {
-  late final TextEditingController _title = TextEditingController(
-    text: widget.task.title,
-  );
-  late final TextEditingController _notes = TextEditingController(
-    text: widget.task.notes ?? '',
-  );
-  late final TextEditingController _due = TextEditingController(
-    text: widget.task.due?.toString() ?? '',
-  );
-  late bool _clearNotes = widget.task.notes == null;
-  String? _dateError;
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _notes.dispose();
-    _due.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final due = _parseTaskDate(_due.text);
-    if (_due.text.trim().isNotEmpty && due == null) {
-      setState(() => _dateError = 'Use a valid YYYY-MM-DD date.');
-      return;
-    }
-    setState(() => _dateError = null);
-    await widget.viewModel.updateTaskContent(
-      taskId: widget.task.id,
-      title: _title.text,
-      notes: _clearNotes ? null : _notes.text,
-      status: widget.task.status,
-      due: due,
-    );
-    if (mounted && widget.viewModel.state.taskCommandFailureMessage == null) {
-      Navigator.of(context).pop();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: widget.viewModel,
-    builder: (context, _) => AlertDialog(
-      title: const Text('Edit task content'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: _title,
-                maxLength: 1024,
-                decoration: const InputDecoration(labelText: 'Task title'),
-              ),
-              TextField(
-                controller: _notes,
-                enabled: !_clearNotes,
-                maxLength: 8192,
-                maxLines: 5,
-                decoration: const InputDecoration(labelText: 'Notes'),
-              ),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Clear notes'),
-                value: _clearNotes,
-                onChanged: widget.viewModel.state.isTaskCommandPending
-                    ? null
-                    : (value) => setState(() => _clearNotes = value ?? false),
-              ),
-              TextField(
-                controller: _due,
-                decoration: InputDecoration(
-                  labelText: 'Due date (YYYY-MM-DD)',
-                  errorText: _dateError,
-                  helperText: 'Leave blank to clear the due date.',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: widget.viewModel.state.isTaskCommandPending
-              ? null
-              : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: widget.viewModel.state.isTaskCommandPending
-              ? null
-              : _submit,
-          child: widget.viewModel.state.isTaskCommandPending
-              ? const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Save'),
-        ),
-      ],
-    ),
-  );
-}
-
-TaskDate? _parseTaskDate(String input) {
-  final value = input.trim();
-  if (value.isEmpty) return null;
-  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(value);
-  if (match == null) return null;
-  try {
-    return TaskDate(
-      int.parse(match.group(1)!),
-      int.parse(match.group(2)!),
-      int.parse(match.group(3)!),
-    );
-  } on ArgumentError {
-    return null;
-  }
-}
-
-final class _DetailLabel extends StatelessWidget {
-  const _DetailLabel({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: <Widget>[
-          SizedBox(
-            width: 72,
-            child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
-}
-
-String _statusLabel(TaskStatus status) => switch (status) {
-  TaskStatus.needsAction => 'Not completed',
-  TaskStatus.completed => 'Completed',
-};

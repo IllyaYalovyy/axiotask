@@ -388,6 +388,16 @@ final class TasksViewModel extends ChangeNotifier {
     _replaceState(_state.copyWith(selectedTaskId: null));
   }
 
+  void backFromTaskDetail() {
+    final selected = _state.selectedTask;
+    final parentTaskId = selected?.parentTaskId;
+    if (parentTaskId == null) {
+      clearTaskSelection();
+    } else {
+      selectTask(parentTaskId);
+    }
+  }
+
   Future<void> refresh() {
     final existing = _refreshInFlight;
     if (existing != null) return existing;

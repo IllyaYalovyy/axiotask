@@ -11,6 +11,7 @@ import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -213,6 +214,181 @@ void main() {
     expect(crossList.taskId, const TaskId(13));
     expect(crossList.destinationTaskListId, const TaskListId(8));
     expect(crossList.parentTaskId, isNull);
+  });
+
+  testWidgets(
+    'collection rows exclude children and share direct-child progress with details',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _detailSnapshot,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      expect(find.text('First direct child'), findsNothing);
+      expect(find.text('Completed direct child'), findsNothing);
+      expect(find.text('1 of 2 subtasks complete'), findsOneWidget);
+
+      await tester.tap(find.text('Long-note parent'));
+      await tester.pump();
+
+      expect(find.text('First direct child'), findsOneWidget);
+      expect(find.text('Completed direct child'), findsOneWidget);
+      expect(find.text('1 of 2 subtasks complete'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets('long Unicode and intentionally empty notes remain plain text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      snapshot: _detailSnapshot,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.text('Long-note parent'));
+    await tester.pump();
+    expect(find.text(_longUnicodeNotes), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics && widget.properties.label == 'Task notes',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Edit task content'));
+    await tester.pumpAndSettle();
+    final notesField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'Notes',
+    );
+    await tester.enterText(notesField, '');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    final command = fixture.tasks.applied.last as UpdateTaskContentCommand;
+    expect(command.notes, '', reason: 'empty is distinct from cleared notes');
+  });
+
+  testWidgets(
+    'subtask menu routes edit, reorder, promote, and delete commands',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _detailSnapshot,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Long-note parent'));
+      await tester.pump();
+
+      await tester.ensureVisible(find.byTooltip('Manage First direct child'));
+      await tester.tap(find.byTooltip('Manage First direct child'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Move subtask down'));
+      await tester.pump();
+      final move = fixture.tasks.applied.last as MoveTaskCommand;
+      expect(move.taskId, const TaskId(22));
+      expect(move.parentTaskId, const TaskId(21));
+      expect(move.previousTaskId, const TaskId(23));
+
+      await tester.ensureVisible(find.byTooltip('Manage First direct child'));
+      await tester.tap(find.byTooltip('Manage First direct child'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Promote subtask'));
+      await tester.pump();
+      expect(fixture.tasks.applied.last, isA<PromoteTaskCommand>());
+
+      await tester.ensureVisible(
+        find.byTooltip('Manage Completed direct child'),
+      );
+      await tester.tap(find.byTooltip('Manage Completed direct child'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete subtask'));
+      await tester.pump();
+      expect(fixture.tasks.deleted.last.taskId, const TaskId(23));
+    },
+  );
+
+  testWidgets('narrow detail takes focus and Escape returns to collection', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(760, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      snapshot: _detailSnapshot,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+    await tester.tap(find.text('Long-note parent'));
+    await tester.pump();
+
+    expect(find.byTooltip('Back to task collection'), findsOneWidget);
+    expect(find.byKey(const Key('task-detail-title')), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byKey(const Key('task-detail-title')), findsNothing);
+    expect(find.text('Long-note parent'), findsOneWidget);
+  });
+
+  testWidgets('detail honors safe padding and two-times text scaling', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      snapshot: _detailSnapshot,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            padding: const EdgeInsets.fromLTRB(18, 28, 14, 20),
+            textScaler: const TextScaler.linear(2),
+          ),
+          child: child!,
+        ),
+        home: AdaptiveShell(viewModel: fixture.viewModel),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Long-note parent'));
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getTopLeft(find.text('Axiotask')).dy,
+      greaterThanOrEqualTo(28),
+    );
+    expect(find.byKey(const Key('task-detail-scroll-view')), findsOneWidget);
   });
 
   testWidgets('Refresh button invokes the ViewModel foreground action', (
@@ -519,6 +695,7 @@ final class _ShellFixture {
     Future<void> Function()? stopSyncRequested,
     Future<void> Function()? resumeSyncRequested,
     TaskListsRepository? taskListsRepository,
+    CachedTasksSnapshot? snapshot,
   }) : tasks = _TasksRepository(),
        healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
@@ -530,7 +707,7 @@ final class _ShellFixture {
       stopSyncRequested: stopSyncRequested,
       resumeSyncRequested: resumeSyncRequested,
     );
-    tasks.snapshot = _snapshot;
+    tasks.snapshot = snapshot ?? _snapshot;
     healthRepository.health = health;
   }
 
@@ -700,6 +877,64 @@ final _snapshot = CachedTasksSnapshot(
       title: 'Leaf task',
       notes: null,
       status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+const _longUnicodeNotes =
+    'Planning notes — 安全な合成データ 🌍\n'
+    'Line 02 keeps whitespace and punctuation exactly.\n'
+    'Line 03 remains untrusted plain text: <b>not markup</b>.\n'
+    'Line 04 checks a comfortably long desktop reading flow.\n'
+    'Line 05 checks scrolling without clipping the subtasks below.\n'
+    'Line 06 checks Unicode preservation: café, naïve, résumé.\n'
+    'Line 07 checks bidirectional-safe ordinary task text.\n'
+    'Line 08 is synthetic and contains no personal data.';
+
+final _detailSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-detail-list'),
+      title: 'Detail fixtures',
+    ),
+  ],
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(21),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-detail-parent'),
+      title: 'Long-note parent',
+      notes: _longUnicodeNotes,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(22),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(21),
+      remoteId: TaskRemoteId('synthetic-detail-child-a'),
+      title: 'First direct child',
+      notes: '',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(23),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(21),
+      remoteId: TaskRemoteId('synthetic-detail-child-b'),
+      title: 'Completed direct child',
+      notes: null,
+      status: TaskStatus.completed,
       due: null,
     ),
   ],

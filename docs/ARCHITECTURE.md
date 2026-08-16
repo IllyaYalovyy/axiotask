@@ -23,7 +23,9 @@ device adapter through one repository boundary in S22A. Pure S22B policy now
 derives effective parent dates and every Focus, Upcoming, Missed, Unscheduled,
 All, and per-list membership/sort projection from cached supported tasks and
 those typed preferences; ViewModels reuse the same projection for rows and
-counts.
+counts. S23A adds a detail-specific immutable projection over the same task
+repository state, a shared direct-child progress policy, and responsive desktop
+detail widgets whose mutations all use the existing domain command boundary.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted
@@ -107,6 +109,10 @@ Tests mirror these boundaries. Files do not grow into generic `utils`,
 - Views contain only rendering, animation, layout, and trivial routing logic.
 - Async commands expose running/succeeded/failed state so duplicate taps and
   error presentation are deterministic.
+- Task detail presentation receives one immutable detail projection containing
+  the selected stable task, direct children, progress, valid hierarchy targets,
+  siblings, and destination lists. It does not derive hierarchy policy or write
+  repository state inside widgets.
 
 `provider` is used only for construction, lifetime, and narrow subscriptions.
 It is not a global state architecture. There is no service locator and no

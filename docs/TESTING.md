@@ -354,6 +354,12 @@ and widget tests prove every displayed count is the length of the same projected
 rows and that typed controls update the selected view. No test reads normal
 preferences, credentials, task data, or Google.
 
+S23A adds a pure direct-child progress suite and a detail ViewModel suite. They
+prove completed/total counts include only direct children, stable sibling order
+is retained, navigation returns from child to parent, and create/edit/delete/
+reorder actions produce the existing shared domain commands rather than
+widget-owned mutations.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -429,6 +435,12 @@ count through the production task and relational-preference repositories. It
 uses an in-memory device adapter, fixed synthetic identities/content, and no
 Google or normal application storage.
 
+S23A adds `integration_test/task_details_linux_test.dart`. It opens and reopens
+one unique temporary SQLite file, renders parent-only collection rows and exact
+direct-child progress, saves multiline Unicode notes, creates a direct child,
+and verifies the notes/children/progress after restart. Sync is stopped and no
+Google, credential store, normal database, or normal preferences are used.
+
 The Linux secure-storage contract suite injects a fake key/value boundary for
 absent, locked, unavailable, denied, malformed, ambiguous-write, failed-delete,
 namespace, and credential-redaction behavior. The explicit GNOME probe uses the
@@ -449,6 +461,11 @@ matching actual `smart-views-light` / `smart-views-dark` application scenarios
 at 1280×720. Both show overdue-first Focus membership, an effective date
 inherited from one unfinished direct child, matching badge/row count, per-view
 controls, and only synthetic content.
+
+S23A adds curated long-content light/dark task-detail goldens at 1280×800 and
+matching actual `task-details-light` / `task-details-dark` application scenarios
+at 1280×720. They show plain multiline notes, parent-only collection rows,
+completed/total direct-child progress, and visible subtask management routes.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
