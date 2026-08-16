@@ -1,10 +1,12 @@
 import 'dart:io';
 
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
+import 'package:axiotask/src/data/database/cache_dao.dart';
 import 'package:axiotask/src/data/database/read_sync_store.dart';
 import 'package:axiotask/src/data/database/sync_health_dao.dart';
 import 'package:axiotask/src/data/database/tasks_repository.dart';
@@ -12,6 +14,7 @@ import 'package:axiotask/src/data/google_tasks/dto.dart';
 import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
+import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
@@ -469,6 +472,184 @@ void main() {
         CacheCompleteness.incomplete,
       );
       expect(remote.mutationCalls, 0);
+    },
+  );
+
+  test(
+    'REC-023 protects decoded hierarchy evidence and persists safe failure only',
+    () async {
+      final history = InMemoryDiagnosticHistory();
+      final remote = _ScriptedReadService(
+        taskListPages: <RemotePage<RemoteTaskList>>[
+          _listPage(<RemoteTaskList>[
+            _remoteList('list-a', 'Hierarchy'),
+            _remoteList('list-b', 'Unrelated'),
+          ]),
+        ],
+        taskPages: <String, List<RemotePage<RemoteTask>>>{
+          'list-a': <RemotePage<RemoteTask>>[
+            _taskPage(<RemoteTask>[
+              _remoteTask('parent', 'Protected parent'),
+              _remoteTask('child', 'Protected child', parent: 'parent'),
+              _remoteTask(
+                'grandchild',
+                'Protected grandchild',
+                parent: 'child',
+              ),
+            ]),
+          ],
+          'list-b': <RemotePage<RemoteTask>>[
+            _taskPage(<RemoteTask>[
+              _remoteTask('unrelated-task', 'Visible unrelated task'),
+            ]),
+          ],
+        },
+      );
+      final harness = await _Harness.create(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final engine = SyncEngine(
+        store: DatabaseReadSyncStore(harness.database),
+        googleTasks: remote,
+        authorization: const SyntheticAuthorization(subject),
+        clock: harness.clock,
+        random: SequenceRandomSource(List<int>.generate(32, (i) => i + 1)),
+        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
+      );
+
+      final report = await engine.run(
+        SyncRunRequest(accountId: harness.accountId),
+      );
+
+      expect(report.failure?.code, 'sync.unsupported_task_depth');
+      expect(remote.mutationCalls, 0);
+      expect(
+        (await harness.snapshot()).tasks.map((task) => task.title),
+        contains('Visible unrelated task'),
+      );
+      final record = history.records.singleWhere(
+        (record) => record.code == 'sync.unsupported_task_depth',
+      );
+      expect(record.fields['decoded_scope'], contains('Protected grandchild'));
+      expect(record.fields['decoded_scope'], contains('grandchild'));
+      final facts = await harness.healthFacts();
+      expect(
+        facts.latestFailure?.diagnosticCode,
+        'sync.unsupported_task_depth',
+      );
+      expect(facts.latestFailure.toString(), isNot(contains('Protected')));
+
+      final releaseHistory = InMemoryDiagnosticHistory();
+      await SyncEngine(
+        store: DatabaseReadSyncStore(harness.database),
+        googleTasks: remote,
+        authorization: const SyntheticAuthorization(subject),
+        clock: harness.clock,
+        random: SequenceRandomSource(List<int>.generate(32, (i) => 64 + i)),
+        diagnostics: ProductionDiagnosticSink(releaseHistory),
+      ).run(SyncRunRequest(accountId: harness.accountId));
+      final releaseRecord = releaseHistory.records.singleWhere(
+        (record) => record.code == 'sync.unsupported_task_depth',
+      );
+      expect(releaseRecord.fields, isNot(contains('decoded_scope')));
+      expect(releaseRecord.renderedText, isNot(contains('Protected')));
+    },
+  );
+
+  test(
+    'local hierarchy projection survives read-back without remote MOVE',
+    () async {
+      final remote = _ScriptedReadService(
+        taskListPages: <RemotePage<RemoteTaskList>>[
+          _listPage(<RemoteTaskList>[_remoteList('list-a', 'Hierarchy')]),
+        ],
+        taskPages: <String, List<RemotePage<RemoteTask>>>{
+          'list-a': <RemotePage<RemoteTask>>[
+            _taskPage(<RemoteTask>[
+              _remoteTask('task', 'Task'),
+              _remoteTask('parent', 'Parent'),
+            ]),
+          ],
+        },
+      );
+      final harness = await _Harness.create(
+        remote: remote,
+        subject: subject,
+        startedAt: startedAt,
+      );
+      addTearDown(harness.close);
+      final cache = CacheDao(harness.database);
+      final list = await cache.putTaskList(
+        accountId: harness.accountId,
+        remoteId: const TaskListRemoteId('list-a'),
+        title: 'Hierarchy',
+      );
+      final task = await cache.putTask(
+        accountId: harness.accountId,
+        taskListId: list,
+        remoteId: const TaskRemoteId('task'),
+        title: 'Task',
+        position: '0001',
+      );
+      final parent = await cache.putTask(
+        accountId: harness.accountId,
+        taskListId: list,
+        remoteId: const TaskRemoteId('parent'),
+        title: 'Parent',
+        position: '0002',
+      );
+      for (final (id, remoteId, title, position)
+          in <(TaskId, TaskRemoteId, String, String)>[
+            (task, const TaskRemoteId('task'), 'Task', '0001'),
+            (parent, const TaskRemoteId('parent'), 'Parent', '0002'),
+          ]) {
+        await cache.putTaskRemoteBase(
+          accountId: harness.accountId,
+          taskId: id,
+          taskListId: list,
+          remoteId: remoteId,
+          observedPublicationId: 'prior',
+          deleted: false,
+          title: title,
+          status: TaskStatus.needsAction,
+          position: position,
+          etag: 'etag-$position',
+          remoteUpdatedAt: startedAt.subtract(const Duration(minutes: 1)),
+        );
+      }
+      final repository = DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      );
+      expect(
+        await repository.apply(
+          DemoteTaskCommand(
+            accountId: harness.accountId,
+            taskId: task,
+            parentTaskId: parent,
+          ),
+        ),
+        isA<Success<void>>(),
+      );
+
+      final report = await harness.engine.run(
+        SyncRunRequest(accountId: harness.accountId),
+      );
+
+      expect(report.outcome, SyncRunOutcome.succeeded);
+      expect(report.updateOperations, 0);
+      expect(remote.mutationCalls, 0);
+      final projected = (await harness.snapshot()).tasks.singleWhere(
+        (value) => value.id == task,
+      );
+      expect(projected.parentTaskId, parent);
+      expect(
+        (await cache.readTaskRemoteBase(harness.accountId, task))?.parentTaskId,
+        isNull,
+      );
     },
   );
 

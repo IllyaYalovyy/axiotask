@@ -90,6 +90,7 @@ final class TasksFeatureRuntime {
             clock: composition.clock,
             random: composition.randomness,
             control: request.control,
+            diagnostics: composition.diagnostics,
           ).run(
             SyncRunRequest(
               accountId: accountId,

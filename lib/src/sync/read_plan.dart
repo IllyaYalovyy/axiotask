@@ -1,10 +1,13 @@
+import 'dart:convert';
+
 import '../core/failure.dart';
 import '../data/google_tasks/dto.dart';
 
 final class ReadPlanException implements Exception {
-  const ReadPlanException(this.failure);
+  const ReadPlanException(this.failure, {this.decodedScope});
 
   final Failure failure;
+  final String? decodedScope;
 }
 
 final class TaskListReadPlan {
@@ -41,7 +44,10 @@ final class TaskScopeReadPlan {
     for (final item in items) {
       _validateTask(item);
       if (!pageIds.add(item.id.value) || _seen.contains(item.id.value)) {
-        throw ReadPlanException(_unsupported('sync.duplicate_task'));
+        throw ReadPlanException(
+          _unsupported('sync.duplicate_task'),
+          decodedScope: _encodeTasks(<RemoteTask>[..._live.values, item]),
+        );
       }
       if (item case final RemoteLiveTask live) {
         _live[item.id.value] = live;
@@ -69,7 +75,10 @@ final class TaskScopeReadPlan {
       }
     }
     if (terminal && _pending.isNotEmpty) {
-      throw ReadPlanException(_unsupported('sync.unsupported_task_parent'));
+      throw ReadPlanException(
+        _unsupported('sync.unsupported_task_parent'),
+        decodedScope: _encodeTasks(_pending),
+      );
     }
     return ready;
   }
@@ -80,42 +89,118 @@ final class TaskScopeReadPlan {
       if (parentId == null) continue;
       final parent = _live[parentId.value];
       if (parent?.parentId != null) {
-        throw ReadPlanException(_unsupported('sync.unsupported_task_depth'));
+        throw ReadPlanException(
+          _unsupported('sync.unsupported_task_depth'),
+          decodedScope: _encodeTasks(_live.values),
+        );
       }
     }
   }
 
   void _validateTask(RemoteTask task) {
-    _requireRemoteId(task.id.value, 'sync.malformed_task_id');
-    _requireOptionalValue(task.etag, 'sync.malformed_task_etag');
-    _requireAbsoluteUri(task.selfLink, 'sync.malformed_task_link');
-    switch (task) {
-      case RemoteLiveTask():
-        if (task.title.length > 1024 || task.position.isEmpty) {
-          throw ReadPlanException(_unsupported('sync.malformed_live_task'));
-        }
-        if (task.notes != null && task.notes!.length > 8192) {
-          throw ReadPlanException(_unsupported('sync.malformed_task_notes'));
-        }
-        _requireAbsoluteUri(task.webViewLink, 'sync.malformed_web_view_link');
-        for (final link in task.links) {
-          _requireAbsoluteUri(link.link, 'sync.malformed_task_link');
-        }
-      case RemoteTaskTombstone():
-        _requireOptionalValue(
-          task.retainedPosition,
-          'sync.malformed_tombstone_position',
-        );
-        _requireAbsoluteUri(
-          task.retainedWebViewLink,
-          'sync.malformed_tombstone_web_view_link',
-        );
-        for (final link in task.retainedLinks) {
-          _requireAbsoluteUri(link.link, 'sync.malformed_tombstone_link');
-        }
+    try {
+      _requireRemoteId(task.id.value, 'sync.malformed_task_id');
+      _requireOptionalValue(task.etag, 'sync.malformed_task_etag');
+      _requireAbsoluteUri(task.selfLink, 'sync.malformed_task_link');
+      switch (task) {
+        case RemoteLiveTask():
+          if (task.title.length > 1024 || task.position.isEmpty) {
+            throw ReadPlanException(_unsupported('sync.malformed_live_task'));
+          }
+          if (task.notes != null && task.notes!.length > 8192) {
+            throw ReadPlanException(_unsupported('sync.malformed_task_notes'));
+          }
+          _requireAbsoluteUri(task.webViewLink, 'sync.malformed_web_view_link');
+          for (final link in task.links) {
+            _requireAbsoluteUri(link.link, 'sync.malformed_task_link');
+          }
+        case RemoteTaskTombstone():
+          _requireOptionalValue(
+            task.retainedPosition,
+            'sync.malformed_tombstone_position',
+          );
+          _requireAbsoluteUri(
+            task.retainedWebViewLink,
+            'sync.malformed_tombstone_web_view_link',
+          );
+          for (final link in task.retainedLinks) {
+            _requireAbsoluteUri(link.link, 'sync.malformed_tombstone_link');
+          }
+      }
+    } on ReadPlanException catch (error) {
+      throw ReadPlanException(
+        error.failure,
+        decodedScope: _encodeTasks(<RemoteTask>[task]),
+      );
     }
   }
 }
+
+String _encodeTasks(Iterable<RemoteTask> tasks) => jsonEncode(
+  tasks.map<Map<String, Object?>>(_taskEvidence).toList(growable: false),
+);
+
+Map<String, Object?> _taskEvidence(RemoteTask task) => <String, Object?>{
+  'id': task.id.value,
+  'etag': task.etag,
+  'updated': task.updated?.toUtc().toIso8601String(),
+  'selfLink': task.selfLink?.toString(),
+  'deleted': task.deleted,
+  switch (task) {
+    RemoteLiveTask() => 'title',
+    RemoteTaskTombstone() => 'retainedTitle',
+  }: switch (task) {
+    RemoteLiveTask(:final title) => title,
+    RemoteTaskTombstone(:final retainedTitle) => retainedTitle,
+  },
+  'parent': switch (task) {
+    RemoteLiveTask(:final parentId) => parentId?.value,
+    RemoteTaskTombstone(:final retainedParentId) => retainedParentId?.value,
+  },
+  'position': switch (task) {
+    RemoteLiveTask(:final position) => position,
+    RemoteTaskTombstone(:final retainedPosition) => retainedPosition,
+  },
+  'notes': switch (task) {
+    RemoteLiveTask(:final notes) => notes,
+    RemoteTaskTombstone(:final retainedNotes) => retainedNotes,
+  },
+  'status': switch (task) {
+    RemoteLiveTask(:final status) => status.name,
+    RemoteTaskTombstone(:final retainedStatus) => retainedStatus?.name,
+  },
+  'due': switch (task) {
+    RemoteLiveTask(:final due) => due?.toString(),
+    RemoteTaskTombstone(:final retainedDue) => retainedDue?.toString(),
+  },
+  'completed': switch (task) {
+    RemoteLiveTask(:final completed) => completed?.toUtc().toIso8601String(),
+    RemoteTaskTombstone(:final retainedCompleted) =>
+      retainedCompleted?.toUtc().toIso8601String(),
+  },
+  'hidden': switch (task) {
+    RemoteLiveTask(:final hidden) => hidden,
+    RemoteTaskTombstone(:final hidden) => hidden,
+  },
+  'links':
+      switch (task) {
+            RemoteLiveTask(:final links) => links,
+            RemoteTaskTombstone(:final retainedLinks) => retainedLinks,
+          }
+          .map(
+            (link) => <String, Object?>{
+              'type': link.type,
+              'description': link.description,
+              'link': link.link?.toString(),
+            },
+          )
+          .toList(growable: false),
+  'webViewLink': switch (task) {
+    RemoteLiveTask(:final webViewLink) => webViewLink?.toString(),
+    RemoteTaskTombstone(:final retainedWebViewLink) =>
+      retainedWebViewLink?.toString(),
+  },
+};
 
 void _requireRemoteId(String value, String code) {
   if (value.isEmpty) throw ReadPlanException(_unsupported(code));

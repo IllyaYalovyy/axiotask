@@ -419,6 +419,24 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
       pendingReason: SyncPendingReason.verifying,
     ),
   ),
+  (
+    name: 'hierarchy-controls',
+    snapshot: _hierarchySnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'hierarchy-unsupported-error',
+    snapshot: _hierarchySnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.applicationFailure,
+      diagnosticCode: 'sync.unsupported_task_depth',
+    ),
+  ),
 ];
 
 const _requestedScenario = String.fromEnvironment(
@@ -459,6 +477,54 @@ final _baseSnapshot = CachedTasksSnapshot(
   completeness: CacheCompleteness.complete,
 );
 
+final _hierarchySnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-hierarchy-list'),
+      title: 'Synthetic hierarchy',
+    ),
+  ],
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(11),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-hierarchy-parent'),
+      title: 'Plan the synthetic release',
+      notes: 'Last valid supported hierarchy remains visible.',
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(12),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(11),
+      remoteId: TaskRemoteId('synthetic-hierarchy-child'),
+      title: 'Review protected hierarchy behavior',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(13),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-hierarchy-leaf'),
+      title: 'Promote or demote this leaf',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.incomplete,
+);
+
 SyncHealth _health(
   SyncHealthOutcome outcome, {
   SyncInactiveReason? inactiveReason,
@@ -467,6 +533,7 @@ SyncHealth _health(
   SyncHealthAction action = SyncHealthAction.none,
   DateTime? lastSuccessfulSyncAt,
   SyncWorkCounts counts = const SyncWorkCounts(),
+  String? diagnosticCode,
 }) => SyncHealth(
   outcome: outcome,
   inactiveReason: inactiveReason,
@@ -474,6 +541,7 @@ SyncHealth _health(
   pendingReason: pendingReason,
   action: action,
   counts: counts,
+  diagnosticCode: diagnosticCode,
   lastSuccessfulSyncAt: lastSuccessfulSyncAt,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
 );

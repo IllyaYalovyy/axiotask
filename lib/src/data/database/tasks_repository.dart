@@ -8,6 +8,7 @@ import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/hierarchy_policy.dart';
 import '../../domain/repository/tasks_repository.dart';
 import 'app_database.dart';
 import 'cache_dao.dart';
@@ -85,6 +86,9 @@ final class DatabaseTasksRepository implements TasksRepository {
   Future<Outcome<void>> apply(ExistingTaskCommand command) async {
     final validation = validateTaskCommand(command);
     if (validation != null) return Outcome<void>.failure(validation);
+    if (command is PromoteTaskCommand || command is DemoteTaskCommand) {
+      return _applyHierarchy(command);
+    }
     try {
       await _database.transaction(() async {
         await _requireAccount(command.accountId);
@@ -162,6 +166,124 @@ final class DatabaseTasksRepository implements TasksRepository {
     } on _TaskCommandException catch (error) {
       return Outcome<void>.failure(error.failure);
     } on DesiredStatePersistenceException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    }
+  }
+
+  Future<Outcome<void>> _applyHierarchy(ExistingTaskCommand command) async {
+    try {
+      await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final target =
+            await (_database.select(_database.taskCacheRows)
+                  ..where((row) => row.id.equals(command.taskId.value)))
+                .getSingleOrNull();
+        if (target == null) {
+          throw const _TaskCommandException(_taskNotFoundFailure);
+        }
+        if (target.accountId != command.accountId.value) {
+          throw const _TaskCommandException(_taskCrossAccountFailure);
+        }
+        if (target.projection != CacheProjection.supported.name) {
+          throw const _TaskCommandException(_taskNotFoundFailure);
+        }
+        if (target.remoteId == null &&
+            !_isUnresolved(
+              (await _desired.readTask(
+                command.accountId,
+                command.taskId,
+              ))?.state,
+            )) {
+          throw const _TaskCommandException(_unsynchronizableTaskFailure);
+        }
+
+        final requestedParentId = switch (command) {
+          DemoteTaskCommand(:final parentTaskId) => parentTaskId,
+          PromoteTaskCommand() => null,
+          _ => throw const DesiredStateInvariantException(
+            'unknown_hierarchy_command',
+          ),
+        };
+        TaskCacheRow? parent;
+        if (requestedParentId != null) {
+          parent =
+              await (_database.select(_database.taskCacheRows)
+                    ..where((row) => row.id.equals(requestedParentId.value)))
+                  .getSingleOrNull();
+          if (parent == null) {
+            throw const _TaskCommandException(_parentNotFoundFailure);
+          }
+          if (parent.accountId != command.accountId.value) {
+            throw const _TaskCommandException(_parentCrossAccountFailure);
+          }
+          if (parent.taskListId != target.taskListId) {
+            throw const _TaskCommandException(_parentCrossListFailure);
+          }
+          if (parent.projection == CacheProjection.deleted.name) {
+            throw const _TaskCommandException(_parentDeletedFailure);
+          }
+          if (parent.projection != CacheProjection.supported.name) {
+            throw const _TaskCommandException(_parentUnsupportedFailure);
+          }
+          if (parent.remoteId == null &&
+              !_isUnresolved(
+                (await _desired.readTask(
+                  command.accountId,
+                  requestedParentId,
+                ))?.state,
+              )) {
+            throw const _TaskCommandException(_unsynchronizableParentFailure);
+          }
+        }
+        final hasChildren =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(command.accountId.value) &
+                      row.parentTaskId.equals(command.taskId.value),
+                ))
+                .getSingleOrNull() !=
+            null;
+        final policyFailure = validateHierarchyChange(
+          task: _cachedTask(target),
+          requestedParent: parent == null ? null : _cachedTask(parent),
+          taskHasChildren: hasChildren,
+        );
+        if (policyFailure != null) {
+          throw _TaskCommandException(policyFailure);
+        }
+        await (_database.update(_database.taskCacheRows)..where(
+              (row) =>
+                  row.accountId.equals(command.accountId.value) &
+                  row.id.equals(command.taskId.value),
+            ))
+            .write(
+              TaskCacheRowsCompanion(
+                parentTaskId: Value<int?>(requestedParentId?.value),
+              ),
+            );
+        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        await _desired.writeTaskStructure(
+          accountId: command.accountId,
+          taskId: command.taskId,
+          taskListId: TaskListId(target.taskListId),
+          parentTaskId: requestedParentId,
+          title: target.title,
+          notes: target.notes,
+          status: _taskStatus(target.status),
+          due: _taskDate(target.dueEpochDay),
+          modifiedAt: clock.now(),
+        );
+        await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+      });
+      return const Outcome<void>.success(null);
+    } on _TaskCommandException catch (error) {
+      return Outcome<void>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    } on DesiredStateInvariantException {
       return const Outcome<void>.failure(_persistenceFailure);
     } on SqliteException {
       return const Outcome<void>.failure(_persistenceFailure);
@@ -416,6 +538,18 @@ final class DatabaseTasksRepository implements TasksRepository {
   }
 }
 
+CachedTask _cachedTask(TaskCacheRow row) => CachedTask(
+  id: TaskId(row.id),
+  accountId: AccountId(row.accountId),
+  taskListId: TaskListId(row.taskListId),
+  parentTaskId: row.parentTaskId == null ? null : TaskId(row.parentTaskId!),
+  remoteId: row.remoteId == null ? null : TaskRemoteId(row.remoteId!),
+  title: row.title,
+  notes: row.notes,
+  status: _taskStatus(row.status),
+  due: _taskDate(row.dueEpochDay),
+);
+
 CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
   final taskLists = <TaskListId, CachedTaskList>{};
   final tasks = <CachedTask>[];
@@ -559,6 +693,51 @@ const Failure _parentNotFoundFailure = Failure(
   retry: RetryClassification.permanent,
   impact: 'The task was not saved.',
   safeSummary: 'The selected parent is not in the task list.',
+);
+
+const Failure _parentCrossAccountFailure = Failure(
+  code: 'task.parent_cross_account',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task hierarchy was not changed.',
+  safeSummary: 'The selected parent belongs to another account partition.',
+);
+
+const Failure _parentCrossListFailure = Failure(
+  code: 'task.parent_cross_list',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task hierarchy was not changed.',
+  safeSummary: 'The selected parent belongs to another task list.',
+);
+
+const Failure _parentDeletedFailure = Failure(
+  code: 'task.parent_deleted',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task hierarchy was not changed.',
+  safeSummary: 'A deleted task cannot become a parent.',
+);
+
+const Failure _parentUnsupportedFailure = Failure(
+  code: 'task.parent_unsupported',
+  category: FailureCategory.unsupportedRemoteState,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task hierarchy was not changed.',
+  safeSummary: 'Unsupported remote data cannot become a parent.',
+);
+
+const Failure _taskCrossAccountFailure = Failure(
+  code: 'task.cross_account',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task hierarchy was not changed.',
+  safeSummary: 'The selected task belongs to another account partition.',
 );
 
 const Failure _unsupportedDepthFailure = Failure(

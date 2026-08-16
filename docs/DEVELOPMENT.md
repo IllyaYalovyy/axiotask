@@ -175,6 +175,11 @@ process-lifetime cadence, file-backed Stop restart, preserved cache/auth/work
 facts, and Resume catch-up. Screenshot capture includes the active Stop control
 and stopped Resume state using ignored synthetic output.
 
+S18A extends the same ignored screenshot runner with `hierarchy-controls` and
+`hierarchy-unsupported-error`. Both contain synthetic content; the latter shows
+the last valid one-level projection under a safe application-failure code and
+never renders the protected decoded diagnostic payload.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

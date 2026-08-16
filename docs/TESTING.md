@@ -232,6 +232,17 @@ quiescence with independent clocks. The Linux application integration also
 stops synchronization, creates competing synthetic edits, resumes through the
 production coordinator, and inspects the typed aggregate Google-won result.
 
+S18A adds pure one-level hierarchy policy tests and real-SQLite repository
+transactions for add, promote, demote, cross-scope/deleted/deep parent
+rejection, parent-subtree protection, and file-backed restart. Read-engine
+coverage retains child-before-parent deferral, preserves pending local structure
+against remote publication, and proves unsupported depth persists a safe
+application-failure code while only the sensitive development sink sees the
+decoded synthetic scope. The scripted Google port fails on any mutation.
+Widget and isolated Linux integration tests exercise the task-detail controls;
+curated golden and actual synthetic desktop captures cover hierarchy controls
+and the protected-depth error state.
+
 The matrix includes successful and failed incremental remote-page publication:
 each published transaction remains valid and visible, partial completion never
 advances last verified success, and restart continues from an explicitly

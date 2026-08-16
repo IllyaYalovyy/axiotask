@@ -17,6 +17,8 @@ scenarios=(
   task-content-sync-stopped
   delete-undo
   delete-list-confirmation
+  hierarchy-controls
+  hierarchy-unsupported-error
 )
 
 for scenario in "${scenarios[@]}"; do

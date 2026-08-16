@@ -55,6 +55,15 @@ void main() {
         counts: const SyncWorkCounts(pending: 3, uncertain: 1),
       ),
     ),
+    (
+      'hierarchy_error',
+      _health(
+        SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.applicationFailure,
+        counts: const SyncWorkCounts(),
+        diagnosticCode: 'sync.unsupported_task_depth',
+      ),
+    ),
   ];
 
   for (final (name, health) in cases) {
@@ -275,6 +284,7 @@ SyncHealth _health(
   SyncPendingReason? pendingReason,
   SyncHealthAction action = SyncHealthAction.none,
   DateTime? lastSuccessfulSyncAt,
+  String? diagnosticCode,
   SyncWorkCounts counts = const SyncWorkCounts(),
 }) => SyncHealth(
   outcome: outcome,
@@ -284,5 +294,6 @@ SyncHealth _health(
   action: action,
   counts: counts,
   lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+  diagnosticCode: diagnosticCode,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
 );

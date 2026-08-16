@@ -454,11 +454,15 @@ Future<void> _showRenameTaskListDialog(
 Future<void> _showCreateTaskDialog(
   BuildContext context,
   TasksViewModel viewModel,
-  TaskListId taskListId,
-) => showDialog<void>(
+  TaskListId taskListId, {
+  TaskId? parentTaskId,
+}) => showDialog<void>(
   context: context,
-  builder: (_) =>
-      _CreateTaskDialog(viewModel: viewModel, taskListId: taskListId),
+  builder: (_) => _CreateTaskDialog(
+    viewModel: viewModel,
+    taskListId: taskListId,
+    parentTaskId: parentTaskId,
+  ),
 );
 
 final class _TaskListEditDialog extends StatefulWidget {
@@ -565,6 +569,15 @@ final class _TaskDetails extends StatelessWidget {
         ),
       );
     }
+    final hasChildren = state.selectedTaskChildren.isNotEmpty;
+    final parentCandidates = state.tasks
+        .where(
+          (candidate) =>
+              candidate.id != task.id &&
+              candidate.taskListId == task.taskListId &&
+              candidate.parentTaskId == null,
+        )
+        .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.all(24),
       children: <Widget>[
@@ -608,6 +621,49 @@ final class _TaskDetails extends StatelessWidget {
         Text('Notes', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 6),
         Text(task.notes?.isNotEmpty == true ? task.notes! : 'No notes'),
+        const SizedBox(height: 22),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            if (task.parentTaskId == null)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => _showCreateTaskDialog(
+                        context,
+                        viewModel,
+                        task.taskListId,
+                        parentTaskId: task.id,
+                      ),
+                icon: const Icon(Icons.add),
+                label: const Text('Add subtask'),
+              ),
+            if (task.parentTaskId == null &&
+                !hasChildren &&
+                parentCandidates.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => _showDemoteTaskDialog(
+                        context,
+                        viewModel,
+                        task,
+                        parentCandidates,
+                      ),
+                icon: const Icon(Icons.subdirectory_arrow_right),
+                label: const Text('Make subtask'),
+              ),
+            if (task.parentTaskId != null)
+              OutlinedButton.icon(
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => unawaited(viewModel.promoteTask(task.id)),
+                icon: const Icon(Icons.arrow_upward),
+                label: const Text('Promote'),
+              ),
+          ],
+        ),
         if (state.selectedTaskChildren.isNotEmpty) ...<Widget>[
           const SizedBox(height: 28),
           Text('Subtasks', style: Theme.of(context).textTheme.titleMedium),
@@ -621,6 +677,14 @@ final class _TaskDetails extends StatelessWidget {
                     : Icons.radio_button_unchecked,
               ),
               title: Text(child.title),
+              trailing: IconButton(
+                tooltip: 'Promote subtask',
+                onPressed: state.isTaskCommandPending
+                    ? null
+                    : () => unawaited(viewModel.promoteTask(child.id)),
+                icon: const Icon(Icons.arrow_upward),
+              ),
+              onTap: () => viewModel.selectTask(child.id),
             ),
         ],
       ],
@@ -635,6 +699,43 @@ Future<void> _showTaskContentDialog(
 ) => showDialog<void>(
   context: context,
   builder: (_) => _TaskContentDialog(viewModel: viewModel, task: task),
+);
+
+Future<void> _showDemoteTaskDialog(
+  BuildContext context,
+  TasksViewModel viewModel,
+  CachedTask task,
+  List<CachedTask> candidates,
+) => showDialog<void>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    title: const Text('Choose parent task'),
+    content: SizedBox(
+      width: 360,
+      child: ListView(
+        shrinkWrap: true,
+        children: <Widget>[
+          for (final parent in candidates)
+            ListTile(
+              title: Text(parent.title),
+              onTap: () async {
+                await viewModel.demoteTask(task.id, parent.id);
+                if (dialogContext.mounted &&
+                    viewModel.state.taskCommandFailureMessage == null) {
+                  Navigator.of(dialogContext).pop();
+                }
+              },
+            ),
+        ],
+      ),
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(dialogContext).pop(),
+        child: const Text('Cancel'),
+      ),
+    ],
+  ),
 );
 
 Future<void> _showDeleteTaskListConfirmation(
@@ -685,10 +786,15 @@ final class DeleteTaskListConfirmationDialog extends StatelessWidget {
 }
 
 final class _CreateTaskDialog extends StatefulWidget {
-  const _CreateTaskDialog({required this.viewModel, required this.taskListId});
+  const _CreateTaskDialog({
+    required this.viewModel,
+    required this.taskListId,
+    this.parentTaskId,
+  });
 
   final TasksViewModel viewModel;
   final TaskListId taskListId;
+  final TaskId? parentTaskId;
 
   @override
   State<_CreateTaskDialog> createState() => _CreateTaskDialogState();
@@ -706,6 +812,7 @@ final class _CreateTaskDialogState extends State<_CreateTaskDialog> {
   Future<void> _submit() async {
     await widget.viewModel.createTask(
       taskListId: widget.taskListId,
+      parentTaskId: widget.parentTaskId,
       title: _title.text,
     );
     if (mounted && widget.viewModel.state.taskCommandFailureMessage == null) {
@@ -717,7 +824,9 @@ final class _CreateTaskDialogState extends State<_CreateTaskDialog> {
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.viewModel,
     builder: (context, _) => AlertDialog(
-      title: const Text('Create task'),
+      title: Text(
+        widget.parentTaskId == null ? 'Create task' : 'Create subtask',
+      ),
       content: TextField(
         controller: _title,
         autofocus: true,

@@ -72,6 +72,20 @@ final class SetTaskCompletionCommand extends ExistingTaskCommand {
   final TaskStatus status;
 }
 
+final class PromoteTaskCommand extends ExistingTaskCommand {
+  const PromoteTaskCommand({required super.accountId, required super.taskId});
+}
+
+final class DemoteTaskCommand extends ExistingTaskCommand {
+  const DemoteTaskCommand({
+    required super.accountId,
+    required super.taskId,
+    required this.parentTaskId,
+  });
+
+  final TaskId parentTaskId;
+}
+
 final class UpdateTaskContentCommand extends ExistingTaskCommand {
   const UpdateTaskContentCommand({
     required super.accountId,

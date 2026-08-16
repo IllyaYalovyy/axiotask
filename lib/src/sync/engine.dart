@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../core/clock.dart';
+import '../core/diagnostics/diagnostics.dart';
 import '../core/failure.dart';
 import '../core/outcome.dart';
 import '../core/randomness.dart';
@@ -26,6 +27,7 @@ final class SyncEngine {
     required this.random,
     this.observer = const NoopSyncRunObserver(),
     this.control = const NoopSyncRunControl(),
+    this.diagnostics,
   });
 
   final SyncStore store;
@@ -35,6 +37,7 @@ final class SyncEngine {
   final RandomSource random;
   final SyncRunObserver observer;
   final SyncRunControl control;
+  final DiagnosticSink? diagnostics;
 
   Future<SyncRunReport> run(SyncRunRequest request) async {
     final readCancellation = _readCancellation();
@@ -98,6 +101,20 @@ final class SyncEngine {
       }
     }
 
+    void recordUnsupported(ReadPlanException error) {
+      diagnostics?.record(
+        DiagnosticEvent(
+          code: error.failure.code,
+          operation: 'synchronize_task_scope',
+          fields: <DiagnosticField>[
+            const DiagnosticField.safe('scope', 'tasks'),
+            if (error.decodedScope case final evidence?)
+              DiagnosticField.private('decoded_scope', evidence),
+          ],
+        ),
+      );
+    }
+
     Future<SyncRunReport?> interrupted(SyncRunBoundary boundary) async {
       if (!await _interrupted(boundary)) return null;
       final failure = switch (control) {
@@ -145,6 +162,7 @@ final class SyncEngine {
                 terminal: value.nextPageToken == null,
               );
             } on ReadPlanException catch (error) {
+              recordUnsupported(error);
               return error.failure;
             }
             final scope = 'tasks:${claim.taskListId.value}:conditional';
@@ -267,6 +285,7 @@ final class SyncEngine {
           try {
             listPlan.validatePage(value.items);
           } on ReadPlanException catch (error) {
+            recordUnsupported(error);
             firstFailure ??= error.failure;
             listToken = null;
             break;
@@ -330,6 +349,7 @@ final class SyncEngine {
                   terminal: value.nextPageToken == null,
                 );
               } on ReadPlanException catch (error) {
+                recordUnsupported(error);
                 scopeFailure = error.failure;
                 taskToken = null;
                 break;

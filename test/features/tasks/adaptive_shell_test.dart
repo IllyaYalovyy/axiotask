@@ -110,6 +110,53 @@ void main() {
     expect(find.text('Add task'), findsNothing);
   });
 
+  testWidgets('task details add, promote, and demote one-level subtasks', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.text('Cached parent'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Add subtask'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'New child');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+    expect(fixture.tasks.created.last.parentTaskId, const TaskId(11));
+
+    await tester.tap(find.text('Cached child'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Promote'));
+    await tester.pump();
+    expect(fixture.tasks.applied.last, isA<PromoteTaskCommand>());
+    expect(
+      (fixture.tasks.applied.last as PromoteTaskCommand).taskId,
+      const TaskId(12),
+    );
+
+    await tester.tap(find.text('Leaf task'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Make subtask'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(ListTile, 'Cached parent'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final demote = fixture.tasks.applied.last as DemoteTaskCommand;
+    expect(demote.taskId, const TaskId(13));
+    expect(demote.parentTaskId, const TaskId(11));
+  });
+
   testWidgets('Refresh button invokes the ViewModel foreground action', (
     tester,
   ) async {
@@ -330,7 +377,7 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Complete task'));
+    await tester.tap(find.byTooltip('Complete task').first);
     await tester.pump();
 
     final command = fixture.tasks.applied.single as SetTaskCompletionCommand;
@@ -576,6 +623,17 @@ final _snapshot = CachedTasksSnapshot(
       parentTaskId: TaskId(11),
       remoteId: TaskRemoteId('synthetic-child'),
       title: 'Cached child',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    const CachedTask(
+      id: TaskId(13),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-leaf'),
+      title: 'Leaf task',
       notes: null,
       status: TaskStatus.needsAction,
       due: null,

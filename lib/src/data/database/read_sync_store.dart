@@ -694,14 +694,32 @@ final class DatabaseReadSyncStore implements SyncStore {
                       ))
                       .getSingleOrNull() !=
                   null;
+              final hasUnresolvedLocalStructure =
+                  await (_database.select(_database.desiredStateRows)..where(
+                        (row) =>
+                            row.accountId.equals(accountId.value) &
+                            row.resourceType.equals('task') &
+                            row.targetTaskId.equals(existing.id) &
+                            row.desiredLifecycle.equals('present') &
+                            row.structureDirty.equals(true) &
+                            row.state.isIn(const <String>[
+                              'pending',
+                              'in_flight',
+                              'uncertain',
+                              'failed',
+                            ]),
+                      ))
+                      .getSingleOrNull() !=
+                  null;
               final structureChanged =
-                  existing.taskListId != taskList.localId.value ||
-                  existing.parentTaskId != parentId?.value ||
-                  existing.position != item.position ||
-                  existing.projection !=
-                      (protectedByDelete
-                          ? CacheProjection.deleted.name
-                          : CacheProjection.supported.name);
+                  !hasUnresolvedLocalStructure &&
+                  (existing.taskListId != taskList.localId.value ||
+                      existing.parentTaskId != parentId?.value ||
+                      existing.position != item.position ||
+                      existing.projection !=
+                          (protectedByDelete
+                              ? CacheProjection.deleted.name
+                              : CacheProjection.supported.name));
               final contentChanged =
                   !hasUnresolvedLocalContent &&
                   (existing.title != item.title ||
@@ -716,8 +734,12 @@ final class DatabaseReadSyncStore implements SyncStore {
                     ))
                     .write(
                       TaskCacheRowsCompanion(
-                        taskListId: Value<int>(taskList.localId.value),
-                        parentTaskId: Value<int?>(parentId?.value),
+                        taskListId: hasUnresolvedLocalStructure
+                            ? const Value<int>.absent()
+                            : Value<int>(taskList.localId.value),
+                        parentTaskId: hasUnresolvedLocalStructure
+                            ? const Value<int?>.absent()
+                            : Value<int?>(parentId?.value),
                         title: hasUnresolvedLocalContent
                             ? const Value<String>.absent()
                             : Value<String>(item.title),
@@ -730,12 +752,16 @@ final class DatabaseReadSyncStore implements SyncStore {
                         dueEpochDay: hasUnresolvedLocalContent
                             ? const Value<int?>.absent()
                             : Value<int?>(_epochDay(due)),
-                        position: Value<String>(item.position),
-                        projection: Value<String>(
-                          protectedByDelete
-                              ? CacheProjection.deleted.name
-                              : CacheProjection.supported.name,
-                        ),
+                        position: hasUnresolvedLocalStructure
+                            ? const Value<String>.absent()
+                            : Value<String>(item.position),
+                        projection: hasUnresolvedLocalStructure
+                            ? const Value<String>.absent()
+                            : Value<String>(
+                                protectedByDelete
+                                    ? CacheProjection.deleted.name
+                                    : CacheProjection.supported.name,
+                              ),
                       ),
                     );
                 writes += 1;

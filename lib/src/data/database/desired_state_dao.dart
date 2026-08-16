@@ -92,6 +92,8 @@ final class TaskDesiredStateRecord {
     required this.taskId,
     required this.taskListId,
     required this.parentTaskId,
+    required this.contentDirty,
+    required this.structureDirty,
     required this.title,
     required this.notes,
     required this.status,
@@ -118,6 +120,8 @@ final class TaskDesiredStateRecord {
   final TaskId taskId;
   final TaskListId taskListId;
   final TaskId? parentTaskId;
+  final bool contentDirty;
+  final bool structureDirty;
   final String title;
   final String? notes;
   final TaskStatus status;
@@ -1236,6 +1240,116 @@ final class DesiredStateDao {
     return _mapTask(await _taskQuery(accountId, taskId).getSingle());
   }
 
+  Future<TaskDesiredStateRecord> writeTaskStructure({
+    required AccountId accountId,
+    required TaskId taskId,
+    required TaskListId taskListId,
+    required TaskId? parentTaskId,
+    required String title,
+    required String? notes,
+    required TaskStatus status,
+    required TaskDate? due,
+    required DateTime modifiedAt,
+  }) async {
+    final existing = await _taskQuery(accountId, taskId).getSingleOrNull();
+    final sequence = await _nextCausalSequence(accountId);
+    final int desiredStateId;
+    if (existing == null) {
+      final base =
+          await (_database.select(_database.taskRemoteBases)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.taskId.equals(taskId.value) &
+                    row.deleted.equals(false),
+              ))
+              .getSingleOrNull();
+      if (base == null) {
+        throw const DesiredStateInvariantException(
+          'structure_without_remote_base',
+        );
+      }
+      desiredStateId = await _database
+          .into(_database.desiredStateRows)
+          .insert(
+            DesiredStateRowsCompanion.insert(
+              accountId: accountId.value,
+              targetKey: 'task:${taskId.value}',
+              resourceType: 'task',
+              targetTaskListId: const Value<int?>.absent(),
+              targetTaskId: Value<int>(taskId.value),
+              desiredLifecycle: 'present',
+              title: Value<String>(title),
+              notes: Value<String?>(notes),
+              status: Value<String>(_statusValue(status)),
+              dueEpochDay: Value<int?>(_epochDay(due)),
+              desiredTaskListId: Value<int>(taskListId.value),
+              desiredParentTaskId: Value<int?>(parentTaskId?.value),
+              structureDirty: const Value<bool>(true),
+              generation: 1,
+              localCausalSequence: sequence,
+              state: _stateValue(DesiredStateLifecycle.pending),
+              baseRemoteId: Value<String>(base.remoteId),
+              baseEtag: Value<String?>(base.etag),
+              baseRemoteUpdatedAt: Value<DateTime?>(base.remoteUpdatedAt),
+              baseObservedPublicationId: Value<String>(
+                base.observedPublicationId,
+              ),
+              baseTitle: Value<String?>(base.title),
+              baseNotes: Value<String?>(base.notes),
+              baseStatus: Value<String?>(base.status),
+              baseDueEpochDay: Value<int?>(base.dueEpochDay),
+              createdAt: modifiedAt.toUtc(),
+              lastTransitionAt: modifiedAt.toUtc(),
+            ),
+          );
+    } else {
+      desiredStateId = existing.id;
+      await (_database.update(_database.desiredStateRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.id.equals(existing.id),
+          ))
+          .write(
+            DesiredStateRowsCompanion(
+              desiredLifecycle: const Value<String>('present'),
+              title: Value<String>(title),
+              notes: Value<String?>(notes),
+              status: Value<String>(_statusValue(status)),
+              dueEpochDay: Value<int?>(_epochDay(due)),
+              desiredTaskListId: Value<int>(taskListId.value),
+              desiredParentTaskId: Value<int?>(parentTaskId?.value),
+              structureDirty: const Value<bool>(true),
+              generation: Value<int>(existing.generation + 1),
+              localCausalSequence: Value<int>(sequence),
+              state: Value<String>(_stateValue(DesiredStateLifecycle.pending)),
+              failureCode: const Value<String?>(null),
+              lastTransitionAt: Value<DateTime>(modifiedAt.toUtc()),
+            ),
+          );
+    }
+    await (_database.delete(_database.desiredStateDependencyRows)..where(
+          (row) =>
+              row.accountId.equals(accountId.value) &
+              row.desiredStateId.equals(desiredStateId) &
+              row.dependencyKind.equals('parent_task'),
+        ))
+        .go();
+    if (parentTaskId != null) {
+      await _database
+          .into(_database.desiredStateDependencyRows)
+          .insert(
+            DesiredStateDependencyRowsCompanion.insert(
+              accountId: accountId.value,
+              desiredStateId: desiredStateId,
+              dependencyKind: 'parent_task',
+              dependsOnTaskId: Value<int>(parentTaskId.value),
+            ),
+          );
+    }
+    await _recomputeCounts(accountId);
+    return _mapTask(await _taskQuery(accountId, taskId).getSingle());
+  }
+
   Future<DesiredStateAttemptRecord> claimTaskList({
     required AccountId accountId,
     required TaskListId taskListId,
@@ -1962,6 +2076,8 @@ TaskDesiredStateRecord _mapTask(DesiredStateRow row) => TaskDesiredStateRecord(
   parentTaskId: row.desiredParentTaskId == null
       ? null
       : TaskId(row.desiredParentTaskId!),
+  contentDirty: row.contentDirty,
+  structureDirty: row.structureDirty,
   title: row.title!,
   notes: row.notes,
   status: _status(row.status),

@@ -84,6 +84,13 @@ application adapter and device-only preferences remain the S22A slice.
   desired content, causal generation, dependency rows, and unresolved counts in
   one transaction. Empty, cleared, Unicode, multiline, and date-only values are
   preserved; repeated edits retain the original confirmed base and local key.
+- Promote and demote commands validate the complete direct subtree before one
+  transaction changes the projected parent and coalesced structure facet.
+  Confirmed tasks retain their remote structure base; pending local structure
+  survives read publication and restart but is ineligible for remote MOVE until
+  the owning move/reconciliation slice. A task with children cannot be demoted,
+  and a child, deleted/unsupported parent, or cross-account/list parent is
+  rejected before any row changes.
 - A supported provisional task is projected only while an unresolved present
   task intent exists. Its non-Google `local-pending` position is local ordering
   scaffolding until a later create acknowledgement stores Google's canonical

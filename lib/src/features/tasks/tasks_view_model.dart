@@ -307,6 +307,23 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       );
 
+  Future<void> promoteTask(TaskId taskId) => _performTaskCommand(
+    () => tasksRepository.apply(
+      PromoteTaskCommand(accountId: accountId, taskId: taskId),
+    ),
+  );
+
+  Future<void> demoteTask(TaskId taskId, TaskId parentTaskId) =>
+      _performTaskCommand(
+        () => tasksRepository.apply(
+          DemoteTaskCommand(
+            accountId: accountId,
+            taskId: taskId,
+            parentTaskId: parentTaskId,
+          ),
+        ),
+      );
+
   Future<void> deleteTask(TaskId taskId) => _performTaskCommand(
     () => tasksRepository.deleteTask(
       DeleteTaskCommand(accountId: accountId, taskId: taskId),
@@ -360,6 +377,12 @@ final class TasksViewModel extends ChangeNotifier {
                   'Task titles can contain at most 1024 characters.',
                 'task.notes_too_long' =>
                   'Task notes can contain at most 8192 characters.',
+                'task.unsupported_depth' || 'task.subtree_would_exceed_depth' =>
+                  'Axiotask supports one subtask level.',
+                'task.parent_deleted' =>
+                  'A deleted task cannot become a parent.',
+                'task.parent_cross_list' || 'task.parent_cross_account' =>
+                  'The parent must be in the same Google task list.',
                 _ => 'The task could not be saved safely.',
               },
             ),

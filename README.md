@@ -34,9 +34,15 @@ offers Undo from that durable state for exactly 30 seconds, and cannot issue a
 Google DELETE during the grace window even on Refresh or restart. Expiry strips
 the content snapshot and schedules authoritative deletion with positive task
 tombstone verification. List deletion has an explicit irreversible
-confirmation and no Undo. Move/reorder, general retry, bulk delete, Clear
-completed, Android lifecycle wiring, and account connection UI remain later
-slices.
+confirmation and no Undo. The task detail pane can create a direct subtask,
+promote a child, or demote a leaf beneath a valid top-level task. These local
+structure changes commit durably, survive restart, and remain pending without a
+remote MOVE; invalid deeper or cross-scope relationships fail before mutation.
+Unexpected deeper Google hierarchy keeps the last valid cache visible under an
+application failure, records decoded evidence only in sensitive development
+diagnostics, and issues no repair mutation. Remote move/reorder execution,
+general retry, bulk delete, Clear completed, Android lifecycle wiring, and
+account connection UI remain later slices.
 
 The cache stores stable local list/task identities separately from nullable,
 account-unique Google IDs and retains confirmed remote bases plus page-scope
@@ -384,6 +390,8 @@ flutter test test/domain/task_commands_test.dart
 flutter test test/domain/tasks_repository_test.dart
 flutter test test/data/database/task_lists_repository_test.dart
 flutter test test/data/database/task_edits_repository_test.dart
+flutter test test/data/database/hierarchy_repository_test.dart
+flutter test test/domain/hierarchy_policy_test.dart
 flutter test test/data/database/delete_repository_test.dart
 flutter test test/data/database/tasks_repository_test.dart
 flutter test test/data/database/sync_health_repository_test.dart
@@ -416,15 +424,16 @@ flutter test integration_test/read_slice_linux_test.dart -d linux
 flutter test integration_test/create_publish_linux_test.dart -d linux
 flutter test integration_test/update_publish_linux_test.dart -d linux
 flutter test integration_test/delete_publish_linux_test.dart -d linux
+flutter test integration_test/hierarchy_commands_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```
 
 Capture the isolated synthetic Linux states, including pending provisional list
-and task creates, stopped list/task content edits, active Stop, and stopped
-Resume controls, into the ignored `screenshots/actual/` directory, then inspect
-each PNG:
+and task creates, stopped list/task content edits, active Stop, stopped Resume,
+hierarchy controls, and protected-depth failure, into the ignored
+`screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh
