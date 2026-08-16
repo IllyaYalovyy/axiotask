@@ -411,6 +411,15 @@ dispatch, failure retention, complete confirmation, reschedule/move routes,
 result copy, and platform back. The isolated Linux integration commits two
 tasks together and reopens the database before asserting all exact counts.
 
+S28B extends those suites with destructive `PAR-BULK-002` and `PAR-TASK-008`
+coverage: hierarchy-root normalization, exact one-group counts, all-or-none
+Undo under missing snapshot evidence, the 29.999/30.000-second restart
+boundary, refresh gating, partial remote deletion, confirmation cancel, and
+unrelated-list safety. Clear-completed cases retain a completed parent and its
+unfinished child while deleting independent eligible completed roots without
+offering Undo. The isolated Linux integration reopens one temporary database
+before grouped Undo and uses only synthetic resources.
+
 ### 6. ViewModel tests
 
 ViewModels are tested with fake repositories and immutable snapshots. Tests
@@ -580,6 +589,14 @@ captures at 1280×720. The reviewed images show two selected rows, visible
 non-destructive commands, explicit all-or-none local confirmation, exact
 confirmed/pending/failed Google-resource counts, and truthful non-green sync
 health using only fixed synthetic data.
+
+S28B adds curated `bulk_delete_undo_light` and
+`clear_completed_confirmation_dark` goldens plus matching ignored
+`bulk-delete-undo-light.png` and `clear-completed-confirmation-dark.png` Fedora
+captures at 1280×720. The reviewed group image shows one selected-count banner
+and one “Undo all” action; the Clear image states that the action has no Undo
+and that the unsafe completed parent is retained. Both use fixed synthetic
+content only.
 
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account

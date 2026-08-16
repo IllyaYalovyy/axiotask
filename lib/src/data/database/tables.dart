@@ -403,6 +403,41 @@ class DesiredStateRows extends Table {
   ];
 }
 
+class TaskDeleteGroupRows extends Table {
+  @override
+  String get tableName => 'task_delete_groups';
+
+  IntColumn get id => integer().autoIncrement()();
+
+  IntColumn get accountId => integer()();
+
+  IntColumn get selectedCount =>
+      integer().check(selectedCount.isBiggerThanValue(0))();
+
+  IntColumn get rootCount => integer().check(rootCount.isBiggerThanValue(0))();
+
+  IntColumn get snapshotCount =>
+      integer().check(snapshotCount.isBiggerThanValue(0))();
+
+  DateTimeColumn get notBefore => dateTime()();
+
+  BoolColumn get snapshotAvailable => boolean()();
+
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => <Set<Column<Object>>>[
+    <Column<Object>>{accountId, id},
+  ];
+
+  @override
+  List<String> get customConstraints => <String>[
+    'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
+    'CHECK (root_count <= selected_count)',
+    'CHECK (root_count <= snapshot_count)',
+  ];
+}
+
 class TaskDeleteTombstoneRows extends Table {
   @override
   String get tableName => 'task_delete_tombstones';
@@ -412,6 +447,8 @@ class TaskDeleteTombstoneRows extends Table {
   IntColumn get accountId => integer()();
 
   IntColumn get rootTaskId => integer()();
+
+  IntColumn get groupId => integer().nullable()();
 
   IntColumn get desiredStateId => integer()();
 
@@ -434,6 +471,8 @@ class TaskDeleteTombstoneRows extends Table {
     'FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE',
     'FOREIGN KEY (account_id, root_task_id) '
         'REFERENCES tasks(account_id, id) ON DELETE CASCADE',
+    'FOREIGN KEY (account_id, group_id) '
+        'REFERENCES task_delete_groups(account_id, id)',
     'FOREIGN KEY (account_id, desired_state_id) '
         'REFERENCES desired_states(account_id, id) ON DELETE CASCADE',
   ];
@@ -554,7 +593,13 @@ class BulkOperationRows extends Table {
   IntColumn get accountId => integer()();
 
   TextColumn get kind => text().check(
-    kind.isIn(const <String>['complete', 'reschedule', 'move']),
+    kind.isIn(const <String>[
+      'complete',
+      'reschedule',
+      'move',
+      'delete',
+      'clearCompleted',
+    ]),
   )();
 
   IntColumn get selectedCount =>

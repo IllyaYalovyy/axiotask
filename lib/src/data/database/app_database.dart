@@ -21,6 +21,7 @@ part 'app_database.g.dart';
     DesiredStateDependencyRows,
     DesiredStateAttemptRows,
     SyncRunRows,
+    TaskDeleteGroupRows,
     TaskDeleteTombstoneRows,
     TaskDeleteSnapshotRows,
     TaskDueChangeGroupRows,

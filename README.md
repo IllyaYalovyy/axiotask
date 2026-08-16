@@ -74,9 +74,8 @@ placement wins without replay while content edits remain independent. Invalid
 deeper, missing-anchor, or cross-scope relationships fail before mutation.
 Unexpected deeper Google hierarchy keeps the last valid cache visible under an
 application failure, records decoded evidence only in sensitive development
-diagnostics, and issues no repair mutation. General retry, bulk delete, Clear
-completed, Android lifecycle wiring, and
-account connection UI remain later slices.
+diagnostics, and issues no repair mutation. General retry, Android lifecycle
+wiring, and account connection UI remain later slices.
 
 The desktop collection also provides one-line quick capture with an explicit
 Google-list target. A terminal ISO date or the exact today, tomorrow, next week,
@@ -95,12 +94,17 @@ then follows ordinary ordered Google create publication with honest pending or
 failed sync health.
 
 The desktop collection supports transient multi-select complete, reschedule,
-and cross-list move. It validates the entire selection and acknowledges every
-affected local projection/desired generation in one transaction or none. A
+cross-list move, and delete. It validates the entire selection and acknowledges
+every affected local projection/desired generation in one transaction or none. A
 durable result reports exact confirmed, pending, and failed Google-resource
-counts across restart; confirmed remote successes are never rolled back. A
+counts across restart; confirmed remote successes are never rolled back. Bulk
+delete creates one durable 30-second Undo group whose complete task/subtree
+snapshot restores all selected delete roots or none, including after restart. A
 parent plus selected child is one independent MOVE, while due consistency still
-records every affected row. Bulk delete and Clear completed remain later work.
+records every affected row. Clear completed is a separate confirmed action for
+the selected Google list: it has no Undo, deletes eligible completed subtrees
+immediately, and preserves every completed parent that still has an unfinished
+child.
 
 Search finds supported cached tasks by title or notes without crossing account
 or protected-data boundaries. A matching subtask is labeled beneath its parent
@@ -584,9 +588,9 @@ states, plus keyboard-focused light/dark quick-capture previews and validated
 light/dark bulk-capture preview/result states and title/notes search with child
 parent context, plus Fedora desktop interactions at 1024×720 light and
 1280×720 dark, plus an in-progress light drag preview and dark canonical
-drag-failure recovery, plus bulk-operation selection, exact result, and local
-confirmation states, into the ignored
-`screenshots/actual/` directory, then inspect each PNG:
+drag-failure recovery, plus bulk-operation selection, exact result, local
+confirmation, grouped-delete Undo, and Clear-completed confirmation states,
+into the ignored `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash
 ./scripts/capture_linux_health_screenshots.sh

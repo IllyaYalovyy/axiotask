@@ -30,6 +30,20 @@ final class TaskDeleteTombstoneRecord {
   final List<TaskId> snapshotTaskIds;
 }
 
+final class TaskDeleteGroupRecord {
+  TaskDeleteGroupRecord({
+    required this.id,
+    required this.selectedCount,
+    required this.notBefore,
+    required List<TaskDeleteTombstoneRecord> members,
+  }) : members = List<TaskDeleteTombstoneRecord>.unmodifiable(members);
+
+  final int id;
+  final int selectedCount;
+  final DateTime notBefore;
+  final List<TaskDeleteTombstoneRecord> members;
+}
+
 enum DeleteResourceType { taskList, task }
 
 final class DeleteCandidate {
@@ -67,6 +81,8 @@ final class DeleteStateDao {
     required AccountId accountId,
     required TaskId rootTaskId,
     required DateTime acknowledgedAt,
+    int? groupId,
+    bool undoable = true,
   }) {
     return _database.transaction(() async {
       final root =
@@ -124,7 +140,9 @@ final class DeleteStateDao {
               ))
               .getSingleOrNull();
       final now = acknowledgedAt.toUtc();
-      final notBefore = const TaskDeletePolicy().notBefore(now);
+      final notBefore = undoable
+          ? const TaskDeletePolicy().notBefore(now)
+          : now;
       final sequence = await _nextCausalSequence(accountId);
       final int desiredStateId;
       final int generation;
@@ -216,10 +234,11 @@ final class DeleteStateDao {
             TaskDeleteTombstoneRowsCompanion.insert(
               accountId: accountId.value,
               rootTaskId: rootTaskId.value,
+              groupId: Value<int?>(groupId),
               desiredStateId: desiredStateId,
               deleteGeneration: generation,
               notBefore: notBefore,
-              snapshotAvailable: true,
+              snapshotAvailable: undoable,
               createdAt: now,
             ),
           );
@@ -234,11 +253,11 @@ final class DeleteStateDao {
                 taskListId: task.taskListId,
                 parentTaskId: Value<int?>(task.parentTaskId),
                 remoteId: Value<String?>(task.remoteId),
-                title: task.title,
-                notes: Value<String?>(task.notes),
-                status: task.status,
-                dueEpochDay: Value<int?>(task.dueEpochDay),
-                position: task.position,
+                title: undoable ? task.title : '',
+                notes: Value<String?>(undoable ? task.notes : null),
+                status: undoable ? task.status : 'needs_action',
+                dueEpochDay: Value<int?>(undoable ? task.dueEpochDay : null),
+                position: undoable ? task.position : 'irreversible-delete',
               ),
             );
       }
@@ -252,6 +271,87 @@ final class DeleteStateDao {
           );
       await DesiredStateDao(_database).recomputeCounts(accountId);
       return (await readTaskDelete(accountId, rootTaskId))!;
+    });
+  }
+
+  Future<TaskDeleteGroupRecord> createTaskDeleteGroup({
+    required AccountId accountId,
+    required List<TaskId> rootTaskIds,
+    required int selectedCount,
+    required DateTime acknowledgedAt,
+  }) {
+    return _database.transaction(() async {
+      if (rootTaskIds.isEmpty || selectedCount < rootTaskIds.length) {
+        throw const DeleteStateException('delete_group_invalid');
+      }
+      final rootValues = rootTaskIds.map((id) => id.value).toList();
+      final subtree =
+          await (_database.select(_database.taskCacheRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.projection.equals('supported') &
+                    (row.id.isIn(rootValues) |
+                        row.parentTaskId.isIn(rootValues)),
+              ))
+              .get();
+      if (subtree.where((row) => rootValues.contains(row.id)).length !=
+              rootTaskIds.length ||
+          subtree.isEmpty) {
+        throw const DeleteStateException('delete_group_invalid');
+      }
+      final now = acknowledgedAt.toUtc();
+      final notBefore = const TaskDeletePolicy().notBefore(now);
+      final groupId = await _database
+          .into(_database.taskDeleteGroupRows)
+          .insert(
+            TaskDeleteGroupRowsCompanion.insert(
+              accountId: accountId.value,
+              selectedCount: selectedCount,
+              rootCount: rootTaskIds.length,
+              snapshotCount: subtree.length,
+              notBefore: notBefore,
+              snapshotAvailable: true,
+              createdAt: now,
+            ),
+          );
+      final members = <TaskDeleteTombstoneRecord>[];
+      for (final rootTaskId in rootTaskIds) {
+        members.add(
+          await createTaskDelete(
+            accountId: accountId,
+            rootTaskId: rootTaskId,
+            acknowledgedAt: now,
+            groupId: groupId,
+          ),
+        );
+      }
+      return TaskDeleteGroupRecord(
+        id: groupId,
+        selectedCount: selectedCount,
+        notBefore: notBefore,
+        members: members,
+      );
+    });
+  }
+
+  Future<List<TaskDeleteTombstoneRecord>> createImmediateTaskDeletes({
+    required AccountId accountId,
+    required List<TaskId> rootTaskIds,
+    required DateTime acknowledgedAt,
+  }) {
+    return _database.transaction(() async {
+      final members = <TaskDeleteTombstoneRecord>[];
+      for (final rootTaskId in rootTaskIds) {
+        members.add(
+          await createTaskDelete(
+            accountId: accountId,
+            rootTaskId: rootTaskId,
+            acknowledgedAt: acknowledgedAt,
+            undoable: false,
+          ),
+        );
+      }
+      return members;
     });
   }
 
@@ -344,6 +444,89 @@ final class DeleteStateDao {
         _database.taskDeleteTombstoneRows,
       )..where((row) => row.id.equals(tombstone.id))).go();
       await desiredDao.recomputeCounts(accountId);
+    });
+  }
+
+  Future<void> undoTaskDeleteGroup({
+    required AccountId accountId,
+    required int groupId,
+    required DateTime now,
+  }) {
+    return _database.transaction(() async {
+      final group =
+          await (_database.select(_database.taskDeleteGroupRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.id.equals(groupId),
+              ))
+              .getSingleOrNull();
+      if (group == null ||
+          !group.snapshotAvailable ||
+          !const TaskDeletePolicy().isUndoAvailable(
+            now: now,
+            notBefore: group.notBefore,
+          )) {
+        throw const DeleteStateException('delete_group_undo_unavailable');
+      }
+      final tombstones =
+          await (_database.select(_database.taskDeleteTombstoneRows)..where(
+                (row) =>
+                    row.accountId.equals(accountId.value) &
+                    row.groupId.equals(groupId),
+              ))
+              .get();
+      if (tombstones.length != group.rootCount) {
+        throw const DeleteStateException('delete_group_incomplete');
+      }
+      final snapshotCountExpression = _database.taskDeleteSnapshotRows.id
+          .count();
+      final snapshotCount =
+          await (_database.selectOnly(_database.taskDeleteSnapshotRows)
+                ..addColumns(<Expression<Object>>[snapshotCountExpression])
+                ..where(
+                  _database.taskDeleteSnapshotRows.accountId.equals(
+                        accountId.value,
+                      ) &
+                      _database.taskDeleteSnapshotRows.tombstoneId.isIn(
+                        tombstones.map((row) => row.id).toList(),
+                      ),
+                ))
+              .getSingle();
+      if (tombstones.any(
+            (row) =>
+                !row.snapshotAvailable ||
+                row.notBefore.toUtc() != group.notBefore.toUtc(),
+          ) ||
+          snapshotCount.read(snapshotCountExpression) != group.snapshotCount) {
+        throw const DeleteStateException('delete_group_incomplete');
+      }
+      for (final tombstone in tombstones) {
+        final desired =
+            await (_database.select(_database.desiredStateRows)..where(
+                  (row) =>
+                      row.accountId.equals(accountId.value) &
+                      row.id.equals(tombstone.desiredStateId) &
+                      row.generation.equals(tombstone.deleteGeneration) &
+                      row.desiredLifecycle.equals('deleted') &
+                      row.state.equals('pending'),
+                ))
+                .getSingleOrNull();
+        if (desired == null) {
+          throw const DeleteStateException('delete_group_already_dispatched');
+        }
+      }
+      for (final tombstone in tombstones) {
+        await undoTaskDelete(
+          accountId: accountId,
+          rootTaskId: TaskId(tombstone.rootTaskId),
+          now: now,
+        );
+      }
+      await (_database.delete(_database.taskDeleteGroupRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) & row.id.equals(groupId),
+          ))
+          .go();
     });
   }
 
@@ -543,6 +726,18 @@ final class DeleteStateDao {
               .go();
         }
       }
+      await (_database.update(_database.taskDeleteGroupRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.snapshotAvailable.equals(true) &
+                row.notBefore.isSmallerOrEqualValue(now.toUtc()),
+          ))
+          .write(
+            const TaskDeleteGroupRowsCompanion(
+              snapshotAvailable: Value<bool>(false),
+            ),
+          );
+      await _deleteFinishedTaskDeleteGroups(accountId);
       if (expired.isNotEmpty) {
         await DesiredStateDao(_database).recomputeCounts(accountId);
       }
@@ -609,6 +804,35 @@ final class DeleteStateDao {
             (row) => TaskDeleteUndo(
               taskId: TaskId(row.read<int>('root_task_id')),
               title: row.read<String>('title'),
+              notBefore: row.read<DateTime>('not_before').toUtc(),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Stream<List<TaskDeleteGroupUndo>> watchAvailableTaskGroupUndos(
+    AccountId accountId,
+  ) {
+    final query = _database.customSelect(
+      '''
+      SELECT id, selected_count, root_count, not_before
+      FROM task_delete_groups
+      WHERE account_id = ?1 AND snapshot_available = 1
+      ORDER BY created_at DESC, id DESC
+      ''',
+      variables: <Variable<Object>>[Variable<int>(accountId.value)],
+      readsFrom: <ResultSetImplementation<Table, Object?>>{
+        _database.taskDeleteGroupRows,
+      },
+    );
+    return query.watch().map(
+      (rows) => rows
+          .map(
+            (row) => TaskDeleteGroupUndo(
+              groupId: row.read<int>('id'),
+              selectedCount: row.read<int>('selected_count'),
+              rootCount: row.read<int>('root_count'),
               notBefore: row.read<DateTime>('not_before').toUtc(),
             ),
           )
@@ -818,6 +1042,7 @@ final class DeleteStateDao {
               .go();
         }
       }
+      await _deleteFinishedTaskDeleteGroups(accountId);
 
       final liveDeleteTargets = await _database
           .customSelect(
@@ -983,7 +1208,26 @@ final class DeleteStateDao {
                 row.rootTaskId.equals(claim.taskId!.value),
           ))
           .go();
+      await _deleteFinishedTaskDeleteGroups(accountId);
     });
+  }
+
+  Future<void> _deleteFinishedTaskDeleteGroups(AccountId accountId) async {
+    await _database.customStatement(
+      '''
+      DELETE FROM task_delete_groups
+      WHERE account_id = ?1
+        AND snapshot_available = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM task_delete_tombstones
+          WHERE task_delete_tombstones.account_id =
+                task_delete_groups.account_id
+            AND task_delete_tombstones.group_id = task_delete_groups.id
+        )
+      ''',
+      <Object?>[accountId.value],
+    );
   }
 
   Future<int> _nextCausalSequence(AccountId accountId) async {

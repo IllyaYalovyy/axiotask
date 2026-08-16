@@ -67,7 +67,9 @@ final class _HealthScreenshotSequenceState
           _viewModel.beginBulkSelection(const TaskId(11));
           _viewModel.toggleBulkSelection(const TaskId(13));
         } else if (!scenario.name.startsWith('search-results-') &&
-            scenario.name != 'bulk-operation-result-dark') {
+            scenario.name != 'bulk-operation-result-dark' &&
+            scenario.name != 'bulk-delete-undo-light' &&
+            scenario.name != 'clear-completed-confirmation-dark') {
           _viewModel.selectTask(const TaskId(11));
         }
         await _settleFrames();
@@ -77,6 +79,10 @@ final class _HealthScreenshotSequenceState
         }
         if (scenario.name == 'bulk-operation-confirmation-light') {
           _pressButton(const Key('bulk-complete-open'));
+          await _settleFrames();
+        }
+        if (scenario.name == 'clear-completed-confirmation-dark') {
+          _pressButton(const Key('clear-completed-open'));
           await _settleFrames();
         }
         if (scenario.name == 'delete-list-confirmation') {
@@ -269,41 +275,57 @@ final class _HealthScreenshotSequenceState
 
 TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   accountId: const AccountId(1),
-  tasksRepository: _ScreenshotTasksRepository(
-    scenario.snapshot,
-    bulkSummary: scenario.name == 'bulk-operation-result-dark'
-        ? _bulkScreenshotSummary
-        : null,
-    failMoves: scenario.name == 'drag-failure-dark',
-    undos: scenario.name == 'delete-undo'
-        ? <TaskDeleteUndo>[
-            TaskDeleteUndo(
-              taskId: const TaskId(11),
-              title: 'Cached synthetic task',
-              notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
-            ),
-          ]
-        : const <TaskDeleteUndo>[],
-    dueUndos: scenario.name.startsWith('task-workflows-')
-        ? <TaskDueChangeUndo>[
-            TaskDueChangeUndo(
-              groupId: 41,
-              editedTaskId: const TaskId(11),
-              editedTaskTitle: 'Plan the synthetic release',
-              cascadedCount: 2,
-              cascadedParent: false,
-              createdAt: DateTime.utc(2026, 8, 15, 12),
-            ),
-          ]
-        : const <TaskDueChangeUndo>[],
-  ),
+  tasksRepository:
+      scenario.name == 'bulk-delete-undo-light' ||
+          scenario.name == 'clear-completed-confirmation-dark'
+      ? _DestructiveScreenshotTasksRepository(
+          scenario.snapshot,
+          groupUndos: scenario.name == 'bulk-delete-undo-light'
+              ? <TaskDeleteGroupUndo>[
+                  TaskDeleteGroupUndo(
+                    groupId: 51,
+                    selectedCount: 2,
+                    rootCount: 2,
+                    notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+                  ),
+                ]
+              : const <TaskDeleteGroupUndo>[],
+        )
+      : _ScreenshotTasksRepository(
+          scenario.snapshot,
+          bulkSummary: scenario.name == 'bulk-operation-result-dark'
+              ? _bulkScreenshotSummary
+              : null,
+          failMoves: scenario.name == 'drag-failure-dark',
+          undos: scenario.name == 'delete-undo'
+              ? <TaskDeleteUndo>[
+                  TaskDeleteUndo(
+                    taskId: const TaskId(11),
+                    title: 'Cached synthetic task',
+                    notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+                  ),
+                ]
+              : const <TaskDeleteUndo>[],
+          dueUndos: scenario.name.startsWith('task-workflows-')
+              ? <TaskDueChangeUndo>[
+                  TaskDueChangeUndo(
+                    groupId: 41,
+                    editedTaskId: const TaskId(11),
+                    editedTaskTitle: 'Plan the synthetic release',
+                    cascadedCount: 2,
+                    cascadedParent: false,
+                    createdAt: DateTime.utc(2026, 8, 15, 12),
+                  ),
+                ]
+              : const <TaskDueChangeUndo>[],
+        ),
   taskListsRepository: const _ScreenshotTaskListsRepository(),
   preferencesRepository: const _ScreenshotPreferencesRepository(),
   syncHealthRepository: _ScreenshotHealthRepository(scenario.health),
   clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
 );
 
-final class _ScreenshotTasksRepository
+class _ScreenshotTasksRepository
     implements
         TasksRepository,
         BulkTasksRepository,
@@ -404,6 +426,46 @@ final class _ScreenshotTasksRepository
   ) async => const Outcome<void>.success(null);
 }
 
+final class _DestructiveScreenshotTasksRepository
+    extends _ScreenshotTasksRepository
+    implements DestructiveTaskOperationsRepository {
+  const _DestructiveScreenshotTasksRepository(
+    super.snapshot, {
+    this.groupUndos = const <TaskDeleteGroupUndo>[],
+  });
+
+  final List<TaskDeleteGroupUndo> groupUndos;
+
+  @override
+  Stream<List<TaskDeleteGroupUndo>> watchUndoableTaskDeleteGroups(
+    AccountId accountId,
+  ) => Stream.value(groupUndos);
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> clearCompleted(
+    ClearCompletedTasksCommand command,
+  ) async => Outcome.success(
+    BulkOperationReceipt(
+      summary: BulkOperationSummary(
+        operationId: 52,
+        kind: BulkOperationKind.clearCompleted,
+        selectedCount: 1,
+        affectedCount: 1,
+        confirmedCount: 0,
+        pendingCount: 1,
+        failedCount: 0,
+        createdAt: DateTime.utc(2026, 8, 15, 12),
+      ),
+      taskIds: const <TaskId>[TaskId(13)],
+    ),
+  );
+
+  @override
+  Future<Outcome<void>> undoTaskDeleteGroup(
+    UndoTaskDeleteGroupCommand command,
+  ) async => const Outcome<void>.success(null);
+}
+
 final class _ScreenshotTaskListsRepository implements TaskListsRepository {
   const _ScreenshotTaskListsRepository();
 
@@ -499,6 +561,24 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'bulk-delete-undo-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 2),
+    ),
+  ),
+  (
+    name: 'clear-completed-confirmation-dark',
+    snapshot: _clearCompletedSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
   (
     name: 'bulk-operation-selection-light',
     snapshot: _smartViewsSnapshot,
@@ -1169,6 +1249,54 @@ final _smartViewsSnapshot = CachedTasksSnapshot(
       notes: null,
       status: TaskStatus.needsAction,
       due: TaskDate(2026, 9, 15),
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _clearCompletedSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: const <CachedTaskList>[
+    CachedTaskList(
+      id: TaskListId(7),
+      accountId: AccountId(1),
+      remoteId: TaskListRemoteId('synthetic-clear-list'),
+      title: 'Safety review',
+    ),
+  ],
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(31),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-clear-parent'),
+      title: 'Completed parent kept safely',
+      notes: null,
+      status: TaskStatus.completed,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(32),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(31),
+      remoteId: TaskRemoteId('synthetic-clear-child'),
+      title: 'Unfinished child remains',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(33),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-clear-leaf'),
+      title: 'Completed leaf is selected',
+      notes: null,
+      status: TaskStatus.completed,
+      due: null,
     ),
   ],
   completeness: CacheCompleteness.complete,

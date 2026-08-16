@@ -36,3 +36,15 @@ abstract interface class BulkTaskOperationsRepository {
     BulkExistingTaskCommand command,
   );
 }
+
+abstract interface class DestructiveTaskOperationsRepository {
+  Stream<List<TaskDeleteGroupUndo>> watchUndoableTaskDeleteGroups(
+    AccountId accountId,
+  );
+
+  Future<Outcome<BulkOperationReceipt>> clearCompleted(
+    ClearCompletedTasksCommand command,
+  );
+
+  Future<Outcome<void>> undoTaskDeleteGroup(UndoTaskDeleteGroupCommand command);
+}

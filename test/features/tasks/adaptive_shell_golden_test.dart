@@ -417,6 +417,92 @@ void main() {
       matchesGoldenFile('../../goldens/linux/bulk_confirmation_light.png'),
     );
   });
+
+  testWidgets('Linux grouped bulk delete Undo light', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _DestructiveGoldenTasksRepository(
+        groupUndos: <TaskDeleteGroupUndo>[
+          TaskDeleteGroupUndo(
+            groupId: 51,
+            selectedCount: 2,
+            rootCount: 2,
+            notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+          ),
+        ],
+      ),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.localChanges,
+          counts: const SyncWorkCounts(pending: 2),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await expectLater(
+      find.byType(AdaptiveShell),
+      matchesGoldenFile('../../goldens/linux/bulk_delete_undo_light.png'),
+    );
+  });
+
+  testWidgets('Linux Clear completed confirmation dark', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: const _DestructiveGoldenTasksRepository(),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.localChanges,
+          counts: const SyncWorkCounts(pending: 1),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('clear-completed-open')));
+    await tester.pumpAndSettle();
+
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile(
+        '../../goldens/linux/clear_completed_confirmation_dark.png',
+      ),
+    );
+  });
 }
 
 Future<void> _loadFlutterRoboto() async {
@@ -581,7 +667,7 @@ final class _GoldenHealthRepository implements SyncHealthRepository {
   Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(health);
 }
 
-final class _BulkGoldenTasksRepository
+class _BulkGoldenTasksRepository
     implements TasksRepository, BulkTaskOperationsRepository {
   const _BulkGoldenTasksRepository({this.summary});
 
@@ -638,6 +724,47 @@ final class _BulkGoldenTasksRepository
   Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
     AccountId accountId,
   ) => _delegate.watchUndoableTaskDueChanges(accountId);
+}
+
+final class _DestructiveGoldenTasksRepository extends _BulkGoldenTasksRepository
+    implements DestructiveTaskOperationsRepository {
+  const _DestructiveGoldenTasksRepository({this.groupUndos = const []});
+
+  final List<TaskDeleteGroupUndo> groupUndos;
+  static const _clearDelegate = _GoldenTasksRepository();
+
+  @override
+  Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
+      _clearDelegate.watchTasks(query);
+
+  @override
+  Stream<List<TaskDeleteGroupUndo>> watchUndoableTaskDeleteGroups(
+    AccountId accountId,
+  ) => Stream.value(groupUndos);
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> clearCompleted(
+    ClearCompletedTasksCommand command,
+  ) async => Outcome.success(
+    BulkOperationReceipt(
+      summary: BulkOperationSummary(
+        operationId: 52,
+        kind: BulkOperationKind.clearCompleted,
+        selectedCount: 1,
+        affectedCount: 1,
+        confirmedCount: 0,
+        pendingCount: 1,
+        failedCount: 0,
+        createdAt: DateTime.utc(2026, 8, 15, 12),
+      ),
+      taskIds: const <TaskId>[TaskId(13)],
+    ),
+  );
+
+  @override
+  Future<Outcome<void>> undoTaskDeleteGroup(
+    UndoTaskDeleteGroupCommand command,
+  ) async => const Outcome.success(null);
 }
 
 final _bulkGoldenSummary = BulkOperationSummary(

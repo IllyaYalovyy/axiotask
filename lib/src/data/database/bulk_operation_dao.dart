@@ -3,13 +3,17 @@ import 'package:drift/drift.dart';
 import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/tasks.dart';
 import 'app_database.dart';
-import 'desired_state_dao.dart';
 
 final class BulkOperationMemberInput {
-  const BulkOperationMemberInput({required this.taskId, required this.desired});
+  const BulkOperationMemberInput({
+    required this.taskId,
+    required this.desiredStateId,
+    required this.generation,
+  });
 
   final TaskId taskId;
-  final TaskDesiredStateRecord desired;
+  final int desiredStateId;
+  final int generation;
 }
 
 final class BulkOperationDao {
@@ -46,8 +50,8 @@ final class BulkOperationDao {
               accountId: accountId.value,
               operationId: operationId,
               taskId: member.taskId.value,
-              desiredStateId: member.desired.id,
-              generation: member.desired.generation,
+              desiredStateId: member.desiredStateId,
+              generation: member.generation,
               outcome: 'pending',
             ),
           );
@@ -112,5 +116,7 @@ BulkOperationKind _kind(String value) => switch (value) {
   'complete' => BulkOperationKind.complete,
   'reschedule' => BulkOperationKind.reschedule,
   'move' => BulkOperationKind.move,
+  'delete' => BulkOperationKind.delete,
+  'clearCompleted' => BulkOperationKind.clearCompleted,
   _ => throw StateError('unknown_bulk_operation_kind'),
 };

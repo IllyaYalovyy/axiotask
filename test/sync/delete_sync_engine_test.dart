@@ -17,6 +17,7 @@ import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
+import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/run.dart';
@@ -278,6 +279,78 @@ void main() {
           seeded.secondListRemoteId!,
         ]),
       );
+    },
+  );
+
+  test(
+    'PAR-BULK-002 remote partial delete keeps exact durable counts',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axiotask-bulk-delete-outcomes-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/isolated.sqlite');
+      final backend = FakeGoogleTasksService();
+      addTearDown(backend.close);
+      final remote = _RejectFirstDeleteService(backend);
+      var harness = await _DeleteHarness.openFile(
+        file,
+        remote,
+        subject,
+        startedAt,
+      );
+      addTearDown(() => harness.close());
+      final seeded = await harness.seed();
+      final secondRemote = switch (await backend.createTask(
+        CreateTaskOperation(
+          taskListId: seeded.listRemoteId,
+          title: 'Second grouped delete',
+          status: RemoteTaskStatus.needsAction,
+        ),
+      )) {
+        CommittedMutation<RemoteTask>(value: final RemoteLiveTask value) =>
+          value,
+        _ => throw StateError('Synthetic second delete setup failed.'),
+      };
+      await harness.run();
+      final secondTask = (await harness.snapshot()).tasks
+          .singleWhere((task) => task.remoteId?.value == secondRemote.id.value)
+          .id;
+      final repository = DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      );
+      final local = await repository.applyBulk(
+        BulkDeleteTasksCommand(
+          accountId: harness.accountId,
+          taskIds: <TaskId>{seeded.parent, secondTask},
+        ),
+      );
+      expect(
+        (local as Success<BulkOperationReceipt>).value.summary.pendingCount,
+        2,
+      );
+      final refresh = await harness.run();
+      expect(refresh.outcome, SyncRunOutcome.succeeded);
+      expect(refresh.deleteOperations, 0);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 0);
+      harness.clock.advance(const Duration(seconds: 30));
+
+      final report = await harness.run();
+      final clock = harness.clock;
+      await harness.close();
+      harness = await _DeleteHarness.reopen(file, remote, subject, clock);
+      final summary = await DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      ).watchLatestBulkOperation(harness.accountId).first;
+
+      expect(report.outcome, SyncRunOutcome.failed);
+      expect(summary?.kind, BulkOperationKind.delete);
+      expect(summary?.confirmedCount, 1);
+      expect(summary?.pendingCount, 0);
+      expect(summary?.failedCount, 1);
+      expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
     },
   );
 
@@ -671,7 +744,7 @@ final class _Seeded {
   final RemoteTaskListId? secondListRemoteId;
 }
 
-final class _UncertainDeleteService
+class _UncertainDeleteService
     implements GoogleTasksService, GoogleTasksRecoveryService {
   _UncertainDeleteService(this.delegate);
 
@@ -775,6 +848,27 @@ final class _UncertainDeleteService
   void close() {}
 }
 
+final class _RejectFirstDeleteService extends _UncertainDeleteService {
+  _RejectFirstDeleteService(super.delegate) {
+    loseNextTaskDeleteResponse = false;
+  }
+
+  var rejectNextTaskDelete = true;
+
+  @override
+  Future<GoogleTasksMutationResult<void>> deleteTask(
+    DeleteTaskOperation operation,
+  ) {
+    if (rejectNextTaskDelete) {
+      rejectNextTaskDelete = false;
+      return Future<GoogleTasksMutationResult<void>>.value(
+        const RejectedMutation<void>(_rejectedDeleteError),
+      );
+    }
+    return super.deleteTask(operation);
+  }
+}
+
 const Failure _uncertainDeleteFailure = Failure(
   code: 'synthetic.delete_uncertain',
   category: FailureCategory.network,
@@ -788,6 +882,21 @@ const GoogleTasksMutationError _uncertainDeleteError = GoogleTasksMutationError(
   failure: _uncertainDeleteFailure,
   kind: GoogleTasksErrorKind.transient,
   commitState: MutationCommitState.uncertain,
+);
+
+const Failure _rejectedDeleteFailure = Failure(
+  code: 'synthetic.delete_rejected',
+  category: FailureCategory.remote,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The synthetic delete did not commit.',
+  safeSummary: 'The synthetic delete was rejected.',
+);
+
+const GoogleTasksMutationError _rejectedDeleteError = GoogleTasksMutationError(
+  failure: _rejectedDeleteFailure,
+  kind: GoogleTasksErrorKind.permanent,
+  commitState: MutationCommitState.notCommitted,
 );
 
 const Failure _malformedListReadBackFailure = Failure(

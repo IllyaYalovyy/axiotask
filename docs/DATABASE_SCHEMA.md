@@ -23,11 +23,12 @@ replaced with an empty cache.
 | `desired_states` | One coalesced account/resource intent with stable local target, present/deleted lifecycle, optional bound Google ID, original confirmed whole-content base snapshot, full desired list/task fields, dirty facets, exact delete `not_before`, generation, causal sequence, and current lifecycle. S14A writes list content; S14B writes complete task content; S16 compares the preserved base during reconciliation; S17 records authoritative delete intent. |
 | `desired_state_dependencies` | Typed account-scoped ordering edges between desired resources, with composite foreign keys preventing cross-account dependencies. Provisional task creates record their list and optional parent references; list edits need no edge. |
 | `desired_state_attempts` | Immutable claimed generation/payload snapshots with present/deleted lifecycle, request identity, optional delete eligibility boundary, and durable lifecycle/failure, uncertainty, confirmation, or supersession evidence. A 412 may supersede one attempt and create a fresh attempt for the same desired generation after refetch/replan. |
-| `task_delete_tombstones` | One account/root-task durable Undo and deletion record, tied to the exact desired generation with its 30-second `not_before` boundary and snapshot-availability bit. |
+| `task_delete_groups` | One account-scoped grouped-delete Undo boundary with exact selected/root/snapshot counts, a shared 30-second `not_before`, and one snapshot-availability bit. Clear completed never creates one. |
+| `task_delete_tombstones` | One account/root-task durable deletion record, optionally owned by a grouped Undo, tied to the exact desired generation with its `not_before` boundary and snapshot-availability bit. |
 | `task_delete_snapshots` | Account-scoped bounded task/subtree snapshots preserving stable local/remote identity and supported content until Undo expiry; cleanup strips content while retaining minimal deletion/scope evidence. |
 | `task_due_change_groups` | The one currently available account-scoped grouped due Undo, with edited task, exact snapshot count, propagation direction, and durable acknowledgement time. |
 | `task_due_change_snapshots` | Account/task-owned prior date-only values for every row in the accepted due cascade; deleting a group cascades only to its snapshots. |
-| `bulk_operations` | The latest durable non-destructive bulk result per account: operation kind, selected/affected counts, exact confirmed/pending/failed counts, and acknowledgement time. |
+| `bulk_operations` | The latest durable bulk result per account: operation kind, selected/affected counts, exact confirmed/pending/failed counts, and acknowledgement time. |
 | `bulk_operation_members` | One account/task member per affected Google resource, pinned to the exact desired generation whose attempt lifecycle determines that member's durable result. |
 | `task_list_preferences` | Account/list-owned sidebar order and smart-view exclusion storage. |
 | `view_preferences` | Account/view-owned sort and completion-filter storage. |
@@ -120,6 +121,16 @@ collection renders rather than a separate SQL approximation.
   supersession, or local replacement before dispatch counts as failed. These
   counts always sum to the affected-resource count and never rewrite confirmed
   remote successes.
+- Bulk delete first normalizes selected parents and children into disjoint
+  Google delete roots. One transaction stores every tombstone and subtree
+  snapshot under one group with a shared exact 30-second boundary; Undo checks
+  the group, root, snapshot, desired-generation, and deadline counts before it
+  restores all roots or none. Expiry strips every content snapshot and makes
+  the entire group unavailable before any member can dispatch.
+- Clear completed uses no delete group and no Undo. Its list-scoped selector
+  skips a completed parent whenever an unfinished direct child exists, then one
+  transaction records immediate deletion tombstones for the remaining disjoint
+  completed roots. Other lists and every unfinished subtree remain unchanged.
 - Promote, demote, reorder, and cross-list move commands validate the complete
   direct subtree and `previous` anchor before one transaction changes the
   projection and coalesced structure facet. Desired rows and immutable attempts

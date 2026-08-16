@@ -570,6 +570,28 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                         ),
                       if (state.latestBulkOperation case final summary?)
                         _BulkOperationResultBanner(summary: summary),
+                      if (state.taskDeleteGroupUndos.firstOrNull
+                          case final undo?)
+                        MaterialBanner(
+                          key: const Key('bulk-delete-undo'),
+                          leading: const Icon(Icons.delete_outline),
+                          content: Text(
+                            '${undo.selectedCount} selected '
+                            '${undo.selectedCount == 1 ? 'task' : 'tasks'} deleted',
+                          ),
+                          actions: <Widget>[
+                            TextButton(
+                              onPressed: state.isTaskCommandPending
+                                  ? null
+                                  : () => unawaited(
+                                      widget.viewModel.undoTaskDeleteGroup(
+                                        undo.groupId,
+                                      ),
+                                    ),
+                              child: const Text('Undo all'),
+                            ),
+                          ],
+                        ),
                       if (state.taskDeleteUndos.firstOrNull case final undo?)
                         MaterialBanner(
                           leading: const Icon(Icons.delete_outline),
@@ -1081,6 +1103,16 @@ final class _BulkActionBar extends StatelessWidget {
               icon: const Icon(Icons.drive_file_move_outline),
               label: const Text('Move'),
             ),
+            OutlinedButton.icon(
+              key: const Key('bulk-delete-open'),
+              onPressed: enabled
+                  ? () => unawaited(
+                      _showBulkDeleteConfirmation(context, viewModel),
+                    )
+                  : null,
+              icon: const Icon(Icons.delete_outline),
+              label: const Text('Delete'),
+            ),
             IconButton(
               key: const Key('bulk-selection-close'),
               tooltip: 'Exit task selection',
@@ -1118,7 +1150,7 @@ final class _BulkOperationResultBanner extends StatelessWidget {
         '${summary.confirmedCount} confirmed • '
         '${summary.pendingCount} pending • '
         '${summary.failedCount} failed '
-        '(${summary.affectedCount} Google ${summary.affectedCount == 1 ? 'update' : 'updates'} '
+        '(${summary.affectedCount} Google ${_bulkRemoteNoun(summary)} '
         'from ${summary.selectedCount} selected)',
       ),
     ),
@@ -1130,7 +1162,17 @@ String _bulkKindLabel(BulkOperationKind kind) => switch (kind) {
   BulkOperationKind.complete => 'Bulk complete',
   BulkOperationKind.reschedule => 'Bulk reschedule',
   BulkOperationKind.move => 'Bulk move',
+  BulkOperationKind.delete => 'Bulk delete',
+  BulkOperationKind.clearCompleted => 'Clear completed',
 };
+
+String _bulkRemoteNoun(BulkOperationSummary summary) {
+  final delete =
+      summary.kind == BulkOperationKind.delete ||
+      summary.kind == BulkOperationKind.clearCompleted;
+  final noun = delete ? 'delete' : 'update';
+  return summary.affectedCount == 1 ? noun : '${noun}s';
+}
 
 Future<void> _showBulkCompleteConfirmation(
   BuildContext context,
@@ -1161,6 +1203,74 @@ Future<void> _showBulkCompleteConfirmation(
     ),
   );
   if (confirmed == true) await viewModel.completeBulkSelection();
+}
+
+Future<void> _showBulkDeleteConfirmation(
+  BuildContext context,
+  TasksViewModel viewModel,
+) async {
+  final count = viewModel.state.bulkSelectedTaskIds.length;
+  final confirmed = await showAppDialog<bool>(
+    context: context,
+    kind: AppDialogKind.confirmation,
+    builder: (dialogContext) => AlertDialog(
+      key: const Key('bulk-delete-confirmation'),
+      title: Text('Delete $count selected ${count == 1 ? 'task' : 'tasks'}?'),
+      content: const Text(
+        'The complete selection is hidden together. One Undo all action '
+        'remains available for 30 seconds before Google deletion begins.',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('bulk-delete-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Delete tasks'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true) await viewModel.deleteBulkSelection();
+}
+
+Future<void> _showClearCompletedConfirmation(
+  BuildContext context,
+  TasksViewModel viewModel,
+) async {
+  final selection = viewModel.state.clearCompletedSelection;
+  if (selection == null) return;
+  final skipped = selection.skippedParentTaskIds.length;
+  final deleteCount = selection.completedTaskCount - skipped;
+  final confirmed = await showAppDialog<bool>(
+    context: context,
+    kind: AppDialogKind.confirmation,
+    builder: (dialogContext) => AlertDialog(
+      key: const Key('clear-completed-confirmation'),
+      title: Text(
+        'Permanently clear $deleteCount completed '
+        '${deleteCount == 1 ? 'task' : 'tasks'}?',
+      ),
+      content: Text(
+        'This action has no Undo. Google confirms each delete independently.'
+        '${skipped == 0 ? '' : ' $skipped completed ${skipped == 1 ? 'parent is' : 'parents are'} kept because unfinished subtasks remain.'}',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('clear-completed-confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Clear completed'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true) await viewModel.clearCompleted();
 }
 
 Future<void> _showBulkDateDialog(
@@ -1567,6 +1677,11 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     final projection = state.visibleProjection;
     final rows = projection.rows;
     final tasks = rows.map((row) => row.task).toList(growable: false);
+    final clearSelection = state.clearCompletedSelection;
+    final clearCompletedCount = clearSelection == null
+        ? 0
+        : clearSelection.completedTaskCount -
+              clearSelection.skippedParentTaskIds.length;
     _ensureFocusNodes(tasks.length);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1635,6 +1750,23 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                           : () => viewModel.beginBulkSelection(tasks.first.id),
                       icon: const Icon(Icons.library_add_check_outlined),
                       label: const Text('Select tasks'),
+                    ),
+                  if (viewModel.tasksRepository
+                          is DestructiveTaskOperationsRepository &&
+                      state.selectedTaskList != null)
+                    OutlinedButton.icon(
+                      key: const Key('clear-completed-open'),
+                      onPressed:
+                          state.isBulkCommandPending || clearCompletedCount == 0
+                          ? null
+                          : () => unawaited(
+                              _showClearCompletedConfirmation(
+                                context,
+                                viewModel,
+                              ),
+                            ),
+                      icon: const Icon(Icons.delete_sweep_outlined),
+                      label: const Text('Clear completed'),
                     ),
                   IconButton(
                     tooltip: 'Create task',

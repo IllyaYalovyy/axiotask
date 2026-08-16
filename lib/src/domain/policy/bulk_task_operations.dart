@@ -73,3 +73,67 @@ List<CachedTask> selectBulkMoveRoots({
   roots.sort((left, right) => left.id.value.compareTo(right.id.value));
   return List<CachedTask>.unmodifiable(roots);
 }
+
+List<CachedTask> selectBulkDeleteRoots({
+  required Iterable<CachedTask> tasks,
+  required Set<TaskId> selectedTaskIds,
+}) => selectBulkMoveRoots(tasks: tasks, selectedTaskIds: selectedTaskIds);
+
+final class ClearCompletedSelection {
+  ClearCompletedSelection({
+    required List<TaskId> rootTaskIds,
+    required List<TaskId> skippedParentTaskIds,
+    required this.completedTaskCount,
+  }) : rootTaskIds = List<TaskId>.unmodifiable(rootTaskIds),
+       skippedParentTaskIds = List<TaskId>.unmodifiable(skippedParentTaskIds);
+
+  final List<TaskId> rootTaskIds;
+  final List<TaskId> skippedParentTaskIds;
+  final int completedTaskCount;
+}
+
+ClearCompletedSelection selectClearCompletedTasks({
+  required Iterable<CachedTask> tasks,
+}) {
+  final values = tasks.toList(growable: false);
+  final childrenByParent = <TaskId, List<CachedTask>>{};
+  for (final task in values) {
+    if (task.parentTaskId case final parentId?) {
+      childrenByParent.putIfAbsent(parentId, () => <CachedTask>[]).add(task);
+    }
+  }
+  final completed = values
+      .where((task) => task.status == TaskStatus.completed)
+      .toList(growable: false);
+  final skippedParents = <TaskId>{};
+  final roots = <TaskId>[];
+  for (final task in completed) {
+    final children = childrenByParent[task.id] ?? const <CachedTask>[];
+    if (children.any((child) => child.status != TaskStatus.completed)) {
+      skippedParents.add(task.id);
+      continue;
+    }
+    final parent = task.parentTaskId;
+    if (parent != null &&
+        completed.any(
+          (candidate) =>
+              candidate.id == parent && !skippedParents.contains(parent),
+        )) {
+      final parentChildren = childrenByParent[parent] ?? const <CachedTask>[];
+      if (parentChildren.every(
+        (child) => child.status == TaskStatus.completed,
+      )) {
+        continue;
+      }
+    }
+    roots.add(task.id);
+  }
+  roots.sort((left, right) => left.value.compareTo(right.value));
+  final skipped = skippedParents.toList(growable: false)
+    ..sort((left, right) => left.value.compareTo(right.value));
+  return ClearCompletedSelection(
+    rootTaskIds: roots,
+    skippedParentTaskIds: skipped,
+    completedTaskCount: completed.length,
+  );
+}

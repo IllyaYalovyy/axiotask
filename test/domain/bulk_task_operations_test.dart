@@ -70,10 +70,62 @@ void main() {
         TaskId(3),
       ]);
     });
+
+    test('a selected parent owns one grouped delete for its subtree', () {
+      final roots = selectBulkDeleteRoots(
+        tasks: <CachedTask>[_task(1), _task(2, parent: 1), _task(3)],
+        selectedTaskIds: <TaskId>{
+          const TaskId(1),
+          const TaskId(2),
+          const TaskId(3),
+        },
+      );
+
+      expect(roots.map((task) => task.id), const <TaskId>[
+        TaskId(1),
+        TaskId(3),
+      ]);
+    });
+  });
+
+  group('PAR-TASK-008 Clear completed selection', () {
+    test('skips a completed parent with an unfinished child', () {
+      final selection = selectClearCompletedTasks(
+        tasks: <CachedTask>[
+          _task(1, status: TaskStatus.completed),
+          _task(2, parent: 1),
+          _task(3, parent: 1, status: TaskStatus.completed),
+          _task(4, status: TaskStatus.completed),
+        ],
+      );
+
+      expect(selection.rootTaskIds, const <TaskId>[TaskId(3), TaskId(4)]);
+      expect(selection.skippedParentTaskIds, const <TaskId>[TaskId(1)]);
+      expect(selection.completedTaskCount, 3);
+    });
+
+    test('deduplicates an entirely completed subtree under its parent', () {
+      final selection = selectClearCompletedTasks(
+        tasks: <CachedTask>[
+          _task(1, status: TaskStatus.completed),
+          _task(2, parent: 1, status: TaskStatus.completed),
+          _task(3, parent: 1, status: TaskStatus.completed),
+        ],
+      );
+
+      expect(selection.rootTaskIds, const <TaskId>[TaskId(1)]);
+      expect(selection.skippedParentTaskIds, isEmpty);
+      expect(selection.completedTaskCount, 3);
+    });
   });
 }
 
-CachedTask _task(int id, {int? parent, TaskDate? due}) => CachedTask(
+CachedTask _task(
+  int id, {
+  int? parent,
+  TaskDate? due,
+  TaskStatus status = TaskStatus.needsAction,
+}) => CachedTask(
   id: TaskId(id),
   accountId: const AccountId(1),
   taskListId: const TaskListId(10),
@@ -81,6 +133,6 @@ CachedTask _task(int id, {int? parent, TaskDate? due}) => CachedTask(
   remoteId: TaskRemoteId('synthetic-bulk-task-$id'),
   title: 'Synthetic task $id',
   notes: null,
-  status: TaskStatus.needsAction,
+  status: status,
   due: due,
 );

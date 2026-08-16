@@ -321,6 +321,16 @@ unique temporary SQLite files. The ignored screenshot runner adds
 after capture. No scenario opens normal storage, credentials, OAuth
 configuration, diagnostics, or Google.
 
+S28B adds the account-scoped `task_delete_groups` table and extends the S28A
+bulk result kinds; generated Drift code and the schema digest must remain
+fresh. Focused domain/store/delete-sync/widget/golden tests and
+`integration_test/bulk_operations_linux_test.dart` exercise grouped Undo,
+restart/expiry, partial remote outcomes, and safe Clear completed with only
+synthetic tasks and temporary SQLite files. The ignored screenshot runner adds
+`bulk-delete-undo-light.png` and `clear-completed-confirmation-dark.png`.
+Capture and inspect both 1280×720 images; neither scenario opens normal storage,
+credentials, OAuth configuration, diagnostics, or Google.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

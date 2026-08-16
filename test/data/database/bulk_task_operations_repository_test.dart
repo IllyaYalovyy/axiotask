@@ -4,6 +4,7 @@ import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/cache_dao.dart';
+import 'package:axiotask/src/data/database/delete_state_dao.dart';
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
 import 'package:axiotask/src/data/database/tasks_repository.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
@@ -125,6 +126,141 @@ void main() {
         fixture.parent,
       );
       expect(await _taskDesiredCount(database, fixture.account), 1);
+    },
+  );
+
+  test(
+    'PAR-BULK-002 grouped delete hides all roots and Undo restores all',
+    () async {
+      final repository = DatabaseTasksRepository(database, clock: clock);
+
+      final result = await repository.applyBulk(
+        BulkDeleteTasksCommand(
+          accountId: fixture.account,
+          taskIds: <TaskId>{fixture.parent, fixture.child, fixture.other},
+        ),
+      );
+
+      final receipt = (result as Success<BulkOperationReceipt>).value;
+      expect(receipt.summary.kind, BulkOperationKind.delete);
+      expect(receipt.summary.selectedCount, 3);
+      expect(receipt.summary.affectedCount, 2);
+      expect(receipt.notBefore, clock.now().add(const Duration(seconds: 30)));
+      expect(receipt.deleteGroupId, isA<int>());
+      expect(
+        (await repository
+                .watchTasks(TasksQuery(accountId: fixture.account))
+                .first)
+            .tasks,
+        isEmpty,
+      );
+      final groups = await repository
+          .watchUndoableTaskDeleteGroups(fixture.account)
+          .first;
+      expect(groups, hasLength(1));
+      expect(groups.single.selectedCount, 3);
+      expect(groups.single.rootCount, 2);
+
+      final undo = await repository.undoTaskDeleteGroup(
+        UndoTaskDeleteGroupCommand(
+          accountId: fixture.account,
+          groupId: receipt.deleteGroupId!,
+        ),
+      );
+
+      expect(undo, isA<Success<void>>());
+      final restored = await repository
+          .watchTasks(TasksQuery(accountId: fixture.account))
+          .first;
+      expect(restored.tasks.map((task) => task.id).toSet(), <TaskId>{
+        fixture.parent,
+        fixture.child,
+        fixture.other,
+      });
+      expect(
+        await repository.watchUndoableTaskDeleteGroups(fixture.account).first,
+        isEmpty,
+      );
+    },
+  );
+
+  test('group Undo restores none when one snapshot is missing', () async {
+    final repository = DatabaseTasksRepository(database, clock: clock);
+    final result = await repository.applyBulk(
+      BulkDeleteTasksCommand(
+        accountId: fixture.account,
+        taskIds: <TaskId>{fixture.parent, fixture.other},
+      ),
+    );
+    final receipt = (result as Success<BulkOperationReceipt>).value;
+    await database.customStatement('''
+      DELETE FROM task_delete_snapshots
+      WHERE id = (SELECT MIN(id) FROM task_delete_snapshots)
+    ''');
+
+    final undo = await repository.undoTaskDeleteGroup(
+      UndoTaskDeleteGroupCommand(
+        accountId: fixture.account,
+        groupId: receipt.deleteGroupId!,
+      ),
+    );
+
+    expect(undo, isA<Failed<void>>());
+    expect(
+      (await repository
+              .watchTasks(TasksQuery(accountId: fixture.account))
+              .first)
+          .tasks,
+      isEmpty,
+    );
+  });
+
+  test(
+    'PAR-TASK-008 Clear completed skips an unsafe parent and has no Undo',
+    () async {
+      await database.customStatement(
+        "UPDATE tasks SET status = 'completed' WHERE id IN (?, ?)",
+        <Object>[fixture.parent.value, fixture.other.value],
+      );
+      final unrelated = await _putTask(
+        CacheDao(database),
+        fixture.account,
+        fixture.destination,
+        'unrelated-completed',
+        status: TaskStatus.completed,
+      );
+      final repository = DatabaseTasksRepository(database, clock: clock);
+
+      final result = await repository.clearCompleted(
+        ClearCompletedTasksCommand(
+          accountId: fixture.account,
+          taskListId: fixture.source,
+        ),
+      );
+
+      final receipt = (result as Success<BulkOperationReceipt>).value;
+      expect(receipt.summary.kind, BulkOperationKind.clearCompleted);
+      expect(receipt.summary.selectedCount, 1);
+      expect(receipt.summary.affectedCount, 1);
+      expect(receipt.notBefore, isNull);
+      final tasks =
+          (await repository
+                  .watchTasks(TasksQuery(accountId: fixture.account))
+                  .first)
+              .tasks;
+      expect(tasks.map((task) => task.id).toSet(), <TaskId>{
+        fixture.parent,
+        fixture.child,
+        unrelated,
+      });
+      expect(
+        await repository.watchUndoableTaskDeleteGroups(fixture.account).first,
+        isEmpty,
+      );
+      expect(
+        await repository.watchUndoableTaskDeletes(fixture.account).first,
+        isEmpty,
+      );
     },
   );
 
@@ -351,6 +487,58 @@ void main() {
     expect(summary?.pendingCount, 2);
     expect(summary?.failedCount, 0);
   });
+
+  test(
+    'group Undo survives restart and expires all-or-none at 30 seconds',
+    () async {
+      await database.close();
+      final directory = await Directory.systemTemp.createTemp(
+        'axiotask-bulk-delete-restart-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/isolated.sqlite');
+      database = await AppDatabase.openFile(file);
+      fixture = await _seed(database);
+      var repository = DatabaseTasksRepository(database, clock: clock);
+      final result = await repository.applyBulk(
+        BulkDeleteTasksCommand(
+          accountId: fixture.account,
+          taskIds: <TaskId>{fixture.parent, fixture.other},
+        ),
+      );
+      final receipt = (result as Success<BulkOperationReceipt>).value;
+      await database.close();
+
+      clock.advance(const Duration(seconds: 29, milliseconds: 999));
+      database = await AppDatabase.openFile(file);
+      repository = DatabaseTasksRepository(database, clock: clock);
+      expect(
+        await repository.watchUndoableTaskDeleteGroups(fixture.account).first,
+        hasLength(1),
+      );
+      await database.close();
+
+      clock.advance(const Duration(milliseconds: 1));
+      database = await AppDatabase.openFile(file);
+      await DeleteStateDao(
+        database,
+      ).cleanupExpiredTaskDeletes(accountId: fixture.account, now: clock.now());
+      repository = DatabaseTasksRepository(database, clock: clock);
+      expect(
+        await repository.watchUndoableTaskDeleteGroups(fixture.account).first,
+        isEmpty,
+      );
+      expect(
+        await repository.undoTaskDeleteGroup(
+          UndoTaskDeleteGroupCommand(
+            accountId: fixture.account,
+            groupId: receipt.deleteGroupId!,
+          ),
+        ),
+        isA<Failed<void>>(),
+      );
+    },
+  );
 }
 
 Future<int> _taskDesiredCount(AppDatabase database, AccountId account) async {
@@ -429,6 +617,7 @@ Future<TaskId> _putTask(
   String remoteId, {
   TaskId? parentTaskId,
   TaskDate? due,
+  TaskStatus status = TaskStatus.needsAction,
 }) async {
   final id = await cache.putTask(
     accountId: account,
@@ -437,6 +626,7 @@ Future<TaskId> _putTask(
     remoteId: TaskRemoteId(remoteId),
     title: remoteId,
     due: due,
+    status: status,
     position: remoteId,
   );
   await cache.putTaskRemoteBase(
@@ -447,7 +637,7 @@ Future<TaskId> _putTask(
     remoteId: TaskRemoteId(remoteId),
     title: remoteId,
     notes: null,
-    status: TaskStatus.needsAction,
+    status: status,
     due: due,
     position: remoteId,
     etag: 'etag-$remoteId',

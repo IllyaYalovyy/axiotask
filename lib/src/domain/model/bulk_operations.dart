@@ -2,7 +2,7 @@ import 'dart:collection';
 
 import 'tasks.dart';
 
-enum BulkOperationKind { complete, reschedule, move }
+enum BulkOperationKind { complete, reschedule, move, delete, clearCompleted }
 
 final class BulkOperationSummary {
   const BulkOperationSummary({
@@ -29,9 +29,15 @@ final class BulkOperationSummary {
 }
 
 final class BulkOperationReceipt {
-  BulkOperationReceipt({required this.summary, required List<TaskId> taskIds})
-    : taskIds = UnmodifiableListView<TaskId>(taskIds);
+  BulkOperationReceipt({
+    required this.summary,
+    required List<TaskId> taskIds,
+    this.deleteGroupId,
+    this.notBefore,
+  }) : taskIds = UnmodifiableListView<TaskId>(taskIds);
 
   final BulkOperationSummary summary;
   final List<TaskId> taskIds;
+  final int? deleteGroupId;
+  final DateTime? notBefore;
 }

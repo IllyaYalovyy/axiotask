@@ -55,6 +55,11 @@ complete, reschedule, and move commands. One SQLite transaction acknowledges
 all affected local rows and exact desired generations or none; durable member
 rows then project each independent Google attempt as confirmed, pending, or
 failed across restart without rolling back confirmed remote work.
+S28B extends the same command/store boundary with destructive policy. Bulk
+delete normalizes selected hierarchy roots, records one account-scoped durable
+30-second group, and restores every root snapshot or none. Clear completed is a
+separate confirmed, non-Undoable list-scoped command whose pure selector omits
+any completed parent with an unfinished child before one immediate transaction.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

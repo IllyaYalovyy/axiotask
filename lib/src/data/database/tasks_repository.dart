@@ -24,7 +24,8 @@ final class DatabaseTasksRepository
     implements
         TasksRepository,
         BulkTasksRepository,
-        BulkTaskOperationsRepository {
+        BulkTaskOperationsRepository,
+        DestructiveTaskOperationsRepository {
   DatabaseTasksRepository(
     this._database, {
     Clock? clock,
@@ -65,6 +66,7 @@ final class DatabaseTasksRepository
           BulkCompleteTasksCommand() => _completeBulk(command, selected),
           BulkRescheduleTasksCommand() => _rescheduleBulk(command, selected),
           BulkMoveTasksCommand() => _moveBulk(command, selected),
+          BulkDeleteTasksCommand() => _deleteBulk(command, selected),
         };
       });
       return Outcome<BulkOperationReceipt>.success(receipt);
@@ -74,6 +76,8 @@ final class DatabaseTasksRepository
       return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
     } on DesiredStateInvariantException {
       return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    } on DeleteStateException catch (error) {
+      return Outcome<BulkOperationReceipt>.failure(_deleteFailure(error.code));
     } on SqliteException {
       return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
     }
@@ -143,7 +147,11 @@ final class DatabaseTasksRepository
         modifiedAt: modifiedAt,
       );
       members.add(
-        BulkOperationMemberInput(taskId: TaskId(row.id), desired: desired),
+        BulkOperationMemberInput(
+          taskId: TaskId(row.id),
+          desiredStateId: desired.id,
+          generation: desired.generation,
+        ),
       );
       await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
     }
@@ -215,7 +223,11 @@ final class DatabaseTasksRepository
         modifiedAt: modifiedAt,
       );
       members.add(
-        BulkOperationMemberInput(taskId: change.taskId, desired: desired),
+        BulkOperationMemberInput(
+          taskId: change.taskId,
+          desiredStateId: desired.id,
+          generation: desired.generation,
+        ),
       );
       await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
     }
@@ -288,7 +300,13 @@ final class DatabaseTasksRepository
         due: root.due,
         modifiedAt: modifiedAt,
       );
-      members.add(BulkOperationMemberInput(taskId: root.id, desired: desired));
+      members.add(
+        BulkOperationMemberInput(
+          taskId: root.id,
+          desiredStateId: desired.id,
+          generation: desired.generation,
+        ),
+      );
       await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
     }
     return _finishBulk(
@@ -300,12 +318,117 @@ final class DatabaseTasksRepository
     );
   }
 
+  Future<BulkOperationReceipt> _deleteBulk(
+    BulkDeleteTasksCommand command,
+    List<TaskCacheRow> selected,
+  ) async {
+    final roots = selectBulkDeleteRoots(
+      tasks: selected.map(_cachedTask),
+      selectedTaskIds: command.taskIds,
+    );
+    final acknowledgedAt = clock.now();
+    final group = await _deletes.createTaskDeleteGroup(
+      accountId: command.accountId,
+      rootTaskIds: roots.map((task) => task.id).toList(growable: false),
+      selectedCount: selected.length,
+      acknowledgedAt: acknowledgedAt,
+    );
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    final members = <BulkOperationMemberInput>[];
+    for (final tombstone in group.members) {
+      members.add(
+        BulkOperationMemberInput(
+          taskId: tombstone.rootTaskId,
+          desiredStateId: tombstone.desiredStateId,
+          generation: tombstone.deleteGeneration,
+        ),
+      );
+      await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+    }
+    return _finishBulk(
+      accountId: command.accountId,
+      kind: BulkOperationKind.delete,
+      selectedCount: selected.length,
+      members: members,
+      createdAt: acknowledgedAt,
+      deleteGroupId: group.id,
+      notBefore: group.notBefore,
+    );
+  }
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> clearCompleted(
+    ClearCompletedTasksCommand command,
+  ) async {
+    try {
+      final receipt = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        await _requireTaskList(command.accountId, command.taskListId);
+        final rows =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(command.accountId.value) &
+                      row.taskListId.equals(command.taskListId.value) &
+                      row.projection.equals(CacheProjection.supported.name),
+                ))
+                .get();
+        final selection = selectClearCompletedTasks(
+          tasks: rows.map(_cachedTask),
+        );
+        final selectedCount =
+            selection.completedTaskCount -
+            selection.skippedParentTaskIds.length;
+        if (selection.rootTaskIds.isEmpty || selectedCount <= 0) {
+          throw const _TaskCommandException(_noCompletedTasksFailure);
+        }
+        final acknowledgedAt = clock.now();
+        final tombstones = await _deletes.createImmediateTaskDeletes(
+          accountId: command.accountId,
+          rootTaskIds: selection.rootTaskIds,
+          acknowledgedAt: acknowledgedAt,
+        );
+        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        final members = <BulkOperationMemberInput>[];
+        for (final tombstone in tombstones) {
+          members.add(
+            BulkOperationMemberInput(
+              taskId: tombstone.rootTaskId,
+              desiredStateId: tombstone.desiredStateId,
+              generation: tombstone.deleteGeneration,
+            ),
+          );
+          await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        }
+        return _finishBulk(
+          accountId: command.accountId,
+          kind: BulkOperationKind.clearCompleted,
+          selectedCount: selectedCount,
+          members: members,
+          createdAt: acknowledgedAt,
+        );
+      });
+      return Outcome<BulkOperationReceipt>.success(receipt);
+    } on _TaskCommandException catch (error) {
+      return Outcome<BulkOperationReceipt>.failure(error.failure);
+    } on DeleteStateException catch (error) {
+      return Outcome<BulkOperationReceipt>.failure(_deleteFailure(error.code));
+    } on DesiredStatePersistenceException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    } on DesiredStateInvariantException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<BulkOperationReceipt>.failure(_persistenceFailure);
+    }
+  }
+
   Future<BulkOperationReceipt> _finishBulk({
     required AccountId accountId,
     required BulkOperationKind kind,
     required int selectedCount,
     required List<BulkOperationMemberInput> members,
     required DateTime createdAt,
+    int? deleteGroupId,
+    DateTime? notBefore,
   }) async {
     final summary = await _bulkOperations.replaceLatest(
       accountId: accountId,
@@ -318,7 +441,32 @@ final class DatabaseTasksRepository
     return BulkOperationReceipt(
       summary: summary,
       taskIds: members.map((member) => member.taskId).toList(growable: false),
+      deleteGroupId: deleteGroupId,
+      notBefore: notBefore,
     );
+  }
+
+  @override
+  Stream<List<TaskDeleteGroupUndo>> watchUndoableTaskDeleteGroups(
+    AccountId accountId,
+  ) => _deletes.watchAvailableTaskGroupUndos(accountId);
+
+  @override
+  Future<Outcome<void>> undoTaskDeleteGroup(
+    UndoTaskDeleteGroupCommand command,
+  ) async {
+    try {
+      await _deletes.undoTaskDeleteGroup(
+        accountId: command.accountId,
+        groupId: command.groupId,
+        now: clock.now(),
+      );
+      return const Outcome<void>.success(null);
+    } on DeleteStateException catch (error) {
+      return Outcome<void>.failure(_deleteFailure(error.code));
+    } on SqliteException {
+      return const Outcome<void>.failure(_persistenceFailure);
+    }
   }
 
   @override
@@ -1521,6 +1669,15 @@ const Failure _bulkSelectionFailure = Failure(
   retry: RetryClassification.permanent,
   impact: 'No tasks were changed.',
   safeSummary: 'At least one selected task is unavailable or out of scope.',
+);
+
+const Failure _noCompletedTasksFailure = Failure(
+  code: 'clear_completed.none_available',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'No completed tasks were deleted.',
+  safeSummary: 'No safely clearable completed task is available.',
 );
 
 const Failure _dueChangePersistenceFailure = Failure(

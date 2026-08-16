@@ -74,6 +74,22 @@ final class BulkMoveTasksCommand extends BulkExistingTaskCommand {
   final TaskListId destinationTaskListId;
 }
 
+final class BulkDeleteTasksCommand extends BulkExistingTaskCommand {
+  const BulkDeleteTasksCommand({
+    required super.accountId,
+    required super.taskIds,
+  });
+}
+
+final class ClearCompletedTasksCommand extends TaskCommand {
+  const ClearCompletedTasksCommand({
+    required super.accountId,
+    required this.taskListId,
+  });
+
+  final TaskListId taskListId;
+}
+
 sealed class ExistingTaskCommand extends TaskCommand {
   const ExistingTaskCommand({required super.accountId, required this.taskId});
 
@@ -184,6 +200,15 @@ final class UndoTaskDeleteCommand extends ExistingTaskCommand {
   });
 }
 
+final class UndoTaskDeleteGroupCommand extends TaskCommand {
+  const UndoTaskDeleteGroupCommand({
+    required super.accountId,
+    required this.groupId,
+  });
+
+  final int groupId;
+}
+
 final class TaskDeleteReceipt {
   const TaskDeleteReceipt({required this.taskId, required this.notBefore});
 
@@ -200,6 +225,20 @@ final class TaskDeleteUndo {
 
   final TaskId taskId;
   final String title;
+  final DateTime notBefore;
+}
+
+final class TaskDeleteGroupUndo {
+  const TaskDeleteGroupUndo({
+    required this.groupId,
+    required this.selectedCount,
+    required this.rootCount,
+    required this.notBefore,
+  });
+
+  final int groupId;
+  final int selectedCount;
+  final int rootCount;
   final DateTime notBefore;
 }
 

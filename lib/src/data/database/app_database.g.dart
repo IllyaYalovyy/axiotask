@@ -8514,6 +8514,534 @@ class SyncRunRowsCompanion extends UpdateCompanion<SyncRunRow> {
   }
 }
 
+class $TaskDeleteGroupRowsTable extends TaskDeleteGroupRows
+    with TableInfo<$TaskDeleteGroupRowsTable, TaskDeleteGroupRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TaskDeleteGroupRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<int> accountId = GeneratedColumn<int>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _selectedCountMeta = const VerificationMeta(
+    'selectedCount',
+  );
+  @override
+  late final GeneratedColumn<int> selectedCount = GeneratedColumn<int>(
+    'selected_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(selectedCount).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rootCountMeta = const VerificationMeta(
+    'rootCount',
+  );
+  @override
+  late final GeneratedColumn<int> rootCount = GeneratedColumn<int>(
+    'root_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(rootCount).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _snapshotCountMeta = const VerificationMeta(
+    'snapshotCount',
+  );
+  @override
+  late final GeneratedColumn<int> snapshotCount = GeneratedColumn<int>(
+    'snapshot_count',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(snapshotCount).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _notBeforeMeta = const VerificationMeta(
+    'notBefore',
+  );
+  @override
+  late final GeneratedColumn<DateTime> notBefore = GeneratedColumn<DateTime>(
+    'not_before',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _snapshotAvailableMeta = const VerificationMeta(
+    'snapshotAvailable',
+  );
+  @override
+  late final GeneratedColumn<bool> snapshotAvailable = GeneratedColumn<bool>(
+    'snapshot_available',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("snapshot_available" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    selectedCount,
+    rootCount,
+    snapshotCount,
+    notBefore,
+    snapshotAvailable,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'task_delete_groups';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TaskDeleteGroupRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('selected_count')) {
+      context.handle(
+        _selectedCountMeta,
+        selectedCount.isAcceptableOrUnknown(
+          data['selected_count']!,
+          _selectedCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_selectedCountMeta);
+    }
+    if (data.containsKey('root_count')) {
+      context.handle(
+        _rootCountMeta,
+        rootCount.isAcceptableOrUnknown(data['root_count']!, _rootCountMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rootCountMeta);
+    }
+    if (data.containsKey('snapshot_count')) {
+      context.handle(
+        _snapshotCountMeta,
+        snapshotCount.isAcceptableOrUnknown(
+          data['snapshot_count']!,
+          _snapshotCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_snapshotCountMeta);
+    }
+    if (data.containsKey('not_before')) {
+      context.handle(
+        _notBeforeMeta,
+        notBefore.isAcceptableOrUnknown(data['not_before']!, _notBeforeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_notBeforeMeta);
+    }
+    if (data.containsKey('snapshot_available')) {
+      context.handle(
+        _snapshotAvailableMeta,
+        snapshotAvailable.isAcceptableOrUnknown(
+          data['snapshot_available']!,
+          _snapshotAvailableMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_snapshotAvailableMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {accountId, id},
+  ];
+  @override
+  TaskDeleteGroupRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TaskDeleteGroupRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}account_id'],
+      )!,
+      selectedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}selected_count'],
+      )!,
+      rootCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}root_count'],
+      )!,
+      snapshotCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}snapshot_count'],
+      )!,
+      notBefore: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}not_before'],
+      )!,
+      snapshotAvailable: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}snapshot_available'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TaskDeleteGroupRowsTable createAlias(String alias) {
+    return $TaskDeleteGroupRowsTable(attachedDatabase, alias);
+  }
+}
+
+class TaskDeleteGroupRow extends DataClass
+    implements Insertable<TaskDeleteGroupRow> {
+  final int id;
+  final int accountId;
+  final int selectedCount;
+  final int rootCount;
+  final int snapshotCount;
+  final DateTime notBefore;
+  final bool snapshotAvailable;
+  final DateTime createdAt;
+  const TaskDeleteGroupRow({
+    required this.id,
+    required this.accountId,
+    required this.selectedCount,
+    required this.rootCount,
+    required this.snapshotCount,
+    required this.notBefore,
+    required this.snapshotAvailable,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<int>(accountId);
+    map['selected_count'] = Variable<int>(selectedCount);
+    map['root_count'] = Variable<int>(rootCount);
+    map['snapshot_count'] = Variable<int>(snapshotCount);
+    map['not_before'] = Variable<DateTime>(notBefore);
+    map['snapshot_available'] = Variable<bool>(snapshotAvailable);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  TaskDeleteGroupRowsCompanion toCompanion(bool nullToAbsent) {
+    return TaskDeleteGroupRowsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      selectedCount: Value(selectedCount),
+      rootCount: Value(rootCount),
+      snapshotCount: Value(snapshotCount),
+      notBefore: Value(notBefore),
+      snapshotAvailable: Value(snapshotAvailable),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory TaskDeleteGroupRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TaskDeleteGroupRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<int>(json['accountId']),
+      selectedCount: serializer.fromJson<int>(json['selectedCount']),
+      rootCount: serializer.fromJson<int>(json['rootCount']),
+      snapshotCount: serializer.fromJson<int>(json['snapshotCount']),
+      notBefore: serializer.fromJson<DateTime>(json['notBefore']),
+      snapshotAvailable: serializer.fromJson<bool>(json['snapshotAvailable']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'accountId': serializer.toJson<int>(accountId),
+      'selectedCount': serializer.toJson<int>(selectedCount),
+      'rootCount': serializer.toJson<int>(rootCount),
+      'snapshotCount': serializer.toJson<int>(snapshotCount),
+      'notBefore': serializer.toJson<DateTime>(notBefore),
+      'snapshotAvailable': serializer.toJson<bool>(snapshotAvailable),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  TaskDeleteGroupRow copyWith({
+    int? id,
+    int? accountId,
+    int? selectedCount,
+    int? rootCount,
+    int? snapshotCount,
+    DateTime? notBefore,
+    bool? snapshotAvailable,
+    DateTime? createdAt,
+  }) => TaskDeleteGroupRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    selectedCount: selectedCount ?? this.selectedCount,
+    rootCount: rootCount ?? this.rootCount,
+    snapshotCount: snapshotCount ?? this.snapshotCount,
+    notBefore: notBefore ?? this.notBefore,
+    snapshotAvailable: snapshotAvailable ?? this.snapshotAvailable,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  TaskDeleteGroupRow copyWithCompanion(TaskDeleteGroupRowsCompanion data) {
+    return TaskDeleteGroupRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      selectedCount: data.selectedCount.present
+          ? data.selectedCount.value
+          : this.selectedCount,
+      rootCount: data.rootCount.present ? data.rootCount.value : this.rootCount,
+      snapshotCount: data.snapshotCount.present
+          ? data.snapshotCount.value
+          : this.snapshotCount,
+      notBefore: data.notBefore.present ? data.notBefore.value : this.notBefore,
+      snapshotAvailable: data.snapshotAvailable.present
+          ? data.snapshotAvailable.value
+          : this.snapshotAvailable,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteGroupRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('selectedCount: $selectedCount, ')
+          ..write('rootCount: $rootCount, ')
+          ..write('snapshotCount: $snapshotCount, ')
+          ..write('notBefore: $notBefore, ')
+          ..write('snapshotAvailable: $snapshotAvailable, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    selectedCount,
+    rootCount,
+    snapshotCount,
+    notBefore,
+    snapshotAvailable,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TaskDeleteGroupRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.selectedCount == this.selectedCount &&
+          other.rootCount == this.rootCount &&
+          other.snapshotCount == this.snapshotCount &&
+          other.notBefore == this.notBefore &&
+          other.snapshotAvailable == this.snapshotAvailable &&
+          other.createdAt == this.createdAt);
+}
+
+class TaskDeleteGroupRowsCompanion extends UpdateCompanion<TaskDeleteGroupRow> {
+  final Value<int> id;
+  final Value<int> accountId;
+  final Value<int> selectedCount;
+  final Value<int> rootCount;
+  final Value<int> snapshotCount;
+  final Value<DateTime> notBefore;
+  final Value<bool> snapshotAvailable;
+  final Value<DateTime> createdAt;
+  const TaskDeleteGroupRowsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.selectedCount = const Value.absent(),
+    this.rootCount = const Value.absent(),
+    this.snapshotCount = const Value.absent(),
+    this.notBefore = const Value.absent(),
+    this.snapshotAvailable = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  TaskDeleteGroupRowsCompanion.insert({
+    this.id = const Value.absent(),
+    required int accountId,
+    required int selectedCount,
+    required int rootCount,
+    required int snapshotCount,
+    required DateTime notBefore,
+    required bool snapshotAvailable,
+    required DateTime createdAt,
+  }) : accountId = Value(accountId),
+       selectedCount = Value(selectedCount),
+       rootCount = Value(rootCount),
+       snapshotCount = Value(snapshotCount),
+       notBefore = Value(notBefore),
+       snapshotAvailable = Value(snapshotAvailable),
+       createdAt = Value(createdAt);
+  static Insertable<TaskDeleteGroupRow> custom({
+    Expression<int>? id,
+    Expression<int>? accountId,
+    Expression<int>? selectedCount,
+    Expression<int>? rootCount,
+    Expression<int>? snapshotCount,
+    Expression<DateTime>? notBefore,
+    Expression<bool>? snapshotAvailable,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (selectedCount != null) 'selected_count': selectedCount,
+      if (rootCount != null) 'root_count': rootCount,
+      if (snapshotCount != null) 'snapshot_count': snapshotCount,
+      if (notBefore != null) 'not_before': notBefore,
+      if (snapshotAvailable != null) 'snapshot_available': snapshotAvailable,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  TaskDeleteGroupRowsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? accountId,
+    Value<int>? selectedCount,
+    Value<int>? rootCount,
+    Value<int>? snapshotCount,
+    Value<DateTime>? notBefore,
+    Value<bool>? snapshotAvailable,
+    Value<DateTime>? createdAt,
+  }) {
+    return TaskDeleteGroupRowsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      selectedCount: selectedCount ?? this.selectedCount,
+      rootCount: rootCount ?? this.rootCount,
+      snapshotCount: snapshotCount ?? this.snapshotCount,
+      notBefore: notBefore ?? this.notBefore,
+      snapshotAvailable: snapshotAvailable ?? this.snapshotAvailable,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<int>(accountId.value);
+    }
+    if (selectedCount.present) {
+      map['selected_count'] = Variable<int>(selectedCount.value);
+    }
+    if (rootCount.present) {
+      map['root_count'] = Variable<int>(rootCount.value);
+    }
+    if (snapshotCount.present) {
+      map['snapshot_count'] = Variable<int>(snapshotCount.value);
+    }
+    if (notBefore.present) {
+      map['not_before'] = Variable<DateTime>(notBefore.value);
+    }
+    if (snapshotAvailable.present) {
+      map['snapshot_available'] = Variable<bool>(snapshotAvailable.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TaskDeleteGroupRowsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('selectedCount: $selectedCount, ')
+          ..write('rootCount: $rootCount, ')
+          ..write('snapshotCount: $snapshotCount, ')
+          ..write('notBefore: $notBefore, ')
+          ..write('snapshotAvailable: $snapshotAvailable, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
     with TableInfo<$TaskDeleteTombstoneRowsTable, TaskDeleteTombstoneRow> {
   @override
@@ -8554,6 +9082,17 @@ class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
     false,
     type: DriftSqlType.int,
     requiredDuringInsert: true,
+  );
+  static const VerificationMeta _groupIdMeta = const VerificationMeta(
+    'groupId',
+  );
+  @override
+  late final GeneratedColumn<int> groupId = GeneratedColumn<int>(
+    'group_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _desiredStateIdMeta = const VerificationMeta(
     'desiredStateId',
@@ -8618,6 +9157,7 @@ class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
     id,
     accountId,
     rootTaskId,
+    groupId,
     desiredStateId,
     deleteGeneration,
     notBefore,
@@ -8657,6 +9197,12 @@ class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
       );
     } else if (isInserting) {
       context.missing(_rootTaskIdMeta);
+    }
+    if (data.containsKey('group_id')) {
+      context.handle(
+        _groupIdMeta,
+        groupId.isAcceptableOrUnknown(data['group_id']!, _groupIdMeta),
+      );
     }
     if (data.containsKey('desired_state_id')) {
       context.handle(
@@ -8733,6 +9279,10 @@ class $TaskDeleteTombstoneRowsTable extends TaskDeleteTombstoneRows
         DriftSqlType.int,
         data['${effectivePrefix}root_task_id'],
       )!,
+      groupId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}group_id'],
+      ),
       desiredStateId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}desired_state_id'],
@@ -8767,6 +9317,7 @@ class TaskDeleteTombstoneRow extends DataClass
   final int id;
   final int accountId;
   final int rootTaskId;
+  final int? groupId;
   final int desiredStateId;
   final int deleteGeneration;
   final DateTime notBefore;
@@ -8776,6 +9327,7 @@ class TaskDeleteTombstoneRow extends DataClass
     required this.id,
     required this.accountId,
     required this.rootTaskId,
+    this.groupId,
     required this.desiredStateId,
     required this.deleteGeneration,
     required this.notBefore,
@@ -8788,6 +9340,9 @@ class TaskDeleteTombstoneRow extends DataClass
     map['id'] = Variable<int>(id);
     map['account_id'] = Variable<int>(accountId);
     map['root_task_id'] = Variable<int>(rootTaskId);
+    if (!nullToAbsent || groupId != null) {
+      map['group_id'] = Variable<int>(groupId);
+    }
     map['desired_state_id'] = Variable<int>(desiredStateId);
     map['delete_generation'] = Variable<int>(deleteGeneration);
     map['not_before'] = Variable<DateTime>(notBefore);
@@ -8801,6 +9356,9 @@ class TaskDeleteTombstoneRow extends DataClass
       id: Value(id),
       accountId: Value(accountId),
       rootTaskId: Value(rootTaskId),
+      groupId: groupId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(groupId),
       desiredStateId: Value(desiredStateId),
       deleteGeneration: Value(deleteGeneration),
       notBefore: Value(notBefore),
@@ -8818,6 +9376,7 @@ class TaskDeleteTombstoneRow extends DataClass
       id: serializer.fromJson<int>(json['id']),
       accountId: serializer.fromJson<int>(json['accountId']),
       rootTaskId: serializer.fromJson<int>(json['rootTaskId']),
+      groupId: serializer.fromJson<int?>(json['groupId']),
       desiredStateId: serializer.fromJson<int>(json['desiredStateId']),
       deleteGeneration: serializer.fromJson<int>(json['deleteGeneration']),
       notBefore: serializer.fromJson<DateTime>(json['notBefore']),
@@ -8832,6 +9391,7 @@ class TaskDeleteTombstoneRow extends DataClass
       'id': serializer.toJson<int>(id),
       'accountId': serializer.toJson<int>(accountId),
       'rootTaskId': serializer.toJson<int>(rootTaskId),
+      'groupId': serializer.toJson<int?>(groupId),
       'desiredStateId': serializer.toJson<int>(desiredStateId),
       'deleteGeneration': serializer.toJson<int>(deleteGeneration),
       'notBefore': serializer.toJson<DateTime>(notBefore),
@@ -8844,6 +9404,7 @@ class TaskDeleteTombstoneRow extends DataClass
     int? id,
     int? accountId,
     int? rootTaskId,
+    Value<int?> groupId = const Value.absent(),
     int? desiredStateId,
     int? deleteGeneration,
     DateTime? notBefore,
@@ -8853,6 +9414,7 @@ class TaskDeleteTombstoneRow extends DataClass
     id: id ?? this.id,
     accountId: accountId ?? this.accountId,
     rootTaskId: rootTaskId ?? this.rootTaskId,
+    groupId: groupId.present ? groupId.value : this.groupId,
     desiredStateId: desiredStateId ?? this.desiredStateId,
     deleteGeneration: deleteGeneration ?? this.deleteGeneration,
     notBefore: notBefore ?? this.notBefore,
@@ -8868,6 +9430,7 @@ class TaskDeleteTombstoneRow extends DataClass
       rootTaskId: data.rootTaskId.present
           ? data.rootTaskId.value
           : this.rootTaskId,
+      groupId: data.groupId.present ? data.groupId.value : this.groupId,
       desiredStateId: data.desiredStateId.present
           ? data.desiredStateId.value
           : this.desiredStateId,
@@ -8888,6 +9451,7 @@ class TaskDeleteTombstoneRow extends DataClass
           ..write('id: $id, ')
           ..write('accountId: $accountId, ')
           ..write('rootTaskId: $rootTaskId, ')
+          ..write('groupId: $groupId, ')
           ..write('desiredStateId: $desiredStateId, ')
           ..write('deleteGeneration: $deleteGeneration, ')
           ..write('notBefore: $notBefore, ')
@@ -8902,6 +9466,7 @@ class TaskDeleteTombstoneRow extends DataClass
     id,
     accountId,
     rootTaskId,
+    groupId,
     desiredStateId,
     deleteGeneration,
     notBefore,
@@ -8915,6 +9480,7 @@ class TaskDeleteTombstoneRow extends DataClass
           other.id == this.id &&
           other.accountId == this.accountId &&
           other.rootTaskId == this.rootTaskId &&
+          other.groupId == this.groupId &&
           other.desiredStateId == this.desiredStateId &&
           other.deleteGeneration == this.deleteGeneration &&
           other.notBefore == this.notBefore &&
@@ -8927,6 +9493,7 @@ class TaskDeleteTombstoneRowsCompanion
   final Value<int> id;
   final Value<int> accountId;
   final Value<int> rootTaskId;
+  final Value<int?> groupId;
   final Value<int> desiredStateId;
   final Value<int> deleteGeneration;
   final Value<DateTime> notBefore;
@@ -8936,6 +9503,7 @@ class TaskDeleteTombstoneRowsCompanion
     this.id = const Value.absent(),
     this.accountId = const Value.absent(),
     this.rootTaskId = const Value.absent(),
+    this.groupId = const Value.absent(),
     this.desiredStateId = const Value.absent(),
     this.deleteGeneration = const Value.absent(),
     this.notBefore = const Value.absent(),
@@ -8946,6 +9514,7 @@ class TaskDeleteTombstoneRowsCompanion
     this.id = const Value.absent(),
     required int accountId,
     required int rootTaskId,
+    this.groupId = const Value.absent(),
     required int desiredStateId,
     required int deleteGeneration,
     required DateTime notBefore,
@@ -8962,6 +9531,7 @@ class TaskDeleteTombstoneRowsCompanion
     Expression<int>? id,
     Expression<int>? accountId,
     Expression<int>? rootTaskId,
+    Expression<int>? groupId,
     Expression<int>? desiredStateId,
     Expression<int>? deleteGeneration,
     Expression<DateTime>? notBefore,
@@ -8972,6 +9542,7 @@ class TaskDeleteTombstoneRowsCompanion
       if (id != null) 'id': id,
       if (accountId != null) 'account_id': accountId,
       if (rootTaskId != null) 'root_task_id': rootTaskId,
+      if (groupId != null) 'group_id': groupId,
       if (desiredStateId != null) 'desired_state_id': desiredStateId,
       if (deleteGeneration != null) 'delete_generation': deleteGeneration,
       if (notBefore != null) 'not_before': notBefore,
@@ -8984,6 +9555,7 @@ class TaskDeleteTombstoneRowsCompanion
     Value<int>? id,
     Value<int>? accountId,
     Value<int>? rootTaskId,
+    Value<int?>? groupId,
     Value<int>? desiredStateId,
     Value<int>? deleteGeneration,
     Value<DateTime>? notBefore,
@@ -8994,6 +9566,7 @@ class TaskDeleteTombstoneRowsCompanion
       id: id ?? this.id,
       accountId: accountId ?? this.accountId,
       rootTaskId: rootTaskId ?? this.rootTaskId,
+      groupId: groupId ?? this.groupId,
       desiredStateId: desiredStateId ?? this.desiredStateId,
       deleteGeneration: deleteGeneration ?? this.deleteGeneration,
       notBefore: notBefore ?? this.notBefore,
@@ -9013,6 +9586,9 @@ class TaskDeleteTombstoneRowsCompanion
     }
     if (rootTaskId.present) {
       map['root_task_id'] = Variable<int>(rootTaskId.value);
+    }
+    if (groupId.present) {
+      map['group_id'] = Variable<int>(groupId.value);
     }
     if (desiredStateId.present) {
       map['desired_state_id'] = Variable<int>(desiredStateId.value);
@@ -9038,6 +9614,7 @@ class TaskDeleteTombstoneRowsCompanion
           ..write('id: $id, ')
           ..write('accountId: $accountId, ')
           ..write('rootTaskId: $rootTaskId, ')
+          ..write('groupId: $groupId, ')
           ..write('desiredStateId: $desiredStateId, ')
           ..write('deleteGeneration: $deleteGeneration, ')
           ..write('notBefore: $notBefore, ')
@@ -10607,7 +11184,13 @@ class $BulkOperationRowsTable extends BulkOperationRows
     'kind',
     aliasedName,
     false,
-    check: () => kind.isIn(const <String>['complete', 'reschedule', 'move']),
+    check: () => kind.isIn(const <String>[
+      'complete',
+      'reschedule',
+      'move',
+      'delete',
+      'clearCompleted',
+    ]),
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
@@ -13538,6 +14121,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $DesiredStateAttemptRowsTable desiredStateAttemptRows =
       $DesiredStateAttemptRowsTable(this);
   late final $SyncRunRowsTable syncRunRows = $SyncRunRowsTable(this);
+  late final $TaskDeleteGroupRowsTable taskDeleteGroupRows =
+      $TaskDeleteGroupRowsTable(this);
   late final $TaskDeleteTombstoneRowsTable taskDeleteTombstoneRows =
       $TaskDeleteTombstoneRowsTable(this);
   late final $TaskDeleteSnapshotRowsTable taskDeleteSnapshotRows =
@@ -13571,6 +14156,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     desiredStateDependencyRows,
     desiredStateAttemptRows,
     syncRunRows,
+    taskDeleteGroupRows,
     taskDeleteTombstoneRows,
     taskDeleteSnapshotRows,
     taskDueChangeGroupRows,
@@ -17524,11 +18110,285 @@ typedef $$SyncRunRowsTableProcessedTableManager =
       SyncRunRow,
       PrefetchHooks Function()
     >;
+typedef $$TaskDeleteGroupRowsTableCreateCompanionBuilder =
+    TaskDeleteGroupRowsCompanion Function({
+      Value<int> id,
+      required int accountId,
+      required int selectedCount,
+      required int rootCount,
+      required int snapshotCount,
+      required DateTime notBefore,
+      required bool snapshotAvailable,
+      required DateTime createdAt,
+    });
+typedef $$TaskDeleteGroupRowsTableUpdateCompanionBuilder =
+    TaskDeleteGroupRowsCompanion Function({
+      Value<int> id,
+      Value<int> accountId,
+      Value<int> selectedCount,
+      Value<int> rootCount,
+      Value<int> snapshotCount,
+      Value<DateTime> notBefore,
+      Value<bool> snapshotAvailable,
+      Value<DateTime> createdAt,
+    });
+
+class $$TaskDeleteGroupRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $TaskDeleteGroupRowsTable> {
+  $$TaskDeleteGroupRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get rootCount => $composableBuilder(
+    column: $table.rootCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TaskDeleteGroupRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TaskDeleteGroupRowsTable> {
+  $$TaskDeleteGroupRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get rootCount => $composableBuilder(
+    column: $table.rootCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get notBefore => $composableBuilder(
+    column: $table.notBefore,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TaskDeleteGroupRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TaskDeleteGroupRowsTable> {
+  $$TaskDeleteGroupRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<int> get selectedCount => $composableBuilder(
+    column: $table.selectedCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get rootCount =>
+      $composableBuilder(column: $table.rootCount, builder: (column) => column);
+
+  GeneratedColumn<int> get snapshotCount => $composableBuilder(
+    column: $table.snapshotCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get notBefore =>
+      $composableBuilder(column: $table.notBefore, builder: (column) => column);
+
+  GeneratedColumn<bool> get snapshotAvailable => $composableBuilder(
+    column: $table.snapshotAvailable,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$TaskDeleteGroupRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TaskDeleteGroupRowsTable,
+          TaskDeleteGroupRow,
+          $$TaskDeleteGroupRowsTableFilterComposer,
+          $$TaskDeleteGroupRowsTableOrderingComposer,
+          $$TaskDeleteGroupRowsTableAnnotationComposer,
+          $$TaskDeleteGroupRowsTableCreateCompanionBuilder,
+          $$TaskDeleteGroupRowsTableUpdateCompanionBuilder,
+          (
+            TaskDeleteGroupRow,
+            BaseReferences<
+              _$AppDatabase,
+              $TaskDeleteGroupRowsTable,
+              TaskDeleteGroupRow
+            >,
+          ),
+          TaskDeleteGroupRow,
+          PrefetchHooks Function()
+        > {
+  $$TaskDeleteGroupRowsTableTableManager(
+    _$AppDatabase db,
+    $TaskDeleteGroupRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TaskDeleteGroupRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TaskDeleteGroupRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$TaskDeleteGroupRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> accountId = const Value.absent(),
+                Value<int> selectedCount = const Value.absent(),
+                Value<int> rootCount = const Value.absent(),
+                Value<int> snapshotCount = const Value.absent(),
+                Value<DateTime> notBefore = const Value.absent(),
+                Value<bool> snapshotAvailable = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+              }) => TaskDeleteGroupRowsCompanion(
+                id: id,
+                accountId: accountId,
+                selectedCount: selectedCount,
+                rootCount: rootCount,
+                snapshotCount: snapshotCount,
+                notBefore: notBefore,
+                snapshotAvailable: snapshotAvailable,
+                createdAt: createdAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int accountId,
+                required int selectedCount,
+                required int rootCount,
+                required int snapshotCount,
+                required DateTime notBefore,
+                required bool snapshotAvailable,
+                required DateTime createdAt,
+              }) => TaskDeleteGroupRowsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                selectedCount: selectedCount,
+                rootCount: rootCount,
+                snapshotCount: snapshotCount,
+                notBefore: notBefore,
+                snapshotAvailable: snapshotAvailable,
+                createdAt: createdAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TaskDeleteGroupRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TaskDeleteGroupRowsTable,
+      TaskDeleteGroupRow,
+      $$TaskDeleteGroupRowsTableFilterComposer,
+      $$TaskDeleteGroupRowsTableOrderingComposer,
+      $$TaskDeleteGroupRowsTableAnnotationComposer,
+      $$TaskDeleteGroupRowsTableCreateCompanionBuilder,
+      $$TaskDeleteGroupRowsTableUpdateCompanionBuilder,
+      (
+        TaskDeleteGroupRow,
+        BaseReferences<
+          _$AppDatabase,
+          $TaskDeleteGroupRowsTable,
+          TaskDeleteGroupRow
+        >,
+      ),
+      TaskDeleteGroupRow,
+      PrefetchHooks Function()
+    >;
 typedef $$TaskDeleteTombstoneRowsTableCreateCompanionBuilder =
     TaskDeleteTombstoneRowsCompanion Function({
       Value<int> id,
       required int accountId,
       required int rootTaskId,
+      Value<int?> groupId,
       required int desiredStateId,
       required int deleteGeneration,
       required DateTime notBefore,
@@ -17540,6 +18400,7 @@ typedef $$TaskDeleteTombstoneRowsTableUpdateCompanionBuilder =
       Value<int> id,
       Value<int> accountId,
       Value<int> rootTaskId,
+      Value<int?> groupId,
       Value<int> desiredStateId,
       Value<int> deleteGeneration,
       Value<DateTime> notBefore,
@@ -17568,6 +18429,11 @@ class $$TaskDeleteTombstoneRowsTableFilterComposer
 
   ColumnFilters<int> get rootTaskId => $composableBuilder(
     column: $table.rootTaskId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get groupId => $composableBuilder(
+    column: $table.groupId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -17621,6 +18487,11 @@ class $$TaskDeleteTombstoneRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get groupId => $composableBuilder(
+    column: $table.groupId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get desiredStateId => $composableBuilder(
     column: $table.desiredStateId,
     builder: (column) => ColumnOrderings(column),
@@ -17666,6 +18537,9 @@ class $$TaskDeleteTombstoneRowsTableAnnotationComposer
     column: $table.rootTaskId,
     builder: (column) => column,
   );
+
+  GeneratedColumn<int> get groupId =>
+      $composableBuilder(column: $table.groupId, builder: (column) => column);
 
   GeneratedColumn<int> get desiredStateId => $composableBuilder(
     column: $table.desiredStateId,
@@ -17738,6 +18612,7 @@ class $$TaskDeleteTombstoneRowsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<int> accountId = const Value.absent(),
                 Value<int> rootTaskId = const Value.absent(),
+                Value<int?> groupId = const Value.absent(),
                 Value<int> desiredStateId = const Value.absent(),
                 Value<int> deleteGeneration = const Value.absent(),
                 Value<DateTime> notBefore = const Value.absent(),
@@ -17747,6 +18622,7 @@ class $$TaskDeleteTombstoneRowsTableTableManager
                 id: id,
                 accountId: accountId,
                 rootTaskId: rootTaskId,
+                groupId: groupId,
                 desiredStateId: desiredStateId,
                 deleteGeneration: deleteGeneration,
                 notBefore: notBefore,
@@ -17758,6 +18634,7 @@ class $$TaskDeleteTombstoneRowsTableTableManager
                 Value<int> id = const Value.absent(),
                 required int accountId,
                 required int rootTaskId,
+                Value<int?> groupId = const Value.absent(),
                 required int desiredStateId,
                 required int deleteGeneration,
                 required DateTime notBefore,
@@ -17767,6 +18644,7 @@ class $$TaskDeleteTombstoneRowsTableTableManager
                 id: id,
                 accountId: accountId,
                 rootTaskId: rootTaskId,
+                groupId: groupId,
                 desiredStateId: desiredStateId,
                 deleteGeneration: deleteGeneration,
                 notBefore: notBefore,
@@ -20071,6 +20949,8 @@ class $AppDatabaseManager {
       );
   $$SyncRunRowsTableTableManager get syncRunRows =>
       $$SyncRunRowsTableTableManager(_db, _db.syncRunRows);
+  $$TaskDeleteGroupRowsTableTableManager get taskDeleteGroupRows =>
+      $$TaskDeleteGroupRowsTableTableManager(_db, _db.taskDeleteGroupRows);
   $$TaskDeleteTombstoneRowsTableTableManager get taskDeleteTombstoneRows =>
       $$TaskDeleteTombstoneRowsTableTableManager(
         _db,

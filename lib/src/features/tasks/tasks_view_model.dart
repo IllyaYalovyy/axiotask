@@ -9,6 +9,7 @@ import '../../domain/commands/task_list_commands.dart';
 import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
+import '../../domain/policy/bulk_task_operations.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/smart_views.dart';
 import '../../domain/repository/preferences_repository.dart';
@@ -24,6 +25,7 @@ final class TasksViewState {
     required this.taskLists,
     required this.tasks,
     required this.taskDeleteUndos,
+    required this.taskDeleteGroupUndos,
     required this.taskDueChangeUndos,
     required this.health,
     required this.today,
@@ -52,6 +54,7 @@ final class TasksViewState {
   final List<CachedTaskList> taskLists;
   final List<CachedTask> tasks;
   final List<TaskDeleteUndo> taskDeleteUndos;
+  final List<TaskDeleteGroupUndo> taskDeleteGroupUndos;
   final List<TaskDueChangeUndo> taskDueChangeUndos;
   final SyncHealth health;
   final TaskDate today;
@@ -138,12 +141,21 @@ final class TasksViewState {
     tasks.where((value) => value.parentTaskId == selectedTaskId),
   );
 
+  ClearCompletedSelection? get clearCompletedSelection {
+    final taskListId = selectedTaskListId;
+    if (taskListId == null) return null;
+    return selectClearCompletedTasks(
+      tasks: tasks.where((task) => task.taskListId == taskListId),
+    );
+  }
+
   TasksViewState copyWith({
     bool? isLoading,
     bool? isRefreshing,
     List<CachedTaskList>? taskLists,
     List<CachedTask>? tasks,
     List<TaskDeleteUndo>? taskDeleteUndos,
+    List<TaskDeleteGroupUndo>? taskDeleteGroupUndos,
     List<TaskDueChangeUndo>? taskDueChangeUndos,
     SyncHealth? health,
     TaskDate? today,
@@ -171,6 +183,7 @@ final class TasksViewState {
     taskLists: taskLists ?? this.taskLists,
     tasks: tasks ?? this.tasks,
     taskDeleteUndos: taskDeleteUndos ?? this.taskDeleteUndos,
+    taskDeleteGroupUndos: taskDeleteGroupUndos ?? this.taskDeleteGroupUndos,
     taskDueChangeUndos: taskDueChangeUndos ?? this.taskDueChangeUndos,
     health: health ?? this.health,
     today: today ?? this.today,
@@ -251,6 +264,7 @@ final class TasksViewModel extends ChangeNotifier {
          taskLists: const <CachedTaskList>[],
          tasks: const <CachedTask>[],
          taskDeleteUndos: const <TaskDeleteUndo>[],
+         taskDeleteGroupUndos: const <TaskDeleteGroupUndo>[],
          taskDueChangeUndos: const <TaskDueChangeUndo>[],
          health: SyncHealth(
            outcome: SyncHealthOutcome.pending,
@@ -280,6 +294,8 @@ final class TasksViewModel extends ChangeNotifier {
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
   StreamSubscription<List<TaskDeleteUndo>>? _taskDeleteUndoSubscription;
+  StreamSubscription<List<TaskDeleteGroupUndo>>?
+  _taskDeleteGroupUndoSubscription;
   StreamSubscription<List<TaskDueChangeUndo>>? _taskDueChangeUndoSubscription;
   StreamSubscription<Map<TaskListId, ListPreferences>>?
   _listPreferencesSubscription;
@@ -310,6 +326,14 @@ final class TasksViewModel extends ChangeNotifier {
     _taskDeleteUndoSubscription = tasksRepository
         .watchUndoableTaskDeletes(accountId)
         .listen(_acceptTaskDeleteUndos, onError: _acceptTaskDeleteUndoError);
+    if (tasksRepository case final DestructiveTaskOperationsRepository value) {
+      _taskDeleteGroupUndoSubscription = value
+          .watchUndoableTaskDeleteGroups(accountId)
+          .listen(
+            _acceptTaskDeleteGroupUndos,
+            onError: _acceptTaskDeleteUndoError,
+          );
+    }
     _taskDueChangeUndoSubscription = tasksRepository
         .watchUndoableTaskDueChanges(accountId)
         .listen(
@@ -659,6 +683,54 @@ final class TasksViewModel extends ChangeNotifier {
         ),
       );
 
+  Future<void> deleteBulkSelection() => _performBulkCommand(
+    BulkDeleteTasksCommand(
+      accountId: accountId,
+      taskIds: Set<TaskId>.unmodifiable(_state.bulkSelectedTaskIds),
+    ),
+  );
+
+  Future<void> clearCompleted() {
+    final existing = _bulkCommandInFlight;
+    if (existing != null) return existing;
+    final repository = tasksRepository;
+    final taskListId = _state.selectedTaskListId;
+    if (repository is! DestructiveTaskOperationsRepository ||
+        taskListId == null) {
+      return Future<void>.value();
+    }
+    final operation = _runClearCompleted(
+      repository as DestructiveTaskOperationsRepository,
+      taskListId,
+    );
+    _bulkCommandInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runClearCompleted(
+    DestructiveTaskOperationsRepository repository,
+    TaskListId taskListId,
+  ) async {
+    _replaceState(
+      _state.copyWith(
+        isBulkCommandPending: true,
+        bulkCommandFailureMessage: null,
+      ),
+    );
+    try {
+      final result = await repository.clearCompleted(
+        ClearCompletedTasksCommand(
+          accountId: accountId,
+          taskListId: taskListId,
+        ),
+      );
+      await _acceptBulkCommandResult(result, clearSelection: false);
+    } finally {
+      _bulkCommandInFlight = null;
+      _replaceState(_state.copyWith(isBulkCommandPending: false));
+    }
+  }
+
   Future<void> _performBulkCommand(BulkExistingTaskCommand command) {
     final existing = _bulkCommandInFlight;
     if (existing != null) return existing;
@@ -684,25 +756,40 @@ final class TasksViewModel extends ChangeNotifier {
     );
     try {
       final result = await repository.applyBulk(command);
-      switch (result) {
-        case Success<BulkOperationReceipt>(:final value):
-          _replaceState(
-            _state.copyWith(
-              bulkSelectedTaskIds: const <TaskId>{},
-              latestBulkOperation: value.summary,
-            ),
-          );
-          await localEditCommitted?.call();
-        case Failed<BulkOperationReceipt>():
-          _replaceState(
-            _state.copyWith(
-              bulkCommandFailureMessage: 'No selected tasks were changed.',
-            ),
-          );
-      }
+      await _acceptBulkCommandResult(result, clearSelection: true);
     } finally {
       _bulkCommandInFlight = null;
       _replaceState(_state.copyWith(isBulkCommandPending: false));
+    }
+  }
+
+  Future<void> _acceptBulkCommandResult(
+    Outcome<BulkOperationReceipt> result, {
+    required bool clearSelection,
+  }) async {
+    switch (result) {
+      case Success<BulkOperationReceipt>(:final value):
+        _replaceState(
+          _state.copyWith(
+            bulkSelectedTaskIds: clearSelection
+                ? const <TaskId>{}
+                : _state.bulkSelectedTaskIds,
+            latestBulkOperation: value.summary,
+          ),
+        );
+        if (value.notBefore case final notBefore?) {
+          await taskDeleteCommitted?.call(notBefore);
+        } else {
+          await localEditCommitted?.call();
+        }
+      case Failed<BulkOperationReceipt>():
+        _replaceState(
+          _state.copyWith(
+            bulkCommandFailureMessage: clearSelection
+                ? 'No selected tasks were changed.'
+                : 'No completed tasks were deleted.',
+          ),
+        );
     }
   }
 
@@ -720,6 +807,19 @@ final class TasksViewModel extends ChangeNotifier {
       UndoTaskDeleteCommand(accountId: accountId, taskId: taskId),
     ),
   );
+
+  Future<void> undoTaskDeleteGroup(int groupId) {
+    final repository = tasksRepository;
+    if (repository is! DestructiveTaskOperationsRepository) {
+      return Future<void>.value();
+    }
+    final destructive = repository as DestructiveTaskOperationsRepository;
+    return _performTaskCommand<void>(
+      () => destructive.undoTaskDeleteGroup(
+        UndoTaskDeleteGroupCommand(accountId: accountId, groupId: groupId),
+      ),
+    );
+  }
 
   Future<void> undoTaskDueChange(int groupId) => _performTaskCommand(
     () => tasksRepository.undoTaskDueChange(
@@ -972,6 +1072,14 @@ final class TasksViewModel extends ChangeNotifier {
     );
   }
 
+  void _acceptTaskDeleteGroupUndos(List<TaskDeleteGroupUndo> values) {
+    _replaceState(
+      _state.copyWith(
+        taskDeleteGroupUndos: List<TaskDeleteGroupUndo>.unmodifiable(values),
+      ),
+    );
+  }
+
   void _acceptTaskDeleteUndoError(Object _) {
     _replaceState(
       _state.copyWith(
@@ -1016,6 +1124,7 @@ final class TasksViewModel extends ChangeNotifier {
     final tasksSubscription = _tasksSubscription;
     final healthSubscription = _healthSubscription;
     final taskDeleteUndoSubscription = _taskDeleteUndoSubscription;
+    final taskDeleteGroupUndoSubscription = _taskDeleteGroupUndoSubscription;
     final taskDueChangeUndoSubscription = _taskDueChangeUndoSubscription;
     final listPreferencesSubscription = _listPreferencesSubscription;
     final viewPreferencesSubscription = _viewPreferencesSubscription;
@@ -1024,6 +1133,9 @@ final class TasksViewModel extends ChangeNotifier {
     if (healthSubscription != null) unawaited(healthSubscription.cancel());
     if (taskDeleteUndoSubscription != null) {
       unawaited(taskDeleteUndoSubscription.cancel());
+    }
+    if (taskDeleteGroupUndoSubscription != null) {
+      unawaited(taskDeleteGroupUndoSubscription.cancel());
     }
     if (taskDueChangeUndoSubscription != null) {
       unawaited(taskDueChangeUndoSubscription.cancel());

@@ -1555,6 +1555,93 @@ void main() {
       const TaskListId(8),
     );
   });
+
+  testWidgets('grouped bulk delete confirms once and exposes one Undo all', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    await tester.tap(find.byKey(const Key('bulk-select-open')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('bulk-select-task-13')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('bulk-delete-open')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('bulk-delete-confirmation')), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(fixture.tasks.bulkApplied, isEmpty);
+
+    await tester.tap(find.byKey(const Key('bulk-delete-open')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('bulk-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(fixture.tasks.bulkApplied.single, isA<BulkDeleteTasksCommand>());
+    fixture.tasks.groupUndoController.add(<TaskDeleteGroupUndo>[
+      TaskDeleteGroupUndo(
+        groupId: 91,
+        selectedCount: 2,
+        rootCount: 2,
+        notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(fixture.viewModel.state.taskDeleteGroupUndos, hasLength(1));
+    expect(find.byKey(const Key('bulk-delete-undo')), findsOneWidget);
+    expect(find.text('2 selected tasks deleted'), findsOneWidget);
+    await tester.tap(find.text('Undo all'));
+    await tester.pump();
+    expect(fixture.tasks.groupUndos.single.groupId, 91);
+  });
+
+  testWidgets(
+    'Clear completed cancel is inert and confirmation names skipped parent',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _destructiveSnapshot,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('clear-completed-open')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('clear-completed-confirmation')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('1 completed parent is kept'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.clearedCompleted, isEmpty);
+
+      await tester.tap(find.byKey(const Key('clear-completed-open')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('clear-completed-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        fixture.tasks.clearedCompleted.single.taskListId,
+        const TaskListId(7),
+      );
+      expect(find.byKey(const Key('bulk-delete-undo')), findsNothing);
+      expect(
+        find.textContaining('Clear completed: 0 confirmed'),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 final class _ShellFixture {
@@ -1625,7 +1712,8 @@ final class _TasksRepository
     implements
         TasksRepository,
         BulkTasksRepository,
-        BulkTaskOperationsRepository {
+        BulkTaskOperationsRepository,
+        DestructiveTaskOperationsRepository {
   late CachedTasksSnapshot snapshot;
   Future<Outcome<TaskId>> createResult = Future.value(
     const Outcome<TaskId>.success(TaskId(90)),
@@ -1639,11 +1727,17 @@ final class _TasksRepository
   final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
   final dueUndoController =
       StreamController<List<TaskDueChangeUndo>>.broadcast();
+  final groupUndoController =
+      StreamController<List<TaskDeleteGroupUndo>>.broadcast();
   final List<SetTaskDueCommand> dueChanges = <SetTaskDueCommand>[];
   final List<UndoTaskDueChangeCommand> dueUndos = <UndoTaskDueChangeCommand>[];
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
   final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
   final List<BulkExistingTaskCommand> bulkApplied = <BulkExistingTaskCommand>[];
+  final List<ClearCompletedTasksCommand> clearedCompleted =
+      <ClearCompletedTasksCommand>[];
+  final List<UndoTaskDeleteGroupCommand> groupUndos =
+      <UndoTaskDeleteGroupCommand>[];
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
@@ -1729,6 +1823,7 @@ final class _TasksRepository
         BulkCompleteTasksCommand() => BulkOperationKind.complete,
         BulkRescheduleTasksCommand() => BulkOperationKind.reschedule,
         BulkMoveTasksCommand() => BulkOperationKind.move,
+        BulkDeleteTasksCommand() => BulkOperationKind.delete,
       },
       selectedCount: command.taskIds.length,
       affectedCount: command.taskIds.length,
@@ -1738,8 +1833,50 @@ final class _TasksRepository
       createdAt: DateTime.utc(2026, 8, 15, 12),
     );
     return Outcome.success(
-      BulkOperationReceipt(summary: summary, taskIds: command.taskIds.toList()),
+      BulkOperationReceipt(
+        summary: summary,
+        taskIds: command.taskIds.toList(),
+        deleteGroupId: command is BulkDeleteTasksCommand ? 91 : null,
+        notBefore: command is BulkDeleteTasksCommand
+            ? DateTime.utc(2026, 8, 15, 12, 0, 30)
+            : null,
+      ),
     );
+  }
+
+  @override
+  Future<Outcome<BulkOperationReceipt>> clearCompleted(
+    ClearCompletedTasksCommand command,
+  ) async {
+    clearedCompleted.add(command);
+    return Outcome.success(
+      BulkOperationReceipt(
+        summary: BulkOperationSummary(
+          operationId: 42,
+          kind: BulkOperationKind.clearCompleted,
+          selectedCount: 1,
+          affectedCount: 1,
+          confirmedCount: 0,
+          pendingCount: 1,
+          failedCount: 0,
+          createdAt: DateTime.utc(2026, 8, 15, 12),
+        ),
+        taskIds: const <TaskId>[TaskId(33)],
+      ),
+    );
+  }
+
+  @override
+  Stream<List<TaskDeleteGroupUndo>> watchUndoableTaskDeleteGroups(
+    AccountId accountId,
+  ) => groupUndoController.stream;
+
+  @override
+  Future<Outcome<void>> undoTaskDeleteGroup(
+    UndoTaskDeleteGroupCommand command,
+  ) async {
+    groupUndos.add(command);
+    return const Outcome<void>.success(null);
   }
 
   @override
@@ -1820,6 +1957,47 @@ final _snapshot = CachedTasksSnapshot(
       title: 'Leaf task',
       notes: null,
       status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _destructiveSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: _snapshot.taskLists,
+  tasks: const <CachedTask>[
+    CachedTask(
+      id: TaskId(31),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-unsafe-parent'),
+      title: 'Completed parent kept safely',
+      notes: null,
+      status: TaskStatus.completed,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(32),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: TaskId(31),
+      remoteId: TaskRemoteId('synthetic-unfinished-child'),
+      title: 'Unfinished child remains',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+    CachedTask(
+      id: TaskId(33),
+      accountId: AccountId(1),
+      taskListId: TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-completed-leaf'),
+      title: 'Completed leaf clears',
+      notes: null,
+      status: TaskStatus.completed,
       due: null,
     ),
   ],
