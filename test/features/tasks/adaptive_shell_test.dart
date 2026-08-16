@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:axiotask/src/app/adaptive_shell.dart';
 import 'package:axiotask/src/app/navigation_state.dart';
 import 'package:axiotask/src/core/clock.dart';
+import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
@@ -1185,6 +1186,227 @@ void main() {
     },
   );
 
+  testWidgets(
+    'PAR-DESKTOP-003 drag previews without reflow and drops through MOVE anchor',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      final source = find.byKey(const Key('desktop-task-row-13'));
+      final target = find.byKey(const Key('desktop-task-row-11'));
+      final sourceBefore = tester.getRect(source);
+      final targetBefore = tester.getRect(target);
+      expect(
+        find.bySemanticsLabel(
+          'Drag Leaf task to reorder or move. '
+          'Move buttons are available in task details.',
+        ),
+        findsOneWidget,
+      );
+      final drag = await tester.startGesture(
+        tester.getCenter(source),
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveTo(tester.getTopLeft(target) + const Offset(80, 8));
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('desktop-task-drag-preview')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Move “Leaf task” before “Cached parent”'),
+        findsOneWidget,
+      );
+      expect(tester.getRect(source), sourceBefore);
+      expect(tester.getRect(target), targetBefore);
+
+      await drag.up();
+      await tester.pumpAndSettle();
+      final command = fixture.tasks.applied.single as MoveTaskCommand;
+      expect(command.taskId, const TaskId(13));
+      expect(command.destinationTaskListId, const TaskListId(7));
+      expect(command.parentTaskId, isNull);
+      expect(command.previousTaskId, isNull);
+      expect(find.byKey(const Key('desktop-task-drag-preview')), findsNothing);
+    },
+  );
+
+  testWidgets('drag cancel and invalid targets commit nothing', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final source = find.byKey(const Key('desktop-task-row-13'));
+    final drag = await tester.startGesture(
+      tester.getCenter(source),
+      kind: PointerDeviceKind.mouse,
+    );
+    await drag.moveTo(tester.getCenter(find.text('Focus').first));
+    await tester.pump();
+    expect(find.text('Cannot drop “Leaf task” here'), findsOneWidget);
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    expect(fixture.tasks.applied, isEmpty);
+    expect(find.text('Leaf task'), findsOneWidget);
+  });
+
+  testWidgets('touch input does not activate the Fedora pointer adapter', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('desktop-task-row-13'))),
+      kind: PointerDeviceKind.touch,
+    );
+    await gesture.moveTo(
+      tester.getTopLeft(find.byKey(const Key('desktop-task-row-11'))) +
+          const Offset(80, 8),
+    );
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('desktop-task-drag-preview')), findsNothing);
+    expect(fixture.tasks.applied, isEmpty);
+  });
+
+  testWidgets('dropping on another Google list uses stable cross-list move', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final drag = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('desktop-task-row-11'))),
+      kind: PointerDeviceKind.mouse,
+    );
+    final archiveTarget = find.descendant(
+      of: find.byKey(const Key('desktop-navigation-pane')),
+      matching: find.text('Synthetic archive'),
+    );
+    await drag.moveTo(tester.getCenter(archiveTarget));
+    await tester.pump();
+    expect(
+      find.text('Move “Cached parent” to “Synthetic archive”'),
+      findsOneWidget,
+    );
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    final command = fixture.tasks.applied.single as MoveTaskCommand;
+    expect(command.taskId, const TaskId(11));
+    expect(command.destinationTaskListId, const TaskListId(8));
+    expect(command.parentTaskId, isNull);
+    expect(command.previousTaskId, isNull);
+  });
+
+  testWidgets(
+    'failed drag command clears preview and restores canonical projection',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.failed));
+      fixture.tasks.applyResult = Future.value(
+        const Outcome<void>.failure(
+          Failure(
+            code: 'sync.synthetic_structure_rejected',
+            category: FailureCategory.remote,
+            operation: FailureOperation.write,
+            retry: RetryClassification.permanent,
+            impact: 'Synthetic structure failure.',
+            safeSummary: 'Synthetic structure failure.',
+          ),
+        ),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      final source = find.byKey(const Key('desktop-task-row-13'));
+      final target = find.byKey(const Key('desktop-task-row-11'));
+      final canonicalSourceTop = tester.getTopLeft(source).dy;
+      final canonicalTargetTop = tester.getTopLeft(target).dy;
+      final drag = await tester.startGesture(
+        tester.getCenter(source),
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveTo(tester.getTopLeft(target) + const Offset(80, 8));
+      await tester.pump();
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      expect(find.text('The task could not be saved safely.'), findsOneWidget);
+      expect(find.byKey(const Key('desktop-task-drag-preview')), findsNothing);
+      expect(
+        tester.getTopLeft(target).dy,
+        lessThan(tester.getTopLeft(source).dy),
+      );
+      expect(canonicalTargetTop, lessThan(canonicalSourceTop));
+    },
+  );
+
+  testWidgets('drag autoscrolls the task collection near its edge', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.pending),
+      snapshot: _scrollSnapshot,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(
+        of: find.byKey(const Key('desktop-task-scroll')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(scrollable.position.pixels, 0);
+    final drag = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('desktop-task-row-100'))),
+      kind: PointerDeviceKind.mouse,
+    );
+    await drag.moveTo(const Offset(600, 775));
+    await tester.pump(const Duration(milliseconds: 180));
+    expect(scrollable.position.pixels, greaterThan(0));
+    await drag.up();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('desktop panes hold at named widths and high text scaling', (
     tester,
   ) async {
@@ -1449,6 +1671,26 @@ final _snapshot = CachedTasksSnapshot(
       due: null,
     ),
   ],
+  completeness: CacheCompleteness.complete,
+);
+
+final _scrollSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: _snapshot.taskLists,
+  tasks: List<CachedTask>.generate(
+    24,
+    (index) => CachedTask(
+      id: TaskId(100 + index),
+      accountId: const AccountId(1),
+      taskListId: const TaskListId(7),
+      parentTaskId: null,
+      remoteId: TaskRemoteId('synthetic-scroll-$index'),
+      title: 'Synthetic scroll task ${index + 1}',
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    ),
+  ),
   completeness: CacheCompleteness.complete,
 );
 

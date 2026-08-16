@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'src/app/adaptive_shell.dart';
 import 'src/core/clock.dart';
+import 'src/core/failure.dart';
 import 'src/core/outcome.dart';
 import 'src/domain/commands/task_commands.dart';
 import 'src/domain/commands/task_list_commands.dart';
@@ -78,6 +80,13 @@ final class _HealthScreenshotSequenceState
           );
           await _settleFrames();
         }
+        var dragHeld = false;
+        if (scenario.name == 'drag-preview-light') {
+          await _performSyntheticDrag(release: false);
+          dragHeld = true;
+        } else if (scenario.name == 'drag-failure-dark') {
+          await _performSyntheticDrag(release: true);
+        }
         final boundary =
             _boundaryKey.currentContext!.findRenderObject()!
                 as RenderRepaintBoundary;
@@ -91,6 +100,15 @@ final class _HealthScreenshotSequenceState
           bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
           flush: true,
         );
+        if (dragHeld) {
+          GestureBinding.instance.handlePointerEvent(
+            const PointerUpEvent(pointer: 42, position: Offset(500, 420)),
+          );
+          GestureBinding.instance.handlePointerEvent(
+            const PointerRemovedEvent(pointer: 42, position: Offset(500, 420)),
+          );
+          await _settleFrames();
+        }
         if (index + 1 < _captureScenarios.length) {
           final previous = _viewModel;
           setState(() {
@@ -114,6 +132,64 @@ final class _HealthScreenshotSequenceState
       WidgetsBinding.instance.scheduleFrame();
       await WidgetsBinding.instance.endOfFrame;
     }
+  }
+
+  Future<void> _performSyntheticDrag({required bool release}) async {
+    final source = _renderBoxFor(const Key('desktop-task-row-13'));
+    final target = _renderBoxFor(const Key('desktop-task-row-11'));
+    final sourcePosition = source.localToGlobal(
+      source.size.center(Offset.zero),
+    );
+    final targetPosition = target.localToGlobal(const Offset(80, 8));
+    GestureBinding.instance.handlePointerEvent(
+      PointerAddedEvent(pointer: 42, position: sourcePosition),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerDownEvent(
+        pointer: 42,
+        position: sourcePosition,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerMoveEvent(
+        pointer: 42,
+        position: targetPosition,
+        delta: targetPosition - sourcePosition,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      ),
+    );
+    if (release) {
+      GestureBinding.instance.handlePointerEvent(
+        PointerUpEvent(
+          pointer: 42,
+          position: targetPosition,
+          kind: PointerDeviceKind.mouse,
+        ),
+      );
+      GestureBinding.instance.handlePointerEvent(
+        PointerRemovedEvent(pointer: 42, position: targetPosition),
+      );
+    }
+    await _settleFrames();
+  }
+
+  RenderBox _renderBoxFor(Key key) {
+    RenderBox? result;
+    void visit(Element element) {
+      if (element.widget.key == key) {
+        result = element.findRenderObject()! as RenderBox;
+        return;
+      }
+      element.visitChildren(visit);
+    }
+
+    final root = WidgetsBinding.instance.rootElement;
+    if (root == null) throw StateError('Screenshot element tree unavailable.');
+    visit(root);
+    return result ?? (throw StateError('Screenshot target $key unavailable.'));
   }
 
   @override
@@ -181,6 +257,7 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
   accountId: const AccountId(1),
   tasksRepository: _ScreenshotTasksRepository(
     scenario.snapshot,
+    failMoves: scenario.name == 'drag-failure-dark',
     undos: scenario.name == 'delete-undo'
         ? <TaskDeleteUndo>[
             TaskDeleteUndo(
@@ -215,11 +292,13 @@ final class _ScreenshotTasksRepository
     this.snapshot, {
     this.undos = const <TaskDeleteUndo>[],
     this.dueUndos = const <TaskDueChangeUndo>[],
+    this.failMoves = false,
   });
 
   final CachedTasksSnapshot snapshot;
   final List<TaskDeleteUndo> undos;
   final List<TaskDueChangeUndo> dueUndos;
+  final bool failMoves;
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
@@ -237,8 +316,20 @@ final class _ScreenshotTasksRepository
       );
 
   @override
-  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
-      Future.value(const Outcome<void>.success(null));
+  Future<Outcome<void>> apply(ExistingTaskCommand command) => Future.value(
+    failMoves && command is MoveTaskCommand
+        ? const Outcome<void>.failure(
+            Failure(
+              code: 'sync.synthetic_structure_rejected',
+              category: FailureCategory.remote,
+              operation: FailureOperation.write,
+              retry: RetryClassification.permanent,
+              impact: 'Synthetic structure failure.',
+              safeSummary: 'Synthetic structure failure.',
+            ),
+          )
+        : const Outcome<void>.success(null),
+  );
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
@@ -372,6 +463,24 @@ typedef _ScreenshotScenario = ({
 });
 
 final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
+  (
+    name: 'drag-preview-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'drag-failure-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.failed,
+      failureReason: SyncFailureReason.remoteFailure,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
   (
     name: 'desktop-interactions-1024-light',
     snapshot: _taskDetailsSnapshot,

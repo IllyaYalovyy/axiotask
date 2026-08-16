@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
+import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
@@ -228,6 +229,105 @@ void main() {
       );
     });
   }
+
+  testWidgets('Linux drag preview light', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: const _GoldenTasksRepository(showCompletedTask: true),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.localChanges,
+          counts: const SyncWorkCounts(pending: 1),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+      ),
+    );
+    await tester.pump();
+    final drag = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('desktop-task-row-13'))),
+      kind: PointerDeviceKind.mouse,
+    );
+    await drag.moveTo(
+      tester.getTopLeft(find.byKey(const Key('desktop-task-row-11'))) +
+          const Offset(80, 8),
+    );
+    await tester.pump();
+
+    await expectLater(
+      find.byType(AdaptiveShell),
+      matchesGoldenFile('../../goldens/linux/drag_preview_light.png'),
+    );
+    await drag.up();
+  });
+
+  testWidgets('Linux drag failure dark restores canonical order', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: const _GoldenTasksRepository(
+        failMoves: true,
+        showCompletedTask: true,
+      ),
+      syncHealthRepository: _GoldenHealthRepository(
+        _health(
+          SyncHealthOutcome.failed,
+          failureReason: SyncFailureReason.remoteFailure,
+          counts: const SyncWorkCounts(pending: 1),
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          colorSchemeSeed: const Color(0xff315da8),
+          fontFamily: 'GoldenRoboto',
+          useMaterial3: true,
+        ),
+        home: AdaptiveShell(viewModel: viewModel, onHealthAction: (_) {}),
+      ),
+    );
+    await tester.pump();
+    final drag = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('desktop-task-row-13'))),
+      kind: PointerDeviceKind.mouse,
+    );
+    await drag.moveTo(
+      tester.getTopLeft(find.byKey(const Key('desktop-task-row-11'))) +
+          const Offset(80, 8),
+    );
+    await tester.pump();
+    await drag.up();
+    await tester.pumpAndSettle();
+
+    await expectLater(
+      find.byType(AdaptiveShell),
+      matchesGoldenFile('../../goldens/linux/drag_failure_dark.png'),
+    );
+  });
 }
 
 Future<void> _loadFlutterRoboto() async {
@@ -262,18 +362,34 @@ final class _GoldenTasksRepository implements TasksRepository {
   const _GoldenTasksRepository({
     this.undos = const <TaskDeleteUndo>[],
     this.hideDeletedSubtree = false,
+    this.failMoves = false,
+    this.showCompletedTask = false,
   });
 
   final List<TaskDeleteUndo> undos;
   final bool hideDeletedSubtree;
+  final bool failMoves;
+  final bool showCompletedTask;
 
   @override
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
       Future.value(const Outcome<TaskId>.success(TaskId(900)));
 
   @override
-  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
-      Future.value(const Outcome<void>.success(null));
+  Future<Outcome<void>> apply(ExistingTaskCommand command) => Future.value(
+    failMoves && command is MoveTaskCommand
+        ? const Outcome<void>.failure(
+            Failure(
+              code: 'sync.synthetic_structure_rejected',
+              category: FailureCategory.remote,
+              operation: FailureOperation.write,
+              retry: RetryClassification.permanent,
+              impact: 'Synthetic structure failure.',
+              safeSummary: 'Synthetic structure failure.',
+            ),
+          )
+        : const Outcome<void>.success(null),
+  );
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => Stream.value(
@@ -318,7 +434,7 @@ final class _GoldenTasksRepository implements TasksRepository {
             due: null,
           ),
         ],
-        const CachedTask(
+        CachedTask(
           id: TaskId(13),
           accountId: AccountId(1),
           taskListId: TaskListId(7),
@@ -326,7 +442,9 @@ final class _GoldenTasksRepository implements TasksRepository {
           remoteId: TaskRemoteId('synthetic-completed'),
           title: 'Confirm cache isolation',
           notes: null,
-          status: TaskStatus.completed,
+          status: showCompletedTask
+              ? TaskStatus.needsAction
+              : TaskStatus.completed,
           due: null,
         ),
       ],

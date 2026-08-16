@@ -71,6 +71,14 @@ Delete for their matching visible actions. F1 and the always-visible keyboard
 button open the complete reference. Unmodified task commands are suppressed
 while an editable text control has focus.
 
+In a Google-list collection using manual order, pointer drag shows an overlay
+row plus a before/after insertion marker without moving the canonical rows until
+the shared structure command commits. Dropping on another Google list uses the
+same stable-ID move command. Sorted, same-position, smart-view, and other invalid
+targets do not commit; cancel or failure removes the preview and exposes the
+canonical projection. Detail Move up/down and Move to list controls remain the
+focusable non-pointer equivalents.
+
 ## Task hierarchy
 
 Collection views show top-level tasks. Parent rows expose subtask progress and

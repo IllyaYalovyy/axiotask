@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -23,6 +24,7 @@ import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
 import '../sync/health/sync_health.dart';
 import 'desktop_shortcuts.dart';
+import 'desktop_task_drag.dart';
 import 'navigation_state.dart';
 
 final class AdaptiveShell extends StatefulWidget {
@@ -66,6 +68,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   TaskId? _focusedTaskId;
   bool _openedInitialBulkAdd = false;
   bool _suppressNavigationSync = false;
+  DesktopTaskDragPayload? _dragPayload;
+  _DesktopDropPreview? _dropPreview;
 
   @override
   void initState() {
@@ -207,6 +211,38 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     widget.viewModel.selectTask(taskId);
     _navigation.openTaskDetail(taskId);
     _suppressNavigationSync = false;
+  }
+
+  void _startTaskDrag(DesktopTaskDragPayload payload) {
+    setState(() {
+      _dragPayload = payload;
+      _dropPreview = _DesktopDropPreview.invalid(payload);
+    });
+  }
+
+  void _previewTaskDrop(_DesktopDropPreview preview) {
+    if (_dragPayload == null || _dropPreview == preview) return;
+    setState(() => _dropPreview = preview);
+  }
+
+  void _cancelTaskDrag() {
+    if (_dragPayload == null && _dropPreview == null) return;
+    setState(() {
+      _dragPayload = null;
+      _dropPreview = null;
+    });
+  }
+
+  void _acceptTaskDrop(DesktopTaskDropIntent intent) {
+    _cancelTaskDrag();
+    unawaited(
+      widget.viewModel.moveTask(
+        taskId: intent.taskId,
+        destinationTaskListId: intent.destinationTaskListId,
+        parentTaskId: intent.parentTaskId,
+        previousTaskId: intent.previousTaskId,
+      ),
+    );
   }
 
   void _openSearchResult(TaskSearchResult result) {
@@ -601,6 +637,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     navigationPaneFocus: _navigationPaneFocus,
     detailPaneFocus: _detailPaneFocus,
     onBack: _handleBack,
+    dropPreview: _dropPreview,
+    onDragStarted: _startTaskDrag,
+    onDragPreview: _previewTaskDrop,
+    onDragCanceled: _cancelTaskDrag,
+    onDrop: _acceptTaskDrop,
     wide: wide,
   );
 }
@@ -768,6 +809,11 @@ final class _ShellBody extends StatelessWidget {
     required this.navigationPaneFocus,
     required this.detailPaneFocus,
     required this.onBack,
+    required this.dropPreview,
+    required this.onDragStarted,
+    required this.onDragPreview,
+    required this.onDragCanceled,
+    required this.onDrop,
   });
 
   final TasksViewState state;
@@ -783,6 +829,11 @@ final class _ShellBody extends StatelessWidget {
   final FocusNode navigationPaneFocus;
   final FocusNode detailPaneFocus;
   final VoidCallback onBack;
+  final _DesktopDropPreview? dropPreview;
+  final ValueChanged<DesktopTaskDragPayload> onDragStarted;
+  final ValueChanged<_DesktopDropPreview> onDragPreview;
+  final VoidCallback onDragCanceled;
+  final ValueChanged<DesktopTaskDropIntent> onDrop;
 
   @override
   Widget build(BuildContext context) {
@@ -808,6 +859,11 @@ final class _ShellBody extends StatelessWidget {
                   openBulkAdd: openBulkAdd,
                   onTaskFocused: onTaskFocused,
                   onTaskAction: onTaskAction,
+                  dropPreview: dropPreview,
+                  onDragStarted: onDragStarted,
+                  onDragPreview: onDragPreview,
+                  onDragCanceled: onDragCanceled,
+                  onDrop: onDrop,
                 )
               : _DesktopPaneFocus(
                   key: const Key('desktop-detail-pane'),
@@ -824,7 +880,13 @@ final class _ShellBody extends StatelessWidget {
                   focusNode: navigationPaneFocus,
                   onKeyEvent: (_, event) =>
                       _handleNavigationKey(event, state, viewModel),
-                  child: _ListNavigation(state: state, viewModel: viewModel),
+                  child: _ListNavigation(
+                    state: state,
+                    viewModel: viewModel,
+                    dropPreview: dropPreview,
+                    onDragPreview: onDragPreview,
+                    onDrop: onDrop,
+                  ),
                 ),
               ),
               const VerticalDivider(width: 1),
@@ -838,6 +900,11 @@ final class _ShellBody extends StatelessWidget {
                   openBulkAdd: openBulkAdd,
                   onTaskFocused: onTaskFocused,
                   onTaskAction: onTaskAction,
+                  dropPreview: dropPreview,
+                  onDragStarted: onDragStarted,
+                  onDragPreview: onDragPreview,
+                  onDragCanceled: onDragCanceled,
+                  onDrop: onDrop,
                 ),
               ),
               const VerticalDivider(width: 1),
@@ -926,11 +993,17 @@ final class _ListNavigation extends StatelessWidget {
     required this.state,
     required this.viewModel,
     this.onSelected,
+    this.dropPreview,
+    this.onDragPreview,
+    this.onDrop,
   });
 
   final TasksViewState state;
   final TasksViewModel viewModel;
   final VoidCallback? onSelected;
+  final _DesktopDropPreview? dropPreview;
+  final ValueChanged<_DesktopDropPreview>? onDragPreview;
+  final ValueChanged<DesktopTaskDropIntent>? onDrop;
 
   @override
   Widget build(BuildContext context) {
@@ -977,38 +1050,97 @@ final class _ListNavigation extends StatelessWidget {
                 child: Text('No cached Google task lists'),
               ),
             for (final list in state.orderedTaskLists)
-              ListTile(
-                selected: list.id == state.selectedTaskListId,
-                leading:
-                    state.listPreferences[list.id]?.excludedFromSmartViews ==
-                        true
-                    ? const Tooltip(
-                        message: 'Excluded from smart views',
-                        child: Icon(Icons.visibility_off_outlined),
-                      )
-                    : const Icon(Icons.list_alt_outlined),
-                title: Text(
-                  list.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              _DesktopTaskListDropTarget(
+                taskList: list,
+                preview: dropPreview,
+                onPreview: onDragPreview,
+                onDrop: onDrop,
+                child: ListTile(
+                  selected: list.id == state.selectedTaskListId,
+                  leading:
+                      state.listPreferences[list.id]?.excludedFromSmartViews ==
+                          true
+                      ? const Tooltip(
+                          message: 'Excluded from smart views',
+                          child: Icon(Icons.visibility_off_outlined),
+                        )
+                      : const Icon(Icons.list_alt_outlined),
+                  title: Text(
+                    list.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${state.viewCount(TaskListView(list.id))} tasks',
+                  ),
+                  trailing: viewModel.preferencesRepository == null
+                      ? null
+                      : _ListPreferenceMenu(
+                          state: state,
+                          viewModel: viewModel,
+                          taskListId: list.id,
+                        ),
+                  onTap: () {
+                    viewModel.selectTaskList(list.id);
+                    onSelected?.call();
+                  },
                 ),
-                subtitle: Text(
-                  '${state.viewCount(TaskListView(list.id))} tasks',
-                ),
-                trailing: viewModel.preferencesRepository == null
-                    ? null
-                    : _ListPreferenceMenu(
-                        state: state,
-                        viewModel: viewModel,
-                        taskListId: list.id,
-                      ),
-                onTap: () {
-                  viewModel.selectTaskList(list.id);
-                  onSelected?.call();
-                },
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+final class _DesktopTaskListDropTarget extends StatelessWidget {
+  const _DesktopTaskListDropTarget({
+    required this.taskList,
+    required this.preview,
+    required this.onPreview,
+    required this.onDrop,
+    required this.child,
+  });
+
+  final CachedTaskList taskList;
+  final _DesktopDropPreview? preview;
+  final ValueChanged<_DesktopDropPreview>? onPreview;
+  final ValueChanged<DesktopTaskDropIntent>? onDrop;
+  final Widget child;
+
+  DesktopTaskDropIntent? _intent(DesktopTaskDragPayload value) =>
+      DesktopTaskDragAdapter.moveToList(
+        payload: value,
+        destinationTaskListId: taskList.id,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (onPreview == null || onDrop == null) return child;
+    final targetKey = 'list-${taskList.id.value}';
+    return DragTarget<DesktopTaskDragPayload>(
+      onWillAcceptWithDetails: (details) => _intent(details.data) != null,
+      onMove: (details) {
+        final intent = _intent(details.data);
+        if (intent != null) {
+          onPreview!(
+            _DesktopDropPreview(
+              intent: intent,
+              label: 'Move “${details.data.title}” to “${taskList.title}”',
+              targetKey: targetKey,
+            ),
+          );
+        }
+      },
+      onAcceptWithDetails: (details) {
+        final intent = _intent(details.data);
+        if (intent != null) onDrop!(intent);
+      },
+      builder: (context, _, _) => Material(
+        color: preview?.targetKey == targetKey
+            ? Theme.of(context).colorScheme.primaryContainer
+            : Colors.transparent,
+        child: child,
       ),
     );
   }
@@ -1105,6 +1237,11 @@ final class _TaskCollection extends StatefulWidget {
     required this.openBulkAdd,
     required this.onTaskFocused,
     required this.onTaskAction,
+    required this.dropPreview,
+    required this.onDragStarted,
+    required this.onDragPreview,
+    required this.onDragCanceled,
+    required this.onDrop,
     super.key,
   });
 
@@ -1115,6 +1252,11 @@ final class _TaskCollection extends StatefulWidget {
   final VoidCallback openBulkAdd;
   final ValueChanged<TaskId> onTaskFocused;
   final void Function(DesktopTaskAction action, [TaskId? taskId]) onTaskAction;
+  final _DesktopDropPreview? dropPreview;
+  final ValueChanged<DesktopTaskDragPayload> onDragStarted;
+  final ValueChanged<_DesktopDropPreview> onDragPreview;
+  final VoidCallback onDragCanceled;
+  final ValueChanged<DesktopTaskDropIntent> onDrop;
 
   @override
   State<_TaskCollection> createState() => _TaskCollectionState();
@@ -1122,6 +1264,8 @@ final class _TaskCollection extends StatefulWidget {
 
 final class _TaskCollectionState extends State<_TaskCollection> {
   final List<FocusNode> _rowFocusNodes = <FocusNode>[];
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _scrollViewportKey = GlobalKey();
 
   TasksViewState get state => widget.state;
   TasksViewModel get viewModel => widget.viewModel;
@@ -1159,11 +1303,28 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     _rowFocusNodes[next].requestFocus();
   }
 
+  void _autoscroll(Offset globalPosition) {
+    if (!_scrollController.hasClients) return;
+    final renderObject = _scrollViewportKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox) return;
+    final pointer = renderObject.globalToLocal(globalPosition);
+    final position = _scrollController.position;
+    final target = DesktopDragAutoscroll.targetOffset(
+      currentOffset: position.pixels,
+      minOffset: position.minScrollExtent,
+      maxOffset: position.maxScrollExtent,
+      pointerY: pointer.dy,
+      viewportHeight: renderObject.size.height,
+    );
+    if (target != null) _scrollController.jumpTo(target);
+  }
+
   @override
   void dispose() {
     for (final node in _rowFocusNodes) {
       node.dispose();
     }
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -1337,9 +1498,15 @@ final class _TaskCollectionState extends State<_TaskCollection> {
         ),
         const Divider(height: 1),
         Expanded(
-          child: tasks.isEmpty
-              ? const Center(child: Text('No cached tasks in this list'))
-              : ListView.separated(
+          child: Stack(
+            key: _scrollViewportKey,
+            children: <Widget>[
+              if (tasks.isEmpty)
+                const Center(child: Text('No cached tasks in this list'))
+              else
+                ListView.separated(
+                  key: const Key('desktop-task-scroll'),
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   itemCount: tasks.length,
                   separatorBuilder: (_, _) =>
@@ -1347,6 +1514,13 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                   itemBuilder: (context, index) {
                     final row = rows[index];
                     final task = row.task;
+                    final canonicalSiblings = state.tasks
+                        .where(
+                          (candidate) =>
+                              candidate.taskListId == task.taskListId &&
+                              candidate.parentTaskId == task.parentTaskId,
+                        )
+                        .toList(growable: false);
                     final progress = projectDirectChildProgress(
                       parentTaskId: task.id,
                       tasks: state.tasks,
@@ -1358,6 +1532,16 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                       onMoveFocus: (delta) => _moveFocus(index, delta, tasks),
                       onAction: (action) =>
                           widget.onTaskAction(action, task.id),
+                      canonicalSiblings: canonicalSiblings,
+                      manualOrderEnabled:
+                          state.selectedTaskListId == task.taskListId &&
+                          state.selectedViewPreferences.sort == ViewSort.manual,
+                      dropPreview: widget.dropPreview,
+                      onDragStarted: widget.onDragStarted,
+                      onDragPreview: widget.onDragPreview,
+                      onDragCanceled: widget.onDragCanceled,
+                      onDrop: widget.onDrop,
+                      onDragMove: _autoscroll,
                       task: task,
                       canMove: state.orderedTaskLists.any(
                         (list) => list.id != task.taskListId,
@@ -1373,6 +1557,31 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                     );
                   },
                 ),
+              if (widget.dropPreview case final preview?)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  top: 8,
+                  child: IgnorePointer(
+                    child: Material(
+                      key: const Key('desktop-task-drag-preview'),
+                      elevation: 4,
+                      color: preview.valid
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(context).colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        child: Text(preview.label),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );
@@ -1390,6 +1599,14 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.subtitle,
     required this.enabled,
     required this.selected,
+    required this.canonicalSiblings,
+    required this.manualOrderEnabled,
+    required this.dropPreview,
+    required this.onDragStarted,
+    required this.onDragPreview,
+    required this.onDragCanceled,
+    required this.onDrop,
+    required this.onDragMove,
     super.key,
   });
 
@@ -1402,6 +1619,14 @@ final class _DesktopTaskRow extends StatefulWidget {
   final String subtitle;
   final bool enabled;
   final bool selected;
+  final List<CachedTask> canonicalSiblings;
+  final bool manualOrderEnabled;
+  final _DesktopDropPreview? dropPreview;
+  final ValueChanged<DesktopTaskDragPayload> onDragStarted;
+  final ValueChanged<_DesktopDropPreview> onDragPreview;
+  final VoidCallback onDragCanceled;
+  final ValueChanged<DesktopTaskDropIntent> onDrop;
+  final ValueChanged<Offset> onDragMove;
 
   @override
   State<_DesktopTaskRow> createState() => _DesktopTaskRowState();
@@ -1464,81 +1689,226 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
     if (action != null) widget.onAction(action);
   }
 
+  DesktopTaskDropPlacement _placement(Offset globalPosition) {
+    final box = context.findRenderObject()! as RenderBox;
+    final local = box.globalToLocal(globalPosition);
+    return local.dy < box.size.height / 2
+        ? DesktopTaskDropPlacement.before
+        : DesktopTaskDropPlacement.after;
+  }
+
+  DesktopTaskDropIntent? _dropIntent(
+    DesktopTaskDragPayload payload,
+    Offset globalPosition,
+  ) => DesktopTaskDragAdapter.reorder(
+    payload: payload,
+    target: widget.task,
+    placement: _placement(globalPosition),
+    canonicalSiblings: widget.canonicalSiblings,
+    manualOrderEnabled: widget.manualOrderEnabled,
+  );
+
+  _DesktopDropPreview _preview(
+    DesktopTaskDragPayload payload,
+    Offset globalPosition,
+  ) {
+    final placement = _placement(globalPosition);
+    final intent = _dropIntent(payload, globalPosition);
+    if (intent == null) return _DesktopDropPreview.invalid(payload);
+    return _DesktopDropPreview(
+      intent: intent,
+      label: 'Move “${payload.title}” ${placement.name} “${widget.task.title}”',
+      targetKey: 'row-${widget.task.id.value}-${placement.name}',
+    );
+  }
+
+  Widget _tile(CachedTask task) => ListTile(
+    selected: widget.selected || widget.focusNode.hasFocus,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
+    leading: IconButton(
+      tooltip: task.status == TaskStatus.completed
+          ? 'Reopen task'
+          : 'Complete task',
+      onPressed: widget.enabled
+          ? () => widget.onAction(DesktopTaskAction.toggleCompletion)
+          : null,
+      icon: Icon(
+        task.status == TaskStatus.completed
+            ? Icons.check_circle
+            : Icons.radio_button_unchecked,
+      ),
+    ),
+    title: Text(task.title),
+    subtitle: Text(widget.subtitle),
+    trailing: SizedBox(
+      width: 100,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: <Widget>[
+          AnimatedOpacity(
+            opacity: _hovered || widget.focusNode.hasFocus ? 1 : 0,
+            duration: const Duration(milliseconds: 120),
+            child: IgnorePointer(
+              ignoring: !_hovered && !widget.focusNode.hasFocus,
+              child: IconButton(
+                tooltip: 'Open ${task.title}',
+                onPressed: widget.enabled
+                    ? () => widget.onAction(DesktopTaskAction.open)
+                    : null,
+                icon: const Icon(Icons.open_in_new),
+              ),
+            ),
+          ),
+          Semantics(
+            button: true,
+            label: 'Task actions for ${task.title}',
+            child: PopupMenuButton<DesktopTaskAction>(
+              tooltip: 'Task actions for ${task.title}',
+              enabled: widget.enabled,
+              onSelected: widget.onAction,
+              itemBuilder: (_) =>
+                  _taskActionMenuItems(task, canMove: widget.canMove),
+            ),
+          ),
+        ],
+      ),
+    ),
+    onTap: widget.enabled
+        ? () => widget.onAction(DesktopTaskAction.open)
+        : null,
+  );
+
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
-    return Focus(
-      focusNode: widget.focusNode,
-      onKeyEvent: _handleKey,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onSecondaryTapDown: (details) =>
-              unawaited(_showContextMenu(details.globalPosition)),
-          child: ListTile(
-            selected: widget.selected || widget.focusNode.hasFocus,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 24,
-              vertical: 6,
+    final tile = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapDown: (details) =>
+          unawaited(_showContextMenu(details.globalPosition)),
+      child: _tile(task),
+    );
+    final draggable = Semantics(
+      label:
+          'Drag ${task.title} to reorder or move. '
+          'Move buttons are available in task details.',
+      child: _DesktopPointerDraggable<DesktopTaskDragPayload>(
+        data: DesktopTaskDragPayload.fromTask(task),
+        maxSimultaneousDrags: widget.enabled ? 1 : 0,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(12),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: ListTile(
+              leading: const Icon(Icons.drag_indicator),
+              title: Text(task.title),
+              subtitle: const Text('Drop to reorder or move'),
             ),
-            leading: IconButton(
-              tooltip: task.status == TaskStatus.completed
-                  ? 'Reopen task'
-                  : 'Complete task',
-              onPressed: widget.enabled
-                  ? () => widget.onAction(DesktopTaskAction.toggleCompletion)
-                  : null,
-              icon: Icon(
-                task.status == TaskStatus.completed
-                    ? Icons.check_circle
-                    : Icons.radio_button_unchecked,
-              ),
-            ),
-            title: Text(task.title),
-            subtitle: Text(widget.subtitle),
-            trailing: SizedBox(
-              width: 100,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: <Widget>[
-                  AnimatedOpacity(
-                    opacity: _hovered || widget.focusNode.hasFocus ? 1 : 0,
-                    duration: const Duration(milliseconds: 120),
-                    child: IgnorePointer(
-                      ignoring: !_hovered && !widget.focusNode.hasFocus,
-                      child: IconButton(
-                        tooltip: 'Open ${task.title}',
-                        onPressed: widget.enabled
-                            ? () => widget.onAction(DesktopTaskAction.open)
-                            : null,
-                        icon: const Icon(Icons.open_in_new),
-                      ),
-                    ),
-                  ),
-                  Semantics(
-                    button: true,
-                    label: 'Task actions for ${task.title}',
-                    child: PopupMenuButton<DesktopTaskAction>(
-                      tooltip: 'Task actions for ${task.title}',
-                      enabled: widget.enabled,
-                      onSelected: widget.onAction,
-                      itemBuilder: (_) =>
-                          _taskActionMenuItems(task, canMove: widget.canMove),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            onTap: widget.enabled
-                ? () => widget.onAction(DesktopTaskAction.open)
-                : null,
           ),
         ),
+        childWhenDragging: Opacity(opacity: 0.42, child: tile),
+        onDragStarted: () =>
+            widget.onDragStarted(DesktopTaskDragPayload.fromTask(task)),
+        onDragEnd: (_) => widget.onDragCanceled(),
+        child: tile,
+      ),
+    );
+    return DragTarget<DesktopTaskDragPayload>(
+      onWillAcceptWithDetails: (details) =>
+          _dropIntent(details.data, details.offset) != null,
+      onMove: (details) {
+        widget.onDragMove(details.offset);
+        widget.onDragPreview(_preview(details.data, details.offset));
+      },
+      onLeave: (payload) {
+        if (payload != null) {
+          widget.onDragPreview(_DesktopDropPreview.invalid(payload));
+        }
+      },
+      onAcceptWithDetails: (details) {
+        final intent = _dropIntent(details.data, details.offset);
+        if (intent != null) widget.onDrop(intent);
+      },
+      builder: (context, _, _) => Stack(
+        children: <Widget>[
+          Focus(
+            focusNode: widget.focusNode,
+            onKeyEvent: _handleKey,
+            child: MouseRegion(
+              onEnter: (_) => setState(() => _hovered = true),
+              onExit: (_) => setState(() => _hovered = false),
+              child: draggable,
+            ),
+          ),
+          if (widget.dropPreview case final preview?
+              when preview.targetKey.startsWith('row-${widget.task.id.value}-'))
+            Positioned(
+              left: 16,
+              right: 16,
+              top: preview.targetKey.endsWith('-before') ? 0 : null,
+              bottom: preview.targetKey.endsWith('-after') ? 0 : null,
+              child: Divider(
+                key: Key('desktop-task-drop-indicator-${task.id.value}'),
+                height: 2,
+                thickness: 2,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+        ],
       ),
     );
   }
+}
+
+final class _DesktopPointerDraggable<T extends Object> extends Draggable<T> {
+  const _DesktopPointerDraggable({
+    required super.data,
+    required super.feedback,
+    required super.child,
+    super.childWhenDragging,
+    super.maxSimultaneousDrags,
+    super.dragAnchorStrategy,
+    super.onDragStarted,
+    super.onDragEnd,
+  });
+
+  @override
+  MultiDragGestureRecognizer createRecognizer(
+    GestureMultiDragStartCallback onStart,
+  ) => ImmediateMultiDragGestureRecognizer(
+    supportedDevices: const <PointerDeviceKind>{PointerDeviceKind.mouse},
+  )..onStart = onStart;
+}
+
+final class _DesktopDropPreview {
+  const _DesktopDropPreview({
+    required this.intent,
+    required this.label,
+    required this.targetKey,
+  });
+
+  factory _DesktopDropPreview.invalid(DesktopTaskDragPayload payload) =>
+      _DesktopDropPreview(
+        intent: null,
+        label: 'Cannot drop “${payload.title}” here',
+        targetKey: 'invalid',
+      );
+
+  final DesktopTaskDropIntent? intent;
+  final String label;
+  final String targetKey;
+  bool get valid => intent != null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _DesktopDropPreview &&
+      other.intent == intent &&
+      other.label == label &&
+      other.targetKey == targetKey;
+
+  @override
+  int get hashCode => Object.hash(intent, label, targetKey);
 }
 
 List<PopupMenuEntry<DesktopTaskAction>> _taskActionMenuItems(

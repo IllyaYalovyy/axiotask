@@ -45,7 +45,11 @@ surface flags.
 S26A adds a Fedora three-pane composition from 1024 logical pixels, one explicit
 desktop shortcut/focus policy, and task-row hover/secondary-click accelerators.
 All accelerated commands reuse the existing ViewModel/domain command boundary
-and retain visible, focusable button or menu routes.
+and retain visible, focusable button or menu routes. S26B adds a pointer-only
+drag adapter that converts row/list drop geometry into those same stable-ID
+structure commands. Drag preview state never replaces repository projection;
+cancel, invalid drop, command failure, and later Google-canonical recovery
+therefore cannot leave a separate visual ordering policy behind.
 Android lifecycle control and other later mutations remain later slices.**
 
 This document defines the boundaries needed to scaffold Axiotask. The accepted

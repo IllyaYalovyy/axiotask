@@ -303,6 +303,13 @@ The screenshot entry renders ignored `desktop-interactions-1024-light.png` at
 runner's 1280×720 size; neither reads normal storage, preferences, credentials,
 OAuth configuration, or Google.
 
+S26B likewise adds no dependency, schema, configuration, account access, or
+storage namespace. Pointer drag state is transient presentation over the
+existing structure-command boundary; its isolated Linux integration uses a
+unique temporary SQLite file. The screenshot entry adds ignored
+`drag-preview-light.png` and `drag-failure-dark.png` Fedora captures with only
+fixed synthetic tasks and identities.
+
 ## Development versus release diagnostics
 
 S01 provides a clearly named debug development entry point that composes the

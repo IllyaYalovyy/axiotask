@@ -100,6 +100,14 @@ and opens that parent detail context. Pointer and keyboard activation share the
 same result path, while search, compact navigation, detail, selection, and
 tracked-dialog state use one deterministic Navigator-backed back stack.
 
+On Fedora, pointer users can drag a top-level task before or after a canonical
+sibling while **My order** is selected, or drop it on another Google task list.
+The overlay preview and insertion marker never replace repository order;
+cancel, invalid targets, local rejection, and Google-canonical failure recovery
+cannot leave a false placement. Edge dragging autoscrolls the collection.
+Focusable detail buttons for Move up, Move down, and Move to list remain the
+equivalent non-pointer route.
+
 The desktop shell also projects Focus, Upcoming, Missed, Unscheduled, All, and
 per-list collections from the cached supported task graph. A parent's effective
 date is the earlier of its explicit date and unfinished direct-child dates;
@@ -516,6 +524,7 @@ flutter test test/features/tasks/task_details_golden_test.dart
 flutter test test/data/database/search_repository_test.dart
 flutter test test/app/navigation_state_test.dart
 flutter test test/app/desktop_shortcuts_test.dart
+flutter test test/app/desktop_task_drag_test.dart
 flutter test test/features/search/search_view_model_test.dart
 flutter test test/features/search/search_overlay_test.dart
 flutter test test/features/search/search_navigation_golden_test.dart
@@ -547,6 +556,7 @@ flutter test integration_test/task_details_linux_test.dart -d linux
 flutter test integration_test/quick_capture_linux_test.dart -d linux
 flutter test integration_test/bulk_capture_linux_test.dart -d linux
 flutter test integration_test/search_navigation_linux_test.dart -d linux
+flutter test integration_test/desktop_drag_reorder_linux_test.dart -d linux
 ./scripts/check_generated.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
@@ -561,7 +571,8 @@ light/dark task details plus effective-date/completion/durable-Undo workflow
 states, plus keyboard-focused light/dark quick-capture previews and validated
 light/dark bulk-capture preview/result states and title/notes search with child
 parent context, plus Fedora desktop interactions at 1024×720 light and
-1280×720 dark, into the ignored
+1280×720 dark, plus an in-progress light drag preview and dark canonical
+drag-failure recovery, into the ignored
 `screenshots/actual/` directory, then inspect each PNG:
 
 ```bash

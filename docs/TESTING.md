@@ -553,6 +553,15 @@ header discoverability, text-editor suppression, arrow/Enter focus transitions,
 and 1.8x text at 1024/1280/1440. The Linux integration exercises the same
 keyboard route over a temporary SQLite database with synthetic data.
 
+S26B adds pure drop-anchor and bounded-autoscroll adapter tests, pointer widget
+tests for preview/drop/cancel/invalid targets/cross-list movement, unchanged row
+geometry, command-failure canonical restore, and focusable detail alternatives.
+`desktop_drag_reorder_linux_test.dart` drives the same gestures through a unique
+temporary SQLite database. Curated `drag_preview_light` and
+`drag_failure_dark` goldens plus matching actual Fedora captures show an
+in-progress placement preview and a truthful failed state with canonical row
+order restored. All identities and content are synthetic.
+
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
 or task data are forbidden.
