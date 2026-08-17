@@ -92,6 +92,53 @@ void main() {
     });
   });
 
+  group('desktop pane widths (#210)', () {
+    test('round-trips sidebar width and detail fraction through disk', () {
+      final store = PrefsStore(prefsFile());
+      store.save(
+        const Prefs().copyWith(sidebarWidth: 320, detailFraction: 0.45),
+      );
+      final reloaded = PrefsStore(prefsFile()).load();
+      expect(reloaded.sidebarWidth, 320);
+      expect(reloaded.detailFraction, 0.45);
+    });
+
+    test('defaults are null when never dragged', () {
+      final prefs = PrefsStore(prefsFile()).load();
+      expect(prefs.sidebarWidth, isNull);
+      expect(prefs.detailFraction, isNull);
+    });
+
+    test('a malformed sidebar width is ignored on load', () {
+      prefsFile().writeAsStringSync(
+        jsonEncode({'sidebar_width': 'wide', 'detail_fraction': 0.5}),
+      );
+      final prefs = PrefsStore(prefsFile()).load();
+      expect(prefs.sidebarWidth, isNull, reason: 'non-numeric → default');
+      expect(prefs.detailFraction, 0.5);
+    });
+
+    test('a non-positive width and an out-of-range fraction are ignored', () {
+      prefsFile().writeAsStringSync(
+        jsonEncode({'sidebar_width': 0, 'detail_fraction': 1.5}),
+      );
+      final prefs = PrefsStore(prefsFile()).load();
+      expect(prefs.sidebarWidth, isNull);
+      expect(
+        prefs.detailFraction,
+        isNull,
+        reason: 'a ≥1 fraction crushes a pane',
+      );
+    });
+
+    test('unset widths are omitted from the JSON (no null keys)', () {
+      PrefsStore(prefsFile()).save(const Prefs());
+      final raw = jsonDecode(prefsFile().readAsStringSync()) as Map;
+      expect(raw.containsKey('sidebar_width'), isFalse);
+      expect(raw.containsKey('detail_fraction'), isFalse);
+    });
+  });
+
   test('unknown keys on disk survive a save (forward-compat)', () {
     prefsFile().writeAsStringSync(
       jsonEncode({'theme': 'dark', 'future_pref_from_newer_build': 42}),

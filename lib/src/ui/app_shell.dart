@@ -174,10 +174,24 @@ class AppShell extends ConsumerWidget {
       context.go(viewPath(sel.viewId));
     }
 
+    final prefsCtl = ref.read(prefsControllerProvider.notifier);
     final scaffold = ListDetailScaffold(
       sidebar: sidebar,
       scaffoldKey: scaffoldKey,
       title: viewTitle,
+      // Desktop divider drags (#210): the persisted widths seed the expanded
+      // layout, and each drag end / double-click reset writes back through the
+      // prefs controller (one write per gesture, not per frame).
+      sidebarWidth:
+          prefs.sidebarWidth ?? ListDetailScaffold.defaultSidebarWidth,
+      detailFraction:
+          prefs.detailFraction ?? ListDetailScaffold.defaultDetailFraction,
+      onSidebarWidthChanged: prefsCtl.setSidebarWidth,
+      onDetailFractionChanged: prefsCtl.setDetailFraction,
+      onResetSidebarWidth: () =>
+          prefsCtl.setSidebarWidth(ListDetailScaffold.defaultSidebarWidth),
+      onResetDetailFraction: () =>
+          prefsCtl.setDetailFraction(ListDetailScaffold.defaultDetailFraction),
       // The mobile FAB just focuses the always-visible quick-add input — never a
       // silent empty-task create (#166).
       onNewTask: () => ref.read(quickAddFocusProvider).requestFocus(),

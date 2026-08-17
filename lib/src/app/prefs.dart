@@ -60,6 +60,8 @@ class Prefs {
     this.onboardingSeen = false,
     this.hideCompletedSubtasks = false,
     this.windowSize,
+    this.sidebarWidth,
+    this.detailFraction,
     this.unknownKeys = const {},
   });
 
@@ -92,6 +94,16 @@ class Prefs {
   /// Persisted window size, or `null` if never saved. Size-only (no position).
   final WindowSize? windowSize;
 
+  /// Persisted desktop sidebar width (logical px), or `null` when never dragged
+  /// — the expanded layout then falls back to its default width. Clamped by the
+  /// UI to the draggable range (#210).
+  final double? sidebarWidth;
+
+  /// Persisted desktop detail-pane width as a fraction (0–1) of the list+detail
+  /// region, or `null` when never dragged — the expanded layout then falls back
+  /// to its default split. Clamped by the UI to the draggable range (#210).
+  final double? detailFraction;
+
   /// Keys present on disk this build does not know — preserved verbatim so a
   /// newer build's prefs survive an older build's save (forward-compat).
   final Map<String, Object?> unknownKeys;
@@ -106,6 +118,8 @@ class Prefs {
     'onboarding_seen',
     'hide_completed_subtasks',
     'window_size',
+    'sidebar_width',
+    'detail_fraction',
   };
 
   Prefs copyWith({
@@ -118,6 +132,8 @@ class Prefs {
     bool? onboardingSeen,
     bool? hideCompletedSubtasks,
     WindowSize? windowSize,
+    double? sidebarWidth,
+    double? detailFraction,
   }) => Prefs(
     theme: theme ?? this.theme,
     view: view ?? this.view,
@@ -128,6 +144,8 @@ class Prefs {
     onboardingSeen: onboardingSeen ?? this.onboardingSeen,
     hideCompletedSubtasks: hideCompletedSubtasks ?? this.hideCompletedSubtasks,
     windowSize: windowSize ?? this.windowSize,
+    sidebarWidth: sidebarWidth ?? this.sidebarWidth,
+    detailFraction: detailFraction ?? this.detailFraction,
     unknownKeys: unknownKeys,
   );
 
@@ -142,6 +160,8 @@ class Prefs {
     'onboarding_seen': onboardingSeen,
     'hide_completed_subtasks': hideCompletedSubtasks,
     if (windowSize != null) 'window_size': windowSize!.toJson(),
+    if (sidebarWidth != null) 'sidebar_width': sidebarWidth,
+    if (detailFraction != null) 'detail_fraction': detailFraction,
   };
 
   factory Prefs.fromJson(Map<String, Object?> json) => Prefs(
@@ -156,11 +176,23 @@ class Prefs {
     onboardingSeen: json['onboarding_seen'] as bool? ?? false,
     hideCompletedSubtasks: json['hide_completed_subtasks'] as bool? ?? false,
     windowSize: WindowSize.fromJson(json['window_size']),
+    sidebarWidth: _positiveDouble(json['sidebar_width']),
+    detailFraction: _fraction(json['detail_fraction']),
     unknownKeys: {
       for (final e in json.entries)
         if (!_known.contains(e.key)) e.key: e.value,
     },
   );
+
+  /// A finite, strictly-positive double from disk, else `null` (a malformed
+  /// pane width must fall back to the default, never crash startup).
+  static double? _positiveDouble(Object? v) =>
+      (v is num && v.isFinite && v > 0) ? v.toDouble() : null;
+
+  /// A fraction strictly inside (0, 1) from disk, else `null`. A value outside
+  /// the open interval could crush a pane to zero or overflow the row.
+  static double? _fraction(Object? v) =>
+      (v is num && v.isFinite && v > 0 && v < 1) ? v.toDouble() : null;
 }
 
 /// Durable JSON store for [Prefs] over a `prefs.json` file.

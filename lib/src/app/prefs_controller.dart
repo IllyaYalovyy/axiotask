@@ -77,6 +77,17 @@ class PrefsController extends Notifier<Prefs> {
   /// Replace the user-defined list order.
   void setListOrder(List<String> ids) =>
       _write(state.copyWith(listOrder: List.of(ids)));
+
+  /// Persist the desktop sidebar width after a divider drag or a reset (#210).
+  /// The value is already clamped to the draggable range by the layout; this is
+  /// pure persistence, called once per gesture (not per drag frame).
+  void setSidebarWidth(double width) =>
+      _write(state.copyWith(sidebarWidth: width));
+
+  /// Persist the desktop detail-pane width fraction after a divider drag or a
+  /// reset (#210). Already clamped by the layout; one write per gesture.
+  void setDetailFraction(double fraction) =>
+      _write(state.copyWith(detailFraction: fraction));
 }
 
 /// The live UI preferences. Watch this (not [prefsProvider]) for anything the

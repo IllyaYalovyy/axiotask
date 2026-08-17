@@ -136,4 +136,32 @@ void main() {
       expect(loaded.sortPerView, hasLength(2));
     });
   });
+
+  group('desktop pane widths (#210)', () {
+    test('setSidebarWidth updates live state and survives a relaunch', () {
+      final w = wire();
+      w.controller.setSidebarWidth(320);
+      expect(w.controller.state.sidebarWidth, 320);
+      expect(w.store.load().sidebarWidth, 320);
+    });
+
+    test('setDetailFraction persists the split across a relaunch', () {
+      final first = wire();
+      first.controller.setDetailFraction(0.45);
+      final second = wire(seed: first.store.load());
+      expect(second.controller.state.detailFraction, 0.45);
+    });
+
+    test('a width write leaves the fraction untouched on disk', () {
+      final w = wire(seed: const Prefs(detailFraction: 0.5));
+      w.controller.setSidebarWidth(300);
+      final loaded = w.store.load();
+      expect(loaded.sidebarWidth, 300);
+      expect(
+        loaded.detailFraction,
+        0.5,
+        reason: 'the other pane pref survives',
+      );
+    });
+  });
 }

@@ -3,6 +3,8 @@
 // with a detail open closes the detail instead of popping the app).
 
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
+import 'package:flutter/gestures.dart'
+    show kDoubleTapMinTime, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -26,6 +28,12 @@ void main() {
     Widget? detail,
     ValueChanged<int>? onSelect,
     VoidCallback? onClose,
+    double sidebarWidth = ListDetailScaffold.defaultSidebarWidth,
+    double detailFraction = ListDetailScaffold.defaultDetailFraction,
+    ValueChanged<double>? onSidebarWidthChanged,
+    ValueChanged<double>? onDetailFractionChanged,
+    VoidCallback? onResetSidebarWidth,
+    VoidCallback? onResetDetailFraction,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -39,11 +47,20 @@ void main() {
             list: const Text('LIST-PANE'),
             detail: detail,
             onCloseDetail: onClose,
+            sidebarWidth: sidebarWidth,
+            detailFraction: detailFraction,
+            onSidebarWidthChanged: onSidebarWidthChanged,
+            onDetailFractionChanged: onDetailFractionChanged,
+            onResetSidebarWidth: onResetSidebarWidth,
+            onResetDetailFraction: onResetDetailFraction,
           ),
         ),
       ),
     );
   }
+
+  double widthOf(WidgetTester tester, String keyValue) =>
+      tester.getSize(find.byKey(Key(keyValue))).width;
 
   group('expanded (width ≥ 600)', () {
     testWidgets('shows the sidebar panel and the list', (tester) async {
@@ -62,6 +79,7 @@ void main() {
       // Both panes are visible at once — the expanded contract.
       expect(find.text('LIST-PANE'), findsOneWidget);
       expect(find.text('DETAIL-PANE'), findsOneWidget);
+      await tester.pump(kDoubleTapTimeout);
     });
   });
 
@@ -175,6 +193,178 @@ void main() {
       expect(find.text('DETAIL-PANE'), findsOneWidget);
       expect(find.text('SIDEBAR-PANE'), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
+    });
+  });
+
+  // #210: the expanded layout's two dividers are draggable, clamped, persisted
+  // on drag end, and reset on double-click. The compact layout has no handles.
+  group('draggable dividers (#210)', () {
+    testWidgets('dragging the sidebar handle widens the sidebar live', (
+      tester,
+    ) async {
+      double? persisted;
+      await pumpScaffold(
+        tester,
+        width: 1000,
+        onSidebarWidthChanged: (w) => persisted = w,
+      );
+      expect(widthOf(tester, 'expanded-sidebar'), 260);
+
+      // Live tracking: the pane follows the pointer BEFORE the gesture ends.
+      final handle = find.byKey(const Key('sidebar-resize-handle'));
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await gesture.moveBy(const Offset(50, 0));
+      await tester.pump();
+      expect(widthOf(tester, 'expanded-sidebar'), 310);
+      expect(persisted, isNull, reason: 'no write until the gesture ends');
+
+      await gesture.up();
+      await tester.pump();
+      expect(persisted, 310, reason: 'one persistence write on drag end');
+      await tester.pump(
+        kDoubleTapTimeout,
+      ); // drain the double-tap tracker timer
+    });
+
+    testWidgets(
+      'the sidebar width clamps to its max no matter how far dragged',
+      (tester) async {
+        double? persisted;
+        await pumpScaffold(
+          tester,
+          width: 1200,
+          onSidebarWidthChanged: (w) => persisted = w,
+        );
+        await tester.drag(
+          find.byKey(const Key('sidebar-resize-handle')),
+          const Offset(1000, 0),
+        );
+        await tester.pump();
+        expect(
+          widthOf(tester, 'expanded-sidebar'),
+          ListDetailScaffold.maxSidebarWidth,
+        );
+        expect(persisted, ListDetailScaffold.maxSidebarWidth);
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: 'no overflow at the max',
+        );
+        await tester.pump(kDoubleTapTimeout);
+      },
+    );
+
+    testWidgets('the sidebar width clamps to its min when dragged left', (
+      tester,
+    ) async {
+      await pumpScaffold(tester, width: 1000);
+      await tester.drag(
+        find.byKey(const Key('sidebar-resize-handle')),
+        const Offset(-1000, 0),
+      );
+      await tester.pump();
+      expect(
+        widthOf(tester, 'expanded-sidebar'),
+        ListDetailScaffold.minSidebarWidth,
+      );
+      await tester.pump(kDoubleTapTimeout);
+    });
+
+    testWidgets('double-clicking the sidebar handle resets to the default', (
+      tester,
+    ) async {
+      double? persisted;
+      await pumpScaffold(
+        tester,
+        width: 1000,
+        sidebarWidth: 360,
+        onResetSidebarWidth: () => persisted = -1,
+      );
+      expect(widthOf(tester, 'expanded-sidebar'), 360);
+
+      final handle = find.byKey(const Key('sidebar-resize-handle'));
+      await tester.tap(handle);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(handle);
+      await tester.pump();
+
+      expect(
+        widthOf(tester, 'expanded-sidebar'),
+        ListDetailScaffold.defaultSidebarWidth,
+      );
+      expect(persisted, -1, reason: 'the reset was persisted');
+      await tester.pump(kDoubleTapTimeout);
+    });
+
+    testWidgets('dragging the detail handle grows the detail pane', (
+      tester,
+    ) async {
+      double? persisted;
+      await pumpScaffold(
+        tester,
+        width: 1000,
+        detail: const Text('DETAIL-PANE'),
+        onDetailFractionChanged: (f) => persisted = f,
+      );
+      final before = widthOf(tester, 'expanded-detail');
+
+      // Drag the handle LEFT → the list shrinks, the detail grows ~50px.
+      await tester.drag(
+        find.byKey(const Key('detail-resize-handle')),
+        const Offset(-50, 0),
+      );
+      await tester.pump();
+      final after = widthOf(tester, 'expanded-detail');
+      expect(after, greaterThan(before));
+      expect(
+        (after - before - 50).abs(),
+        lessThan(1),
+        reason: 'the pane tracks the pointer 1:1',
+      );
+      expect(persisted, isNotNull);
+      expect(persisted, greaterThan(ListDetailScaffold.defaultDetailFraction));
+      await tester.pump(kDoubleTapTimeout);
+    });
+
+    testWidgets('the detail fraction clamps to its max (no overflow)', (
+      tester,
+    ) async {
+      await pumpScaffold(tester, width: 900, detail: const Text('DETAIL-PANE'));
+      await tester.drag(
+        find.byKey(const Key('detail-resize-handle')),
+        const Offset(-2000, 0),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      // Both panes still on screen; the detail did not swallow the list.
+      expect(find.text('LIST-PANE'), findsOneWidget);
+      expect(find.text('DETAIL-PANE'), findsOneWidget);
+      await tester.pump(kDoubleTapTimeout);
+    });
+
+    testWidgets('a persisted width beyond the clamp is pinned on load', (
+      tester,
+    ) async {
+      // A corrupt/stale pref must never crush a pane: the layout clamps on read.
+      await pumpScaffold(tester, width: 1000, sidebarWidth: 9999);
+      expect(
+        widthOf(tester, 'expanded-sidebar'),
+        ListDetailScaffold.maxSidebarWidth,
+      );
+    });
+
+    testWidgets('the compact layout has NO resize handles', (tester) async {
+      await pumpScaffold(tester, width: 400);
+      expect(find.byKey(const Key('sidebar-resize-handle')), findsNothing);
+      expect(find.byKey(const Key('detail-resize-handle')), findsNothing);
+    });
+
+    testWidgets('only the sidebar handle exists when no detail is open', (
+      tester,
+    ) async {
+      await pumpScaffold(tester, width: 1000);
+      expect(find.byKey(const Key('sidebar-resize-handle')), findsOneWidget);
+      expect(find.byKey(const Key('detail-resize-handle')), findsNothing);
     });
   });
 

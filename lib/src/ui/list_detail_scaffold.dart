@@ -36,6 +36,7 @@
 // flutter_adaptive_scaffold is discontinued, so this is deliberately a handful
 // of framework primitives we own and golden-test at both form factors.
 
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
 /// A single navigation destination for the shell (rail + bar share this data).
@@ -69,6 +70,12 @@ class ListDetailScaffold extends StatelessWidget {
     this.title = '',
     this.onNewTask,
     this.scaffoldKey,
+    this.sidebarWidth = defaultSidebarWidth,
+    this.detailFraction = defaultDetailFraction,
+    this.onSidebarWidthChanged,
+    this.onDetailFractionChanged,
+    this.onResetSidebarWidth,
+    this.onResetDetailFraction,
     super.key,
   });
 
@@ -81,6 +88,29 @@ class ListDetailScaffold extends StatelessWidget {
   /// full-screen through the compact layout instead of squeezing three panes
   /// into a mid-width window. Mirrors the Material "expanded window" floor.
   static const double detailBreakpoint = 840;
+
+  // Draggable-divider geometry (#210). The expanded layout only: the sidebar
+  // and the list/detail split are resizable, clamped so neither pane can be
+  // crushed nor swallow the window, and double-clicking a handle resets it.
+
+  /// Default sidebar width (logical px) — the pre-#210 fixed width.
+  static const double defaultSidebarWidth = 260;
+
+  /// Narrowest the sidebar may be dragged.
+  static const double minSidebarWidth = 200;
+
+  /// Widest the sidebar may be dragged.
+  static const double maxSidebarWidth = 400;
+
+  /// Default detail-pane width as a fraction of the list+detail region — the
+  /// pre-#210 fixed 2:3 (list:detail) flex, i.e. detail = 3/5.
+  static const double defaultDetailFraction = 0.6;
+
+  /// Smallest share of the list+detail region the detail pane may take.
+  static const double minDetailFraction = 0.3;
+
+  /// Largest share of the list+detail region the detail pane may take.
+  static const double maxDetailFraction = 0.7;
 
   /// The full navigation sidebar (smart views + lists + footer). The left panel
   /// in the expanded layout; the slide-in [Drawer] content when compact.
@@ -116,6 +146,28 @@ class ListDetailScaffold extends StatelessWidget {
   /// a navigation. `null` in tests that do not drive the drawer.
   final GlobalKey<ScaffoldState>? scaffoldKey;
 
+  /// Persisted sidebar width for the expanded layout (#210). Clamped internally
+  /// to [minSidebarWidth]–[maxSidebarWidth]; ignored by the compact layout.
+  final double sidebarWidth;
+
+  /// Persisted detail-pane fraction for the expanded layout (#210). Clamped
+  /// internally to [minDetailFraction]–[maxDetailFraction]; compact-ignored.
+  final double detailFraction;
+
+  /// Called once when a sidebar-divider drag ends, with the new clamped width
+  /// to persist. `null` disables persistence (the drag still tracks live).
+  final ValueChanged<double>? onSidebarWidthChanged;
+
+  /// Called once when a list/detail-divider drag ends, with the new clamped
+  /// fraction to persist. `null` disables persistence.
+  final ValueChanged<double>? onDetailFractionChanged;
+
+  /// Called when the sidebar handle is double-clicked to reset the default.
+  final VoidCallback? onResetSidebarWidth;
+
+  /// Called when the list/detail handle is double-clicked to reset the default.
+  final VoidCallback? onResetDetailFraction;
+
   bool get _showingDetail => detail != null;
 
   @override
@@ -146,16 +198,19 @@ class ListDetailScaffold extends StatelessWidget {
   Widget _buildExpanded() {
     return Scaffold(
       body: SafeArea(
-        child: Row(
-          children: [
-            sidebar,
-            const VerticalDivider(width: 1),
-            Expanded(flex: 2, child: list),
-            if (_showingDetail) ...[
-              const VerticalDivider(width: 1),
-              Expanded(flex: 3, child: detail!),
-            ],
-          ],
+        child: _ResizableExpanded(
+          sidebar: sidebar,
+          list: list,
+          detail: _showingDetail ? detail : null,
+          sidebarWidth: sidebarWidth.clamp(minSidebarWidth, maxSidebarWidth),
+          detailFraction: detailFraction.clamp(
+            minDetailFraction,
+            maxDetailFraction,
+          ),
+          onSidebarWidthChanged: onSidebarWidthChanged,
+          onDetailFractionChanged: onDetailFractionChanged,
+          onResetSidebarWidth: onResetSidebarWidth,
+          onResetDetailFraction: onResetDetailFraction,
         ),
       ),
     );
@@ -221,6 +276,186 @@ class ListDetailScaffold extends StatelessWidget {
               label: d.label,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The expanded-layout body with two draggable dividers (#210): the sidebar/list
+/// split and — when a detail is open — the list/detail split. Stateful so a drag
+/// tracks the pointer live (setState per frame) while persistence fires only
+/// ONCE, on drag end, keeping the prefs write off the per-frame path. The parent
+/// re-seeds the local widths only when the persisted props actually change (a
+/// drag end reports the same value it holds, so an unrelated rebuild — a new
+/// task, a count tick — never clobbers an in-progress or just-finished drag).
+class _ResizableExpanded extends StatefulWidget {
+  const _ResizableExpanded({
+    required this.sidebar,
+    required this.list,
+    required this.detail,
+    required this.sidebarWidth,
+    required this.detailFraction,
+    required this.onSidebarWidthChanged,
+    required this.onDetailFractionChanged,
+    required this.onResetSidebarWidth,
+    required this.onResetDetailFraction,
+  });
+
+  final Widget sidebar;
+  final Widget list;
+  final Widget? detail;
+  final double sidebarWidth;
+  final double detailFraction;
+  final ValueChanged<double>? onSidebarWidthChanged;
+  final ValueChanged<double>? onDetailFractionChanged;
+  final VoidCallback? onResetSidebarWidth;
+  final VoidCallback? onResetDetailFraction;
+
+  @override
+  State<_ResizableExpanded> createState() => _ResizableExpandedState();
+}
+
+class _ResizableExpandedState extends State<_ResizableExpanded> {
+  late double _sidebarWidth = widget.sidebarWidth;
+  late double _detailFraction = widget.detailFraction;
+
+  @override
+  void didUpdateWidget(_ResizableExpanded old) {
+    super.didUpdateWidget(old);
+    // Only adopt a prop change that did NOT originate from our own drag end
+    // (where the incoming value already equals the local one). A cross-rebuild
+    // with unchanged props leaves the live drag state untouched.
+    if (widget.sidebarWidth != old.sidebarWidth) {
+      _sidebarWidth = widget.sidebarWidth;
+    }
+    if (widget.detailFraction != old.detailFraction) {
+      _detailFraction = widget.detailFraction;
+    }
+  }
+
+  void _dragSidebar(double dx) {
+    setState(() {
+      _sidebarWidth = (_sidebarWidth + dx).clamp(
+        ListDetailScaffold.minSidebarWidth,
+        ListDetailScaffold.maxSidebarWidth,
+      );
+    });
+  }
+
+  void _resetSidebar() {
+    setState(() => _sidebarWidth = ListDetailScaffold.defaultSidebarWidth);
+    widget.onResetSidebarWidth?.call();
+  }
+
+  void _dragDetail(double dx, double region) {
+    if (region <= 0) return;
+    setState(() {
+      // Dragging the handle right grows the list and shrinks the detail, so the
+      // detail fraction falls by the pointer's share of the region.
+      _detailFraction = (_detailFraction - dx / region).clamp(
+        ListDetailScaffold.minDetailFraction,
+        ListDetailScaffold.maxDetailFraction,
+      );
+    });
+  }
+
+  void _resetDetail() {
+    setState(() => _detailFraction = ListDetailScaffold.defaultDetailFraction);
+    widget.onResetDetailFraction?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          key: const Key('expanded-sidebar'),
+          width: _sidebarWidth,
+          child: widget.sidebar,
+        ),
+        _ResizeHandle(
+          key: const Key('sidebar-resize-handle'),
+          semanticLabel: 'Resize sidebar',
+          onDelta: _dragSidebar,
+          onDragEnd: () => widget.onSidebarWidthChanged?.call(_sidebarWidth),
+          onReset: _resetSidebar,
+        ),
+        Expanded(
+          child: widget.detail == null
+              ? widget.list
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final region = constraints.maxWidth;
+                    // Detail is width-pinned to its fraction of the region; the
+                    // list flexes into the remainder, so no configuration
+                    // overflows the row (#208 still holds).
+                    final detailWidth = _detailFraction * region;
+                    return Row(
+                      children: [
+                        Expanded(child: widget.list),
+                        _ResizeHandle(
+                          key: const Key('detail-resize-handle'),
+                          semanticLabel: 'Resize detail panel',
+                          onDelta: (dx) => _dragDetail(dx, region),
+                          onDragEnd: () => widget.onDetailFractionChanged?.call(
+                            _detailFraction,
+                          ),
+                          onReset: _resetDetail,
+                        ),
+                        SizedBox(
+                          key: const Key('expanded-detail'),
+                          width: detailWidth,
+                          child: widget.detail,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A draggable divider: a comfortable hit area over the 1px [VerticalDivider],
+/// with a column-resize cursor for the mouse and double-click-to-reset. Reports
+/// horizontal drag deltas so the parent owns the clamp and the persistence.
+class _ResizeHandle extends StatelessWidget {
+  const _ResizeHandle({
+    required this.onDelta,
+    required this.onDragEnd,
+    required this.onReset,
+    required this.semanticLabel,
+    super.key,
+  });
+
+  /// The width of the transparent grab area straddling the 1px divider.
+  static const double hitWidth = 11;
+
+  final ValueChanged<double> onDelta;
+  final VoidCallback onDragEnd;
+  final VoidCallback onReset;
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        // Track from the very first pixel (no 18px slop dead-zone), so the pane
+        // edge follows the pointer 1:1 the instant the drag begins.
+        dragStartBehavior: DragStartBehavior.down,
+        onHorizontalDragUpdate: (d) => onDelta(d.delta.dx),
+        onHorizontalDragEnd: (_) => onDragEnd(),
+        onDoubleTap: onReset,
+        child: Semantics(
+          label: semanticLabel,
+          child: const SizedBox(
+            width: hitWidth,
+            child: Center(child: VerticalDivider(width: 1)),
+          ),
+        ),
       ),
     );
   }
