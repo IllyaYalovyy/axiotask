@@ -371,6 +371,80 @@ void main() {
     });
   });
 
+  group('checkbox precision — complete ONLY from the checkbox (#214)', () {
+    // The completion tap target must be the checkbox affordance the user SEES,
+    // and every other tap on the row body must do the harmless expected thing
+    // (open the detail). Before this contract the checkbox's invisible 48×48
+    // box spanned the row's whole leading column (~75% of the desktop row's
+    // height), so clicks on what reads as "the record" completed tasks; and
+    // parts of the body were dead zones. Precision directive 2026-08-18.
+
+    testWidgets('desktop: a click at the row edge OUTSIDE the checkbox glyph '
+        'opens the detail and never completes', (tester) async {
+      final toggled = <String>[];
+      final opened = <String>[];
+      await pumpRow(
+        tester,
+        toggled: toggled,
+        opened: opened,
+        platform: TargetPlatform.linux,
+      );
+
+      final rect = tester.getRect(find.byKey(const Key('swipe-content')));
+      // Inside the OLD invisible 48×48 hit box, outside the compact target.
+      await tester.tapAt(rect.topLeft + const Offset(8, 40));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(toggled, isEmpty, reason: 'only the checkbox completes');
+      expect(opened, ['buy milk'], reason: 'a body tap opens the detail');
+    });
+
+    testWidgets('desktop: the checkbox itself still completes', (tester) async {
+      final toggled = <String>[];
+      await pumpRow(tester, toggled: toggled, platform: TargetPlatform.linux);
+      await tester.tap(find.byKey(const Key('row-checkbox-target')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(toggled, ['buy milk']);
+    });
+
+    testWidgets('desktop: the checkbox hit target stays compact (<48dp) on a '
+        'mouse — same rule as the metadata badges', (tester) async {
+      await pumpRow(tester, platform: TargetPlatform.linux);
+      final size = tester.getSize(find.byKey(const Key('row-checkbox-target')));
+      expect(size.width, lessThan(48));
+      expect(size.height, lessThan(48));
+    });
+
+    testWidgets('touch: former dead zones open the detail — leading column '
+        'below the checkbox and meta-line whitespace', (tester) async {
+      final toggled = <String>[];
+      final opened = <String>[];
+      await pumpRow(
+        tester,
+        due: '2026-08-01',
+        listTag: 'My Tasks',
+        toggled: toggled,
+        opened: opened,
+        picked: <String>[],
+        platform: TargetPlatform.android,
+      );
+
+      final rect = tester.getRect(find.byKey(const Key('swipe-content')));
+      // Leading column BELOW the 48dp checkbox box.
+      await tester.tapAt(rect.topLeft + const Offset(24, 60));
+      await tester.pump(const Duration(milliseconds: 400));
+      // Meta-band whitespace to the right of the badges.
+      await tester.tapAt(rect.topLeft + Offset(rect.width * 0.8, 60));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(toggled, isEmpty);
+      expect(opened, [
+        'buy milk',
+        'buy milk',
+      ], reason: 'every non-control tap on the row opens the detail');
+    });
+  });
+
   group('touch row density', () {
     // On a phone the row's height is dominated by the 48dp metadata tap boxes,
     // which already carry generous internal whitespace — stacking the desktop
@@ -424,7 +498,8 @@ void main() {
       expect(
         row.height,
         lessThanOrEqualTo(76),
-        reason: 'mobile rows must not stack decorative padding on top of the '
+        reason:
+            'mobile rows must not stack decorative padding on top of the '
             '48dp metadata tap boxes',
       );
       // Density must come out of whitespace, never out of the hit areas.
@@ -433,10 +508,7 @@ void main() {
       );
       expect(checkbox.height, greaterThanOrEqualTo(48));
       final dueTarget = tester.getSize(
-        find.ancestor(
-          of: find.text('Aug 1'),
-          matching: find.byType(InkWell),
-        ),
+        find.ancestor(of: find.text('Aug 1'), matching: find.byType(InkWell)),
       );
       expect(dueTarget.height, greaterThanOrEqualTo(48));
     });

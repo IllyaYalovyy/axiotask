@@ -432,7 +432,15 @@ class _TaskRowState extends State<TaskRow> {
                 ..onStart = _onSwipeStart
                 ..onUpdate = _onSwipeUpdate
                 ..onEnd = _onSwipeEnd
-                ..onCancel = _onSwipeCancel,
+                ..onCancel = _onSwipeCancel
+                // Replay the pre-acceptance movement once the arena resolves
+                // (#214): the row-wide open-tap recognizer makes every swipe's
+                // arena CONTESTED, and with the default DragStartBehavior.start
+                // a contested win swallows the touch-slop travel plus the
+                // accepting move — the peek visibly jumps instead of following
+                // the finger from the first pixel. `.down` anchors the drag at
+                // the pointer-down, losing nothing.
+                ..dragStartBehavior = DragStartBehavior.down,
             ),
         LongPressGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
@@ -507,46 +515,81 @@ class _TaskRowState extends State<TaskRow> {
                 // offset.
                 Transform.translate(
                   key: const Key('swipe-content'),
+                  // The whole row body is one open-the-detail surface (#214):
+                  // explicit controls (checkbox, badges, overflow, strip) win
+                  // the gesture arena as deeper children; every other tap —
+                  // including the space the old invisible checkbox box used to
+                  // swallow and the former dead zones between the title band
+                  // and the badge boxes — routes to the harmless default.
+                  // Completion is ONLY the checkbox (and the deliberate
+                  // swipe-right) — precision directive 2026-08-18.
                   offset: Offset(_swipeOffset, 0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 48dp hit target for the checkbox (#167,
-                      // CheckboxTapTarget) — tapping it toggles and never bubbles
-                      // to the body tap.
-                      SizedBox(
-                        key: const Key('row-checkbox-target'),
-                        width: 48,
-                        height: 48,
-                        child: Checkbox(
-                          value: widget.completed,
-                          onChanged: (_) => widget.onToggle(),
-                        ),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _mainLine(theme),
-                            if (!coarsePointerPlatform(theme.platform))
-                              const SizedBox(height: 2),
-                            _metaLine(theme),
-                          ],
-                        ),
-                      ),
-                      if (showOverflow)
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _onBodyTap,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // The completion target. On touch it is the full 48dp
+                        // box (#167, CheckboxTapTarget). On a mouse it shrinks
+                        // to a compact box around the glyph — same rule as the
+                        // metadata badges ("compact on a mouse") — because the
+                        // invisible 48×48 area spanned ~75% of the desktop
+                        // row's height and completed tasks from clicks that
+                        // read as "the row" (#214). The 48dp-wide column stays
+                        // either way, so the title never shifts.
                         SizedBox(
                           width: 48,
                           height: 48,
-                          child: IconButton(
-                            key: const Key('row-overflow'),
-                            padding: EdgeInsets.zero,
-                            tooltip: 'Task actions',
-                            icon: const Icon(Icons.more_vert),
-                            onPressed: widget.onShowActions,
+                          child: coarsePointerPlatform(theme.platform)
+                              ? SizedBox(
+                                  key: const Key('row-checkbox-target'),
+                                  width: 48,
+                                  height: 48,
+                                  child: Checkbox(
+                                    value: widget.completed,
+                                    onChanged: (_) => widget.onToggle(),
+                                  ),
+                                )
+                              : Center(
+                                  child: SizedBox(
+                                    key: const Key('row-checkbox-target'),
+                                    width: 28,
+                                    height: 28,
+                                    child: Checkbox(
+                                      value: widget.completed,
+                                      onChanged: (_) => widget.onToggle(),
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _mainLine(theme),
+                              if (!coarsePointerPlatform(theme.platform))
+                                const SizedBox(height: 2),
+                              _metaLine(theme),
+                            ],
                           ),
                         ),
-                    ],
+                        if (showOverflow)
+                          SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: IconButton(
+                              key: const Key('row-overflow'),
+                              padding: EdgeInsets.zero,
+                              tooltip: 'Task actions',
+                              icon: const Icon(Icons.more_vert),
+                              onPressed: widget.onShowActions,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 // The quick-date strip — lifted OUT of layout flow (#168): a
@@ -649,7 +692,10 @@ class _TaskRowState extends State<TaskRow> {
       onTap: _onBodyTap,
       onDoubleTap: doubleTapToRename,
       child: Padding(
-        padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: compact ? 0 : 2),
+        padding: EdgeInsets.only(
+          top: compact ? 4 : 12,
+          bottom: compact ? 0 : 2,
+        ),
         child: Row(
           children: [
             Expanded(
