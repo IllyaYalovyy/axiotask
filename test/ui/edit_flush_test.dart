@@ -260,7 +260,11 @@ void main() {
         initialLists: [list('L1', 'My Tasks')],
       );
 
-      // Type a draft in the always-visible quick-add, but never submit it.
+      // On touch (the shell's default test platform) creation goes through the
+      // FAB's bottom-sheet composer (#216): open it, type a draft, but never
+      // submit.
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextField, 'Add a task'),
         'buy milk',

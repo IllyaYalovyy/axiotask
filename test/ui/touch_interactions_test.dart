@@ -75,7 +75,7 @@ void main() {
                 selectedIndex: SmartView.all.index,
                 onDestinationSelected: (_) {},
                 title: 'All Tasks',
-                onNewTask: () => ref.read(quickAddFocusProvider).requestFocus(),
+                onNewTask: ref.read(newTaskRequestProvider.notifier).bump,
                 list: const TaskListView(
                   viewId: 'all',
                   selectedTaskId: null,
@@ -91,31 +91,97 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
   }
 
-  testWidgets('the FAB focuses the quick-add input (no empty-task create)', (
+  testWidgets('touch mounts NO inline quick-add bar — the FAB is the one '
+      'creation affordance (#216)', (tester) async {
+    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    addTearDown(fake.dispose);
+    await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+    expect(
+      find.text('Add a task'),
+      findsNothing,
+      reason: 'the bar would duplicate the FAB and cost a row of screen',
+    );
+    expect(find.byType(FloatingActionButton), findsOneWidget);
+  });
+
+  testWidgets('the FAB opens the bottom-sheet composer, focused and ready '
+      '(no empty-task create) (#216)', (tester) async {
+    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    addTearDown(fake.dispose);
+    await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+
+    // The composer is up, and its input took focus with no extra tap.
+    final field = find.widgetWithText(TextField, 'Add a task');
+    expect(field, findsOneWidget);
+    final editable = find.descendant(
+      of: field,
+      matching: find.byType(EditableText),
+    );
+    expect(
+      tester.widget<EditableText>(editable).focusNode.hasFocus,
+      isTrue,
+      reason: 'the sheet raises the keyboard immediately',
+    );
+    // Opening must NOT create a task — the fake still holds exactly the seed.
+    expect(fake.tasks.length, 1);
+  });
+
+  testWidgets('submitting in the composer creates the task, clears the field, '
+      'and keeps the sheet open for rapid entry (#216)', (tester) async {
+    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    addTearDown(fake.dispose);
+    await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Add a task'),
+      'buy oats',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(fake.tasks.where((t) => t.task.title == 'buy oats'), isNotEmpty);
+    final sheetField = find.widgetWithText(TextField, 'Add a task');
+    expect(
+      sheetField,
+      findsOneWidget,
+      reason: 'the sheet stays open for the next task',
+    );
+    expect(
+      tester.widget<TextField>(sheetField).controller?.text,
+      isEmpty,
+      reason: 'the field cleared for rapid consecutive adds',
+    );
+  });
+
+  testWidgets('dismissing the composer keeps an unsubmitted draft (#216)', (
     tester,
   ) async {
     final fake = FakeBackend([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
-    // The one text field on the list surface is the quick-add input.
-    final quickAdd = find.byType(EditableText);
-    expect(
-      tester.widget<EditableText>(quickAdd).focusNode.hasFocus,
-      isFalse,
-      reason: 'the input is unfocused until the FAB is tapped',
-    );
-
     await tester.tap(find.byType(FloatingActionButton));
-    await tester.pump();
-
-    expect(
-      tester.widget<EditableText>(quickAdd).focusNode.hasFocus,
-      isTrue,
-      reason: 'the FAB just focuses the input',
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Add a task'),
+      'half a thought',
     );
-    // Focusing must NOT create a task — the fake still holds exactly the seed.
-    expect(fake.tasks.length, 1);
+    // Tap the scrim above the sheet to dismiss without submitting.
+    await tester.tapAt(const Offset(200, 40));
+    await tester.pumpAndSettle();
+    expect(find.text('Add a task'), findsNothing, reason: 'sheet closed');
+    expect(fake.tasks.length, 1, reason: 'nothing was created');
+
+    // Reopening shows the draft again — dismissal is not data loss.
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    expect(find.text('half a thought'), findsOneWidget);
   });
 
   testWidgets('pulling down from the top runs the refresh action + spinner', (

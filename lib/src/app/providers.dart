@@ -153,6 +153,23 @@ final quickAddFocusProvider = Provider<FocusNode>((ref) {
   return node;
 });
 
+/// A monotonically-increasing "new task" request (#216): the touch FAB bumps it
+/// and the mounted [TaskListView] listens, opening its bottom-sheet composer.
+/// A counter (not a bool/event bus) so consecutive taps re-trigger even when a
+/// listener missed one; nothing resets it. Desktop never bumps it — the
+/// always-visible quick-add bar is the fine-pointer creation affordance.
+class NewTaskRequests extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  /// One FAB tap → one request.
+  void bump() => state++;
+}
+
+final newTaskRequestProvider = NotifierProvider<NewTaskRequests, int>(
+  NewTaskRequests.new,
+);
+
 /// A stable [GlobalKey] for the compact (phone) [Scaffold], so the shell can
 /// drive its slide-in drawer (open via the hamburger, close after a navigation)
 /// across the rebuilds a route change triggers. Held for the app lifetime — a

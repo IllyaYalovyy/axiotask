@@ -21,6 +21,7 @@ import 'router.dart';
 import 'sidebar.dart';
 import 'task_detail.dart';
 import 'task_list_view.dart';
+import 'task_row.dart' show coarsePointerPlatform;
 import 'toast.dart';
 import 'views.dart';
 
@@ -192,9 +193,14 @@ class AppShell extends ConsumerWidget {
           prefsCtl.setSidebarWidth(ListDetailScaffold.defaultSidebarWidth),
       onResetDetailFraction: () =>
           prefsCtl.setDetailFraction(ListDetailScaffold.defaultDetailFraction),
-      // The mobile FAB just focuses the always-visible quick-add input — never a
-      // silent empty-task create (#166).
-      onNewTask: () => ref.read(quickAddFocusProvider).requestFocus(),
+      // ONE creation affordance per pointer class (#216): on touch the FAB is
+      // it — it opens the list's bottom-sheet composer (never a silent
+      // empty-task create, #166). On a fine pointer the always-visible
+      // quick-add bar is it, and the FAB never renders — width does not decide
+      // (a narrow desktop window keeps the bar, not the FAB).
+      onNewTask: coarsePointerPlatform(Theme.of(context).platform)
+          ? ref.read(newTaskRequestProvider.notifier).bump
+          : null,
       destinations: [
         for (final v in SmartView.values)
           ShellDestination(

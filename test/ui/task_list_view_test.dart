@@ -282,6 +282,7 @@ void main() {
     bool showCompleted = false,
     List<String> excludedLists = const [],
     List<Override> extraOverrides = const [],
+    TargetPlatform platform = TargetPlatform.linux,
   }) async {
     final fake = FakeBackend(initial, newId: newId);
     addTearDown(fake.dispose);
@@ -312,6 +313,12 @@ void main() {
           ],
           child: MaterialApp(
             builder: wrapWithToast,
+            // Fine-pointer by default, so the inline quick-add bar is mounted:
+            // this suite pins the pointer-agnostic list/create SEMANTICS
+            // through the bar. Touch-specific cases pass android and drive the
+            // FAB's bottom-sheet composer (#216) instead; the full touch
+            // chrome is pinned in touch_interactions_test.
+            theme: ThemeData(platform: platform),
             home: Scaffold(
               body: TaskListView(
                 viewId: viewId,
@@ -365,10 +372,10 @@ void main() {
         await tester.enterText(find.byType(TextField), 'buy milk tomorrow');
         await tester.pump();
       });
-      // Preview chip shows a FRIENDLY relative date, never the ISO (#78b). On
-      // the default (touch) test platform the × is a standalone 48dp button so
-      // the chip is a plain Chip (F19 #198); the label is the same either way.
-      expect(find.widgetWithText(Chip, 'tomorrow'), findsOneWidget);
+      // Preview chip shows a FRIENDLY relative date, never the ISO (#78b).
+      // RawChip matches both the mouse form (InputChip) and the touch form
+      // (plain Chip + standalone ×, F19 #198); the label is the same either way.
+      expect(find.widgetWithText(RawChip, 'tomorrow'), findsOneWidget);
       // The typed title is untouched in the field.
       final field = tester.widget<TextField>(find.byType(TextField).first);
       expect(field.controller?.text, 'buy milk tomorrow');
@@ -381,8 +388,15 @@ void main() {
     // The failure this prevents: the InputChip's built-in delete glyph is a
     // sub-48dp target, so on a phone a finger struggles to keep the parsed
     // phrase as literal text. On a touch pointer the × is a standalone 48dp
-    // IconButton. (Default test platform is touch.)
-    await pumpView(tester);
+    // IconButton. Touch creates through the bottom-sheet composer (#216), so
+    // this drives the sheet: bump the FAB's request seam, then type there.
+    await pumpView(tester, platform: TargetPlatform.android);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(TaskListView)),
+      listen: false,
+    );
+    container.read(newTaskRequestProvider.notifier).bump();
+    await tester.pumpAndSettle();
     await withClock(_clock, () async {
       await tester.enterText(find.byType(TextField), 'call bank tomorrow');
       await tester.pump();
@@ -425,7 +439,7 @@ void main() {
       await withClock(_clock, () async {
         await tester.enterText(find.byType(TextField), 'pay rent 2026-07-01');
         await tester.pump();
-        expect(find.widgetWithText(Chip, 'Jul 1'), findsOneWidget);
+        expect(find.widgetWithText(RawChip, 'Jul 1'), findsOneWidget);
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await settle(tester);
       });

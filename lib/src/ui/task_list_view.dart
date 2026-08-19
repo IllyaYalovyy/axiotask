@@ -225,6 +225,53 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// is live, else a no-op over the always-live reactive store.
   Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
 
+  /// The touch creation surface (#216): a modal bottom-sheet composer over the
+  /// same controller/focus/submit machinery as the desktop bar, so drafts,
+  /// NL-date preview, landing toasts (#190), and the background flush (#183)
+  /// are identical on both pointer classes. Submitting clears the field and
+  /// KEEPS the sheet open for rapid consecutive adds; back / swipe-down / a
+  /// scrim tap dismisses it (an unsubmitted draft survives in the controller
+  /// and reappears on the next open). Landing toasts render through
+  /// ToastOverlay, which sits above modals (F19).
+  Future<void> _openQuickAddSheet() async {
+    final quickAddFocus = ref.read(quickAddFocusProvider);
+    // Raise the keyboard with the sheet — the composer is ready to type into
+    // the moment it appears, with no extra tap.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => quickAddFocus.requestFocus(),
+    );
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => Padding(
+          // Keep the composer above the keyboard (#166 IME contract).
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
+          ),
+          child: _QuickAddBar(
+            controller: _quickAdd,
+            focusNode: quickAddFocus,
+            dateIgnoredFor: _dateIgnoredFor,
+            onSubmit: () {
+              _submit();
+              // Rapid entry: the field cleared; keep composing.
+              quickAddFocus.requestFocus();
+            },
+            onDismissPreview: () {
+              setState(() => _dateIgnoredFor = _quickAdd.text);
+              // The sheet is its own route — re-render its content too.
+              setSheetState(() {});
+              quickAddFocus.requestFocus();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     final toasts = ref.read(toastControllerProvider);
     final created = await _createFromDraft();
@@ -742,19 +789,30 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
     final openUrl = ref.read(urlOpenerProvider);
     final quickAddFocus = ref.watch(quickAddFocusProvider);
+    // ONE creation affordance per pointer class (#216): touch creates through
+    // the FAB's bottom-sheet composer (thumb zone, IME pre-raised), so the
+    // inline bar — which duplicated the FAB and cost a row of screen — mounts
+    // on a fine pointer only. The FAB bumps [newTaskRequestProvider]; the
+    // mounted list opens its sheet.
+    final touch = coarsePointerPlatform(Theme.of(context).platform);
+    ref.listen(newTaskRequestProvider, (previous, next) {
+      if (touch && next != previous) _openQuickAddSheet();
+    });
     return Column(
       children: [
-        _QuickAddBar(
-          controller: _quickAdd,
-          focusNode: quickAddFocus,
-          dateIgnoredFor: _dateIgnoredFor,
-          onSubmit: _submit,
-          onDismissPreview: () {
-            setState(() => _dateIgnoredFor = _quickAdd.text);
-            quickAddFocus.requestFocus();
-          },
-        ),
-        const Divider(height: 1),
+        if (!touch) ...[
+          _QuickAddBar(
+            controller: _quickAdd,
+            focusNode: quickAddFocus,
+            dateIgnoredFor: _dateIgnoredFor,
+            onSubmit: _submit,
+            onDismissPreview: () {
+              setState(() => _dateIgnoredFor = _quickAdd.text);
+              quickAddFocus.requestFocus();
+            },
+          ),
+          const Divider(height: 1),
+        ],
         _ListToolbar(
           sort: sort,
           showCompleted: prefs.showCompleted,

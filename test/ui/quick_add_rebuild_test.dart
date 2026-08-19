@@ -28,6 +28,9 @@ void main() {
         row('B', 'Beta', position: '2'),
       ],
       lists: [list('L1', 'My Tasks')],
+      // The inline bar is the fine-pointer surface (#216); the rebuild-scoping
+      // contract (F20) is about the BAR, so pin the platform that mounts it.
+      platform: TargetPlatform.linux,
     );
 
     // Focus the quick-add field first so the subsequent keystroke is the only
@@ -46,7 +49,7 @@ void main() {
 
     // The bar rebuilt: the natural-language date preview chip is now shown.
     expect(
-      find.byType(Chip),
+      find.byType(RawChip),
       findsOneWidget,
       reason: 'the quick-add bar rebuilt to render the date preview',
     );
