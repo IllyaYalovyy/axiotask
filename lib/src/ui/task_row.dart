@@ -528,7 +528,8 @@ class _TaskRowState extends State<TaskRow> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _mainLine(theme),
-                            const SizedBox(height: 2),
+                            if (!coarsePointerPlatform(theme.platform))
+                              const SizedBox(height: 2),
                             _metaLine(theme),
                           ],
                         ),
@@ -638,12 +639,17 @@ class _TaskRowState extends State<TaskRow> {
     final doubleTapToRename = coarsePointerPlatform(theme.platform)
         ? null
         : _startEdit;
+    // On touch the title's decorative padding shrinks: the 48dp metadata tap
+    // boxes below already hold generous whitespace, and stacking the desktop
+    // paddings on top of them made the mobile list sparse (density directive
+    // 2026-08-18 — the 'touch row density' contract).
+    final compact = coarsePointerPlatform(theme.platform);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _onBodyTap,
       onDoubleTap: doubleTapToRename,
       child: Padding(
-        padding: const EdgeInsets.only(top: 12, bottom: 2),
+        padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: compact ? 0 : 2),
         child: Row(
           children: [
             Expanded(
@@ -688,7 +694,11 @@ class _TaskRowState extends State<TaskRow> {
     final hasNotes = (widget.notes ?? '').isNotEmpty;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      // Touch: the 48dp tap boxes in this line carry the whitespace; the
+      // decorative bottom padding is desktop-only (see _mainLine's note).
+      padding: EdgeInsets.only(
+        bottom: coarsePointerPlatform(theme.platform) ? 0 : 8,
+      ),
       child: Wrap(
         crossAxisAlignment: WrapCrossAlignment.center,
         spacing: 10,

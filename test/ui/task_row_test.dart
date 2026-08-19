@@ -370,4 +370,84 @@ void main() {
       expect(badge.height, greaterThanOrEqualTo(48));
     });
   });
+
+  group('touch row density', () {
+    // On a phone the row's height is dominated by the 48dp metadata tap boxes,
+    // which already carry generous internal whitespace — stacking the desktop
+    // row's decorative paddings ON TOP of them made the mobile list read as
+    // sparse (user directive 2026-08-18). The contract: a full-featured row
+    // stays compact on a touch platform WITHOUT shrinking any tap target (the
+    // 48dp contracts above must hold inside the same compact row).
+    //
+    // Rows are measured under the app's real constraints — inside a ListView,
+    // where the main axis is unbounded and the row shrink-wraps. (The shared
+    // pumpRow harness mounts the row as the Scaffold body, whose bounded
+    // height stretches the row's column — useless for geometry.)
+    Future<void> pumpListedRow(
+      WidgetTester tester, {
+      required TargetPlatform platform,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: platform),
+          home: Scaffold(
+            body: ListView(
+              children: [
+                TaskRow(
+                  title: 'buy milk',
+                  completed: false,
+                  due: '2026-08-01',
+                  listTag: 'My Tasks',
+                  subtaskDone: 0,
+                  subtaskTotal: 0,
+                  onOpen: () {},
+                  onToggle: () {},
+                  onRename: (_) {},
+                  onPickDate: () {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('a full row stays ≤80dp tall on a touch platform, tap targets '
+        'intact', (tester) async {
+      await withClock(Clock.fixed(DateTime(2026, 6, 15)), () async {
+        await pumpListedRow(tester, platform: TargetPlatform.android);
+      });
+
+      // The row's content box (the swipe-follow layer wraps exactly the
+      // checkbox + text column + badges; TaskRow itself fills its parent).
+      final row = tester.getSize(find.byKey(const Key('swipe-content')));
+      expect(
+        row.height,
+        lessThanOrEqualTo(76),
+        reason: 'mobile rows must not stack decorative padding on top of the '
+            '48dp metadata tap boxes',
+      );
+      // Density must come out of whitespace, never out of the hit areas.
+      final checkbox = tester.getSize(
+        find.byKey(const Key('row-checkbox-target')),
+      );
+      expect(checkbox.height, greaterThanOrEqualTo(48));
+      final dueTarget = tester.getSize(
+        find.ancestor(
+          of: find.text('Aug 1'),
+          matching: find.byType(InkWell),
+        ),
+      );
+      expect(dueTarget.height, greaterThanOrEqualTo(48));
+    });
+
+    testWidgets('the desktop row keeps its ratified spacing', (tester) async {
+      await pumpListedRow(tester, platform: TargetPlatform.linux);
+      // The desktop metadata line is compact (no 48dp boxes), so the desktop
+      // row was never the sparse one — its geometry is unchanged by the mobile
+      // density pass: title padding (12+2) + line + gap + meta + padding (8).
+      final row = tester.getSize(find.byKey(const Key('swipe-content')));
+      expect(row.height, lessThanOrEqualTo(68));
+    });
+  });
 }
