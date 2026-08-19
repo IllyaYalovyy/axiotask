@@ -143,22 +143,25 @@ class GoogleSignInAuthGateway implements GoogleAuthGateway {
     try {
       await _ensureInitialized();
 
+      // AUTHORIZATION-ONLY, deliberately skipping `authenticate()`: the v7
+      // authentication step is Credential Manager, which hard-requires a
+      // serverClientId on Android ("serverClientId must be provided on
+      // Android") — but this app never needs identity tokens, only a `tasks`
+      // access token. The instance-level authorization client is the Play
+      // Services Authorization API — the exact surface the reference's
+      // play_services_auth.rs used — and is serviced by package + registered
+      // SHA-1 alone, so the ratified no-client-id model holds.
       if (interactive) {
-        // The sign-in gesture: full interactive authentication, then an
-        // interactive scope authorization — the ONLY path allowed to prompt.
-        final account = await _signIn.authenticate(scopeHint: scopes);
-        final authz = await account.authorizationClient.authorizeScopes(scopes);
+        // The sign-in gesture: an interactive authorization — Play Services
+        // runs the combined account-picker + consent flow as needed. The ONLY
+        // path allowed to prompt.
+        final authz = await _signIn.authorizationClient.authorizeScopes(scopes);
         return GoogleAuthorization.token(authz.accessToken);
       }
 
-      // Silent restore: never prompt. A lightweight (cached) authentication,
-      // then a silent authorization; a null at either step means the grant
-      // needs the interactive gesture.
-      final attempt = _signIn.attemptLightweightAuthentication();
-      if (attempt == null) return const GoogleAuthorization.needsInteraction();
-      final account = await attempt;
-      if (account == null) return const GoogleAuthorization.needsInteraction();
-      final authz = await account.authorizationClient.authorizationForScopes(
+      // Silent restore: never prompt. A null means the grant needs the
+      // interactive gesture.
+      final authz = await _signIn.authorizationClient.authorizationForScopes(
         scopes,
       );
       if (authz == null) return const GoogleAuthorization.needsInteraction();

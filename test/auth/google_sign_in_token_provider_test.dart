@@ -9,8 +9,12 @@
 //     no crash, no false "session expired" banner, and no retry loop.
 //
 //  2. The live [GoogleSignInAuthGateway] over a mock GoogleSignInPlatform. This
-//     is where T9.1's real behaviour lives, so it is pinned here: the SILENT
-//     path never authenticates and never prompts for scopes; the interactive
+//     is where T9.1's real behaviour lives, so it is pinned here: the gateway is
+//     AUTHORIZATION-ONLY — it never touches the authentication surfaces
+//     (authenticate / attemptLightweightAuthentication are Credential Manager,
+//     which hard-requires a serverClientId on Android; the mock models that
+//     refusal, so a regression back to them fails these tests the way it failed
+//     on device); the SILENT path never prompts for scopes; the interactive
 //     path is the ONLY one that prompts; initialize() carries NO
 //     clientId/serverClientId; and a GMS failure degrades to "unavailable"
 //     rather than throwing out of the app.
@@ -72,9 +76,6 @@ class _MockPlatform extends GoogleSignInPlatform
   // method-channel PlatformException or a MissingPluginException escaping the
   // plugin.
   Exception? initRawError;
-  AuthenticationResults? lightweightResult; // null => no cached session
-  AuthenticationResults? authenticateResult;
-  GoogleSignInException? authenticateException;
   ClientAuthorizationTokenData? clientAuthorization; // null => not grantable
   GoogleSignInException? clientAuthorizationException;
 
@@ -94,12 +95,23 @@ class _MockPlatform extends GoogleSignInPlatform
     if (initException != null) throw initException!;
   }
 
+  // The real Android platform refuses BOTH authentication surfaces without a
+  // serverClientId (they ride Credential Manager) — the exact on-device failure
+  // that killed sign-in when the gateway still called authenticate(). The mock
+  // models that refusal so any regression back to an authentication call fails
+  // here the way it failed on the phone.
+  static GoogleSignInException get _serverClientIdRefusal =>
+      const GoogleSignInException(
+        code: GoogleSignInExceptionCode.clientConfigurationError,
+        description: 'serverClientId must be provided on Android',
+      );
+
   @override
   Future<AuthenticationResults?>? attemptLightweightAuthentication(
     AttemptLightweightAuthenticationParameters params,
   ) async {
     lightweightCalls++;
-    return lightweightResult;
+    throw _serverClientIdRefusal;
   }
 
   @override
@@ -110,8 +122,7 @@ class _MockPlatform extends GoogleSignInPlatform
     AuthenticateParameters params,
   ) async {
     authenticateCalls++;
-    if (authenticateException != null) throw authenticateException!;
-    return authenticateResult!;
+    throw _serverClientIdRefusal;
   }
 
   @override
@@ -148,11 +159,6 @@ class _MockPlatform extends GoogleSignInPlatform
   Future<void> disconnect(DisconnectParams params) async =>
       throw UnimplementedError();
 }
-
-AuthenticationResults _account() => const AuthenticationResults(
-  user: GoogleSignInUserData(email: 'user@example.com', id: 'uid-1'),
-  authenticationTokens: AuthenticationTokenData(idToken: null),
-);
 
 GoogleSignInException _exception(GoogleSignInExceptionCode code) =>
     GoogleSignInException(code: code, description: code.name);
@@ -281,13 +287,11 @@ void main() {
       GoogleSignInPlatform.instance = platform;
     });
 
-    test('silent restore returns the cached token and NEVER prompts or '
-        'authenticates', () async {
-      platform
-        ..lightweightResult = _account()
-        ..clientAuthorization = const ClientAuthorizationTokenData(
-          accessToken: 'silent-token',
-        );
+    test('silent restore returns the token from a SILENT authorization and '
+        'never touches an authentication surface', () async {
+      platform.clientAuthorization = const ClientAuthorizationTokenData(
+        accessToken: 'silent-token',
+      );
 
       final result = await GoogleSignInAuthGateway().authorize(
         interactive: false,
@@ -295,20 +299,21 @@ void main() {
 
       expect(result.needsInteraction, isFalse);
       expect(result.accessToken, 'silent-token');
-      expect(platform.authenticateCalls, 0, reason: 'no interactive auth');
       expect(
         platform.authorizationPrompts,
         [false],
         reason: 'silent authorization only — never escalates to a prompt',
       );
+      // The authentication surfaces are Credential Manager, which refuses
+      // without a serverClientId — the gateway must never reach them.
+      expect(platform.authenticateCalls, 0);
+      expect(platform.lightweightCalls, 0);
     });
 
     test('initialize() carries NO clientId and NO serverClientId', () async {
-      platform
-        ..lightweightResult = _account()
-        ..clientAuthorization = const ClientAuthorizationTokenData(
-          accessToken: 't',
-        );
+      platform.clientAuthorization = const ClientAuthorizationTokenData(
+        accessToken: 't',
+      );
 
       await GoogleSignInAuthGateway().authorize(interactive: false);
 
@@ -318,30 +323,9 @@ void main() {
     });
 
     test(
-      'no cached session → needs interaction, without asking for tokens',
-      () async {
-        platform.lightweightResult = null;
-
-        final result = await GoogleSignInAuthGateway().authorize(
-          interactive: false,
-        );
-
-        expect(result.needsInteraction, isTrue);
-        expect(
-          platform.authorizationPrompts,
-          isEmpty,
-          reason: 'no session, so no token request at all',
-        );
-        expect(platform.authenticateCalls, 0);
-      },
-    );
-
-    test(
       'scopes not grantable silently → needs interaction, still no prompt',
       () async {
-        platform
-          ..lightweightResult = _account()
-          ..clientAuthorization = null; // grantable only with UI
+        platform.clientAuthorization = null; // grantable only with UI
 
         final result = await GoogleSignInAuthGateway().authorize(
           interactive: false,
@@ -358,26 +342,27 @@ void main() {
     );
 
     test(
-      'interactive gesture authenticates then authorizes WITH a prompt',
+      'interactive gesture authorizes WITH a prompt and never authenticates',
       () async {
-        platform
-          ..authenticateResult = _account()
-          ..clientAuthorization = const ClientAuthorizationTokenData(
-            accessToken: 'gesture-token',
-          );
+        platform.clientAuthorization = const ClientAuthorizationTokenData(
+          accessToken: 'gesture-token',
+        );
 
         final result = await GoogleSignInAuthGateway().authorize(
           interactive: true,
         );
 
         expect(result.accessToken, 'gesture-token');
-        expect(platform.authenticateCalls, 1);
-        expect(platform.lightweightCalls, 0, reason: 'gesture is explicit');
         expect(
           platform.authorizationPrompts,
           [true],
           reason: 'the gesture path is the one allowed to prompt',
         );
+        // authenticate() is Credential Manager — it refuses without a
+        // serverClientId, which is exactly how sign-in died on device; the
+        // gesture must stay authorization-only.
+        expect(platform.authenticateCalls, 0);
+        expect(platform.lightweightCalls, 0);
       },
     );
 
@@ -463,7 +448,7 @@ void main() {
     });
 
     test('a cancelled gesture is interaction-required, not a crash', () async {
-      platform.authenticateException = _exception(
+      platform.clientAuthorizationException = _exception(
         GoogleSignInExceptionCode.canceled,
       );
 
@@ -477,11 +462,9 @@ void main() {
     test('sign-out delegates to the platform', () async {
       final gateway = GoogleSignInAuthGateway();
       // Initialize first so the gateway has a session to drop.
-      platform
-        ..lightweightResult = _account()
-        ..clientAuthorization = const ClientAuthorizationTokenData(
-          accessToken: 't',
-        );
+      platform.clientAuthorization = const ClientAuthorizationTokenData(
+        accessToken: 't',
+      );
       await gateway.authorize(interactive: false);
 
       await gateway.signOut();
@@ -492,11 +475,9 @@ void main() {
     // then return the gateway ready to have signOut exercised.
     Future<GoogleSignInAuthGateway> initializedGateway() async {
       final gateway = GoogleSignInAuthGateway();
-      platform
-        ..lightweightResult = _account()
-        ..clientAuthorization = const ClientAuthorizationTokenData(
-          accessToken: 't',
-        );
+      platform.clientAuthorization = const ClientAuthorizationTokenData(
+        accessToken: 't',
+      );
       await gateway.authorize(interactive: false);
       return gateway;
     }
