@@ -130,6 +130,29 @@ void main() {
       expect(moves, [DateMove.tomorrow]);
     });
 
+    testWidgets('the revealed strip labels its actions in words', (
+      tester,
+    ) async {
+      // The failure this prevents: the strip regressing to glyph codes. The
+      // revealed reschedule actions must be labeled in words a first-time user
+      // reads without a legend ("→o →t →w →m" shipped once and read as alien —
+      // user directive 2026-08-19); the two long moves carry their full name in
+      // the tooltip.
+      final moves = <DateMove>[];
+      await pumpRow(tester, due: '2026-08-30', moves: moves);
+      await tester.drag(rowFinder(), const Offset(-180, 0));
+      await settle(tester);
+      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Tomorrow'), findsOneWidget);
+      expect(find.text('1 wk'), findsOneWidget);
+      expect(find.text('1 mo'), findsOneWidget);
+      expect(
+        find.byKey(const Key('quick-date-clear')),
+        findsOneWidget,
+        reason: 'a dated task offers Remove date',
+      );
+    });
+
     testWidgets('picking a date on the latched strip closes it (F19 #198)', (
       tester,
     ) async {

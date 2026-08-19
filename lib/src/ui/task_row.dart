@@ -941,40 +941,47 @@ class _QuickDateStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // A Material-3 tonal surface, not a flat grey box: the strip must read as
+    // this app's own control the moment it appears (it shipped once as
+    // labelSmall glyph codes on surfaceContainerHigh and read as an alien
+    // tooltip — user directive 2026-08-19). Actions are labeled in words;
+    // secondaryContainer keeps it distinct from the row underneath in both
+    // themes.
     return Material(
-      color: theme.colorScheme.surfaceContainerHigh,
-      borderRadius: BorderRadius.circular(6),
-      elevation: 1,
+      color: theme.colorScheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(dense ? 10 : 14),
+      elevation: 3,
+      shadowColor: theme.colorScheme.shadow,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             _btn(
               theme,
               const Key('quick-date-today'),
-              '→o',
               'Today',
+              'Move to today',
               () => onSetDue(DateMove.today),
             ),
             _btn(
               theme,
               const Key('quick-date-tomorrow'),
-              '→t',
               'Tomorrow',
+              'Move to tomorrow',
               () => onSetDue(DateMove.tomorrow),
             ),
             _btn(
               theme,
               const Key('quick-date-week'),
-              '→w',
+              '1 wk',
               'Next week',
               () => onSetDue(DateMove.nextWeek),
             ),
             _btn(
               theme,
               const Key('quick-date-month'),
-              '→m',
+              '1 mo',
               'Next month',
               () => onSetDue(DateMove.nextMonth),
             ),
@@ -982,7 +989,7 @@ class _QuickDateStrip extends StatelessWidget {
               _btn(
                 theme,
                 const Key('quick-date-clear'),
-                '✕',
+                null,
                 'Remove date',
                 () => onSetDue(DateMove.clear),
               ),
@@ -992,28 +999,37 @@ class _QuickDateStrip extends StatelessWidget {
     );
   }
 
+  /// One pill action. A null [label] renders the clear-date icon instead.
   Widget _btn(
     ThemeData theme,
     Key key,
-    String label,
+    String? label,
     String tooltip,
     VoidCallback onTap,
   ) {
+    final onColor = theme.colorScheme.onSecondaryContainer;
     final inner = Padding(
-      padding: EdgeInsets.symmetric(horizontal: dense ? 6 : 12, vertical: 4),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onSurface,
-        ),
+      padding: EdgeInsets.symmetric(
+        horizontal: dense ? 10 : 12,
+        vertical: dense ? 5 : 9,
       ),
+      child: label == null
+          ? Icon(Icons.close, size: dense ? 16 : 20, color: onColor)
+          : Text(
+              label,
+              style:
+                  (dense
+                          ? theme.textTheme.labelMedium
+                          : theme.textTheme.labelLarge)
+                      ?.copyWith(color: onColor),
+            ),
     );
     return Tooltip(
       message: tooltip,
       child: InkWell(
         key: key,
         onTap: onTap,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(dense ? 8 : 12),
         // A touch reveal gives every button a 48dp hit target (#167); the dense
         // desktop hover strip stays compact.
         child: dense
