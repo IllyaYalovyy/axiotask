@@ -319,7 +319,8 @@ config, cache, and state roots. Default mode never opens OAuth, calls Google, or
 reads a token. It does require the ignored desktop OAuth configuration because
 the final production builds are deliberately config-validated.
 
-For final interactive product review, run:
+The agent-owned final command can launch the production app for interactive
+product review:
 
 ```bash
 ./scripts/verify_linux_acceptance.sh --human
@@ -327,18 +328,21 @@ For final interactive product review, run:
 
 That reruns the noninteractive gate, checks the configured GNOME Secret Service,
 prints the concise product checklist, and opens the configured production
-release app. It does not declare approval; close the app when review is done.
-Only when the dedicated test account is ready, explicitly include the isolated
-authorization, secure-storage, and cleanup-backed Google contract probes:
+release app. It does not declare approval. The agent executes and remediates
+this command; the human is responsible only for unavoidable browser consent and
+hands-on product acceptance. When the dedicated test account is ready, the
+agent explicitly includes the isolated authorization, secure-storage, and
+cleanup-backed Google contract probes:
 
 ```bash
 ./scripts/verify_linux_acceptance.sh --human --live-probes
 ```
 
 `--live-probes` is rejected without `--human`. These commands are Linux release
-evidence only; Android remains unverified. The live-account/product observation
-is deliberately the remaining evidence for **HUMAN task 56**: do not record
-approval until that checklist has been exercised with the dedicated account.
+evidence only; Android remains unverified. **HUMAN task 56** does not delegate
+command execution or screenshot review: it records only hands-on product
+acceptance and the decision to begin Android work after any necessary browser
+consent.
 
 ## Compile-time application compositions
 
