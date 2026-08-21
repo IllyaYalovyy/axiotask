@@ -76,14 +76,17 @@ final class TestComposition implements AppComposition {
   AccountSubject get configuredAccountSubject => authorization.subject;
 
   @override
-  Future<ReadSliceTransport> createReadTransport(AccountSubject subject) async {
-    final access = accountGuard.verify(subject);
+  Future<ReadSliceTransport> createReadTransport(
+    AccountSubject? subject,
+  ) async {
+    final selectedSubject = subject ?? authorization.subject;
+    final access = accountGuard.verify(selectedSubject);
     if (access is! Success<void>) {
       throw StateError(
         'Synthetic account guard rejected its configured subject.',
       );
     }
-    return createSyntheticReadTransport(subject);
+    return createSyntheticReadTransport(selectedSubject);
   }
 
   @override

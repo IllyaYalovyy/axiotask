@@ -145,6 +145,44 @@ void main() {
     expect(find.text('Tasks unavailable'), findsNothing);
   });
 
+  testWidgets(
+    'durable account configuration closes and reopens the complete runtime',
+    (tester) async {
+      final first = _FakeRuntime();
+      final second = _FakeRuntime();
+      final history = InMemoryDiagnosticHistory();
+      final reopened = Completer<void>();
+      var attempts = 0;
+      await tester.pumpWidget(
+        AxiotaskBootstrap(
+          diagnostics: ProductionDiagnosticSink(history),
+          openRuntime: () async {
+            attempts += 1;
+            if (attempts == 2) reopened.complete();
+            return attempts == 1 ? first : second;
+          },
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(attempts, 1);
+
+      first.requestReload();
+      await tester.runAsync(() => first.whenCloseStarted);
+      await tester.runAsync(() => reopened.future);
+      await tester.pump();
+
+      expect(
+        history.records.map((record) => record.code),
+        contains('application.runtime_reload_started'),
+      );
+      expect(first.closeCalls, 1);
+      expect(attempts, 2);
+      expect(find.text('Tasks unavailable'), findsNothing);
+      expect(find.text('Axiotask'), findsOneWidget);
+    },
+  );
+
   test('startup read failure constructs no Google transport', () async {
     final database = AppDatabase.inMemory();
     await database.createAccount('synthetic-unreadable-account');
@@ -185,17 +223,29 @@ final class _FakeRuntime implements AxiotaskRuntime {
 
   final StreamController<Object> _storageFailures =
       StreamController<Object>.broadcast();
+  final Completer<void> _reload = Completer<void>();
+  final Completer<void> _closeStarted = Completer<void>();
+  var closeCalls = 0;
 
   @override
   Stream<Object> get fatalStorageFailures => _storageFailures.stream;
 
+  @override
+  Future<void>? get reloadRequested => _reload.future;
+
   void failStorage(Object error) => _storageFailures.add(error);
+
+  void requestReload() => _reload.complete();
+
+  Future<void> get whenCloseStarted => _closeStarted.future;
 
   @override
   Future<void> start() async {}
 
   @override
   Future<void> close() async {
+    closeCalls += 1;
+    if (!_closeStarted.isCompleted) _closeStarted.complete();
     viewModel.dispose();
     await _storageFailures.close();
   }
@@ -326,7 +376,9 @@ final class _NoTransportComposition implements AppComposition {
   );
 
   @override
-  Future<ReadSliceTransport> createReadTransport(AccountSubject subject) async {
+  Future<ReadSliceTransport> createReadTransport(
+    AccountSubject? subject,
+  ) async {
     transportCreations += 1;
     throw StateError('Transport must not be constructed for unreadable data.');
   }

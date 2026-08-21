@@ -114,7 +114,7 @@ final class DevelopmentComposition implements AppComposition {
   final LinuxReadConfiguration linuxReadConfiguration;
 
   @override
-  Future<ReadSliceTransport> createReadTransport(AccountSubject subject) =>
+  Future<ReadSliceTransport> createReadTransport(AccountSubject? subject) =>
       createLinuxReadTransport(
         composition: this,
         configuredSubject: subject,

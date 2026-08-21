@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../core/diagnostics/diagnostics.dart';
 import '../core/failure.dart';
 import '../core/outcome.dart';
 import '../data/auth/authorization.dart';
@@ -47,6 +48,12 @@ abstract interface class AxiotaskRuntime {
 
   Stream<Object> get fatalStorageFailures;
 
+  /// Requests a complete composition reopen after a durable boundary changes.
+  ///
+  /// First-account authorization uses this after the verified Google subject
+  /// is committed to SQLite. Existing runtimes normally emit nothing.
+  Future<void>? get reloadRequested => null;
+
   Future<void> start();
 
   Future<void> close();
@@ -60,6 +67,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.transport,
     required this.devicePreferences,
     required this.storageFailures,
+    required this.reloadRequest,
+    required this._closeFirstAccountHealth,
     required this.accountBackupRepository,
     required this.accountBackupRestoreRepository,
     required this.syncHealthRepository,
@@ -73,6 +82,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
   final ReadSliceTransport? transport;
   final DevicePreferencesAdapter? devicePreferences;
   final StreamController<Object> storageFailures;
+  final Completer<void>? reloadRequest;
+  final Future<void> Function()? _closeFirstAccountHealth;
 
   @override
   final AccountBackupRepository? accountBackupRepository;
@@ -89,9 +100,13 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
   @override
   Stream<Object> get fatalStorageFailures => storageFailures.stream;
 
+  @override
+  Future<void>? get reloadRequested => reloadRequest?.future;
+
   static Future<TasksFeatureRuntime> open(
     AppComposition composition, {
     AppDatabase? injectedDatabase,
+    DevicePreferencesBackend? injectedDevicePreferencesBackend,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
   }) async {
@@ -101,6 +116,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     ReadSliceTransport? transport;
     DevicePreferencesAdapter? devicePreferences;
     final storageFailures = StreamController<Object>.broadcast();
+    Completer<void>? reloadRequest;
     try {
       var accounts = await database.allAccounts();
       final configuredSubject = composition.configuredAccountSubject;
@@ -109,22 +125,37 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         accounts = await database.allAccounts();
       }
       if (accounts.isEmpty) {
+        reloadRequest = Completer<void>();
+        final openedTransport = await composition.createReadTransport(null);
+        transport = openedTransport;
+        final healthRepository = _FirstAccountHealthRepository(
+          composition.clock.now(),
+        );
         return TasksFeatureRuntime._(
           viewModel: TasksViewModel(
             accountId: const AccountId(1),
             tasksRepository: const _EmptyTasksRepository(),
-            syncHealthRepository: _NoAuthorizationHealthRepository(
-              composition.clock.now(),
+            syncHealthRepository: healthRepository,
+            connectRequested: () => _connectFirstAccount(
+              composition: composition,
+              database: database,
+              transport: openedTransport,
+              health: healthRepository,
+              reloadRequest: reloadRequest!,
+              storageFailures: storageFailures,
             ),
+            diagnostics: composition.diagnostics,
           ),
           database: database,
           coordinator: null,
-          transport: null,
+          transport: openedTransport,
           devicePreferences: null,
           storageFailures: storageFailures,
+          reloadRequest: reloadRequest,
+          closeFirstAccountHealth: healthRepository.close,
           accountBackupRepository: null,
           accountBackupRestoreRepository: null,
-          syncHealthRepository: null,
+          syncHealthRepository: healthRepository,
           localDataRecoveryService: null,
         );
       }
@@ -188,7 +219,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         runtime: coordinator,
       );
       devicePreferences = DevicePreferencesAdapter(
-        backend: SharedPreferencesAsyncBackend(),
+        backend:
+            injectedDevicePreferencesBackend ?? SharedPreferencesAsyncBackend(),
         namespace: composition.boundary.storage.preferencesNamespace,
         diagnostics: composition.diagnostics,
       );
@@ -240,6 +272,8 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         transport: openedTransport,
         devicePreferences: devicePreferences,
         storageFailures: storageFailures,
+        reloadRequest: null,
+        closeFirstAccountHealth: null,
         accountBackupRepository: backupRepository,
         accountBackupRestoreRepository: backupRepository,
         syncHealthRepository: healthRepository,
@@ -266,9 +300,179 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     await coordinator?.close();
     await transport?.close();
     await devicePreferences?.close();
+    await _closeFirstAccountHealth?.call();
     await database.close();
     await storageFailures.close();
   }
+}
+
+Future<Outcome<void>> _connectFirstAccount({
+  required AppComposition composition,
+  required AppDatabase database,
+  required ReadSliceTransport transport,
+  required _FirstAccountHealthRepository health,
+  required Completer<void> reloadRequest,
+  required StreamController<Object> storageFailures,
+}) async {
+  health.checkingAuthorization(composition.clock.now());
+  final Outcome<AccountSubject> authorization;
+  try {
+    authorization = await transport.authorization.requestTasksAuthorization();
+  } on Object {
+    composition.diagnostics.record(
+      const DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.authorization,
+        kind: DiagnosticEventKind.failure,
+        code: 'auth.first_connection_failed_unexpectedly',
+        operation: 'authorize_first_account',
+      ),
+    );
+    health.failed(_unexpectedAuthorizationFailure, composition.clock.now());
+    return const Outcome<void>.failure(_unexpectedAuthorizationFailure);
+  }
+  final AccountSubject subject;
+  switch (authorization) {
+    case Failed<AccountSubject>(:final failure):
+      health.failed(failure, composition.clock.now());
+      return Outcome<void>.failure(failure);
+    case Success<AccountSubject>(:final value):
+      subject = value;
+  }
+
+  final guarded = composition.accountGuard.verify(subject);
+  if (guarded case Failed<void>(:final failure)) {
+    health.failed(failure, composition.clock.now());
+    return Outcome<void>.failure(failure);
+  }
+
+  try {
+    final provisioned = await database.transaction<Outcome<void>>(() async {
+      var accounts = await database.allAccounts();
+      if (accounts.isEmpty) {
+        await database.createAccount(subject.value);
+        accounts = await database.allAccounts();
+      }
+      if (accounts.length != 1 ||
+          accounts.single.googleSubject != subject.value) {
+        return const Outcome<void>.failure(_accountSelectionChangedFailure);
+      }
+      return const Outcome<void>.success(null);
+    });
+    if (provisioned case Failed<void>(:final failure)) {
+      health.failed(failure, composition.clock.now());
+      return provisioned;
+    }
+  } on Object catch (error) {
+    try {
+      await database.schemaFingerprint();
+    } on Object {
+      if (!storageFailures.isClosed) storageFailures.add(error);
+    }
+    composition.diagnostics.record(
+      const DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.storage,
+        kind: DiagnosticEventKind.failure,
+        code: 'account.first_partition_create_failed',
+        operation: 'create_account_partition',
+      ),
+    );
+    health.failed(_accountCreationFailure, composition.clock.now());
+    return const Outcome<void>.failure(_accountCreationFailure);
+  }
+
+  health.verificationPending(composition.clock.now());
+  if (!reloadRequest.isCompleted) reloadRequest.complete();
+  return const Outcome<void>.success(null);
+}
+
+final class _FirstAccountHealthRepository implements SyncHealthRepository {
+  _FirstAccountHealthRepository(DateTime now) : _current = _inactive(now);
+
+  final StreamController<SyncHealth> _changes =
+      StreamController<SyncHealth>.broadcast(sync: true);
+  SyncHealth _current;
+
+  @override
+  Stream<SyncHealth> watchHealth(AccountId accountId) async* {
+    yield _current;
+    yield* _changes.stream;
+  }
+
+  void checkingAuthorization(DateTime now) {
+    _publish(
+      SyncHealth(
+        outcome: SyncHealthOutcome.pending,
+        pendingReason: SyncPendingReason.checkingAuthorization,
+        counts: const SyncWorkCounts(),
+        lastSuccessfulSyncAt: null,
+        evaluatedAt: now,
+      ),
+    );
+  }
+
+  void verificationPending(DateTime now) {
+    _publish(
+      SyncHealth(
+        outcome: SyncHealthOutcome.pending,
+        pendingReason: SyncPendingReason.verifying,
+        counts: const SyncWorkCounts(),
+        lastSuccessfulSyncAt: null,
+        evaluatedAt: now,
+      ),
+    );
+  }
+
+  void failed(Failure failure, DateTime now) {
+    final isAuthorizationFailure =
+        failure.category == FailureCategory.authorization;
+    if (isAuthorizationFailure) {
+      _publish(
+        SyncHealth(
+          outcome: SyncHealthOutcome.inactive,
+          inactiveReason: SyncInactiveReason.noAuthorization,
+          action: SyncHealthAction.connect,
+          counts: const SyncWorkCounts(),
+          lastSuccessfulSyncAt: null,
+          evaluatedAt: now,
+          diagnosticCode: failure.code,
+        ),
+      );
+      return;
+    }
+    final reason = switch (failure.category) {
+      FailureCategory.network => SyncFailureReason.noConnection,
+      FailureCategory.remote ||
+      FailureCategory.rateLimit => SyncFailureReason.remoteFailure,
+      _ => SyncFailureReason.applicationFailure,
+    };
+    _publish(
+      SyncHealth(
+        outcome: SyncHealthOutcome.failed,
+        failureReason: reason,
+        action: SyncHealthAction.connect,
+        counts: const SyncWorkCounts(),
+        lastSuccessfulSyncAt: null,
+        evaluatedAt: now,
+        diagnosticCode: failure.code,
+      ),
+    );
+  }
+
+  void _publish(SyncHealth value) {
+    _current = value;
+    if (!_changes.isClosed) _changes.add(value);
+  }
+
+  Future<void> close() => _changes.close();
+
+  static SyncHealth _inactive(DateTime now) => SyncHealth(
+    outcome: SyncHealthOutcome.inactive,
+    inactiveReason: SyncInactiveReason.noAuthorization,
+    action: SyncHealthAction.connect,
+    counts: const SyncWorkCounts(),
+    lastSuccessfulSyncAt: null,
+    evaluatedAt: now,
+  );
 }
 
 final class _EmptyTasksRepository implements TasksRepository {
@@ -349,20 +553,34 @@ const Failure _noTaskAccountFailure = Failure(
   safeSummary: 'No configured account partition is available.',
 );
 
-final class _NoAuthorizationHealthRepository implements SyncHealthRepository {
-  const _NoAuthorizationHealthRepository(this._now);
+const Failure _accountSelectionChangedFailure = Failure(
+  code: 'account.first_partition_conflict',
+  category: FailureCategory.authorization,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'Google Tasks data was not opened for a different account.',
+  action: FailureAction.reviewConfiguration,
+  safeSummary: 'The configured account changed while connection was opening.',
+);
 
-  final DateTime _now;
+const Failure _accountCreationFailure = Failure(
+  code: 'account.first_partition_create_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact: 'The verified Google account was not saved locally.',
+  action: FailureAction.retry,
+  safeSummary: 'The local account partition could not be created safely.',
+);
 
-  @override
-  Stream<SyncHealth> watchHealth(AccountId accountId) => Stream.value(
-    SyncHealth(
-      outcome: SyncHealthOutcome.inactive,
-      inactiveReason: SyncInactiveReason.noAuthorization,
-      action: SyncHealthAction.connect,
-      counts: const SyncWorkCounts(),
-      lastSuccessfulSyncAt: null,
-      evaluatedAt: _now,
-    ),
-  );
-}
+const Failure _unexpectedAuthorizationFailure = Failure(
+  code: 'auth.first_connection_failed_unexpectedly',
+  category: FailureCategory.internal,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.unknown,
+  impact: 'Google Tasks was not connected.',
+  action: FailureAction.retry,
+  safeSummary:
+      'Google authorization failed unexpectedly. Open diagnostics '
+      'for details and retry.',
+);

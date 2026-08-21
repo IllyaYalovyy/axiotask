@@ -115,7 +115,13 @@ abstract interface class AppComposition {
   /// Production discovers only an already configured account from SQLite.
   AccountSubject? get configuredAccountSubject;
 
-  Future<ReadSliceTransport> createReadTransport(AccountSubject subject);
+  /// Builds the platform authorization and Google Tasks boundary.
+  ///
+  /// [subject] is null only while a fresh production installation has no
+  /// verified account partition. That transport may perform interactive
+  /// identity authorization, but callers must create the durable partition
+  /// before issuing any Google Tasks request.
+  Future<ReadSliceTransport> createReadTransport(AccountSubject? subject);
 }
 
 final class ReadSliceTransport {

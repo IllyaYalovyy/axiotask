@@ -541,7 +541,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                   ),
                         isRefreshing: state.isRefreshing,
                         isSyncControlPending: state.isSyncControlPending,
-                        onRefresh: widget.viewModel.refresh,
+                        onRefresh: widget.viewModel.refreshRequested == null
+                            ? null
+                            : widget.viewModel.refresh,
                         onStopSync: widget.viewModel.stopSync,
                         onSearch: _navigation.openSearch,
                         onShowShortcuts: _showShortcutReference,
@@ -740,7 +742,7 @@ final class _ApplicationHeader extends StatelessWidget {
   final ValueChanged<SyncHealthAction>? onHealthAction;
   final bool isRefreshing;
   final bool isSyncControlPending;
-  final Future<void> Function() onRefresh;
+  final Future<void> Function()? onRefresh;
   final Future<void> Function() onStopSync;
   final VoidCallback onSearch;
   final VoidCallback onShowShortcuts;
@@ -827,8 +829,8 @@ final class _ApplicationHeader extends StatelessWidget {
                   onPressed:
                       isRefreshing ||
                           isSyncControlPending ||
-                          health.inactiveReason ==
-                              SyncInactiveReason.syncStopped
+                          onRefresh == null ||
+                          health.outcome == SyncHealthOutcome.inactive
                       ? null
                       : onRefresh,
                   icon: isRefreshing
@@ -843,8 +845,8 @@ final class _ApplicationHeader extends StatelessWidget {
                   onPressed:
                       isRefreshing ||
                           isSyncControlPending ||
-                          health.inactiveReason ==
-                              SyncInactiveReason.syncStopped
+                          onRefresh == null ||
+                          health.outcome == SyncHealthOutcome.inactive
                       ? null
                       : onRefresh,
                   icon: isRefreshing

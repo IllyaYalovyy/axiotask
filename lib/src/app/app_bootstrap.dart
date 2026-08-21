@@ -53,6 +53,7 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
   AxiotaskRuntime? _runtime;
   StreamSubscription<Object>? _storageFailureSubscription;
   var _opening = true;
+  var _reloading = false;
   var _generation = 0;
 
   @override
@@ -81,6 +82,7 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
       _storageFailureSubscription = runtime.fatalStorageFailures.listen(
         _storageFailed,
       );
+      unawaited(runtime.reloadRequested?.then((_) => _reloadRuntime()));
       unawaited(_start(runtime));
     } on Object catch (error) {
       if (!mounted || generation != _generation) return;
@@ -144,6 +146,62 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
     setState(() {
       _opening = false;
     });
+  }
+
+  Future<void> _reloadRuntime() async {
+    final runtime = _runtime;
+    if (runtime == null || _reloading || !mounted) return;
+    _reloading = true;
+    widget.diagnostics.record(
+      const DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.application,
+        kind: DiagnosticEventKind.transition,
+        code: 'application.runtime_reload_started',
+        operation: 'reload_runtime',
+      ),
+    );
+    _generation += 1;
+    setState(() {
+      _runtime = null;
+      _opening = true;
+    });
+    final storageSubscription = _storageFailureSubscription;
+    _storageFailureSubscription = null;
+    // Cancellation begins before the owning runtime closes; runtime.close is
+    // the deterministic resource barrier before composition opens again.
+    unawaited(storageSubscription?.cancel());
+    try {
+      await runtime.close();
+      if (mounted) await _open();
+      if (!mounted) return;
+      widget.diagnostics.record(
+        DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.application,
+          kind: _runtime == null
+              ? DiagnosticEventKind.failure
+              : DiagnosticEventKind.transition,
+          code: _runtime == null
+              ? 'application.runtime_reload_failed'
+              : 'application.runtime_reload_completed',
+          operation: 'reload_runtime',
+        ),
+      );
+    } on Object {
+      if (!mounted) return;
+      widget.diagnostics.record(
+        const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.application,
+          kind: DiagnosticEventKind.failure,
+          code: 'application.runtime_reload_failed',
+          operation: 'reload_runtime',
+        ),
+      );
+      setState(() {
+        _opening = false;
+      });
+    } finally {
+      _reloading = false;
+    }
   }
 
   @override

@@ -309,7 +309,7 @@ final class _IntegrationComposition implements AppComposition {
 
   @override
   Future<ReadSliceTransport> createReadTransport(
-    AccountSubject subject,
+    AccountSubject? subject,
   ) async =>
       ReadSliceTransport(authorization: authorization, googleTasks: service);
 }

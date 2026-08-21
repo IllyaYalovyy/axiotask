@@ -107,7 +107,7 @@ final class ReleaseComposition implements AppComposition {
   AccountSubject? get configuredAccountSubject => null;
 
   @override
-  Future<ReadSliceTransport> createReadTransport(AccountSubject subject) =>
+  Future<ReadSliceTransport> createReadTransport(AccountSubject? subject) =>
       createLinuxReadTransport(
         composition: this,
         configuredSubject: subject,

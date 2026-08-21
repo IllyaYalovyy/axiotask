@@ -557,6 +557,41 @@ void main() {
     expect(refreshes, 1);
   });
 
+  testWidgets('Refresh is disabled until an account is authorized', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(
+      _health(
+        SyncHealthOutcome.inactive,
+        inactiveReason: SyncInactiveReason.noAuthorization,
+        action: SyncHealthAction.connect,
+      ),
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final refresh = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Refresh'),
+    );
+    expect(refresh.onPressed, isNull);
+    expect(find.text('Connect'), findsOneWidget);
+  });
+
+  testWidgets('Refresh is disabled when no foreground action exists', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    final refresh = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Refresh'),
+    );
+    expect(refresh.onPressed, isNull);
+  });
+
   testWidgets('active sync exposes Stop and stopped sync exposes Resume', (
     tester,
   ) async {

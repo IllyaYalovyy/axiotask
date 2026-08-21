@@ -116,6 +116,7 @@ void main() {
       var resumeCalls = 0;
       var retryCalls = 0;
       var reauthorizeCalls = 0;
+      var connectCalls = 0;
       final viewModel = TasksViewModel(
         accountId: const AccountId(1),
         tasksRepository: tasks,
@@ -132,6 +133,10 @@ void main() {
         },
         reauthorizeRequested: () async {
           reauthorizeCalls += 1;
+        },
+        connectRequested: () async {
+          connectCalls += 1;
+          return const Outcome<void>.success(null);
         },
       );
       addTearDown(viewModel.dispose);
@@ -150,6 +155,42 @@ void main() {
       expect(retryCalls, 1);
       await viewModel.handleSyncHealthAction(SyncHealthAction.reauthorize);
       expect(reauthorizeCalls, 1);
+      await viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+      expect(connectCalls, 1);
+    },
+  );
+
+  test(
+    'Connect exposes a safe typed failure and permits a later retry',
+    () async {
+      final tasks = _TasksRepository();
+      final health = _HealthRepository();
+      var calls = 0;
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: health,
+        connectRequested: () async {
+          calls += 1;
+          return calls == 1
+              ? const Outcome<void>.failure(_connectionConfigurationFailure)
+              : const Outcome<void>.success(null);
+        },
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+
+      expect(viewModel.state.isSyncControlPending, isFalse);
+      expect(
+        viewModel.state.syncControlFailureMessage,
+        _connectionConfigurationFailure.safeSummary,
+      );
+
+      await viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+
+      expect(calls, 2);
+      expect(viewModel.state.syncControlFailureMessage, isNull);
     },
   );
 
@@ -487,6 +528,16 @@ const _taskPersistenceFailure = Failure(
   retry: RetryClassification.unknown,
   impact: 'The task was not saved.',
   safeSummary: 'The task transaction failed.',
+);
+
+const _connectionConfigurationFailure = Failure(
+  code: 'auth.configuration',
+  category: FailureCategory.configuration,
+  operation: FailureOperation.initialize,
+  retry: RetryClassification.permanent,
+  impact: 'Google Tasks connection is unavailable.',
+  action: FailureAction.reviewConfiguration,
+  safeSummary: 'Linux OAuth configuration is missing or invalid.',
 );
 
 final _snapshot = CachedTasksSnapshot(

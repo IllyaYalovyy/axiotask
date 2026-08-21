@@ -250,6 +250,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.refreshRequested,
     this.retryRequested,
     this.reauthorizeRequested,
+    this.connectRequested,
     this.stopSyncRequested,
     this.resumeSyncRequested,
     this.diagnostics,
@@ -293,6 +294,7 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function()? refreshRequested;
   final Future<void> Function()? retryRequested;
   final Future<void> Function()? reauthorizeRequested;
+  final Future<Outcome<void>> Function()? connectRequested;
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
   final DiagnosticSink? diagnostics;
@@ -1009,14 +1011,63 @@ final class TasksViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> handleSyncHealthAction(
-    SyncHealthAction action,
-  ) => switch (action) {
-    SyncHealthAction.resume => resumeSync(),
-    SyncHealthAction.retry => retrySync(),
-    SyncHealthAction.reauthorize => _performSyncControl(reauthorizeRequested),
-    SyncHealthAction.none || SyncHealthAction.connect => Future<void>.value(),
-  };
+  Future<void> handleSyncHealthAction(SyncHealthAction action) =>
+      switch (action) {
+        SyncHealthAction.resume => resumeSync(),
+        SyncHealthAction.retry => retrySync(),
+        SyncHealthAction.reauthorize => _performSyncControl(
+          reauthorizeRequested,
+        ),
+        SyncHealthAction.connect => _performConnect(),
+        SyncHealthAction.none => Future<void>.value(),
+      };
+
+  Future<void> _performConnect() {
+    final existing = _syncControlInFlight;
+    if (existing != null) return existing;
+    final action = connectRequested;
+    if (action == null) return Future<void>.value();
+    final operation = _runConnect(action);
+    _syncControlInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _runConnect(Future<Outcome<void>> Function() action) async {
+    _recordUi('ui.connect_started', DiagnosticEventKind.transition);
+    _replaceState(
+      _state.copyWith(
+        isSyncControlPending: true,
+        syncControlFailureMessage: null,
+      ),
+    );
+    try {
+      switch (await action()) {
+        case Success<void>():
+          _recordUi('ui.connect_completed', DiagnosticEventKind.transition);
+        case Failed<void>(:final failure):
+          _recordUi(
+            'ui.connect_failed',
+            DiagnosticEventKind.failure,
+            failureCode: failure.code,
+          );
+          _replaceState(
+            _state.copyWith(syncControlFailureMessage: failure.safeSummary),
+          );
+      }
+    } on Object {
+      _recordUi('ui.connect_failed', DiagnosticEventKind.failure);
+      _replaceState(
+        _state.copyWith(
+          syncControlFailureMessage:
+              'Google Tasks connection failed unexpectedly. Open diagnostics '
+              'for details and retry.',
+        ),
+      );
+    } finally {
+      _syncControlInFlight = null;
+      _replaceState(_state.copyWith(isSyncControlPending: false));
+    }
+  }
 
   Future<void> _performSyncControl(Future<void> Function()? action) {
     final existing = _syncControlInFlight;

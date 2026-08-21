@@ -29,7 +29,7 @@ final class LinuxReadConfiguration {
 
 Future<ReadSliceTransport> createLinuxReadTransport({
   required AppComposition composition,
-  required AccountSubject configuredSubject,
+  required AccountSubject? configuredSubject,
   required LinuxReadConfiguration configuration,
 }) async {
   if (!configuration.isValid) {
@@ -77,7 +77,7 @@ Future<ReadSliceTransport> createLinuxReadTransport({
 final class _ConfiguredSubjectStore implements PinnedSubjectStore {
   const _ConfiguredSubjectStore(this.subject);
 
-  final AccountSubject subject;
+  final AccountSubject? subject;
 
   @override
   Future<Outcome<AccountSubject?>> read() async =>
@@ -85,7 +85,7 @@ final class _ConfiguredSubjectStore implements PinnedSubjectStore {
 
   @override
   Future<Outcome<void>> pin(AccountSubject candidate) async =>
-      candidate == subject
+      subject == null || candidate == subject
       ? const Outcome<void>.success(null)
       : Outcome<void>.failure(
           const Failure(
