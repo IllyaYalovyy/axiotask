@@ -52,7 +52,10 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
     final repository =
         widget.preferencesRepository ?? widget.viewModel.preferencesRepository;
     if (repository == null) return;
-    _presentation = OnboardingViewModel(repository)..start();
+    _presentation = OnboardingViewModel(
+      repository,
+      diagnostics: widget.viewModel.diagnostics,
+    )..start();
   }
 
   @override
@@ -98,6 +101,40 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
                     onDismiss: viewModel.dismiss,
                     isSaving: viewModel.state.isSaving,
                     failureMessage: viewModel.state.failureMessage,
+                  ),
+                ),
+              if (presentation case final viewModel?
+                  when !viewModel.state.isVisible &&
+                      viewModel.state.failureMessage != null)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: SafeArea(
+                    top: false,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 720),
+                        child: Material(
+                          elevation: 3,
+                          color: Theme.of(context).colorScheme.surface,
+                          child: MaterialBanner(
+                            key: const Key('onboarding-persistence-notice'),
+                            content: Semantics(
+                              liveRegion: true,
+                              child: Text(viewModel.state.failureMessage!),
+                            ),
+                            actions: <Widget>[
+                              TextButton(
+                                onPressed: viewModel.clearFailure,
+                                child: const Text('Dismiss notice'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
             ],

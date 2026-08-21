@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
@@ -30,23 +31,62 @@ void main() {
   );
 
   test(
-    'dismissal failure keeps onboarding visible with an honest retry error',
+    'dismissal failure closes for this process and is safe and observable',
     () async {
+      final diagnostics = InMemoryDiagnosticHistory();
       final preferences = _Preferences()..failDismissal = true;
-      final viewModel = OnboardingViewModel(preferences);
+      final viewModel = OnboardingViewModel(
+        preferences,
+        diagnostics: ProductionDiagnosticSink(diagnostics),
+      );
       addTearDown(viewModel.dispose);
 
       viewModel.start();
       await _settle();
       await viewModel.dismiss();
 
-      expect(viewModel.state.isVisible, isTrue);
+      expect(preferences.current.onboardingDismissed, isFalse);
+      expect(viewModel.state.preferences.onboardingDismissed, isFalse);
+      expect(viewModel.state.isVisible, isFalse);
       expect(
         viewModel.state.failureMessage,
-        'Could not save onboarding dismissal. Try again.',
+        contains('may appear again next time'),
       );
+      expect(diagnostics.records, hasLength(1));
+      expect(
+        diagnostics.records.single.code,
+        'onboarding.dismissal_write_failed',
+      );
+      expect(diagnostics.records.single.fields, <String, String>{
+        'failure_code': 'synthetic.write_failed',
+      });
+
+      preferences.emitCurrent();
+      await _settle();
+      expect(viewModel.state.isVisible, isFalse);
+
+      final nextLaunch = OnboardingViewModel(preferences)..start();
+      addTearDown(nextLaunch.dispose);
+      await _settle();
+      expect(nextLaunch.state.isVisible, isTrue);
     },
   );
+
+  test('diagnostic failure cannot prevent process-local dismissal', () async {
+    final preferences = _Preferences()..failDismissal = true;
+    final viewModel = OnboardingViewModel(
+      preferences,
+      diagnostics: const _ThrowingDiagnosticSink(),
+    );
+    addTearDown(viewModel.dispose);
+
+    viewModel.start();
+    await _settle();
+    await expectLater(viewModel.dismiss(), completes);
+
+    expect(viewModel.state.isVisible, isFalse);
+    expect(viewModel.state.failureMessage, isNotNull);
+  });
 }
 
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
@@ -56,6 +96,8 @@ final class _Preferences implements PreferencesRepository {
       StreamController<DevicePreferences>.broadcast();
   var current = const DevicePreferences.defaults();
   var failDismissal = false;
+
+  void emitCurrent() => _device.add(current);
 
   @override
   Stream<DevicePreferences> watchDevicePreferences() async* {
@@ -122,6 +164,13 @@ final class _Preferences implements PreferencesRepository {
     AccountId accountId,
     ViewKey viewKey,
   ) => const Stream<ViewPreferences>.empty();
+}
+
+final class _ThrowingDiagnosticSink implements DiagnosticSink {
+  const _ThrowingDiagnosticSink();
+
+  @override
+  void record(DiagnosticEvent event) => throw StateError('diagnostics failed');
 }
 
 const Failure _writeFailure = Failure(
