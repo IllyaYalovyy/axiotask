@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/preferences/device_preferences.dart';
@@ -104,7 +105,10 @@ void main() {
       final adapter = DevicePreferencesAdapter(
         backend: backend,
         namespace: 'synthetic-malformed',
-        diagnostics: ProductionDiagnosticSink(history),
+        diagnostics: ProductionDiagnosticSink(
+          history,
+          clock: ManualClock(DateTime.utc(2025, 1, 1)),
+        ),
       );
       addTearDown(adapter.close);
 
@@ -117,9 +121,15 @@ void main() {
           record.fields.keys,
           containsAll(<String>['preference', 'reason']),
         );
-        expect(record.renderedText, isNot(contains('sepia')));
-        expect(record.renderedText, isNot(contains('42')));
-        expect(record.renderedText, isNot(contains('yes')));
+        final diagnosticPayload = <String>[
+          record.code,
+          record.operation,
+          ...record.fields.keys,
+          ...record.fields.values,
+        ].join(' ');
+        expect(diagnosticPayload, isNot(contains('sepia')));
+        expect(diagnosticPayload, isNot(contains('42')));
+        expect(diagnosticPayload, isNot(contains('yes')));
       }
     },
   );
