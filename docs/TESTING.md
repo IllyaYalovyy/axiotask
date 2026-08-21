@@ -690,6 +690,14 @@ S31 adds `local-data-reset-warning-light.png`,
 already-sent limitation; result captures distinguish verified Good rebuild
 from an empty, non-green failed cache. All content is fixed and synthetic.
 
+S32B adds `onboarding_light.png` and `onboarding_dark.png` curated desktop
+goldens at 1280×800 plus matching ignored synthetic Linux captures. ViewModel
+and widget coverage proves default/dismissal/write-failure behavior, truthful
+connection and health copy, semantics, keyboard/touch finish activation,
+narrow/wide layouts, two-times text scale, and reduced-motion stability.
+Shared visual-token tests verify light/dark foreground contrast and standard/
+compact density presentation.
+
 Significant UI changes are incomplete until actual screenshots have been
 inspected on both relevant form factors. Screenshots containing a real account
 or task data are forbidden.

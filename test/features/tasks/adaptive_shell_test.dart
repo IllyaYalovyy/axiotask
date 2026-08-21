@@ -332,7 +332,9 @@ void main() {
 
     await tester.tap(find.text('Leaf task'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Move up'));
+    final moveUp = find.widgetWithText(OutlinedButton, 'Move up');
+    await tester.ensureVisible(moveUp);
+    await tester.tap(moveUp);
     await tester.pump();
     final reorder = fixture.tasks.applied.last as MoveTaskCommand;
     expect(reorder.taskId, const TaskId(13));

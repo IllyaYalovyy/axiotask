@@ -660,6 +660,7 @@ into the ignored `screenshots/actual/` directory, then inspect each PNG:
 ./scripts/capture_linux_diagnostics_screenshots.sh
 ./scripts/capture_linux_account_backup_screenshots.sh
 ./scripts/capture_linux_local_data_recovery_screenshots.sh
+./scripts/capture_linux_onboarding_screenshots.sh
 ```
 
 That command also captures `database-recovery.png` at the Linux runner's

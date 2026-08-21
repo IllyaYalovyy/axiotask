@@ -27,6 +27,7 @@ import '../sync/health/sync_health.dart';
 import 'desktop_shortcuts.dart';
 import 'desktop_task_drag.dart';
 import 'navigation_state.dart';
+import 'visual_tokens.dart';
 
 final class AdaptiveShell extends StatefulWidget {
   const AdaptiveShell({
@@ -752,11 +753,12 @@ final class _ApplicationHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 800;
+    final tokens = Theme.of(context).axiotaskTokens;
     return Column(
       children: <Widget>[
         Container(
-          height: 64,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          height: tokens.headerHeight,
+          padding: EdgeInsets.symmetric(horizontal: tokens.horizontalInset),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
             border: Border(

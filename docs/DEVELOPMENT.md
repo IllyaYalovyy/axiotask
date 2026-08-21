@@ -177,6 +177,15 @@ flutter test test/features/tasks/adaptive_shell_golden_test.dart
 ./scripts/capture_linux_health_screenshots.sh
 ```
 
+S32B adds a first-run-only, synthetic onboarding capture. It opens no
+database, preferences, credentials, diagnostics, or Google boundary and writes
+only fixed copy to ignored output:
+
+```text
+flutter test test/features/onboarding/onboarding_golden_test.dart
+./scripts/capture_linux_onboarding_screenshots.sh
+```
+
 S13B extends the native Linux read-slice command above with hidden/unfocused
 process-lifetime cadence, file-backed Stop restart, preserved cache/auth/work
 facts, and Resume catch-up. Screenshot capture includes the active Stop control
