@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:axiotask/src/app/app_bootstrap.dart';
 import 'package:axiotask/src/app/composition/app_composition.dart';
 import 'package:axiotask/src/app/tasks_feature_runtime.dart';
 import 'package:axiotask/src/core/clock.dart';
@@ -11,8 +12,10 @@ import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/data/preferences/device_preferences.dart';
+import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fake_auth.dart';
@@ -37,6 +40,7 @@ void main() {
       final restoredAuthorization = FakeAuthorization()
         ..enqueue(FakeAuthorizationAttempt.restoreSuccess(subject));
       final restoredGoogle = FakeGoogleTasksService();
+      final devicePreferences = InMemoryDevicePreferencesBackend();
       final composition = _FirstRunComposition(<_TransportPlan>[
         _TransportPlan(initialAuthorization, initialGoogle),
         _TransportPlan(restoredAuthorization, restoredGoogle),
@@ -45,6 +49,7 @@ void main() {
       var runtime = await TasksFeatureRuntime.open(
         composition,
         injectedDatabase: database,
+        injectedDevicePreferencesBackend: devicePreferences,
       );
       runtime.viewModel.start();
       await pumpEventQueue();
@@ -73,7 +78,7 @@ void main() {
       runtime = await TasksFeatureRuntime.open(
         composition,
         injectedDatabase: database,
-        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
+        injectedDevicePreferencesBackend: devicePreferences,
       );
       await runtime.start();
 
@@ -110,6 +115,7 @@ void main() {
           _TransportPlan(authorization, google),
         ]),
         injectedDatabase: database,
+        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
       );
       runtime.viewModel.start();
 
@@ -144,6 +150,7 @@ void main() {
           _TransportPlan(authorization, google),
         ]),
         injectedDatabase: database,
+        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
       );
       runtime.viewModel.start();
 
@@ -169,6 +176,7 @@ void main() {
           _TransportPlan(const _ThrowingAuthorization(), google),
         ]),
         injectedDatabase: database,
+        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
       );
       addTearDown(runtime.close);
       runtime.viewModel.start();
@@ -197,6 +205,7 @@ void main() {
         _TransportPlan(const UnavailableAuthorization(), google),
       ]),
       injectedDatabase: database,
+      injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
     );
     addTearDown(runtime.close);
     runtime.viewModel.start();
@@ -211,6 +220,105 @@ void main() {
       'No platform authorization adapter is configured.',
     );
   });
+
+  testWidgets(
+    'fresh install presents onboarding and device Settings before Connect',
+    (tester) async {
+      final database = AppDatabase.inMemory();
+      final preferences = InMemoryDevicePreferencesBackend();
+      final authorization = FakeAuthorization()
+        ..enqueue(FakeAuthorizationAttempt.interactiveSuccess(subject));
+      final google = FakeGoogleTasksService();
+      final composition = _FirstRunComposition(<_TransportPlan>[
+        _TransportPlan(authorization, google),
+      ]);
+
+      await tester.pumpWidget(
+        AxiotaskBootstrap(
+          diagnostics: composition.diagnostics,
+          openRuntime: () => TasksFeatureRuntime.open(
+            composition,
+            injectedDatabase: database,
+            injectedDevicePreferencesBackend: preferences,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Welcome to Axiotask'), findsOneWidget);
+      expect(find.text('Connect to Google Tasks'), findsOneWidget);
+      expect(await database.allAccounts(), isEmpty);
+      expect(google.calls, isEmpty);
+
+      await tester.ensureVisible(find.text('Start using Axiotask'));
+      await tester.tap(find.text('Start using Axiotask'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Welcome to Axiotask'), findsNothing);
+      expect(find.text('Connect'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Settings'));
+      await tester.pumpAndSettle();
+      expect(find.text('Settings'), findsWidgets);
+      await tester.tap(find.byKey(const Key('settings-theme-dark')));
+      await tester.pumpAndSettle();
+      expect(
+        preferences.values['first-run.preferences.theme'],
+        ThemePreference.dark.name,
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Connect'), findsOneWidget);
+      expect(await database.allAccounts(), isEmpty);
+      expect(google.calls, isEmpty);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'failed fresh-install dismissal is nonblocking and leaves Connect usable',
+    (tester) async {
+      final database = AppDatabase.inMemory();
+      final preferences = InMemoryDevicePreferencesBackend()..failWrites = true;
+      final authorization = FakeAuthorization()
+        ..enqueue(FakeAuthorizationAttempt.interactiveSuccess(subject));
+      final google = FakeGoogleTasksService();
+      final composition = _FirstRunComposition(<_TransportPlan>[
+        _TransportPlan(authorization, google),
+      ]);
+
+      await tester.pumpWidget(
+        AxiotaskBootstrap(
+          diagnostics: composition.diagnostics,
+          openRuntime: () => TasksFeatureRuntime.open(
+            composition,
+            injectedDatabase: database,
+            injectedDevicePreferencesBackend: preferences,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.ensureVisible(find.text('Start using Axiotask'));
+      await tester.tap(find.text('Start using Axiotask'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Welcome to Axiotask'), findsNothing);
+      expect(find.byKey(const Key('onboarding-persistence-notice')), findsOne);
+      expect(find.text('Connect'), findsOneWidget);
+      expect(find.byTooltip('Settings'), findsOneWidget);
+      expect(await database.allAccounts(), isEmpty);
+      expect(google.calls, isEmpty);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
 }
 
 final class _TransportPlan {

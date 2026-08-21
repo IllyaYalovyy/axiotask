@@ -12,10 +12,12 @@ import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/schema_verifier.dart';
+import 'package:axiotask/src/data/preferences/device_preferences.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/recovery/local_data_recovery.dart';
 import 'package:axiotask/src/domain/repository/account_backup_repository.dart';
+import 'package:axiotask/src/domain/repository/preferences_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
@@ -218,7 +220,11 @@ void main() {
     final composition = _NoTransportComposition();
 
     await expectLater(
-      TasksFeatureRuntime.open(composition, injectedDatabase: database),
+      TasksFeatureRuntime.open(
+        composition,
+        injectedDatabase: database,
+        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
+      ),
       throwsA(anything),
     );
 
@@ -236,6 +242,9 @@ final class _FakeRuntime implements AxiotaskRuntime {
 
   @override
   final TasksViewModel viewModel;
+
+  @override
+  PreferencesRepository? get preferencesRepository => null;
 
   @override
   AccountBackupRepository? get accountBackupRepository => null;

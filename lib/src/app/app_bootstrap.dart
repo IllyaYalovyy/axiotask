@@ -214,6 +214,7 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
       final localDataRecoveryService = runtime.localDataRecoveryService;
       return AxiotaskApp(
         viewModel: runtime.viewModel,
+        preferencesRepository: runtime.preferencesRepository,
         diagnosticsBuilder: widget.diagnosticsBuilder,
         accountBackupBuilder:
             repository == null ||

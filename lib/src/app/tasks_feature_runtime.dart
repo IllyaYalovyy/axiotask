@@ -24,6 +24,7 @@ import '../domain/commands/task_commands.dart';
 import '../domain/model/tasks.dart';
 import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
+import '../domain/repository/preferences_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../sync/coordinator/sync_coordinator.dart';
@@ -45,6 +46,8 @@ abstract interface class AxiotaskRuntime {
   SyncHealthRepository? get syncHealthRepository => null;
 
   LocalDataRecoveryService? get localDataRecoveryService => null;
+
+  PreferencesRepository? get preferencesRepository => null;
 
   Stream<Object> get fatalStorageFailures;
 
@@ -73,6 +76,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.accountBackupRestoreRepository,
     required this.syncHealthRepository,
     required this.localDataRecoveryService,
+    required this.preferencesRepository,
   });
 
   @override
@@ -98,6 +102,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
   final LocalDataRecoveryService? localDataRecoveryService;
 
   @override
+  final PreferencesRepository? preferencesRepository;
+
+  @override
   Stream<Object> get fatalStorageFailures => storageFailures.stream;
 
   @override
@@ -118,6 +125,16 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     final storageFailures = StreamController<Object>.broadcast();
     Completer<void>? reloadRequest;
     try {
+      devicePreferences = DevicePreferencesAdapter(
+        backend:
+            injectedDevicePreferencesBackend ?? SharedPreferencesAsyncBackend(),
+        namespace: composition.boundary.storage.preferencesNamespace,
+        diagnostics: composition.diagnostics,
+      );
+      final preferencesRepository = StoredPreferencesRepository(
+        relational: DriftRelationalPreferences(database),
+        device: devicePreferences,
+      );
       var accounts = await database.allAccounts();
       final configuredSubject = composition.configuredAccountSubject;
       if (accounts.isEmpty && configuredSubject != null) {
@@ -149,7 +166,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           database: database,
           coordinator: null,
           transport: openedTransport,
-          devicePreferences: null,
+          devicePreferences: devicePreferences,
           storageFailures: storageFailures,
           reloadRequest: reloadRequest,
           closeFirstAccountHealth: healthRepository.close,
@@ -157,6 +174,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           accountBackupRestoreRepository: null,
           syncHealthRepository: healthRepository,
           localDataRecoveryService: null,
+          preferencesRepository: preferencesRepository,
         );
       }
 
@@ -218,16 +236,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         clock: composition.clock,
         runtime: coordinator,
       );
-      devicePreferences = DevicePreferencesAdapter(
-        backend:
-            injectedDevicePreferencesBackend ?? SharedPreferencesAsyncBackend(),
-        namespace: composition.boundary.storage.preferencesNamespace,
-        diagnostics: composition.diagnostics,
-      );
-      final preferencesRepository = StoredPreferencesRepository(
-        relational: DriftRelationalPreferences(database),
-        device: devicePreferences,
-      );
       final backupRepository = DatabaseAccountBackupRepository(
         database,
         clock: composition.clock,
@@ -281,6 +289,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           store: resetStore,
           synchronization: coordinator,
         ),
+        preferencesRepository: preferencesRepository,
       );
     } on Object {
       await storageFailures.close();
