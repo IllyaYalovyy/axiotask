@@ -705,9 +705,9 @@ or task data are forbidden.
 ### 11. Real Google API integration tests
 
 Real API tests are a separately invoked, explicit opt-in suite. They require a
-dedicated test account and ignored local configuration. If configuration is
-absent, the command exits as skipped/not configured; it never searches normal
-application credentials.
+dedicated test account and ignored local configuration. Missing configuration
+fails closed; the commands never search release application credentials or the
+Rust token file.
 The pinned-subject Google mutation probe includes S30B's empty-list smoke: one
 fresh in-memory partition restores a synthetic list/task, publishes it through
 the production engine, verifies returned identities and live read-back, then
@@ -717,16 +717,35 @@ Every run uses a unique, recognizable test prefix and a dedicated disposable
 list. Cleanup runs in `finally`, records leftovers without exposing content,
 and a separate cleanup command removes stale test resources by the safe prefix.
 
+S34A supplies the full opt-in contract command,
+`AXIOTASK_RUN_GOOGLE_CONTRACT=1 ./scripts/test_google.sh`. It takes only the
+Linux OAuth client configuration and pinned-subject file from ignored private
+sources. Access tokens, refresh tokens, and DPoP keys remain inside the shipped
+development secure-storage boundary. The command first restores the existing
+development authorization and otherwise runs the shipped interactive browser
+flow. It then exercises the shipped `HttpGoogleTasksService`; there is no
+second token-refresh or Tasks HTTP implementation in test code. The account
+guard compares the subject on every Tasks operation. Missing/mismatched
+subjects make zero Tasks calls. Prefix-scoped cleanup runs before and after the
+probe, and the safe prefix is printed before the first mutation. The separate
+cleanup command requires one exact
+`axiotask-contract-probe-<UTC>-<random>` prefix and confirms zero remaining
+matching lists. S34A validates `webViewLink` presence/shape on a disposable
+ordinary task, but makes no claim about ordinary or recurring link navigation.
+That confirmation is owned by the final Linux HUMAN approval gate. Adversarial
+platform-authentication and intentional rate-limit generation remain their own
+gates, so this suite makes no synthetic claim for them.
+
 The suite validates only high-value assumptions that a fake cannot prove:
 
-- pagination and wire shapes;
+- pagination and wire shapes through the production adapter (with forced
+  multi-page traversal qualified against the deterministic fake);
 - etag behavior and conditional updates;
 - create/update/delete/move semantics;
 - lost-response recovery probes where safely reproducible;
 - `webViewLink` availability;
-- Linux PKCE/DPoP exchange, returned nonce handling, bound refresh, and rejection
-  of a missing/wrong DPoP key;
-- authorization expiration/error classification where practical.
+- the existing Linux authorization boundary's successful restore or interactive
+  connection to the pinned account.
 
 It is never part of the normal fast quality command.
 

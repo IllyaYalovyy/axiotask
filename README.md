@@ -451,6 +451,40 @@ The command opens the system browser. Complete authorization only with the
 already pinned dedicated test account. The subject mismatch guard runs before
 any Google Tasks enumeration or mutation.
 
+## Full Google Tasks contract suite
+
+The S34A contract suite is a separate, destructive, dedicated-account check;
+it is intentionally not part of `quality.sh`. It uses the same ignored
+mode-`600` Linux OAuth client configuration and pinned subject as the
+development application. Authorization is restored from the development
+application's secure DPoP credential bundle. If that bundle is absent or no
+longer usable, this one acceptance command opens the normal system-browser
+authorization flow and replaces it through the shipped authorization adapter:
+
+```bash
+AXIOTASK_RUN_GOOGLE_CONTRACT=1 ./scripts/test_google.sh
+```
+
+The suite has no raw access-token or refresh-token configuration. It executes
+through the shipped `LinuxAuthorization`, secure storage, account guard, and
+`HttpGoogleTasksService` boundaries. The account guard checks the pinned
+dedicated subject on every Tasks operation. The suite uses a fresh
+`axiotask-contract-probe-<UTC>-<random>` prefix and deletes only matching
+scratch lists in final cleanup. It prints that safe prefix before its first
+mutation so an interrupted run can be cleaned precisely. Ordinary and recurring
+link navigation belongs to the final Linux HUMAN approval gate. If an
+interrupted process leaves a reported prefix, remove only that exact prefix:
+
+```bash
+AXIOTASK_RUN_GOOGLE_CONTRACT_CLEANUP=1 \
+AXIOTASK_GOOGLE_CONTRACT_CLEANUP_PREFIX=axiotask-contract-probe-YYYYMMDDTHHMMSSZ-abcdef \
+./scripts/cleanup_google_contract.sh
+```
+
+The cleanup command verifies the prefix syntax, dedicated subject, and zero
+remaining matching lists through the same application adapters. It never
+accepts a broad cleanup target.
+
 ## Android build, local installation, and development run
 
 Build the debug APK:
