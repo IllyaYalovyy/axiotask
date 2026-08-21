@@ -788,8 +788,24 @@ only SQLite version, schema, counts, and pragma facts, then removes only that
 exact probe database and its WAL/SHM companions. The APK check proves SQLite is
 packaged for ARM64, ARMv7, and x86_64 without pretending packaging proves
 runtime behavior. Physical-device execution remains mandatory for Android
-authorization and final device gates. Scope-specific scripts will add golden,
-screenshot, real API, and deep synchronization suites.
+authorization and final device gates.
+
+S33 provides the deep synchronization suite:
+
+```text
+./scripts/deep_sync.sh
+```
+
+It runs the qualified fake/model/replay support checks, then repeats four fixed
+generated sequences (`331`, `902`, `1907`, and `8161`) through production
+repository and engine ports backed by two isolated temporary SQLite files. The
+model checks the twelve `SYNC_SPEC.md` reliability invariants after every
+transition, drives edits, creates, deletes, moves, triggers, authorization
+refresh, and reopen recovery, enumerates both host orders, verifies no-write
+quiescence, exercises bounded no-progress detection, and runs the real
+subprocess crash matrix. The normal two-pass command has no network dependency
+and reports its duration. `AXIOTASK_REPLAY_SEED=<integer>` reduces the generated
+corpus to the printed failing seed for exact replay.
 
 Run the isolated Linux secure-storage capability proof only from an unlocked
 GNOME user session:

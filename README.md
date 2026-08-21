@@ -204,6 +204,19 @@ flutter pub get
 ./scripts/quality.sh
 ```
 
+The deterministic deep synchronization evidence is a separate, more expensive
+local command. It uses only temporary SQLite databases and synthetic Google
+state; it never reads OAuth configuration, credentials, or network state.
+
+```bash
+./scripts/deep_sync.sh
+```
+
+The default command runs the fixed S33 replay corpus twice. To replay one
+reported generated failure, run
+`AXIOTASK_REPLAY_SEED=<seed> ./scripts/deep_sync.sh`; the seed is the exact
+integer printed by a failing model run.
+
 `pubspec.lock` is committed. Do not run a dependency upgrade as part of normal
 setup. SQLite is supplied as a native asset by the locked `sqlite3` package; do
 not install `sqlite3_flutter_libs` or a system SQLite development package.
