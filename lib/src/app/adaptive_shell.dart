@@ -40,6 +40,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
+    this.settingsBuilder,
     super.key,
   });
 
@@ -52,6 +53,7 @@ final class AdaptiveShell extends StatefulWidget {
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
   final WidgetBuilder? localDataRecoveryBuilder;
+  final WidgetBuilder? settingsBuilder;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -555,6 +557,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                         accountBackupBuilder: widget.accountBackupBuilder,
                         localDataRecoveryBuilder:
                             widget.localDataRecoveryBuilder,
+                        settingsBuilder: widget.settingsBuilder,
                       ),
                       if (state.syncControlFailureMessage case final message?)
                         MaterialBanner(
@@ -736,6 +739,7 @@ final class _ApplicationHeader extends StatelessWidget {
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
+    this.settingsBuilder,
   });
 
   final SyncHealth health;
@@ -751,10 +755,12 @@ final class _ApplicationHeader extends StatelessWidget {
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
   final WidgetBuilder? localDataRecoveryBuilder;
+  final WidgetBuilder? settingsBuilder;
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < 800;
+    final width = MediaQuery.sizeOf(context).width;
+    final compact = width < 800 || (settingsBuilder != null && width < 860);
     final tokens = Theme.of(context).axiotaskTokens;
     return Column(
       children: <Widget>[
@@ -803,6 +809,16 @@ final class _ApplicationHeader extends StatelessWidget {
                 icon: const Icon(Icons.keyboard_outlined),
               ),
               const SizedBox(width: 4),
+              if (settingsBuilder case final builder?) ...<Widget>[
+                IconButton(
+                  tooltip: 'Settings',
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute<void>(builder: builder)),
+                  icon: const Icon(Icons.settings_outlined),
+                ),
+                const SizedBox(width: 4),
+              ],
               if (accountBackupBuilder case final builder?) ...<Widget>[
                 IconButton(
                   tooltip: 'Account backup',

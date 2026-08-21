@@ -4,6 +4,7 @@ import '../domain/model/preferences.dart';
 import '../domain/repository/preferences_repository.dart';
 import '../features/onboarding/onboarding_view.dart';
 import '../features/onboarding/onboarding_view_model.dart';
+import '../features/settings/settings_view.dart';
 import '../features/tasks/tasks_view_model.dart';
 import 'adaptive_shell.dart';
 import 'visual_tokens.dart';
@@ -70,6 +71,9 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
     return AnimatedBuilder(
       animation: presentation ?? Listenable.merge(const <Listenable>[]),
       builder: (context, _) {
+        final preferencesRepository =
+            widget.preferencesRepository ??
+            widget.viewModel.preferencesRepository;
         final preferences =
             presentation?.state.preferences ??
             const DevicePreferences.defaults();
@@ -92,6 +96,12 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
                   diagnosticsBuilder: widget.diagnosticsBuilder,
                   accountBackupBuilder: widget.accountBackupBuilder,
                   localDataRecoveryBuilder: widget.localDataRecoveryBuilder,
+                  settingsBuilder: preferencesRepository == null
+                      ? null
+                      : (_) => SettingsPage(
+                          preferencesRepository: preferencesRepository,
+                          diagnostics: widget.viewModel.diagnostics,
+                        ),
                 ),
               ),
               if (presentation case final viewModel?

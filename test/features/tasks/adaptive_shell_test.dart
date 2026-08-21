@@ -1097,6 +1097,33 @@ void main() {
     },
   );
 
+  testWidgets('desktop header opens Settings with native navigation', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AdaptiveShell(
+          viewModel: fixture.viewModel,
+          settingsBuilder: (_) => const Scaffold(
+            body: Center(child: Text('Settings presentation')),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byTooltip('Settings'), findsOneWidget);
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('Settings presentation'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Settings presentation'), findsNothing);
+  });
+
   testWidgets(
     'PAR-DESKTOP-001 task focus traverses rows and keyboard actions share routes',
     (tester) async {
