@@ -191,6 +191,52 @@ void main() {
       expect(health.outcome, SyncHealthOutcome.failed);
       expect(health.lastSuccessfulSyncAt, t0);
     });
+
+    test(
+      'incomplete durable run is Pending only while verification is active',
+      () {
+        final active = project(
+          facts: PersistedSyncFacts(
+            lastSuccessfulSyncAt: t0,
+            requiredScopeIncomplete: true,
+          ),
+          runtime: const SyncRuntimeFacts(
+            authorization: SyncAuthorization.usable,
+            activity: SyncActivity.verifying,
+            verificationRequired: true,
+          ),
+        );
+        final interrupted = project(
+          facts: PersistedSyncFacts(
+            lastSuccessfulSyncAt: t0,
+            requiredScopeIncomplete: true,
+          ),
+        );
+
+        expect(active.outcome, SyncHealthOutcome.pending);
+        expect(active.pendingReason, SyncPendingReason.verifying);
+        expect(interrupted.outcome, SyncHealthOutcome.failed);
+        expect(interrupted.failureReason, SyncFailureReason.applicationFailure);
+      },
+    );
+
+    test('failed desired work remains Failed during active verification', () {
+      final health = project(
+        facts: PersistedSyncFacts(
+          lastSuccessfulSyncAt: t0,
+          requiredScopeIncomplete: true,
+          counts: const SyncWorkCounts(failed: 1),
+        ),
+        runtime: const SyncRuntimeFacts(
+          authorization: SyncAuthorization.usable,
+          activity: SyncActivity.verifying,
+          verificationRequired: true,
+        ),
+      );
+
+      expect(health.outcome, SyncHealthOutcome.failed);
+      expect(health.failureReason, SyncFailureReason.applicationFailure);
+    });
   });
 
   group('Good and freshness (HLT-004/005/008/013)', () {

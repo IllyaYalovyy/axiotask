@@ -758,9 +758,15 @@ final class _ApplicationHeader extends StatelessWidget {
   final WidgetBuilder? settingsBuilder;
 
   @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final compact = width < 800 || (settingsBuilder != null && width < 860);
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _buildForWidth(context, constraints.maxWidth),
+  );
+
+  Widget _buildForWidth(BuildContext context, double width) {
+    // This threshold reserves room for the brand, navigation/search, every
+    // optional application action, and both synchronization controls.
+    final compact = width < 1200;
     final tokens = Theme.of(context).axiotaskTokens;
     return Column(
       children: <Widget>[
@@ -787,7 +793,7 @@ final class _ApplicationHeader extends StatelessWidget {
                 ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               ),
               const Spacer(),
-              if (MediaQuery.sizeOf(context).width < 900) ...<Widget>[
+              if (width < 900) ...<Widget>[
                 IconButton(
                   tooltip: 'Open navigation',
                   onPressed: onOpenNavigation,
@@ -857,21 +863,24 @@ final class _ApplicationHeader extends StatelessWidget {
                       : const Icon(Icons.refresh),
                 )
               else
-                FilledButton.icon(
-                  onPressed:
-                      isRefreshing ||
-                          isSyncControlPending ||
-                          onRefresh == null ||
-                          health.outcome == SyncHealthOutcome.inactive
-                      ? null
-                      : onRefresh,
-                  icon: isRefreshing
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                  label: const Text('Refresh'),
+                Tooltip(
+                  message: 'Refresh',
+                  child: FilledButton.icon(
+                    onPressed:
+                        isRefreshing ||
+                            isSyncControlPending ||
+                            onRefresh == null ||
+                            health.outcome == SyncHealthOutcome.inactive
+                        ? null
+                        : onRefresh,
+                    icon: isRefreshing
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                  ),
                 ),
               if (health.outcome != SyncHealthOutcome.inactive) ...<Widget>[
                 SizedBox(width: compact ? 4 : 12),
@@ -887,15 +896,18 @@ final class _ApplicationHeader extends StatelessWidget {
                         : const Icon(Icons.pause_circle_outline),
                   )
                 else
-                  OutlinedButton.icon(
-                    onPressed: isSyncControlPending ? null : onStopSync,
-                    icon: isSyncControlPending
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.pause_circle_outline),
-                    label: const Text('Stop sync'),
+                  Tooltip(
+                    message: 'Stop sync',
+                    child: OutlinedButton.icon(
+                      onPressed: isSyncControlPending ? null : onStopSync,
+                      icon: isSyncControlPending
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.pause_circle_outline),
+                      label: const Text('Stop sync'),
+                    ),
                   ),
               ],
             ],

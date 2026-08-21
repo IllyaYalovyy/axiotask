@@ -343,7 +343,11 @@ SyncHealth projectSyncHealth({
       action: SyncHealthAction.retry,
     );
   }
-  if (facts.requiredScopeIncomplete || facts.counts.failed > 0) {
+  final verificationActive =
+      runtime.activity == SyncActivity.verifying ||
+      runtime.verificationRequired;
+  if (facts.counts.failed > 0 ||
+      (facts.requiredScopeIncomplete && !verificationActive)) {
     return result(
       outcome: SyncHealthOutcome.failed,
       failureReason: SyncFailureReason.applicationFailure,
@@ -366,9 +370,6 @@ SyncHealth projectSyncHealth({
       pendingReason: SyncPendingReason.verifying,
     );
   }
-  final verificationActive =
-      runtime.activity == SyncActivity.verifying ||
-      runtime.verificationRequired;
   if (isStale && verificationActive) {
     return result(
       outcome: SyncHealthOutcome.pending,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -18,6 +19,7 @@ import 'package:axiotask/src/data/google_tasks/dto.dart';
 import 'package:axiotask/src/data/google_tasks/mutation.dart';
 import 'package:axiotask/src/data/google_tasks/request.dart';
 import 'package:axiotask/src/data/google_tasks/service.dart';
+import 'package:axiotask/src/data/preferences/device_preferences.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,11 +47,14 @@ void main() {
   testWidgets(
     'cold/warm launch, Refresh, and Linux resume verify cached data',
     (tester) async {
+      _useLinuxTestSurface(tester);
       final databaseFile = File('${temporaryRoot.path}/read-slice.sqlite');
       final firstComposition = _IntegrationComposition.success('cold-warm');
+      final preferences = _dismissedPreferences(firstComposition);
       final first = await TasksFeatureRuntime.open(
         firstComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: preferences,
       );
       await first.start();
       expect(firstComposition.service.listCalls, 1);
@@ -60,6 +65,7 @@ void main() {
       final second = await TasksFeatureRuntime.open(
         secondComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: preferences,
         lifecycle: lifecycle,
       );
       addTearDown(second.close);
@@ -77,7 +83,7 @@ void main() {
       expect(secondComposition.service.listCalls, 1);
 
       secondComposition.clock.advance(const Duration(minutes: 1));
-      await tester.tap(find.widgetWithText(FilledButton, 'Refresh'));
+      await tester.tap(find.byTooltip('Refresh'));
       await second.coordinator!.whenIdle;
       await tester.pumpAndSettle();
       expect(secondComposition.service.listCalls, 2);
@@ -102,6 +108,9 @@ void main() {
       final seed = await TasksFeatureRuntime.open(
         seedComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: _dismissedPreferences(
+          seedComposition,
+        ),
       );
       await seed.start();
       await seed.close();
@@ -114,6 +123,9 @@ void main() {
       final runtime = await TasksFeatureRuntime.open(
         failedComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: _dismissedPreferences(
+          failedComposition,
+        ),
       );
       addTearDown(runtime.close);
       await tester.pumpWidget(AxiotaskApp(viewModel: runtime.viewModel));
@@ -138,6 +150,9 @@ void main() {
       final malformed = await TasksFeatureRuntime.open(
         malformedComposition,
         injectedDatabase: AppDatabase.inMemory(),
+        injectedDevicePreferencesBackend: _dismissedPreferences(
+          malformedComposition,
+        ),
       );
       await tester.pumpWidget(AxiotaskApp(viewModel: malformed.viewModel));
       await malformed.start();
@@ -154,6 +169,9 @@ void main() {
       final unavailable = await TasksFeatureRuntime.open(
         unavailableComposition,
         injectedDatabase: AppDatabase.inMemory(),
+        injectedDevicePreferencesBackend: _dismissedPreferences(
+          unavailableComposition,
+        ),
       );
       addTearDown(unavailable.close);
       await tester.pumpWidget(AxiotaskApp(viewModel: unavailable.viewModel));
@@ -175,6 +193,7 @@ void main() {
     final runtime = await TasksFeatureRuntime.open(
       composition,
       injectedDatabase: AppDatabase.inMemory(),
+      injectedDevicePreferencesBackend: _dismissedPreferences(composition),
       lifecycle: lifecycle,
     );
     addTearDown(runtime.close);
@@ -203,37 +222,38 @@ void main() {
   testWidgets(
     'Stop survives restart and preserves auth, cache, and stopped-work fixture',
     (tester) async {
+      _useLinuxTestSurface(tester);
       final databaseFile = File('${temporaryRoot.path}/stop-resume.sqlite');
       final firstComposition = _IntegrationComposition.success('stop-resume');
+      final preferences = _dismissedPreferences(firstComposition);
       final first = await TasksFeatureRuntime.open(
         firstComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: preferences,
       );
       await tester.pumpWidget(AxiotaskApp(viewModel: first.viewModel));
       await first.start();
       await tester.pumpAndSettle();
       expect(find.text('Validated remote task'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Stop sync'));
+      await tester.tap(find.byTooltip('Stop sync'));
       await tester.pumpAndSettle();
       expect(find.text('Sync stopped'), findsOneWidget);
       expect(
         firstComposition.authorization.currentState,
         isA<TasksAuthorized>(),
       );
-      final accountId = first.viewModel.accountId;
-      final prior = await SyncHealthDao(
-        first.database,
-      ).watchFacts(accountId).first;
-      await SyncHealthDao(first.database).writeFacts(
-        accountId,
-        PersistedSyncFacts(
-          syncEnabled: false,
-          lastSuccessfulSyncAt: prior.lastSuccessfulSyncAt,
-          counts: const SyncWorkCounts(pending: 2),
-        ),
+      final cached = first.viewModel.state.tasks.single;
+      await first.viewModel.updateTaskContent(
+        taskId: cached.id,
+        title: 'Edited while sync is stopped',
+        notes: cached.notes,
+        status: cached.status,
+        due: cached.due,
       );
-      await first.coordinator!.localEditCommitted();
+      await tester.pumpAndSettle();
+      expect(find.text('Edited while sync is stopped'), findsOneWidget);
+      expect(find.text('1 unresolved'), findsOneWidget);
       firstComposition.clock.advance(const Duration(minutes: 10));
       await first.coordinator!.refresh();
       expect(firstComposition.service.listCalls, 1);
@@ -243,6 +263,7 @@ void main() {
       final second = await TasksFeatureRuntime.open(
         secondComposition,
         injectedDatabase: await AppDatabase.openFile(databaseFile),
+        injectedDevicePreferencesBackend: preferences,
       );
       addTearDown(second.close);
       await tester.pumpWidget(AxiotaskApp(viewModel: second.viewModel));
@@ -251,19 +272,62 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(secondComposition.service.listCalls, 0);
-      expect(find.text('Validated remote task'), findsOneWidget);
+      expect(find.text('Edited while sync is stopped'), findsOneWidget);
       expect(find.text('Sync stopped'), findsOneWidget);
-      expect(find.text('2 unresolved'), findsOneWidget);
+      expect(find.text('1 unresolved'), findsOneWidget);
+      final stoppedFacts = await SyncHealthDao(
+        second.database,
+      ).watchFacts(second.viewModel.accountId).first;
+      expect(
+        stoppedFacts.requiredScopeIncomplete,
+        isFalse,
+        reason: 'stopped facts: $stoppedFacts',
+      );
+      expect(stoppedFacts.counts.failed, 0, reason: '$stoppedFacts');
+      expect(stoppedFacts.latestFailure, isNull, reason: '$stoppedFacts');
 
+      final resumeRead = secondComposition.service.holdNextListRead();
       await tester.tap(find.widgetWithText(OutlinedButton, 'Resume'));
+      await resumeRead.entered;
+      await tester.pump();
+      expect(
+        second.viewModel.state.health.outcome,
+        SyncHealthOutcome.pending,
+        reason:
+            'runtime=${second.coordinator!.currentFacts}; '
+            'health=${second.viewModel.state.health.reasonLabel}; '
+            'code=${second.viewModel.state.health.diagnosticCode}',
+      );
+      expect(find.text('Pending'), findsWidgets);
+      expect(find.text('1 unresolved'), findsOneWidget);
+
+      resumeRead.release();
       await second.coordinator!.whenIdle;
       await tester.pumpAndSettle();
       expect(secondComposition.service.listCalls, 1);
-      expect(find.text('Pending'), findsWidgets);
-      expect(find.text('2 unresolved'), findsOneWidget);
+      expect(secondComposition.service.patchCalls, 1);
+      expect(find.text('Synced'), findsWidgets);
+      expect(find.text('0 unresolved'), findsOneWidget);
     },
   );
 }
+
+void _useLinuxTestSurface(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1024, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+InMemoryDevicePreferencesBackend _dismissedPreferences(
+  AppComposition composition,
+) => InMemoryDevicePreferencesBackend(
+  initialValues: <String, Object>{
+    '${composition.boundary.storage.preferencesNamespace}'
+            '.onboarding_dismissed':
+        true,
+  },
+);
 
 final class _IntegrationComposition implements AppComposition {
   _IntegrationComposition({
@@ -320,6 +384,15 @@ final class _IntegrationReadService implements GoogleTasksService {
   final bool failTasks;
   final bool malformedTask;
   var listCalls = 0;
+  var patchCalls = 0;
+  _ListReadBarrier? _nextListRead;
+
+  _ListReadBarrier holdNextListRead() {
+    if (_nextListRead != null) {
+      throw StateError('A list-read barrier is already active.');
+    }
+    return _nextListRead = _ListReadBarrier();
+  }
 
   @override
   Future<Outcome<RemotePage<RemoteTaskList>>> listTaskLists({
@@ -327,6 +400,12 @@ final class _IntegrationReadService implements GoogleTasksService {
     GoogleTasksReadCancellation? cancellation,
   }) async {
     listCalls += 1;
+    final barrier = _nextListRead;
+    _nextListRead = null;
+    if (barrier != null) {
+      barrier.markEntered();
+      await barrier.released;
+    }
     return Outcome<RemotePage<RemoteTaskList>>.success(
       RemotePage<RemoteTaskList>(
         items: <RemoteTaskList>[
@@ -356,7 +435,9 @@ final class _IntegrationReadService implements GoogleTasksService {
           code: 'google_tasks.integration_connection',
           category: FailureCategory.network,
           operation: FailureOperation.read,
-          retry: RetryClassification.transient,
+          // Request/backoff behavior has dedicated deterministic coverage.
+          // This fixture isolates cache preservation and health projection.
+          retry: RetryClassification.permanent,
           impact: 'Synthetic remote tasks were not verified.',
           action: FailureAction.retry,
           safeSummary: 'Synthetic connection failed.',
@@ -408,7 +489,36 @@ final class _IntegrationReadService implements GoogleTasksService {
   @override
   Future<GoogleTasksMutationResult<RemoteTask>> patchTask(
     PatchTaskOperation operation,
-  ) => throw UnsupportedError('Read-only integration.');
+  ) async {
+    patchCalls += 1;
+    return CommittedMutation<RemoteTask>(
+      RemoteLiveTask(
+        id: operation.taskId,
+        etag: 'integration-task-patched-etag',
+        updated: DateTime.utc(2026, 1, 1, 12, 10),
+        selfLink: null,
+        title: operation.title,
+        parentId: null,
+        position: '00000000000000000001',
+        notes: switch (operation.notes) {
+          SetOptionalField<String>(:final value) => value,
+          ClearOptionalField<String>() => null,
+        },
+        status: operation.status,
+        due: switch (operation.due) {
+          SetOptionalField<RemoteDate>(:final value) => value,
+          ClearOptionalField<RemoteDate>() => null,
+        },
+        completed: operation.status == RemoteTaskStatus.completed
+            ? DateTime.utc(2026, 1, 1, 12, 10)
+            : null,
+        hidden: false,
+        links: const <RemoteTaskLink>[],
+        webViewLink: null,
+      ),
+    );
+  }
+
   @override
   Future<GoogleTasksMutationResult<void>> deleteTask(
     DeleteTaskOperation operation,
@@ -419,4 +529,15 @@ final class _IntegrationReadService implements GoogleTasksService {
   ) => throw UnsupportedError('Read-only integration.');
   @override
   void close() {}
+}
+
+final class _ListReadBarrier {
+  final Completer<void> _entered = Completer<void>();
+  final Completer<void> _released = Completer<void>();
+
+  Future<void> get entered => _entered.future;
+  Future<void> get released => _released.future;
+
+  void markEntered() => _entered.complete();
+  void release() => _released.complete();
 }

@@ -551,7 +551,7 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Refresh'));
+    await tester.tap(find.byTooltip('Refresh'));
     await tester.pump();
 
     expect(refreshes, 1);
@@ -571,8 +571,8 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    final refresh = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Refresh'),
+    final refresh = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.refresh),
     );
     expect(refresh.onPressed, isNull);
     expect(find.text('Connect'), findsOneWidget);
@@ -586,8 +586,8 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    final refresh = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Refresh'),
+    final refresh = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.refresh),
     );
     expect(refresh.onPressed, isNull);
   });
@@ -605,7 +605,7 @@ void main() {
     );
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Stop sync'));
+    await tester.tap(find.byTooltip('Stop sync'));
     await tester.pump();
     expect(stops, 1);
     fixture.dispose();
@@ -622,7 +622,7 @@ void main() {
     );
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
-    expect(find.widgetWithText(OutlinedButton, 'Stop sync'), findsNothing);
+    expect(find.byTooltip('Stop sync'), findsNothing);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Resume'));
     await tester.pump();
     expect(resumes, 1);
@@ -1123,6 +1123,73 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Settings presentation'), findsNothing);
   });
+
+  testWidgets(
+    'desktop header keeps the complete action set reachable at supported widths',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final width in <double>[800, 1024, 1280]) {
+        tester.view.physicalSize = Size(width, 800);
+        tester.view.devicePixelRatio = 1;
+        final fixture = _ShellFixture(
+          _health(SyncHealthOutcome.good),
+          refreshRequested: () async {},
+          stopSyncRequested: () async {},
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AdaptiveShell(
+              viewModel: fixture.viewModel,
+              diagnosticsBuilder: (_) => const Scaffold(),
+              settingsBuilder: (_) => const Scaffold(),
+              accountBackupBuilder: (_) => const Scaffold(),
+              localDataRecoveryBuilder: (_) => const Scaffold(),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        final expectedActions = <String>[
+          if (width < 900) 'Open navigation',
+          'Search tasks',
+          'Keyboard shortcuts',
+          'Settings',
+          'Account backup',
+          'Local data recovery',
+          'Refresh',
+          'Stop sync',
+          'Open diagnostics',
+        ];
+        for (final label in expectedActions) {
+          final action = find.byTooltip(label);
+          expect(action, findsOneWidget, reason: '$label at ${width}px');
+          expect(action.hitTestable(), findsOneWidget, reason: label);
+          final center = tester.getCenter(action);
+          expect(center.dx, inInclusiveRange(0, width), reason: label);
+          expect(center.dy, inInclusiveRange(0, 800), reason: label);
+        }
+        expect(tester.takeException(), isNull, reason: '${width}px header');
+        if (width < 1200) {
+          expect(
+            find.widgetWithIcon(IconButton, Icons.refresh),
+            findsOneWidget,
+          );
+          expect(
+            find.widgetWithIcon(IconButton, Icons.pause_circle_outline),
+            findsOneWidget,
+          );
+        } else {
+          expect(find.widgetWithText(FilledButton, 'Refresh'), findsOneWidget);
+          expect(
+            find.widgetWithText(OutlinedButton, 'Stop sync'),
+            findsOneWidget,
+          );
+        }
+        fixture.dispose();
+      }
+    },
+  );
 
   testWidgets(
     'PAR-DESKTOP-001 task focus traverses rows and keyboard actions share routes',
