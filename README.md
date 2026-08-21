@@ -182,6 +182,12 @@ sudo dnf install clang cmake ninja-build pkgconf-pkg-config gtk3-devel \
   java-21-openjdk-devel
 ```
 
+The Linux desktop build itself requires `clang`, `cmake`, `ninja-build`,
+`pkgconf-pkg-config`, `gtk3-devel`, `libsecret-devel`, and
+`libstdc++-devel`. `libsecret`, `gnome-keyring`, and an unlocked Secret
+Service are runtime requirements for authorization storage. JDK 21 and the
+Android SDK are required only for the later Android target.
+
 Install Flutter `3.44.8` from the official Flutter archive, add its `bin`
 directory to `PATH`, and use Android Studio's SDK Manager to install the Android
 components above. Then verify both toolchains:
@@ -201,8 +207,14 @@ git clone --branch flutter2 --single-branch \
   https://github.com/IllyaYalovyy/axiotask.git axiotask_flutter2
 cd axiotask_flutter2
 flutter pub get
+dart run build_runner build --delete-conflicting-outputs
 ./scripts/quality.sh
 ```
+
+The generation command must leave the committed generated Dart files
+unchanged. `./scripts/quality.sh` checks formatting, generated-source
+freshness, static analysis, Flutter tests, shell safety tests, and repository
+privacy. It does not read private OAuth configuration or call Google.
 
 The deterministic deep synchronization evidence is a separate, more expensive
 local command. It uses only temporary SQLite databases and synthetic Google
@@ -232,22 +244,66 @@ desktop-first slice.
 Linux secure storage requires an active Secret Service in the user session;
 GNOME normally supplies it through `gnome-keyring`.
 
-## Linux build, local launch, and development run
+## Linux private configuration, build, run, and local install
 
-Build the relocatable debug bundle and launch it directly:
-
-```bash
-flutter build linux --debug
-./build/linux/x64/debug/bundle/axiotask
-```
-
-For a normal production-safe development session with hot reload:
+The production entry point requires a Google OAuth **Desktop app** client ID
+and client secret. Create the ignored private file once and restrict it to the
+current user:
 
 ```bash
-flutter run -d linux --debug -t lib/main.dart
+mkdir -p .ktask/gates
+chmod 700 .ktask .ktask/gates
+touch .ktask/gates/stage7.env
+chmod 600 .ktask/gates/stage7.env
 ```
 
-System-wide packaging or installation is deliberately out of scope.
+Open `.ktask/gates/stage7.env` in your preferred text editor without placing
+either value in shell history.
+
+Its contents are:
+
+```text
+AXIOTASK_LINUX_AUTH_CLIENT_ID=<desktop-client-id>.apps.googleusercontent.com
+AXIOTASK_LINUX_AUTH_CLIENT_SECRET=<desktop-client-secret>
+```
+
+No account subject, token, or existing authorization is required. A fresh
+production app offers **Connect**, obtains and verifies the signed-in Google
+subject, and only then creates that account's durable local partition. The
+interactive sign-in is therefore separate from build configuration.
+
+Use the checked wrapper for every production run or build:
+
+```bash
+./scripts/linux_app.sh run
+./scripts/linux_app.sh build debug
+./scripts/linux_app.sh build release
+```
+
+The wrapper validates that the private file is a mode-`600`, current-user-owned
+regular file with both required values before invoking Flutter. It passes only
+the filename through `--dart-define-from-file`; it neither sources the file nor
+prints its values. Missing, malformed, unignored in-worktree, or incomplete
+configuration fails before launch or compilation. Do not replace these commands
+with plain `flutter run` or `flutter build`: those commands can compile empty
+OAuth constants into an unusable production app.
+
+Debug and release bundles are produced under
+`build/linux/x64/<debug|release>/bundle` on supported Fedora x86-64 hosts. To
+build and atomically copy a relocatable bundle to a user-selected directory
+inside the current user's home, then run and remove it:
+
+```bash
+./scripts/linux_app.sh install release "$HOME/.local/opt/axiotask"
+"$HOME/.local/opt/axiotask/axiotask"
+./scripts/linux_app.sh remove "$HOME/.local/opt/axiotask"
+```
+
+Install refuses paths outside the current user's home, existing targets, and
+the source worktree.
+Remove accepts only a directory carrying the wrapper's local-install marker.
+It does not create desktop entries, modify the system, or package the app.
+System-wide installation and packaging remain out of scope.
 
 ## Compile-time application compositions
 
@@ -256,15 +312,15 @@ runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Restores Linux authorization, verifies an existing configured account, and publishes eligible creates; missing configuration/authorization fails closed | Up to 500 persisted safe structured records in `axiotask-diagnostics-safe.json` |
+| Production-safe | `lib/main.dart` | Offers first-run Connect, verifies the Google subject before creating its account partition, restores existing Linux authorization, and uses the normal synchronization coordinator; missing build configuration fails visibly and authorization failures remain non-green | Up to 500 persisted safe structured records in `axiotask-diagnostics-safe.json` |
 | Sensitive development | `lib/main_development.dart` | Verification and eligible create publication require the explicit dedicated-account subject to match before any Google request | Up to 1000 persisted private-context records in `axiotask-development-diagnostics-sensitive.json`; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Creates only its isolated synthetic account and verifies against an in-process synthetic read service | Safe in-memory history |
 
-Run the synthetic composition with a unique lowercase instance name:
+Run the synthetic composition with a unique lowercase instance name through
+the same safe command surface:
 
 ```bash
-flutter run -d linux --debug -t lib/main_test.dart \
-  --dart-define=AXIOTASK_TEST_INSTANCE=manual-synthetic
+./scripts/linux_app.sh synthetic manual-synthetic
 ```
 
 The first run creates only `axiotask-test-manual-synthetic.sqlite`, displays
@@ -272,7 +328,10 @@ Pending while its synthetic walk executes, then displays the validated
 synthetic list/task as Synced. A subsequent launch displays that cache
 immediately and verifies it again. This composition never loads OAuth
 configuration, secure storage, normal preferences, normal diagnostics, or
-Google Tasks.
+Google Tasks. Its compile-time composition has `allowsRealGoogle: false`, and
+the instance name partitions its application identifier, SQLite filename, and
+preferences/credential/diagnostic namespaces from production. Use a new
+instance name for a completely separate manual test.
 
 Run sensitive development only with a dedicated Google account. Obtain that
 account's stable Google subject through the opt-in authorization probe; do not
