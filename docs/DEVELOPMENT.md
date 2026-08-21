@@ -417,9 +417,12 @@ storage, OAuth configuration, or Google adapter.
 
 `lib/main.dart`, `lib/main_development.dart`, and `lib/main_test.dart` are the
 production-safe, sensitive-development, and synthetic-test roots respectively.
-Their injected database filename, preferences namespace, secure-storage
-namespace, OAuth configuration identity, diagnostics namespace, authorization,
-clock, and randomness are distinct. On first authorization, development Google
+Their injected Dart composition identifier, database filename, preferences
+namespace, secure-storage namespace, OAuth configuration identity, diagnostics
+namespace, authorization, clock, and randomness are distinct. The generated
+Linux runner itself retains the compiled native application ID and uses
+`G_APPLICATION_NON_UNIQUE`; storage and service boundaries, not a per-instance
+GTK ID, provide isolation. On first authorization, development Google
 access obtains the stable account subject from the authenticated identity and
 pins it in ignored private development storage before any Google Tasks request.
 Later absence or mismatch fails closed; a subject is never guessed or required

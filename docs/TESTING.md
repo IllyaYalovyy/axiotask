@@ -730,13 +730,15 @@ subjects make zero Tasks calls. Prefix-scoped cleanup runs before and after the
 probe, and the safe prefix is printed before the first mutation. The separate
 cleanup command requires one exact
 `axiotask-contract-probe-<UTC>-<random>` prefix and confirms zero remaining
-matching lists. S34A validates `webViewLink` presence/shape on a disposable
-ordinary task, but makes no claim about ordinary or recurring link navigation.
-That confirmation is owned by the final Linux HUMAN approval gate. Adversarial
+matching lists. The S34A guarded harness covers `webViewLink` presence/shape on
+a disposable ordinary task, but S34A only prepared and deterministically tested
+that harness; the real-Google invocation remains outstanding. Link navigation
+is owned by the final Linux HUMAN approval gate. Adversarial
 platform-authentication and intentional rate-limit generation remain their own
 gates, so this suite makes no synthetic claim for them.
 
-The suite validates only high-value assumptions that a fake cannot prove:
+When explicitly run, the suite validates only high-value assumptions that a
+fake cannot prove:
 
 - pagination and wire shapes through the production adapter (with forced
   multi-page traversal qualified against the deterministic fake);
@@ -749,7 +751,7 @@ The suite validates only high-value assumptions that a fake cannot prove:
 
 It is never part of the normal fast quality command.
 
-The interactive authorization slices have fail-closed prerequisite checks:
+The interactive authorization gates have fail-closed prerequisite checks:
 
 ```text
 ./scripts/preflight_capability_gate.sh android-auth
@@ -760,9 +762,9 @@ The Android check requires exactly one authorized physical device with Google
 Play Services plus ignored dedicated-account configuration. The Linux check
 requires installed `libsecret-devel` metadata, a live user D-Bus session, GNOME
 Secret Service, a system-browser launcher, and ignored dedicated-account
-configuration. A passing preflight only allows the implementation task to
-start; it is not evidence that authorization, refresh, DPoP, persistence, or a
-Google Tasks call works.
+configuration. A passing preflight only allows the explicitly requested live
+gate to start; it is not evidence that authorization, refresh, DPoP,
+persistence, or a Google Tasks call works.
 
 ### 12. Physical Android authentication gate
 
@@ -775,8 +777,11 @@ evidence is insufficient.
 
 ## Isolation rules
 
-- Test application IDs/namespaces differ from production where platform storage
-  is involved.
+- Dart composition identifiers and storage/credential/diagnostic namespaces
+  differ from production where platform storage is involved. The generated
+  Linux runner keeps one compiled native application ID and uses
+  `G_APPLICATION_NON_UNIQUE`; Linux tests therefore never rely on a per-instance
+  GTK ID for isolation.
 - Secure-storage adapter tests use a dedicated namespace and delete only that
   namespace.
 - Unit/widget/integration tests receive database connections directly; they do
@@ -798,6 +803,16 @@ can name a real runner:
 flutter test integration_test/database_native_probe_test.dart -d linux
 flutter test integration_test/database_native_probe_test.dart -d <android-device-id>
 ```
+
+The clean-tree Linux release gate is
+`./scripts/verify_linux_acceptance.sh`. Its default mode adds deep-sync,
+every classified non-live Linux integration, an XDG-isolated synthetic bundle
+launch, and configured debug/release builds without starting browser
+authorization or making a Google request.
+`--human` adds the production-app checklist; live authorization,
+secure-storage, and cleanup-backed contract probes run only with the explicit
+combined `--human --live-probes` form. The command reports evidence and never
+records human approval itself.
 
 S02 acceptance requires the Android command on an emulator plus a debug APK
 build followed by `./scripts/check_android_native_assets.sh`. The probe resolves

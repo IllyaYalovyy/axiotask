@@ -81,8 +81,10 @@ placement wins without replay while content edits remain independent. Invalid
 deeper, missing-anchor, or cross-scope relationships fail before mutation.
 Unexpected deeper Google hierarchy keeps the last valid cache visible under an
 application failure, records decoded evidence only in sensitive development
-diagnostics, and issues no repair mutation. General retry, Android lifecycle
-wiring, and account connection UI remain later slices.
+diagnostics, and issues no repair mutation. Linux bounded retry,
+refresh/Reauthorize, and first-run Connect are wired through the normal
+coordinator. Android authorization, lifecycle, and device qualification remain
+later work.
 
 The desktop collection also provides one-line quick capture with an explicit
 Google-list target. A terminal ISO date or the exact today, tomorrow, next week,
@@ -165,40 +167,35 @@ are part of schema version 1; unresolved local work keeps health non-green until
 remote confirmation. The exact schema-v1 contract is documented in
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
-## Supported development environment
+## Supported Linux development environment
 
 - Fedora Linux 43 or a later supported Fedora release with GNOME.
 - Flutter stable `>=3.44.0 <3.45.0` (validated with `3.44.8`).
 - Dart `>=3.12.0 <3.13.0` (validated with `3.12.2`).
-- Android SDK 36.1, Android SDK Build-Tools 36.1, Android Platform-Tools, and
-  an API 36.1 emulator or attached Android device.
-- JDK 21, either Fedora OpenJDK or Android Studio's bundled JDK.
 
-Install the Fedora build prerequisites:
+Install the Fedora Linux build and runtime prerequisites:
 
 ```bash
 sudo dnf install clang cmake ninja-build pkgconf-pkg-config gtk3-devel \
-  libsecret libsecret-devel gnome-keyring libstdc++-devel \
-  java-21-openjdk-devel
+  libsecret libsecret-devel gnome-keyring libstdc++-devel
 ```
 
-The Linux desktop build itself requires `clang`, `cmake`, `ninja-build`,
-`pkgconf-pkg-config`, `gtk3-devel`, `libsecret-devel`, and
-`libstdc++-devel`. `libsecret`, `gnome-keyring`, and an unlocked Secret
-Service are runtime requirements for authorization storage. JDK 21 and the
-Android SDK are required only for the later Android target.
+`libsecret`, `gnome-keyring`, and an unlocked Secret Service are runtime
+requirements for authorization storage.
 
 Install Flutter `3.44.8` from the official Flutter archive, add its `bin`
-directory to `PATH`, and use Android Studio's SDK Manager to install the Android
-components above. Then verify both toolchains:
+directory to `PATH`, and verify the Linux toolchain:
 
 ```bash
 flutter config --enable-linux-desktop
 flutter doctor -v
 ```
 
-The Linux and Android sections of `flutter doctor -v` must pass before building.
-Chrome and unsupported Apple/Windows targets are not required.
+The Linux section of `flutter doctor -v` must pass before a Linux build.
+Android SDK/JDK status, Chrome, and unsupported Apple/Windows targets do not
+block Linux development. Android work is sequenced later and then requires SDK
+36.1, Build-Tools 36.1, Platform-Tools, an API 36.1 emulator or physical device,
+and JDK 21.
 
 ## Clean-checkout setup
 
@@ -305,6 +302,42 @@ Remove accepts only a directory carrying the wrapper's local-install marker.
 It does not create desktop entries, modify the system, or package the app.
 System-wide installation and packaging remain out of scope.
 
+## Linux release acceptance
+
+Run the complete noninteractive Linux gate from a clean worktree:
+
+```bash
+./scripts/verify_linux_acceptance.sh
+```
+
+It fails fast through `quality.sh`, deterministic deep-sync evidence, every
+classified non-live Linux integration test, privacy scanning, an actual
+synthetic bundle launch bounded to ten seconds, and configured debug/release
+production builds. The smoke bundle is built in a detached temporary worktree,
+uses the non-Google synthetic composition, and launches with temporary XDG data,
+config, cache, and state roots. Default mode never opens OAuth, calls Google, or
+reads a token. It does require the ignored desktop OAuth configuration because
+the final production builds are deliberately config-validated.
+
+For final interactive product review, run:
+
+```bash
+./scripts/verify_linux_acceptance.sh --human
+```
+
+That reruns the noninteractive gate, checks the configured GNOME Secret Service,
+prints the concise product checklist, and opens the configured production
+release app. It does not declare approval; close the app when review is done.
+Only when the dedicated test account is ready, explicitly include the isolated
+authorization, secure-storage, and cleanup-backed Google contract probes:
+
+```bash
+./scripts/verify_linux_acceptance.sh --human --live-probes
+```
+
+`--live-probes` is rejected without `--human`. These commands are Linux release
+evidence only; Android remains unverified.
+
 ## Compile-time application compositions
 
 Composition is selected only by the Dart entry point. The release root has no
@@ -329,9 +362,12 @@ synthetic list/task as Synced. A subsequent launch displays that cache
 immediately and verifies it again. This composition never loads OAuth
 configuration, secure storage, normal preferences, normal diagnostics, or
 Google Tasks. Its compile-time composition has `allowsRealGoogle: false`, and
-the instance name partitions its application identifier, SQLite filename, and
-preferences/credential/diagnostic namespaces from production. Use a new
-instance name for a completely separate manual test.
+the instance name partitions its SQLite filename and
+preferences/credential/diagnostic namespaces from production. The generated
+Linux runner retains its compiled native application ID and explicitly uses
+`G_APPLICATION_NON_UNIQUE`, so concurrent processes are permitted; isolation
+comes from the injected storage and service boundaries, not from a distinct GTK
+application ID. Use a new instance name for a separate manual test.
 
 Run sensitive development only with a dedicated Google account. Obtain that
 account's stable Google subject through the opt-in authorization probe; do not
@@ -599,9 +635,9 @@ authorize exactly one physical Google Play Services device, then run:
 ./scripts/preflight_capability_gate.sh android-auth
 ```
 
-Before the Linux browser authorization slice, confirm `pkg-config --exists
-libsecret-1` succeeds and run the app from a GNOME user session with Secret
-Service available, then run:
+Before interactive Linux authorization or final human review, confirm
+`pkg-config --exists libsecret-1` succeeds and run from a GNOME user session
+with Secret Service available, then run:
 
 ```bash
 ./scripts/preflight_capability_gate.sh linux-auth
@@ -647,6 +683,9 @@ flutter test test/features/diagnostics/diagnostics_view_test.dart
 flutter test test/features/diagnostics/diagnostics_golden_test.dart
 flutter test test/app/composition/composition_test.dart
 flutter test test/app/composition/isolation_test.dart
+flutter test test/app/first_run_authorization_test.dart
+flutter test test/features/settings/settings_view_model_test.dart
+flutter test test/features/settings/settings_view_test.dart
 flutter test test/data/database/app_database_test.dart
 flutter test test/data/database/file_database_test.dart
 flutter test test/data/database/native_database_probe_test.dart
@@ -743,6 +782,8 @@ flutter test integration_test/diagnostics_linux_test.dart -d linux
 flutter test integration_test/account_backup_linux_test.dart -d linux
 flutter test integration_test/local_data_recovery_linux_test.dart -d linux
 ./scripts/check_generated.sh
+./test/linux_app_test.sh
+./test/verify_linux_acceptance_test.sh
 ./test/privacy_check_test.sh
 ./scripts/privacy_check.sh
 ```
