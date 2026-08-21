@@ -245,6 +245,7 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
     return DatabaseRecoveryApp(
       opening: _opening,
       retryOpen: _opening ? null : _open,
+      diagnosticsBuilder: widget.diagnosticsBuilder,
     );
   }
 }
@@ -253,11 +254,13 @@ final class DatabaseRecoveryApp extends StatelessWidget {
   const DatabaseRecoveryApp({
     required this.opening,
     required this.retryOpen,
+    this.diagnosticsBuilder,
     super.key,
   });
 
   final bool opening;
   final VoidCallback? retryOpen;
+  final WidgetBuilder? diagnosticsBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -265,55 +268,95 @@ final class DatabaseRecoveryApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Axiotask',
       theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Axiotask')),
-        body: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Icon(
-                      opening ? Icons.storage_rounded : Icons.warning_amber,
-                      size: 52,
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      opening ? 'Opening task storage…' : 'Tasks unavailable',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                      textAlign: TextAlign.center,
-                    ),
+      home: _DatabaseRecoveryHome(
+        opening: opening,
+        retryOpen: retryOpen,
+        diagnosticsBuilder: diagnosticsBuilder,
+      ),
+    );
+  }
+}
+
+final class _DatabaseRecoveryHome extends StatelessWidget {
+  const _DatabaseRecoveryHome({
+    required this.opening,
+    required this.retryOpen,
+    required this.diagnosticsBuilder,
+  });
+
+  final bool opening;
+  final VoidCallback? retryOpen;
+  final WidgetBuilder? diagnosticsBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Axiotask')),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(
+                    opening ? Icons.storage_rounded : Icons.warning_amber,
+                    size: 52,
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    opening ? 'Opening task storage…' : 'Tasks unavailable',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    opening
+                        ? 'Checking the saved task database before the app starts.'
+                        : 'Axiotask could not safely open saved tasks. Your '
+                              'local data has been left in place. Editing and '
+                              'Google synchronization are stopped.',
+                    textAlign: TextAlign.center,
+                  ),
+                  if (!opening) ...<Widget>[
                     const SizedBox(height: 12),
                     Text(
-                      opening
-                          ? 'Checking the saved task database before the app starts.'
-                          : 'Axiotask could not safely open saved tasks. Your '
-                                'local data has been left in place. Editing and '
-                                'Google synchronization are stopped.',
-                      textAlign: TextAlign.center,
+                      'Diagnostic code: database.open_failed',
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
-                    if (!opening) ...<Widget>[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Diagnostic code: database.open_failed',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 24),
-                      Semantics(
-                        label: 'Retry opening task storage',
-                        button: true,
-                        child: FilledButton.icon(
-                          onPressed: retryOpen,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Retry Open'),
+                    const SizedBox(height: 24),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: <Widget>[
+                        Semantics(
+                          label: 'Retry opening task storage',
+                          button: true,
+                          child: FilledButton.icon(
+                            onPressed: retryOpen,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry Open'),
+                          ),
                         ),
-                      ),
-                    ],
+                        if (diagnosticsBuilder case final builder?)
+                          Semantics(
+                            label: 'Open application diagnostics',
+                            button: true,
+                            child: OutlinedButton.icon(
+                              onPressed: () => Navigator.of(context).push<void>(
+                                MaterialPageRoute<void>(builder: builder),
+                              ),
+                              icon: const Icon(Icons.receipt_long_outlined),
+                              label: const Text('Open Diagnostics'),
+                            ),
+                          ),
+                      ],
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
           ),

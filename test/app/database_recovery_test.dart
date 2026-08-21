@@ -20,6 +20,7 @@ import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -33,6 +34,8 @@ void main() {
       await tester.pumpWidget(
         AxiotaskBootstrap(
           diagnostics: ProductionDiagnosticSink(history),
+          diagnosticsBuilder: (_) =>
+              const Scaffold(body: Text('Release-safe diagnostic evidence')),
           openRuntime: () async {
             attempts += 1;
             if (attempts == 1) {
@@ -52,6 +55,7 @@ void main() {
 
       expect(find.text('Tasks unavailable'), findsOneWidget);
       expect(find.text('Retry Open'), findsOneWidget);
+      expect(find.text('Open Diagnostics'), findsOneWidget);
       expect(find.text('No cached tasks in this list'), findsNothing);
       expect(find.textContaining(privatePath), findsNothing);
       expect(find.textContaining('integrity_check_failed'), findsNothing);
@@ -59,6 +63,17 @@ void main() {
         find.bySemanticsLabel('Retry opening task storage'),
         findsOneWidget,
       );
+      expect(
+        find.bySemanticsLabel('Open application diagnostics'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Open Diagnostics'));
+      await tester.pumpAndSettle();
+      expect(find.text('Release-safe diagnostic evidence'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Retry Open'), findsOneWidget);
 
       await tester.tap(find.text('Retry Open'));
       await tester.pump();
@@ -90,6 +105,8 @@ void main() {
     await tester.pumpWidget(
       AxiotaskBootstrap(
         diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
+        diagnosticsBuilder: (_) =>
+            const Scaffold(body: Text('Recovery diagnostics')),
         openRuntime: () {
           attempts += 1;
           if (attempts == 1) {
@@ -105,6 +122,7 @@ void main() {
     await tester.pump();
     expect(find.text('Opening task storage…'), findsOneWidget);
     expect(find.text('Retry Open'), findsNothing);
+    expect(find.text('Open Diagnostics'), findsNothing);
     expect(attempts, 2);
 
     retry.complete(_FakeRuntime());
@@ -122,6 +140,8 @@ void main() {
     await tester.pumpWidget(
       AxiotaskBootstrap(
         diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
+        diagnosticsBuilder: (_) =>
+            const Scaffold(body: Text('Mid-run diagnostic evidence')),
         openRuntime: () async {
           attempts += 1;
           return attempts == 1 ? failedRuntime : _FakeRuntime();
@@ -137,6 +157,14 @@ void main() {
     await tester.pump();
     expect(find.text('Tasks unavailable'), findsOneWidget);
     expect(find.text('No cached tasks in this list'), findsNothing);
+    expect(find.text('Open Diagnostics'), findsOneWidget);
+
+    await tester.tap(find.text('Open Diagnostics'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mid-run diagnostic evidence'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Retry Open'), findsOneWidget);
 
     await tester.tap(find.text('Retry Open'));
     await tester.pump();
