@@ -404,8 +404,8 @@ final class FakeGoogleTasksService
     final list = _lists[operation.taskListId.value];
     final state = list?.tasks[operation.taskId.value];
     if (list == null || state == null) return _notFoundMutation();
-    if (state.deleted) return const CommittedMutation<void>(null);
     if (state.etag != operation.etag) return _conditionalMutation();
+    if (state.deleted) return const CommittedMutation<void>(null);
     for (final task in <_FakeTaskState>[
       state,
       ..._descendants(list, state.id),

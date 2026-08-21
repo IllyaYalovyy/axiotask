@@ -78,6 +78,20 @@ abstract interface class AuthorizationPort {
   Future<Outcome<AccountSubject>> requestTasksAuthorization();
 }
 
+/// A request was stopped before dispatch because the authorization adapter
+/// could not produce a durably recoverable access token.
+///
+/// HTTP adapters preserve the contained typed failure instead of collapsing it
+/// into a generic transport error. No credential value is exposed.
+final class AuthorizationTransportException implements Exception {
+  const AuthorizationTransportException(this.failure);
+
+  final Failure failure;
+
+  @override
+  String toString() => 'AuthorizationTransportException(${failure.code})';
+}
+
 final class UnavailableAuthorization implements AuthorizationPort {
   const UnavailableAuthorization();
 
@@ -170,6 +184,7 @@ Failure mapAuthorizationFailure(AuthorizationAdapterFailure source) {
       action: FailureAction.connect,
       safeSummary: 'Tasks authorization is unavailable.',
       sensitiveContext: sensitiveContext,
+      authorizationRecovery: AuthorizationRecovery.reauthorize,
     ),
     AuthorizationAdapterFailureKind.missingScope => Failure(
       code: 'auth.tasks_scope_absent',
@@ -180,6 +195,7 @@ Failure mapAuthorizationFailure(AuthorizationAdapterFailure source) {
       action: FailureAction.connect,
       safeSummary: 'Google Tasks access was not granted.',
       sensitiveContext: sensitiveContext,
+      authorizationRecovery: AuthorizationRecovery.reauthorize,
     ),
     AuthorizationAdapterFailureKind.rejected => Failure(
       code: 'auth.rejected',
@@ -190,6 +206,7 @@ Failure mapAuthorizationFailure(AuthorizationAdapterFailure source) {
       action: FailureAction.connect,
       safeSummary: 'Google rejected Tasks authorization.',
       sensitiveContext: sensitiveContext,
+      authorizationRecovery: AuthorizationRecovery.reauthorize,
     ),
     AuthorizationAdapterFailureKind.network => Failure(
       code: 'auth.network',

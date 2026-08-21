@@ -25,12 +25,17 @@ and a pinned-subject guard. It recorded only the sanitized capability facts
 below; OAuth material, raw IDs/content/URLs, and machine paths remained outside
 Git.
 
+The shipped Flutter S34A contract ran on 2026-08-21 through the production
+Linux authorization and Google Tasks adapters. It used the pinned development
+account and disposable uniquely prefixed data, completed its exact-prefix
+cleanup, and retained only the sanitized observations recorded below.
+
 ## Evidence labels
 
 | Label | Meaning in this document |
 |---|---|
 | **Officially documented** | Stated by current primary Google documentation or the current official discovery document. |
-| **Observed by a controlled probe** | Reproduced during the 2026-08-11 controlled runs with disposable data and sanitized evidence recorded below. |
+| **Observed by a controlled probe** | Reproduced during a dated controlled run with disposable data and sanitized evidence recorded below. |
 | **Inherited historical evidence needing reverification** | Recorded by the read-only Rust project, but not independently reproduced for this contract. |
 | **Inference** | A conclusion from documented presence or absence, not an explicit Google promise. |
 | **Unknown** | Neither current documentation nor a controlled current probe establishes the behavior. |
@@ -157,7 +162,7 @@ Sources: [`tasklists.insert`](https://developers.google.com/workspace/tasks/refe
 | Task conditional mutation | P1 sent stale/current/`*`/absent `If-Match` to task PATCH, UPDATE, DELETE, and MOVE. Every stale request returned 412 without changing the task; current, `*`, and absent variants succeeded. | **Observed by a controlled probe** | All four probed task mutations can use ETag preconditions; this remains endpoint behavior rather than a documented Google guarantee. |
 | List conditional mutation | P2 sent stale/current/`*`/absent `If-Match` to task-list PATCH, UPDATE, and DELETE. Every variant succeeded, including stale ETags. | **Observed by a controlled probe** | Task-list rename/delete ignores `If-Match`; list conflict policy cannot depend on it. |
 | Successful mutation response | Insert, patch, update, and move document a resource response; delete documents an empty response. | **Officially documented** | Google does not guarantee that every echoed field is canonical beyond the resource schema. |
-| Lost response after mutation | P5/P6/P7 discarded a successful response before read-back/replay. Identical task/list creates duplicated; repeated PATCH/list rename changed version metadata again; repeated DELETE returned 204; repeated same-list MOVE was a 200 no-op; retrying a completed cross-list MOVE from the original list returned 404 while the same ID remained in the destination. | **Observed by a controlled probe** | Recovery must be operation-specific. Blind replay is unsafe for create and misleading for cross-list move. |
+| Lost response after mutation | P5/P6/P7 discarded a successful response before read-back/replay. Identical task/list creates duplicated; repeated PATCH/list rename changed version metadata again; repeated list DELETE returned 204; repeated same-list MOVE was a 200 no-op; retrying a completed cross-list MOVE from the original list returned 404 while the same ID remained in the destination. The S34A live contract additionally observed that replaying task DELETE with its pre-delete ETag returns 412 after the first DELETE advanced the tombstone ETag. | **Observed by a controlled probe** | Recovery must be operation-specific. Blind replay is unsafe for create and misleading for cross-list move. An uncertain task delete must use read-back evidence rather than replaying its stale precondition. |
 | Duplicate-create prevention | Discovery exposes no request ID, idempotency key, conditional-create parameter, or client-selected resource ID. P5 repeated identical task and list POSTs; both calls returned 200 and produced two different IDs. | **Inference; observed by a controlled probe** | Blind retry of an uncertain create demonstrably creates duplicates. |
 | Invalid generic PATCH | The Tasks performance guide says an invalid patch returns `400` or `422` and leaves the resource unchanged. | **Officially documented** | This is a guide-level range, not an endpoint-specific matrix. |
 | Endpoint validation details | Exact codes and resource effects for each invalid Tasks field/limit are not documented. | **Unknown** | Probe representative invalid fields and limits; do not assume one code for every validation error. |
@@ -341,6 +346,24 @@ rate-limit response details remain Unknown.
   cleanup. The human resolution retained the pass/cleanup facts but not the
   stale DELETE status and destination lifecycle bit, so those exact server
   semantics are deliberately not promoted here.
+- The 2026-08-21 S34A Flutter contract restored the DPoP-bound development
+  credential through `DevelopmentComposition`, verified the pinned subject,
+  and exercised the shipped `HttpGoogleTasksService`. Its successful final run
+  used one unique prefix, passed the complete adapter contract, deleted every
+  matching resource, and confirmed zero remaining prefix matches. Credentials,
+  account identifiers, task contents, and raw URLs were neither printed nor
+  committed.
+- Two S34A correction runs established that a task creation response was no
+  longer a valid conditional-mutation base after later task creation/order
+  activity: PATCH and cross-list MOVE with those creation-time ETags returned
+  412. Fresh full-list read-back supplied accepted ETags. The exact remote
+  event that changed each ETag is an inference; the 412 responses and successful
+  fresh-base retries are observed facts.
+- S34A's first task DELETE returned 204. Replaying it with the original
+  pre-delete ETag returned 412, and a full-list read-back still showed the
+  deleted tombstone. This differs from P6's earlier recorded repeated-DELETE
+  204 and therefore narrows the proven rule: a stale conditional replay is not
+  an idempotency mechanism; recovery must read back first.
 - One earlier unpaced run was discarded after 403 `quotaExceeded` responses.
   It left 26 prefixed lists temporarily; a later prefix-scoped cleanup deleted
   all 26 and confirmed zero remaining. Only the rate-limit response itself is
@@ -362,6 +385,7 @@ rate-limit response details remain Unknown.
 | P11 malformed bearer | Malformed bearer produced 401, `WWW-Authenticate`, and JSON error fields `code`, `errors`, `message`, and `status`. | This case is unauthorized. Expired, revoked, and wrong-scope classification still needs separate safe evidence. |
 | S07 P12 follow-up | PATCH with JSON `null` returned a valid 200 task resource and read-back omitted both synthetic `notes` and `due`. | Admit JSON `null` clearing for the supported optional task-content fields. |
 | S07 stale-source DELETE follow-up | The adapter preserved the old-source DELETE as uncertain and a destination read-back positively found the stable task ID. The retained resolution omitted the status and live/tombstone bit. | Keep stale-path confirmation conservative; do not promote exact fake/recovery behavior from an incomplete sanitized record. |
+| S34A shipped-adapter contract | The production Linux authorization/HTTP path passed the complete guarded contract with fresh read-back bases. Creation-time ETags returned 412 after intervening task activity; a task DELETE replay with its pre-delete ETag also returned 412 while the tombstone remained deleted. Exact-prefix cleanup left zero matching resources. | Re-read the current base before conditional mutation. Recover uncertain task DELETE by authoritative read-back, never by assuming a stale replay is idempotent. |
 
 ## Remaining API unknowns and implementation gates
 

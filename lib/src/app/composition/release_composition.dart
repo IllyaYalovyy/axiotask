@@ -20,12 +20,14 @@ final class ReleaseComposition implements AppComposition {
     required this.diagnosticExporter,
     required this.accountGuard,
     required this.linuxReadConfiguration,
+    required this.linuxReadTransportDependencies,
   });
 
   factory ReleaseComposition.create({
     DiagnosticExportPort? diagnosticExporter,
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
+    LinuxReadTransportDependencies? linuxReadTransportDependencies,
   }) {
     final history = InMemoryDiagnosticHistory(
       maxRecords: defaultReleaseDiagnosticRecordLimit,
@@ -35,6 +37,7 @@ final class ReleaseComposition implements AppComposition {
       diagnosticExporter:
           diagnosticExporter ?? const _UnavailableDiagnosticExporter(),
       linuxReadConfiguration: linuxReadConfiguration,
+      linuxReadTransportDependencies: linuxReadTransportDependencies,
     );
   }
 
@@ -42,6 +45,7 @@ final class ReleaseComposition implements AppComposition {
     required DiagnosticHistory history,
     required DiagnosticExportPort diagnosticExporter,
     required LinuxReadConfiguration linuxReadConfiguration,
+    LinuxReadTransportDependencies? linuxReadTransportDependencies,
   }) {
     return ReleaseComposition._(
       clock: SystemClock(),
@@ -52,6 +56,7 @@ final class ReleaseComposition implements AppComposition {
       diagnosticExporter: diagnosticExporter,
       accountGuard: const NormalAccountGuard(),
       linuxReadConfiguration: linuxReadConfiguration,
+      linuxReadTransportDependencies: linuxReadTransportDependencies,
     );
   }
 
@@ -59,6 +64,7 @@ final class ReleaseComposition implements AppComposition {
     File? diagnosticFile,
     LinuxReadConfiguration linuxReadConfiguration =
         const LinuxReadConfiguration(clientId: '', clientSecret: ''),
+    LinuxReadTransportDependencies? linuxReadTransportDependencies,
   }) async {
     final file = diagnosticFile ?? await _resolveDiagnosticFile(_boundary);
     final history = PersistentDiagnosticHistory.open(
@@ -76,6 +82,7 @@ final class ReleaseComposition implements AppComposition {
         product: DiagnosticProduct.releaseSafe,
       ),
       linuxReadConfiguration: linuxReadConfiguration,
+      linuxReadTransportDependencies: linuxReadTransportDependencies,
     );
   }
 
@@ -102,6 +109,7 @@ final class ReleaseComposition implements AppComposition {
   final NormalAccountGuard accountGuard;
 
   final LinuxReadConfiguration linuxReadConfiguration;
+  final LinuxReadTransportDependencies? linuxReadTransportDependencies;
 
   @override
   AccountSubject? get configuredAccountSubject => null;
@@ -112,6 +120,7 @@ final class ReleaseComposition implements AppComposition {
         composition: this,
         configuredSubject: subject,
         configuration: linuxReadConfiguration,
+        dependencies: linuxReadTransportDependencies,
       );
 
   @override

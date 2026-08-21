@@ -6,12 +6,14 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/clock.dart';
 import '../../../core/diagnostics/diagnostics.dart';
 import '../../../core/failure.dart';
 import '../../../core/outcome.dart';
 import '../../../core/randomness.dart';
 
 const String _callbackPath = '/oauth2/callback';
+const Duration linuxAuthorizationCallbackDeadline = Duration(minutes: 5);
 
 typedef AuthorizationUriBuilder =
     Uri Function({
@@ -157,6 +159,12 @@ final class _HttpLoopbackCallbackListener implements LoopbackCallbackListener {
   Future<CallbackRequest> get nextRequest => _requests.future;
 
   void _receive(HttpRequest request) {
+    if (request.method != 'GET' || request.uri.path != _callbackPath) {
+      request.response
+        ..statusCode = HttpStatus.notFound
+        ..close();
+      return;
+    }
     if (_requests.isCompleted) {
       request.response
         ..statusCode = HttpStatus.notFound
@@ -223,24 +231,41 @@ final class LinuxBrowserFlow implements BrowserAuthorizationFlow {
     required LoopbackCallbackFactory callbackFactory,
     required BrowserLauncher browserLauncher,
     required RandomSource randomness,
+    MonotonicScheduler? scheduler,
+    Duration callbackDeadline = linuxAuthorizationCallbackDeadline,
     DiagnosticSink? diagnostics,
-  }) => LinuxBrowserFlow._(
-    callbackFactory,
-    browserLauncher,
-    randomness,
-    diagnostics,
-  );
+  }) {
+    if (callbackDeadline <= Duration.zero) {
+      throw ArgumentError.value(
+        callbackDeadline,
+        'callbackDeadline',
+        'must be positive',
+      );
+    }
+    return LinuxBrowserFlow._(
+      callbackFactory,
+      browserLauncher,
+      randomness,
+      scheduler ?? SystemClock(),
+      callbackDeadline,
+      diagnostics,
+    );
+  }
 
   const LinuxBrowserFlow._(
     this._callbackFactory,
     this._browserLauncher,
     this._randomness,
+    this._scheduler,
+    this._callbackDeadline,
     this._diagnostics,
   );
 
   final LoopbackCallbackFactory _callbackFactory;
   final BrowserLauncher _browserLauncher;
   final RandomSource _randomness;
+  final MonotonicScheduler _scheduler;
+  final Duration _callbackDeadline;
   final DiagnosticSink? _diagnostics;
 
   @override
@@ -299,19 +324,30 @@ final class LinuxBrowserFlow implements BrowserAuthorizationFlow {
         return Outcome<BrowserAuthorizationCode>.failure(_launchFailure());
       }
 
+      final deadline = Completer<_CallbackWinner>();
+      final deadlineTimer = _scheduler.schedule(
+        _callbackDeadline,
+        () => deadline.complete(const _CallbackTimedOut()),
+      );
       final _CallbackWinner winner;
       try {
         winner = await Future.any<_CallbackWinner>(<Future<_CallbackWinner>>[
           listener.nextRequest.then(_CallbackReceived.new),
           cancellation.whenCancelled.then((_) => const _CallbackCancelled()),
+          deadline.future,
         ]);
       } catch (_) {
         return Outcome<BrowserAuthorizationCode>.failure(
           _callbackReceiveFailure(),
         );
+      } finally {
+        deadlineTimer.cancel();
       }
       if (winner is _CallbackCancelled) {
         return Outcome<BrowserAuthorizationCode>.failure(_cancelledFailure());
+      }
+      if (winner is _CallbackTimedOut) {
+        return Outcome<BrowserAuthorizationCode>.failure(_timeoutFailure());
       }
 
       final request = (winner as _CallbackReceived).request;
@@ -378,6 +414,10 @@ final class _CallbackCancelled extends _CallbackWinner {
   const _CallbackCancelled();
 }
 
+final class _CallbackTimedOut extends _CallbackWinner {
+  const _CallbackTimedOut();
+}
+
 Outcome<String> _validateCallback(
   CallbackRequest request, {
   required String expectedState,
@@ -390,14 +430,17 @@ Outcome<String> _validateCallback(
     return Outcome<String>.failure(_stateFailure());
   }
   final errors = request.queryParameters['error'] ?? const <String>[];
-  if (errors.length == 1) {
+  final codes = request.queryParameters['code'] ?? const <String>[];
+  if (errors.isNotEmpty) {
+    if (errors.length != 1 || codes.isNotEmpty) {
+      return Outcome<String>.failure(_invalidCallbackFailure());
+    }
     return Outcome<String>.failure(
       errors.single == 'access_denied'
           ? _cancelledFailure()
           : _rejectedFailure(),
     );
   }
-  final codes = request.queryParameters['code'] ?? const <String>[];
   if (codes.length != 1 || codes.single.isEmpty) {
     return Outcome<String>.failure(_invalidCallbackFailure());
   }
@@ -435,6 +478,16 @@ Failure _callbackReceiveFailure() => const Failure(
   impact: 'Google authorization did not return to the application.',
   action: FailureAction.retry,
   safeSummary: 'The loopback authorization callback could not be received.',
+);
+
+Failure _timeoutFailure() => const Failure(
+  code: 'auth.callback_timeout',
+  category: FailureCategory.network,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.transient,
+  impact: 'Google authorization did not return to the application.',
+  action: FailureAction.retry,
+  safeSummary: 'The authorization callback expired after five minutes.',
 );
 
 Failure _configurationFailure() => const Failure(

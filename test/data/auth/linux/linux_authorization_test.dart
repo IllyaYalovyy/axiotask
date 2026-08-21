@@ -11,6 +11,8 @@ import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/auth/linux/browser_flow.dart';
 import 'package:axiotask/src/data/auth/linux/linux_authorization.dart';
 import 'package:axiotask/src/data/auth/linux/secure_credentials.dart';
+import 'package:axiotask/src/data/google_tasks/dto.dart';
+import 'package:axiotask/src/data/google_tasks/http_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -249,6 +251,257 @@ void main() {
     );
 
     test(
+      'token exchange deadline fails red without a real-time wait',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+          ..holdAuthorizationCode = true;
+        final clock = ManualClock(DateTime.utc(2026, 8, 21, 12));
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: MemoryCredentialStore(),
+          subjects: MemoryPinnedSubjectStore(),
+          clock: clock,
+        );
+        addTearDown(adapter.close);
+
+        final pending = adapter.connect();
+        await endpoint.authorizationCodeStarted;
+        clock.advance(linuxAuthorizationNetworkDeadline);
+        final result = await pending;
+
+        expect(result, isA<Failed<LinuxAuthorizedSession>>());
+        expect(
+          (result as Failed<LinuxAuthorizedSession>).failure.code,
+          'auth.network_timeout',
+        );
+        expect(result.failure.category, FailureCategory.network);
+        expect(adapter.currentState, isA<AuthorizationRequestFailed>());
+      },
+    );
+
+    test(
+      'identity deadline stops persistence without a real-time wait',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[]);
+        final clock = ManualClock(DateTime.utc(2026, 8, 21, 12));
+        final credentials = MemoryCredentialStore();
+        final identity = HangingIdentityVerifier();
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: credentials,
+          subjects: MemoryPinnedSubjectStore(),
+          clock: clock,
+          identityVerifier: identity,
+        );
+        addTearDown(adapter.close);
+
+        final pending = adapter.connect();
+        await identity.started;
+        clock.advance(linuxAuthorizationNetworkDeadline);
+        final result = await pending;
+
+        expect(
+          (result as Failed<LinuxAuthorizedSession>).failure.code,
+          'auth.network_timeout',
+        );
+        expect(credentials.bundle, isNull);
+        expect(endpoint.tasksCalls, 0);
+      },
+    );
+
+    test(
+      'restore persists a rotated refresh token before identity read-back',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+          ..rotateRefreshToken = true;
+        final clock = ManualClock(DateTime.utc(2026, 8, 21, 12));
+        final credentials = MemoryCredentialStore(
+          initial: DpopFixture.keyBundle(),
+        );
+        final identity = HangingIdentityVerifier();
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: credentials,
+          subjects: MemoryPinnedSubjectStore(
+            initial: const AccountSubject('dedicated-subject'),
+          ),
+          clock: clock,
+          identityVerifier: identity,
+        );
+        addTearDown(adapter.close);
+
+        final pending = adapter.restore();
+        await identity.started;
+
+        expect(credentials.bundle?.refreshToken, 'rotated-refresh');
+        clock.advance(linuxAuthorizationNetworkDeadline);
+        final result = await pending;
+        expect(
+          (result as Failed<LinuxAuthorizedSession>).failure.code,
+          'auth.network_timeout',
+        );
+        expect(endpoint.tasksCalls, 0);
+      },
+    );
+
+    test('closing during token exchange prevents late persistence', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+        ..holdAuthorizationCode = true;
+      final credentials = MemoryCredentialStore();
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: credentials,
+        subjects: MemoryPinnedSubjectStore(),
+      );
+
+      final pending = adapter.connect();
+      await endpoint.authorizationCodeStarted;
+      adapter.close();
+      final result = await pending;
+
+      expect(result, isA<Failed<LinuxAuthorizedSession>>());
+      expect(credentials.bundle, isNull);
+      expect(endpoint.tasksCalls, 0);
+    });
+
+    test(
+      'closing during identity verification completes immediately',
+      () async {
+        final identity = HangingIdentityVerifier();
+        final credentials = MemoryCredentialStore();
+        final adapter = createAdapter(
+          endpoint: StatefulTokenAndTasksEndpoint(<String>[]),
+          credentials: credentials,
+          subjects: MemoryPinnedSubjectStore(),
+          identityVerifier: identity,
+        );
+
+        final pending = adapter.connect();
+        await identity.started;
+        adapter.close();
+        final result = await pending;
+
+        expect(
+          (result as Failed<LinuxAuthorizedSession>).failure.code,
+          'auth.closed',
+        );
+        expect(credentials.bundle, isNull);
+      },
+    );
+
+    test(
+      'expired resource request refreshes, validates, and persists rotation before dispatch',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+          ..expireAuthorizationCodeAccess = true
+          ..rotateRefreshToken = true;
+        final credentials = MemoryCredentialStore();
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: credentials,
+          subjects: MemoryPinnedSubjectStore(),
+        );
+        addTearDown(adapter.close);
+        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+        final service = _tasksService(adapter);
+        addTearDown(service.close);
+
+        final result = await service.listTaskLists();
+
+        expect(result, isA<Success<RemotePage<RemoteTaskList>>>());
+        expect(endpoint.tokenCalls, 2);
+        expect(endpoint.tasksCalls, 1);
+        expect(credentials.bundle?.refreshToken, 'rotated-refresh');
+        expect(adapter.currentState, isA<TasksAuthorized>());
+      },
+    );
+
+    test('concurrent expired requests share one durable refresh', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+        ..expireAuthorizationCodeAccess = true
+        ..rotateRefreshToken = true
+        ..holdRefresh = true;
+      final credentials = MemoryCredentialStore();
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: credentials,
+        subjects: MemoryPinnedSubjectStore(),
+      );
+      addTearDown(adapter.close);
+      expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+      final client = LinuxAuthorizedHttpClient(adapter);
+
+      final endpointUri = Uri.parse(
+        'https://tasks.example.test/tasks/v1/users/@me/lists',
+      );
+      final first = client.get(endpointUri);
+      final second = client.get(endpointUri);
+      await endpoint.refreshStarted;
+      expect(endpoint.tokenCalls, 2);
+      endpoint.releaseRefresh();
+
+      expect((await first).statusCode, 200);
+      expect((await second).statusCode, 200);
+      expect(endpoint.tokenCalls, 2);
+      expect(credentials.replaceCalls, 2);
+      expect(endpoint.tasksCalls, 2);
+    });
+
+    test(
+      'expired resource request preserves invalid_grant and dispatches no Tasks call',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+          ..expireAuthorizationCodeAccess = true;
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: MemoryCredentialStore(),
+          subjects: MemoryPinnedSubjectStore(),
+        );
+        addTearDown(adapter.close);
+        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+        endpoint.rejectRefresh = true;
+        final service = _tasksService(adapter);
+        addTearDown(service.close);
+
+        final result = await service.listTaskLists();
+
+        expect(result, isA<Failed<RemotePage<RemoteTaskList>>>());
+        expect(
+          (result as Failed<RemotePage<RemoteTaskList>>).failure.code,
+          'auth.refresh_rejected',
+        );
+        expect(
+          result.failure.authorizationRecovery,
+          AuthorizationRecovery.reauthorize,
+        );
+        expect(endpoint.tasksCalls, 0);
+        expect(adapter.currentState, isA<AuthorizationRejected>());
+      },
+    );
+
+    test('resource 401 reaches the strict Tasks adapter unchanged', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+        ..rejectTasksAsUnauthorized = true;
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: MemoryCredentialStore(),
+        subjects: MemoryPinnedSubjectStore(),
+      );
+      addTearDown(adapter.close);
+      expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+      final service = _tasksService(adapter);
+      addTearDown(service.close);
+
+      final result = await service.listTaskLists();
+
+      expect(result, isA<Failed<RemotePage<RemoteTaskList>>>());
+      final failure = (result as Failed<RemotePage<RemoteTaskList>>).failure;
+      expect(failure.code, 'google_tasks.unauthorized');
+      expect(failure.authorizationRecovery, AuthorizationRecovery.refreshOnce);
+      expect(endpoint.tasksCalls, 1);
+    });
+
+    test(
       'cancellation preserves absent authorization and emits no secret',
       () async {
         final history = InMemoryDiagnosticHistory();
@@ -274,6 +527,28 @@ void main() {
         expect(output, isNot(contains('synthetic-refresh')));
       },
     );
+
+    test('closing the adapter cancels an outstanding browser flow', () async {
+      final browser = CloseAwareBrowserFlow();
+      final credentials = MemoryCredentialStore();
+      final adapter = createAdapter(
+        endpoint: StatefulTokenAndTasksEndpoint(<String>[]),
+        credentials: credentials,
+        subjects: MemoryPinnedSubjectStore(),
+        browser: browser,
+      );
+
+      final pending = adapter.connect();
+      await browser.started;
+      adapter.close();
+      final result = await pending;
+
+      expect(
+        (result as Failed<LinuxAuthorizedSession>).failure.code,
+        'auth.cancelled',
+      );
+      expect(credentials.bundle, isNull);
+    });
   });
 
   group('GoogleIdTokenVerifier', () {
@@ -444,7 +719,10 @@ LinuxAuthorization createAdapter({
   required MemoryPinnedSubjectStore subjects,
   BrowserAuthorizationFlow browser = const SuccessfulBrowserFlow(),
   DiagnosticSink? diagnostics,
+  ManualClock? clock,
+  IdentityTokenVerifier identityVerifier = const SyntheticIdentityVerifier(),
 }) {
+  final resolvedClock = clock ?? ManualClock(DateTime.utc(2026, 8, 14, 12));
   return LinuxAuthorization(
     config: LinuxAuthorizationConfig(
       clientId: 'client.example.test',
@@ -460,14 +738,24 @@ LinuxAuthorization createAdapter({
     browserFlow: browser,
     credentialStore: credentials,
     subjectStore: subjects,
-    identityVerifier: const SyntheticIdentityVerifier(),
+    identityVerifier: identityVerifier,
     httpClientFactory: () => endpoint,
-    clock: ManualClock(DateTime.utc(2026, 8, 14, 12)),
+    clock: resolvedClock,
+    scheduler: resolvedClock,
     randomness: SequenceRandomSource(List<int>.generate(1024, (i) => i % 256)),
     diagnostics:
         diagnostics ?? ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
   );
 }
+
+HttpGoogleTasksService _tasksService(LinuxAuthorization authorization) =>
+    HttpGoogleTasksService(
+      client: LinuxAuthorizedHttpClient(authorization),
+      authorization: authorization,
+      accountGuard: const NormalAccountGuard(),
+      diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
+      endpoint: Uri.parse('https://tasks.example.test/tasks/v1/'),
+    );
 
 final class SuccessfulBrowserFlow implements BrowserAuthorizationFlow {
   const SuccessfulBrowserFlow();
@@ -520,6 +808,31 @@ final class CancelledBrowserFlow implements BrowserAuthorizationFlow {
   );
 }
 
+final class CloseAwareBrowserFlow implements BrowserAuthorizationFlow {
+  final Completer<void> _started = Completer<void>();
+
+  Future<void> get started => _started.future;
+
+  @override
+  Future<Outcome<BrowserAuthorizationCode>> authorize({
+    required AuthorizationUriBuilder buildAuthorizationUri,
+    required AuthorizationCancellation cancellation,
+  }) async {
+    _started.complete();
+    await cancellation.whenCancelled;
+    return const Outcome<BrowserAuthorizationCode>.failure(
+      Failure(
+        code: 'auth.cancelled',
+        category: FailureCategory.authorization,
+        operation: FailureOperation.authorize,
+        retry: RetryClassification.permanent,
+        impact: 'Synthetic authorization was cancelled.',
+        safeSummary: 'Synthetic authorization was cancelled.',
+      ),
+    );
+  }
+}
+
 final class LoopbackAuthorizationBrowser implements BrowserLauncher {
   final Completer<http.Response> _response = Completer<http.Response>();
 
@@ -565,12 +878,37 @@ final class SyntheticIdentityVerifier implements IdentityTokenVerifier {
       );
 }
 
+final class HangingIdentityVerifier implements IdentityTokenVerifier {
+  final Completer<void> _started = Completer<void>();
+  final Completer<Outcome<AccountSubject>> _result =
+      Completer<Outcome<AccountSubject>>();
+
+  Future<void> get started => _started.future;
+
+  @override
+  Future<Outcome<AccountSubject>> verify(
+    String idToken, {
+    required String clientId,
+    String? expectedNonce,
+  }) {
+    if (!_started.isCompleted) _started.complete();
+    return _result.future;
+  }
+
+  @override
+  Future<Outcome<AccountSubject>> resolveSubject(http.Client client) {
+    if (!_started.isCompleted) _started.complete();
+    return _result.future;
+  }
+}
+
 final class MemoryCredentialStore implements CredentialStore {
   MemoryCredentialStore({CredentialBundle? initial, this.failReplace = false})
     : bundle = initial;
 
   CredentialBundle? bundle;
   final bool failReplace;
+  int replaceCalls = 0;
 
   @override
   Future<Outcome<CredentialBundle?>> read() async =>
@@ -578,6 +916,7 @@ final class MemoryCredentialStore implements CredentialStore {
 
   @override
   Future<Outcome<void>> replace(CredentialBundle value) async {
+    replaceCalls += 1;
     if (failReplace) {
       return const Outcome<void>.failure(
         Failure(
@@ -657,6 +996,23 @@ final class StatefulTokenAndTasksEndpoint extends http.BaseClient {
   int tasksCalls = 0;
   bool omitTasksScope = false;
   bool rejectRefresh = false;
+  bool expireAuthorizationCodeAccess = false;
+  bool rotateRefreshToken = false;
+  bool rejectTasksAsUnauthorized = false;
+  bool holdAuthorizationCode = false;
+  bool holdRefresh = false;
+  final Completer<void> _authorizationCodeStarted = Completer<void>();
+  final Completer<void> _authorizationCodeRelease = Completer<void>();
+  final Completer<void> _refreshStarted = Completer<void>();
+  final Completer<void> _refreshRelease = Completer<void>();
+  String _latestAccessToken = 'test-access';
+
+  Future<void> get authorizationCodeStarted => _authorizationCodeStarted.future;
+  Future<void> get refreshStarted => _refreshStarted.future;
+
+  void releaseRefresh() {
+    if (!_refreshRelease.isCompleted) _refreshRelease.complete();
+  }
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
@@ -670,9 +1026,20 @@ final class StatefulTokenAndTasksEndpoint extends http.BaseClient {
       expect(fields['client_id'], 'client.example.test');
       expect(fields['client_secret'], 'credential-canary-client-secret');
       if (fields['grant_type'] == 'authorization_code') {
+        if (!_authorizationCodeStarted.isCompleted) {
+          _authorizationCodeStarted.complete();
+        }
         expect(fields['code'], 'synthetic-code');
         expect(fields['code_verifier'], isNotEmpty);
         expect(fields['redirect_uri'], startsWith('http://127.0.0.1:'));
+      }
+      if (fields['grant_type'] == 'authorization_code' &&
+          holdAuthorizationCode) {
+        await _authorizationCodeRelease.future;
+      }
+      if (fields['grant_type'] == 'refresh_token' && holdRefresh) {
+        if (!_refreshStarted.isCompleted) _refreshStarted.complete();
+        await _refreshRelease.future;
       }
       if (fields['grant_type'] == 'refresh_token' && rejectRefresh) {
         return response('{"error":"invalid_grant"}', 400);
@@ -680,11 +1047,15 @@ final class StatefulTokenAndTasksEndpoint extends http.BaseClient {
       final scopes = omitTasksScope
           ? 'openid'
           : 'openid https://www.googleapis.com/auth/tasks';
+      final isRefresh = fields['grant_type'] == 'refresh_token';
+      _latestAccessToken = isRefresh ? 'test-access-refreshed' : 'test-access';
       final tokenResponse = <String, Object>{
-        'access_token': 'test-access',
-        'refresh_token': 'synthetic-refresh',
+        'access_token': _latestAccessToken,
+        'refresh_token': isRefresh && rotateRefreshToken
+            ? 'rotated-refresh'
+            : 'synthetic-refresh',
         'token_type': 'Bearer',
-        'expires_in': 3600,
+        'expires_in': !isRefresh && expireAuthorizationCodeAccess ? -1 : 3600,
         'scope': scopes,
         if (fields['grant_type'] == 'authorization_code')
           'id_token': 'synthetic-id-token',
@@ -698,8 +1069,23 @@ final class StatefulTokenAndTasksEndpoint extends http.BaseClient {
     if (request.url.host == 'tasks.example.test') {
       tasksCalls += 1;
       ledger.add('tasks.list');
-      expect(request.headers['authorization'], 'Bearer test-access');
-      return response('{"kind":"tasks#taskLists","items":[{}]}', 200);
+      expect(request.headers['authorization'], 'Bearer $_latestAccessToken');
+      if (rejectTasksAsUnauthorized) {
+        return response(
+          '{"error":{"code":401,"errors":[],"message":"synthetic","status":"UNAUTHENTICATED"}}',
+          401,
+          headers: const <String, String>{
+            'www-authenticate': 'Bearer error="invalid_token"',
+          },
+        );
+      }
+      return response(
+        '{"kind":"tasks#taskLists","items":[{"kind":"tasks#taskList",'
+        '"id":"list-1","etag":"list-etag","title":"Synthetic inbox",'
+        '"updated":"2026-08-15T18:30:12.123Z",'
+        '"selfLink":"https://tasks.googleapis.com/tasks/v1/users/@me/lists/list-1"}]}',
+        200,
+      );
     }
     return response('', 404);
   }
@@ -713,6 +1099,20 @@ final class StatefulTokenAndTasksEndpoint extends http.BaseClient {
     status,
     headers: <String, String>{'content-type': 'application/json', ...headers},
   );
+
+  @override
+  void close() {
+    if (holdAuthorizationCode &&
+        _authorizationCodeStarted.isCompleted &&
+        !_authorizationCodeRelease.isCompleted) {
+      _authorizationCodeRelease.completeError(http.ClientException('closed'));
+    }
+    if (holdRefresh &&
+        _refreshStarted.isCompleted &&
+        !_refreshRelease.isCompleted) {
+      _refreshRelease.completeError(http.ClientException('closed'));
+    }
+  }
 }
 
 final class DpopFixture {

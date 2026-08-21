@@ -336,6 +336,7 @@ final class LinuxSecureCredentialStore implements CredentialStore {
     safeSummary:
         'The complete refresh-token and DPoP-key bundle must be replaced by '
         'reauthorization.',
+    authorizationRecovery: AuthorizationRecovery.reauthorize,
   );
 
   Failure _unverifiedMutationFailure(String mutation) => Failure(

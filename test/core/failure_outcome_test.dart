@@ -69,6 +69,21 @@ void main() {
       expect(failure.safeSummary, isNot(contains('credential-canary')));
       expect(failure.sensitiveContext, contains('credential-canary'));
     });
+
+    test('maps rejected grants to explicit reauthorization recovery', () {
+      for (final kind in <AuthorizationAdapterFailureKind>[
+        AuthorizationAdapterFailureKind.noCredentials,
+        AuthorizationAdapterFailureKind.missingScope,
+        AuthorizationAdapterFailureKind.rejected,
+      ]) {
+        expect(
+          mapAuthorizationFailure(
+            AuthorizationAdapterFailure(kind: kind),
+          ).authorizationRecovery,
+          AuthorizationRecovery.reauthorize,
+        );
+      }
+    });
   });
 
   test('Outcome equality distinguishes success and typed failure', () {

@@ -218,6 +218,7 @@ LinuxAuthorization _createAdapter({
   identityVerifier: GoogleIdTokenVerifier(clock: SystemClock()),
   httpClientFactory: http.Client.new,
   clock: SystemClock(),
+  scheduler: SystemClock(),
   randomness: SecureRandomSource(),
   diagnostics: diagnostics,
 );

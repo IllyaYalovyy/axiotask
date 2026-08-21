@@ -417,19 +417,29 @@ Failure of that proof stops dependent work; it does not justify a private
 half-implementation of Google's SDK.
 
 Linux uses the external system browser, Authorization Code flow with PKCE,
-random state, and a loopback redirect on an ephemeral port. It also requests a
-DPoP-bound refresh token: a per-installation P-256 key signs a fresh proof for
-each token exchange/refresh, including Google's returned nonce. Google currently
-keeps resource access tokens as bearer tokens, so DPoP protects refresh-token
-replay rather than changing Tasks API calls. The key and refresh token are kept
-together in secure storage.
+random state, and a loopback redirect on an ephemeral port. The listener ignores
+unrelated requests and closes after a validated callback, cancellation, or a
+five-minute application deadline. Token exchange, refresh, identity-key fetch,
+and UserInfo verification each have a separate 30-second application deadline,
+so a stalled authorization service cannot leave synchronization Pending
+indefinitely. It also requests a DPoP-bound refresh token: a per-installation
+P-256 key signs a fresh proof for each token exchange/refresh, including
+Google's returned nonce. Google currently keeps resource access tokens as
+bearer tokens, so DPoP protects refresh-token replay rather than changing Tasks
+API calls. The key and refresh token are kept together in secure storage.
 
-The `oauth2` package handles grant/credential mechanics behind a DPoP-aware HTTP
-client; a maintained JOSE implementation creates standards-compliant ES256
-proofs. The application owns browser launch, callback validation, nonce/key
-lifecycle, safe cancellation, typed errors, and credential persistence. This
-composition must pass Google endpoint integration tests before adoption.
-Embedded web views and custom URI workarounds are not used.
+The `oauth2` package handles authorization-code and token-refresh credential
+mechanics behind a DPoP-aware token client; it does not dispatch Google Tasks
+resource requests. Axiotask explicitly serializes expiry refresh, durably stores
+any rotated refresh token before identity read-back, and then sends the bearer
+resource request through a raw HTTP client. This keeps a Google Tasks 401
+visible to the strict API adapter and its accepted refresh-once policy. A
+maintained JOSE implementation creates standards-compliant ES256 proofs. The
+application owns browser launch, callback validation, nonce/key lifecycle,
+lifecycle cancellation, typed errors, and credential persistence. The composed
+release path is covered deterministically and the same shipped authorization
+and Tasks adapters pass the opt-in live contract. Embedded web views and custom
+URI workarounds are not used.
 
 On Linux, the refresh token and DPoP private key are stored through
 `flutter_secure_storage` backed by GNOME Secret Service through libsecret.

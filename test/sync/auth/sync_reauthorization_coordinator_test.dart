@@ -55,6 +55,80 @@ void main() {
     expect((await fixture.health()).action, SyncHealthAction.reauthorize);
   });
 
+  test(
+    'missing saved credentials latch Reauthorize instead of dead Connect',
+    () async {
+      final fixture = await _Fixture.create(now, subject, latched: false);
+      addTearDown(fixture.close);
+      fixture.authorization.enqueue(
+        FakeAuthorizationAttempt.restoreRejected(subject, _missingCredentials),
+      );
+
+      await fixture.coordinator.start();
+
+      expect(
+        (await fixture.store.readEligibility(
+          fixture.accountId,
+        )).reauthorizationRequired,
+        isTrue,
+      );
+      expect((await fixture.health()).action, SyncHealthAction.reauthorize);
+      expect(fixture.runner.calls, 0);
+    },
+  );
+
+  test(
+    'retryable authorization infrastructure failure stays Failed with Retry',
+    () async {
+      final fixture = await _Fixture.create(now, subject, latched: false);
+      addTearDown(fixture.close);
+      fixture.authorization.enqueue(
+        FakeAuthorizationAttempt.restoreRequestFailed(
+          subject,
+          _authorizationNetworkFailure,
+        ),
+      );
+
+      await fixture.coordinator.start();
+
+      expect(
+        (await fixture.store.readEligibility(
+          fixture.accountId,
+        )).reauthorizationRequired,
+        isFalse,
+      );
+      final health = await fixture.health();
+      expect(health.outcome, SyncHealthOutcome.failed);
+      expect(health.failureReason, SyncFailureReason.noConnection);
+      expect(health.action, SyncHealthAction.retry);
+      expect(health.diagnosticCode, _authorizationNetworkFailure.code);
+      expect(fixture.runner.calls, 0);
+    },
+  );
+
+  test(
+    'missing configuration stays Failed without an unwired Connect action',
+    () async {
+      final fixture = await _Fixture.create(now, subject, latched: false);
+      addTearDown(fixture.close);
+      fixture.authorization.enqueue(
+        FakeAuthorizationAttempt.restoreRequestFailed(
+          subject,
+          _authorizationConfigurationFailure,
+        ),
+      );
+
+      await fixture.coordinator.start();
+
+      final health = await fixture.health();
+      expect(health.outcome, SyncHealthOutcome.failed);
+      expect(health.failureReason, SyncFailureReason.applicationFailure);
+      expect(health.action, SyncHealthAction.none);
+      expect(health.diagnosticCode, _authorizationConfigurationFailure.code);
+      expect(fixture.runner.calls, 0);
+    },
+  );
+
   test('AUTH-003 cancel preserves latch, cache, and intent', () async {
     final fixture = await _Fixture.create(now, subject, latched: true);
     addTearDown(fixture.close);
@@ -310,4 +384,36 @@ const _terminal = Failure(
   retry: RetryClassification.permanent,
   impact: 'Synthetic authorization requires renewal.',
   safeSummary: 'Synthetic terminal authorization rejection.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
+);
+
+const _missingCredentials = Failure(
+  code: 'auth.credentials_absent',
+  category: FailureCategory.authorization,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.permanent,
+  impact: 'Synthetic authorization is absent.',
+  action: FailureAction.connect,
+  safeSummary: 'Synthetic saved authorization is absent.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
+);
+
+const _authorizationNetworkFailure = Failure(
+  code: 'auth.network_timeout',
+  category: FailureCategory.network,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.transient,
+  impact: 'Synthetic authorization request timed out.',
+  action: FailureAction.retry,
+  safeSummary: 'Synthetic authorization service timeout.',
+);
+
+const _authorizationConfigurationFailure = Failure(
+  code: 'auth.configuration',
+  category: FailureCategory.configuration,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.permanent,
+  impact: 'Synthetic authorization configuration is missing.',
+  action: FailureAction.reviewConfiguration,
+  safeSummary: 'Synthetic authorization configuration failure.',
 );

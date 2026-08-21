@@ -315,8 +315,14 @@ cancel/scope/subject failure, stopped-sync precedence, and matching interactive
 reauthorization followed by Pending full verification. HTTP adapter tests admit
 only the observed malformed-bearer read shape; unknown 401/403 shapes and every
 mutation-side auth-like response remain non-replayed and fail closed. Linux
-authorization contracts retain `invalid_grant`, scope, subject, cancellation,
-DPoP, and secure replacement coverage.
+authorization contracts additionally cover real loopback routing, callback and
+network deadlines under an injected clock, lifecycle cancellation, serialized
+refresh, refresh-token rotation before identity read-back, `invalid_grant`,
+scope, subject, DPoP, secure replacement, and preservation of raw resource 401
+responses. A release-composition test joins first Connect, verified-subject
+account creation, secure credential replacement, restart restore, the shipped
+HTTP adapter, and first successful Tasks verification with zero pre-partition
+Tasks calls.
 
 S20A extends the create engine/store suite with `REL-013`, `API-004`, and
 `CRS-004`–`CRS-007` recovery cases. It covers commit-before-loss and
@@ -731,9 +737,10 @@ probe, and the safe prefix is printed before the first mutation. The separate
 cleanup command requires one exact
 `axiotask-contract-probe-<UTC>-<random>` prefix and confirms zero remaining
 matching lists. The S34A guarded harness covers `webViewLink` presence/shape on
-a disposable ordinary task, but S34A only prepared and deterministically tested
-that harness; the real-Google invocation remains outstanding. Link navigation
-is owned by the final Linux HUMAN approval gate. Adversarial
+a disposable ordinary task. The live S34A run on 2026-08-21 passed through the
+shipped Linux authorization and Tasks adapters and confirmed exact-prefix
+cleanup; raw credentials, identities, task content, and URLs were not retained.
+Link navigation is owned by the final Linux HUMAN approval gate. Adversarial
 platform-authentication and intentional rate-limit generation remain their own
 gates, so this suite makes no synthetic claim for them.
 

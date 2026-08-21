@@ -10,13 +10,27 @@ void main() {
   runApp(SecureStorageProbeApp(instanceName: instanceName));
 }
 
-final class SecureStorageProbeApp extends StatelessWidget {
-  const SecureStorageProbeApp({required this.instanceName, super.key});
+typedef SecureStorageProbeRunner =
+    Future<LinuxSecureStorageProbeResult> Function(String instanceName);
+
+final class SecureStorageProbeApp extends StatefulWidget {
+  const SecureStorageProbeApp({
+    required this.instanceName,
+    this.runner = runLinuxSecureStorageProbe,
+    super.key,
+  });
 
   final String instanceName;
+  final SecureStorageProbeRunner runner;
 
-  Future<LinuxSecureStorageProbeResult> _run() =>
-      runLinuxSecureStorageProbe(instanceName);
+  @override
+  State<SecureStorageProbeApp> createState() => _SecureStorageProbeAppState();
+}
+
+final class _SecureStorageProbeAppState extends State<SecureStorageProbeApp> {
+  late final Future<LinuxSecureStorageProbeResult> _result = widget.runner(
+    widget.instanceName,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +38,7 @@ final class SecureStorageProbeApp extends StatelessWidget {
       home: Scaffold(
         body: Center(
           child: FutureBuilder<LinuxSecureStorageProbeResult>(
-            future: _run(),
+            future: _result,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return const Text(

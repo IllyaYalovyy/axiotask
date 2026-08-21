@@ -142,7 +142,11 @@ final class GoogleTasksAdapterContract {
 
     // API-003/API-004: current writes land, stale task ETags are rejected, and
     // a repeated current write advances the remote version.
-    final firstEtag = _requiredEtag(first);
+    // Creating or positioning another task may rewrite sibling ordering and
+    // therefore invalidate an earlier task representation. Re-read the exact
+    // mutation base instead of treating the creation response as current.
+    final patchBase = _liveTask(await _allTasks(source.id), first.id);
+    final firstEtag = _requiredEtag(patchBase);
     final updated = _expectLiveTask(
       await service.patchTask(
         PatchTaskOperation(
@@ -243,17 +247,31 @@ final class GoogleTasksAdapterContract {
       ),
       'delete replay task creation',
     );
-    for (var attempt = 0; attempt < 2; attempt += 1) {
-      _expectCommitted<void>(
-        await service.deleteTask(
-          DeleteTaskOperation(
-            taskListId: source.id,
-            taskId: deleteReplay.id,
-            etag: _requiredEtag(deleteReplay),
-            pathFreshness: MutationPathFreshness.current,
-          ),
-        ),
-        'repeated task delete',
+    final deleteOperation = DeleteTaskOperation(
+      taskListId: source.id,
+      taskId: deleteReplay.id,
+      etag: _requiredEtag(deleteReplay),
+      pathFreshness: MutationPathFreshness.current,
+    );
+    _expectCommitted<void>(
+      await service.deleteTask(deleteOperation),
+      'task delete',
+    );
+    final deleteReplayResult = await service.deleteTask(deleteOperation);
+    if (deleteReplayResult case RejectedMutation<void>(:final error)) {
+      if (error.kind != GoogleTasksErrorKind.conditional) {
+        throw const GoogleContractAssertionException(
+          'stale task-delete replay had the wrong classification',
+        );
+      }
+    } else {
+      throw const GoogleContractAssertionException(
+        'stale task-delete replay was not rejected',
+      );
+    }
+    if (!_task(await _allTasks(source.id), deleteReplay.id).deleted) {
+      throw const GoogleContractAssertionException(
+        'stale task-delete replay did not preserve the tombstone',
       );
     }
 
@@ -265,13 +283,14 @@ final class GoogleTasksAdapterContract {
       ),
       'destination list creation',
     );
+    final moveBase = _liveTask(await _allTasks(source.id), second.id);
     final moved = _expectLiveTask(
       await service.moveTask(
         MoveTaskOperation(
           sourceTaskListId: source.id,
           destinationTaskListId: destination.id,
-          taskId: second.id,
-          etag: _requiredEtag(second),
+          taskId: moveBase.id,
+          etag: _requiredEtag(moveBase),
           pathFreshness: MutationPathFreshness.current,
         ),
       ),
@@ -283,8 +302,8 @@ final class GoogleTasksAdapterContract {
     final staleDelete = await service.deleteTask(
       DeleteTaskOperation(
         taskListId: source.id,
-        taskId: second.id,
-        etag: _requiredEtag(second),
+        taskId: moveBase.id,
+        etag: _requiredEtag(moveBase),
         pathFreshness: MutationPathFreshness.possiblyStale,
       ),
     );
@@ -317,13 +336,17 @@ final class GoogleTasksAdapterContract {
       ),
       'child creation',
     );
+    final parentCompletionBase = _liveTask(
+      await _allTasks(source.id),
+      parent.id,
+    );
     final completedParent = _expectLiveTask(
       await service.patchTask(
         PatchTaskOperation(
           taskListId: source.id,
-          taskId: parent.id,
-          etag: _requiredEtag(parent),
-          title: parent.title,
+          taskId: parentCompletionBase.id,
+          etag: _requiredEtag(parentCompletionBase),
+          title: parentCompletionBase.title,
           notes: const OptionalFieldWrite<String>.clear(),
           status: RemoteTaskStatus.completed,
           due: const OptionalFieldWrite<RemoteDate>.clear(),
@@ -336,12 +359,13 @@ final class GoogleTasksAdapterContract {
             RemoteTaskStatus.completed) {
       throw StateError('API-005 parent completion did not cascade.');
     }
+    final parentDeleteBase = _liveTask(await _allTasks(source.id), parent.id);
     _expectCommitted<void>(
       await service.deleteTask(
         DeleteTaskOperation(
           taskListId: source.id,
-          taskId: parent.id,
-          etag: _requiredEtag(completedParent),
+          taskId: parentDeleteBase.id,
+          etag: _requiredEtag(parentDeleteBase),
           pathFreshness: MutationPathFreshness.current,
         ),
       ),
@@ -353,13 +377,14 @@ final class GoogleTasksAdapterContract {
       throw StateError('API-005 parent deletion did not retain tombstones.');
     }
 
+    final clearBase = _liveTask(await _allTasks(source.id), first.id);
     final cleared = _expectLiveTask(
       await service.patchTask(
         PatchTaskOperation(
           taskListId: source.id,
-          taskId: first.id,
-          etag: _requiredEtag(replayed),
-          title: replayed.title,
+          taskId: clearBase.id,
+          etag: _requiredEtag(clearBase),
+          title: clearBase.title,
           notes: const OptionalFieldWrite<String>.clear(),
           status: RemoteTaskStatus.needsAction,
           due: const OptionalFieldWrite<RemoteDate>.clear(),
@@ -449,14 +474,37 @@ final class GoogleTasksContractProbeException implements Exception {
   final Object cause;
 
   @override
-  String toString() =>
-      'Google Tasks contract probe failed. '
-      'Cleanup prefix: $cleanupPrefix. Cause: ${cause.runtimeType}.';
+  String toString() {
+    final safeCause = switch (cause) {
+      GoogleContractAssertionException(:final message) => message,
+      _ => cause.runtimeType.toString(),
+    };
+    return 'Google Tasks contract probe failed. '
+        'Cleanup prefix: $cleanupPrefix. Cause: $safeCause.';
+  }
+}
+
+final class GoogleContractAssertionException implements Exception {
+  const GoogleContractAssertionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'GoogleContractAssertionException: $message';
 }
 
 T _expectCommitted<T>(GoogleTasksMutationResult<T> result, String operation) {
   if (result case CommittedMutation<T>(:final value)) return value;
-  throw StateError('$operation did not commit through the Google adapter.');
+  final classification = switch (result) {
+    RejectedMutation<T>(:final error) =>
+      'rejected:${error.kind.name}:${error.failure.code}',
+    UncertainMutation<T>(:final error) =>
+      'uncertain:${error.kind.name}:${error.failure.code}',
+    _ => 'unexpected:${result.runtimeType}',
+  };
+  throw GoogleContractAssertionException(
+    '$operation did not commit through the Google adapter ($classification).',
+  );
 }
 
 RemoteLiveTask _expectLiveTask(

@@ -229,6 +229,9 @@ final class HttpGoogleTasksService
       final failure = _timeoutFailure();
       _recordFailure(resourceType, failure, requestUri: request.url);
       return Outcome<RemoteTaskList?>.failure(failure);
+    } on AuthorizationTransportException catch (error) {
+      _recordFailure(resourceType, error.failure, requestUri: request.url);
+      return Outcome<RemoteTaskList?>.failure(error.failure);
     } on http.ClientException {
       final failure = _transportFailure();
       _recordFailure(resourceType, failure, requestUri: request.url);
@@ -483,6 +486,19 @@ final class HttpGoogleTasksService
         requestBody: requestBody,
       );
       return UncertainMutation<T>(error);
+    } on AuthorizationTransportException catch (exception) {
+      final error = GoogleTasksMutationError(
+        failure: _asWriteFailure(exception.failure),
+        kind: GoogleTasksErrorKind.authorization,
+        commitState: MutationCommitState.notCommitted,
+      );
+      _recordMutationFailure(
+        operation,
+        error,
+        requestUri: request.url,
+        requestBody: requestBody,
+      );
+      return RejectedMutation<T>(error);
     } on http.ClientException {
       final error = _uncertainMutationError(
         'google_tasks.mutation_transport',
@@ -608,6 +624,9 @@ final class HttpGoogleTasksService
       final failure = _timeoutFailure();
       _recordFailure(resourceType, failure, requestUri: request.url);
       return Outcome<RemotePage<T>>.failure(failure);
+    } on AuthorizationTransportException catch (error) {
+      _recordFailure(resourceType, error.failure, requestUri: request.url);
+      return Outcome<RemotePage<T>>.failure(error.failure);
     } on http.ClientException {
       final failure = _transportFailure();
       _recordFailure(resourceType, failure, requestUri: request.url);

@@ -250,16 +250,18 @@ void defineGoogleTasksServiceContract(
         parent.id,
         child.id,
       });
-      expect(
-        await service.deleteTask(
-          DeleteTaskOperation(
-            taskListId: list.id,
-            taskId: parent.id,
-            etag: parent.etag!,
-            pathFreshness: MutationPathFreshness.current,
-          ),
+      final repeatedDelete = await service.deleteTask(
+        DeleteTaskOperation(
+          taskListId: list.id,
+          taskId: parent.id,
+          etag: parent.etag!,
+          pathFreshness: MutationPathFreshness.current,
         ),
-        isA<CommittedMutation<void>>(),
+      );
+      expect(repeatedDelete, isA<RejectedMutation<void>>());
+      expect(
+        (repeatedDelete as RejectedMutation<void>).error.kind,
+        GoogleTasksErrorKind.conditional,
       );
       final afterRepeatedDelete = _success(await service.listTasks(list.id));
       expect(

@@ -24,6 +24,30 @@ final class FakeAuthorizationAttempt {
         Outcome<AccountSubject>.success(subject),
       );
 
+  factory FakeAuthorizationAttempt.restoreRejected(
+    AccountSubject subject,
+    Failure failure,
+  ) => FakeAuthorizationAttempt._(
+    FakeAuthorizationOperation.restore,
+    <AuthorizationState>[
+      AuthorizationRefreshPending(subject),
+      AuthorizationRejected(failure),
+    ],
+    Outcome<AccountSubject>.failure(failure),
+  );
+
+  factory FakeAuthorizationAttempt.restoreRequestFailed(
+    AccountSubject subject,
+    Failure failure,
+  ) => FakeAuthorizationAttempt._(
+    FakeAuthorizationOperation.restore,
+    <AuthorizationState>[
+      AuthorizationRefreshPending(subject),
+      AuthorizationRequestFailed(failure),
+    ],
+    Outcome<AccountSubject>.failure(failure),
+  );
+
   factory FakeAuthorizationAttempt.refreshSuccess(AccountSubject subject) =>
       FakeAuthorizationAttempt._(
         FakeAuthorizationOperation.refresh,

@@ -1,5 +1,6 @@
 import 'package:http/http.dart' as http;
 
+import '../../core/diagnostics/diagnostics.dart';
 import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../data/auth/authorization.dart';
@@ -27,10 +28,32 @@ final class LinuxReadConfiguration {
       clientSecret.isNotEmpty;
 }
 
+typedef LinuxCredentialStoreFactory =
+    CredentialStore Function(String namespace, DiagnosticSink diagnostics);
+
+/// Injectable platform edges for deterministic composition tests.
+///
+/// Release code leaves this absent and therefore constructs the real system
+/// browser, GNOME Secret Service, Google identity verifier, and HTTP client.
+final class LinuxReadTransportDependencies {
+  const LinuxReadTransportDependencies({
+    required this.browserFlow,
+    required this.credentialStoreFactory,
+    required this.identityVerifier,
+    required this.httpClientFactory,
+  });
+
+  final BrowserAuthorizationFlow browserFlow;
+  final LinuxCredentialStoreFactory credentialStoreFactory;
+  final IdentityTokenVerifier identityVerifier;
+  final http.Client Function() httpClientFactory;
+}
+
 Future<ReadSliceTransport> createLinuxReadTransport({
   required AppComposition composition,
   required AccountSubject? configuredSubject,
   required LinuxReadConfiguration configuration,
+  LinuxReadTransportDependencies? dependencies,
 }) async {
   if (!configuration.isValid) {
     return ReadSliceTransport(
@@ -38,26 +61,39 @@ Future<ReadSliceTransport> createLinuxReadTransport({
       googleTasks: const _UnavailableGoogleTasksService(),
     );
   }
+  final browserFlow =
+      dependencies?.browserFlow ??
+      LinuxBrowserFlow(
+        callbackFactory: const HttpLoopbackCallbackFactory(),
+        browserLauncher: const SystemBrowserLauncher(),
+        randomness: composition.randomness,
+        scheduler: composition.scheduler,
+        diagnostics: composition.diagnostics,
+      );
+  final credentialStore =
+      dependencies?.credentialStoreFactory(
+        composition.boundary.storage.secureStorageNamespace,
+        composition.diagnostics,
+      ) ??
+      LinuxSecureCredentialStore(
+        namespace: composition.boundary.storage.secureStorageNamespace,
+        storage: FlutterSecureStorageValueStore(),
+        diagnostics: composition.diagnostics,
+      );
   final authorization = LinuxAuthorization(
     config: LinuxAuthorizationConfig.google(
       clientId: configuration.clientId,
       clientSecret: configuration.clientSecret,
     ),
-    browserFlow: LinuxBrowserFlow(
-      callbackFactory: const HttpLoopbackCallbackFactory(),
-      browserLauncher: const SystemBrowserLauncher(),
-      randomness: composition.randomness,
-      diagnostics: composition.diagnostics,
-    ),
-    credentialStore: LinuxSecureCredentialStore(
-      namespace: composition.boundary.storage.secureStorageNamespace,
-      storage: FlutterSecureStorageValueStore(),
-      diagnostics: composition.diagnostics,
-    ),
+    browserFlow: browserFlow,
+    credentialStore: credentialStore,
     subjectStore: _ConfiguredSubjectStore(configuredSubject),
-    identityVerifier: GoogleIdTokenVerifier(clock: composition.clock),
-    httpClientFactory: http.Client.new,
+    identityVerifier:
+        dependencies?.identityVerifier ??
+        GoogleIdTokenVerifier(clock: composition.clock),
+    httpClientFactory: dependencies?.httpClientFactory ?? http.Client.new,
     clock: composition.clock,
+    scheduler: composition.scheduler,
     randomness: composition.randomness,
     diagnostics: composition.diagnostics,
   );
@@ -96,6 +132,7 @@ final class _ConfiguredSubjectStore implements PinnedSubjectStore {
             impact: 'Google Tasks data cannot be opened for this account.',
             action: FailureAction.connect,
             safeSummary: 'The authenticated account did not match.',
+            authorizationRecovery: AuthorizationRecovery.reauthorize,
           ),
         );
 }

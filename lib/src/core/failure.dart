@@ -27,7 +27,7 @@ enum FailureAction { retry, connect, reviewConfiguration }
 /// Most authorization-looking HTTP responses remain [none]. Only an adapter
 /// contract backed by accepted endpoint evidence may opt a response into the
 /// single refresh-and-repeat path.
-enum AuthorizationRecovery { none, refreshOnce }
+enum AuthorizationRecovery { none, refreshOnce, reauthorize }
 
 sealed class RetryAfter {
   const RetryAfter();

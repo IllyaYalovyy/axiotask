@@ -715,13 +715,12 @@ final class SyncCoordinator
   }
 
   Future<bool> _acceptAuthorizationFailure(Failure failure) async {
-    if (authorization.currentState is AuthorizationRejected) {
+    if (failure.authorizationRecovery == AuthorizationRecovery.reauthorize ||
+        authorization.currentState is AuthorizationRejected) {
       await reauthorizationStore.requireReauthorization(accountId);
       _reauthorizationRequired = true;
     }
-    if (failure.category == FailureCategory.authorization ||
-        failure.category == FailureCategory.configuration ||
-        authorization.currentState is NoTasksAuthorization ||
+    if (_reauthorizationRequired ||
         authorization.currentState is AuthorizationRejected) {
       _emit(_inactiveAuthorization());
       return false;

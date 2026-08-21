@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
+import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/linux/browser_flow.dart';
@@ -39,6 +41,43 @@ void main() {
   });
 
   group('LinuxBrowserFlow', () {
+    test(
+      'real listener ignores unrelated requests before the callback',
+      () async {
+        final listener = await const HttpLoopbackCallbackFactory().bind();
+        addTearDown(listener.close);
+        var callbackObserved = false;
+        unawaited(listener.nextRequest.then((_) => callbackObserved = true));
+
+        final unrelated = await http.get(
+          listener.redirectUri.replace(path: '/favicon.ico'),
+        );
+        expect(unrelated.statusCode, 404);
+        expect(callbackObserved, isFalse);
+
+        final callbackResponse = Completer<http.Response>();
+        unawaited(
+          http
+              .get(
+                listener.redirectUri.replace(
+                  queryParameters: const <String, String>{
+                    'code': 'synthetic-code',
+                    'state': 'synthetic-state',
+                  },
+                ),
+              )
+              .then(
+                callbackResponse.complete,
+                onError: callbackResponse.completeError,
+              ),
+        );
+        final callback = await listener.nextRequest;
+        expect(callback.path, '/oauth2/callback');
+        await listener.respond(CallbackResponse.success);
+        expect((await callbackResponse.future).statusCode, 200);
+      },
+    );
+
     test(
       'uses loopback ephemeral redirect, PKCE S256, state, and nonce',
       () async {
@@ -145,6 +184,22 @@ void main() {
               'code': <String>['one', 'two'],
             },
           ),
+          const CallbackRequest(
+            method: 'GET',
+            path: '/oauth2/callback',
+            queryParameters: <String, List<String>>{
+              'code': <String>['synthetic-code'],
+              'error': <String>['access_denied'],
+            },
+          ),
+          const CallbackRequest(
+            method: 'GET',
+            path: '/oauth2/callback',
+            queryParameters: <String, List<String>>{
+              'code': <String>['synthetic-code'],
+              'error': <String>['access_denied', 'server_error'],
+            },
+          ),
         ];
         for (final request in requests) {
           final listener = FakeCallbackListener();
@@ -239,6 +294,38 @@ void main() {
           (result as Failed<BrowserAuthorizationCode>).failure.code,
           'auth.cancelled',
         );
+        expect(listener.closed, isTrue);
+        expect(listener.lastResponse, isNull);
+      },
+    );
+
+    test(
+      'callback deadline closes the listener without a real-time wait',
+      () async {
+        final listener = FakeCallbackListener();
+        final launcher = RecordingBrowserLauncher();
+        final clock = ManualClock(DateTime.utc(2026, 8, 21));
+        final flow = LinuxBrowserFlow(
+          callbackFactory: FakeCallbackFactory(listener),
+          browserLauncher: launcher,
+          randomness: SequenceRandomSource(List<int>.filled(160, 14)),
+          scheduler: clock,
+        );
+        final future = flow.authorize(
+          buildAuthorizationUri: buildTestAuthorizationUri,
+          cancellation: AuthorizationCancellation(),
+        );
+        await launcher.launched;
+        await listener.waitingForRequest;
+
+        clock.advance(linuxAuthorizationCallbackDeadline);
+        final result = await future;
+
+        expect(
+          (result as Failed<BrowserAuthorizationCode>).failure.code,
+          'auth.callback_timeout',
+        );
+        expect(result.failure.category, FailureCategory.network);
         expect(listener.closed, isTrue);
         expect(listener.lastResponse, isNull);
       },
@@ -387,6 +474,7 @@ final class FakeCallbackListener implements LoopbackCallbackListener {
   FakeCallbackListener({this.failResponse = false, this.failClose = false});
 
   final Completer<CallbackRequest> _request = Completer<CallbackRequest>();
+  final Completer<void> _waitingForRequest = Completer<void>();
   final bool failResponse;
   final bool failClose;
 
@@ -397,7 +485,12 @@ final class FakeCallbackListener implements LoopbackCallbackListener {
   Uri get redirectUri => Uri.parse('http://127.0.0.1:43127/oauth2/callback');
 
   @override
-  Future<CallbackRequest> get nextRequest => _request.future;
+  Future<CallbackRequest> get nextRequest {
+    if (!_waitingForRequest.isCompleted) _waitingForRequest.complete();
+    return _request.future;
+  }
+
+  Future<void> get waitingForRequest => _waitingForRequest.future;
 
   void complete(CallbackRequest request) {
     _request.complete(request);

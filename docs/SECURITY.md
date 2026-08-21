@@ -20,13 +20,25 @@ not selected initially; see [DEPENDENCIES.md](DEPENDENCIES.md) for the tradeoff.
 - Android uses the maintained Flutter Google identity integration and system
   consent UI.
 - Linux uses the system browser, loopback redirect, PKCE S256, cryptographically
-  random state and verifier, exact redirect/state validation, and short-lived
-  callback listeners.
+  random state and verifier, exact redirect/state validation, and a callback
+  listener that closes after success, rejection, cancellation, or a five-minute
+  application deadline. The deadline is an Axiotask resource-safety policy, not
+  a claim about Google's authorization-code lifetime.
 - Linux sender-constrains the long-lived refresh token with DPoP. A
   per-installation P-256 private key is kept in secure storage and signs a unique
   ES256 proof for every authorization-code exchange and refresh, including
   Google's DPoP nonce. The resource access token remains a short-lived bearer
   token as documented by Google.
+- Token exchange, refresh, identity-key fetch, and UserInfo verification each
+  have a 30-second application deadline. Resource requests use an explicitly
+  refreshed bearer credential rather than `oauth2.Client` auto-refresh, so a
+  rotated refresh token is durably replaced before identity read-back and a
+  Google Tasks 401 remains visible to the strict API adapter.
+- Only a missing, revoked, rejected, wrong-scope, wrong-subject, or otherwise
+  unusable saved grant requests Reauthorize. Network, timeout, keyring, and
+  configuration failures remain Failed with their safe diagnostic and an
+  applicable Retry when retryable; they are never presented as proof that
+  authorization is absent or as an unwired Connect action.
 - Embedded web views and custom URI-scheme shortcuts are forbidden.
 - An installed-app client secret is not treated as confidential or as proof of
   client identity.

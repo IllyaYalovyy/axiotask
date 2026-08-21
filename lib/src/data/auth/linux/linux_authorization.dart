@@ -18,6 +18,7 @@ import 'secure_credentials.dart';
 
 const String googleTasksScope = 'https://www.googleapis.com/auth/tasks';
 const String googleOpenIdScope = 'openid';
+const Duration linuxAuthorizationNetworkDeadline = Duration(seconds: 30);
 final Uri _googleJwksEndpoint = Uri.parse(
   'https://www.googleapis.com/oauth2/v3/certs',
 );
@@ -115,9 +116,7 @@ final class GoogleIdTokenVerifier implements IdentityTokenVerifier {
       final subjectValue = claims['sub'];
       final expiryValue = claims['exp'];
       final nonce = claims['nonce'];
-      final audienceMatches =
-          audience == clientId ||
-          (audience is List<dynamic> && audience.contains(clientId));
+      final audienceMatches = audience == clientId;
       final expiry = expiryValue is num
           ? DateTime.fromMillisecondsSinceEpoch(
               expiryValue.toInt() * 1000,
@@ -135,6 +134,10 @@ final class GoogleIdTokenVerifier implements IdentityTokenVerifier {
         return Outcome<AccountSubject>.failure(_identityFailure());
       }
       return Outcome<AccountSubject>.success(AccountSubject(subjectValue));
+    } on http.ClientException {
+      return Outcome<AccountSubject>.failure(_authorizationTransportFailure());
+    } on SocketException {
+      return Outcome<AccountSubject>.failure(_authorizationTransportFailure());
     } catch (_) {
       return Outcome<AccountSubject>.failure(_identityFailure());
     }
@@ -154,6 +157,10 @@ final class GoogleIdTokenVerifier implements IdentityTokenVerifier {
         return Outcome<AccountSubject>.failure(_identityFailure());
       }
       return Outcome<AccountSubject>.success(AccountSubject(subject));
+    } on http.ClientException {
+      return Outcome<AccountSubject>.failure(_authorizationTransportFailure());
+    } on SocketException {
+      return Outcome<AccountSubject>.failure(_authorizationTransportFailure());
     } catch (_) {
       return Outcome<AccountSubject>.failure(_identityFailure());
     }
@@ -236,13 +243,20 @@ final class LinuxAuthorizedSession {
   factory LinuxAuthorizedSession({
     required AccountSubject subject,
     required oauth2.Client client,
+    required DpopTokenClient resourceTransport,
     required DpopKeyPair dpopKey,
-  }) => LinuxAuthorizedSession._(subject, client, dpopKey);
+  }) => LinuxAuthorizedSession._(subject, client, resourceTransport, dpopKey);
 
-  const LinuxAuthorizedSession._(this.subject, this._client, this._dpopKey);
+  const LinuxAuthorizedSession._(
+    this.subject,
+    this._client,
+    this._resourceTransport,
+    this._dpopKey,
+  );
 
   final AccountSubject subject;
   final oauth2.Client _client;
+  final DpopTokenClient _resourceTransport;
   final DpopKeyPair _dpopKey;
 
   http.Client get authenticatedClient => _client;
@@ -260,14 +274,21 @@ final class LinuxAuthorizedHttpClient extends http.BaseClient {
   final LinuxAuthorization _authorization;
 
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) {
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final access = await _authorization._accessTokenForRequest();
+    final String accessToken;
+    switch (access) {
+      case Success<String>(:final value):
+        accessToken = value;
+      case Failed<String>(:final failure):
+        throw AuthorizationTransportException(failure);
+    }
     final session = _authorization._session;
     if (session == null) {
-      return Future<http.StreamedResponse>.error(
-        http.ClientException('Google Tasks authorization is unavailable.'),
-      );
+      throw AuthorizationTransportException(_credentialsAbsentFailure());
     }
-    return session.authenticatedClient.send(request);
+    request.headers[HttpHeaders.authorizationHeader] = 'Bearer $accessToken';
+    return session._resourceTransport.send(request);
   }
 
   @override
@@ -285,19 +306,32 @@ final class LinuxAuthorization implements AuthorizationPort {
     required IdentityTokenVerifier identityVerifier,
     required http.Client Function() httpClientFactory,
     required Clock clock,
+    required MonotonicScheduler scheduler,
     required RandomSource randomness,
     required DiagnosticSink diagnostics,
-  }) => LinuxAuthorization._(
-    config,
-    browserFlow,
-    credentialStore,
-    subjectStore,
-    identityVerifier,
-    httpClientFactory,
-    clock,
-    randomness,
-    diagnostics,
-  );
+    Duration networkDeadline = linuxAuthorizationNetworkDeadline,
+  }) {
+    if (networkDeadline <= Duration.zero) {
+      throw ArgumentError.value(
+        networkDeadline,
+        'networkDeadline',
+        'must be positive',
+      );
+    }
+    return LinuxAuthorization._(
+      config,
+      browserFlow,
+      credentialStore,
+      subjectStore,
+      identityVerifier,
+      httpClientFactory,
+      clock,
+      randomness,
+      diagnostics,
+      scheduler,
+      networkDeadline,
+    );
+  }
 
   LinuxAuthorization._(
     this._config,
@@ -309,6 +343,8 @@ final class LinuxAuthorization implements AuthorizationPort {
     this._clock,
     this._randomness,
     this._diagnostics,
+    this._scheduler,
+    this._networkDeadline,
   );
 
   final LinuxAuthorizationConfig _config;
@@ -320,12 +356,18 @@ final class LinuxAuthorization implements AuthorizationPort {
   final Clock _clock;
   final RandomSource _randomness;
   final DiagnosticSink _diagnostics;
+  final MonotonicScheduler _scheduler;
+  final Duration _networkDeadline;
   final StreamController<AuthorizationState> _states =
       StreamController<AuthorizationState>.broadcast();
+  final Completer<void> _closedSignal = Completer<void>();
 
   AuthorizationState _currentState = const NoTasksAuthorization();
   LinuxAuthorizedSession? _session;
   DpopTokenClient? _activeTokenClient;
+  AuthorizationCancellation? _activeBrowserCancellation;
+  Future<Outcome<LinuxAuthorizedSession>>? _refreshOperation;
+  var _closed = false;
 
   @override
   AuthorizationState get currentState => _currentState;
@@ -338,12 +380,17 @@ final class LinuxAuthorization implements AuthorizationPort {
   Future<Outcome<LinuxAuthorizedSession>> connect({
     AuthorizationCancellation? cancellation,
   }) async {
+    if (_closed) {
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    }
     _emit(const AuthorizationConnecting());
     final key = DpopKeyPair.generate();
     final tokenClient = _createTokenClient(key);
     oauth2.AuthorizationCodeGrant? grant;
+    final browserCancellation = cancellation ?? AuthorizationCancellation();
+    _activeBrowserCancellation = browserCancellation;
     final browserResult = await _browserFlow.authorize(
-      cancellation: cancellation ?? AuthorizationCancellation(),
+      cancellation: browserCancellation,
       buildAuthorizationUri:
           ({
             required Uri redirectUri,
@@ -375,6 +422,9 @@ final class LinuxAuthorization implements AuthorizationPort {
             );
           },
     );
+    if (identical(_activeBrowserCancellation, browserCancellation)) {
+      _activeBrowserCancellation = null;
+    }
     if (browserResult case Failed<BrowserAuthorizationCode>(:final failure)) {
       tokenClient.close();
       if (failure.code == 'auth.cancelled') {
@@ -385,15 +435,29 @@ final class LinuxAuthorization implements AuthorizationPort {
     }
     final code = (browserResult as Success<BrowserAuthorizationCode>).value;
     try {
-      final oauthClient = await grant!.handleAuthorizationResponse(
-        <String, String>{'code': code.code, 'state': code.state},
+      final oauthClient = await _withNetworkDeadline(
+        grant!.handleAuthorizationResponse(<String, String>{
+          'code': code.code,
+          'state': code.state,
+        }),
+        abort: tokenClient.close,
       );
       return _acceptClient(
         oauthClient,
+        tokenClient,
         key,
         expectedNonce: code.nonce,
         pinFirstAuthorization: true,
       );
+    } on _AuthorizationNetworkTimeout {
+      tokenClient.close();
+      return _fail(_networkTimeoutFailure());
+    } on _AuthorizationClosed {
+      tokenClient.close();
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    } on http.ClientException {
+      tokenClient.close();
+      return _fail(_authorizationTransportFailure());
     } on oauth2.AuthorizationException catch (error) {
       tokenClient.close();
       return _fail(_oauthFailure(error, refresh: false));
@@ -407,6 +471,9 @@ final class LinuxAuthorization implements AuthorizationPort {
   }
 
   Future<Outcome<LinuxAuthorizedSession>> restore() async {
+    if (_closed) {
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    }
     final pinnedResult = await _subjectStore.read();
     final AccountSubject pinned;
     switch (pinnedResult) {
@@ -452,13 +519,26 @@ final class LinuxAuthorization implements AuthorizationPort {
     );
     _emit(AuthorizationRefreshPending(pinned));
     try {
-      await oauthClient.refreshCredentials();
+      await _withNetworkDeadline(
+        oauthClient.refreshCredentials(),
+        abort: oauthClient.close,
+      );
       return _acceptClient(
         oauthClient,
+        tokenClient,
         key,
         expectedPinnedSubject: pinned,
         pinFirstAuthorization: false,
       );
+    } on _AuthorizationNetworkTimeout {
+      oauthClient.close();
+      return _fail(_networkTimeoutFailure());
+    } on _AuthorizationClosed {
+      oauthClient.close();
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    } on http.ClientException {
+      oauthClient.close();
+      return _fail(_authorizationTransportFailure());
     } on oauth2.AuthorizationException catch (error) {
       oauthClient.close();
       return _fail(_oauthFailure(error, refresh: true));
@@ -471,15 +551,52 @@ final class LinuxAuthorization implements AuthorizationPort {
     }
   }
 
-  Future<Outcome<LinuxAuthorizedSession>> refresh() async {
+  Future<Outcome<LinuxAuthorizedSession>> refresh() {
+    final existing = _refreshOperation;
+    if (existing != null) return existing;
+    final operation = _refreshOnce();
+    _refreshOperation = operation;
+    unawaited(
+      operation.then<void>(
+        (_) {
+          if (identical(_refreshOperation, operation)) {
+            _refreshOperation = null;
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_refreshOperation, operation)) {
+            _refreshOperation = null;
+          }
+        },
+      ),
+    );
+    return operation;
+  }
+
+  Future<Outcome<LinuxAuthorizedSession>> _refreshOnce() async {
+    if (_closed) {
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    }
     final session = _session;
     if (session == null) {
       return _fail(_credentialsAbsentFailure());
     }
     _emit(AuthorizationRefreshPending(session.subject));
     try {
-      await session._client.refreshCredentials();
+      await _withNetworkDeadline(
+        session._client.refreshCredentials(),
+        abort: () {
+          session._client.close();
+          if (identical(_session, session)) _session = null;
+        },
+      );
       return _validateRefreshedSession(session);
+    } on _AuthorizationNetworkTimeout {
+      return _fail(_networkTimeoutFailure());
+    } on _AuthorizationClosed {
+      return Outcome<LinuxAuthorizedSession>.failure(_closedFailure());
+    } on http.ClientException {
+      return _fail(_authorizationTransportFailure());
     } on oauth2.AuthorizationException catch (error) {
       return _fail(_oauthFailure(error, refresh: true));
     } on FormatException {
@@ -558,6 +675,7 @@ final class LinuxAuthorization implements AuthorizationPort {
 
   Future<Outcome<LinuxAuthorizedSession>> _acceptClient(
     oauth2.Client client,
+    DpopTokenClient resourceTransport,
     DpopKeyPair key, {
     String? expectedNonce,
     AccountSubject? expectedPinnedSubject,
@@ -575,6 +693,13 @@ final class LinuxAuthorization implements AuthorizationPort {
       client.close();
       return _fail(_refreshTokenAbsentFailure());
     }
+    if (expectedPinnedSubject != null) {
+      final persisted = await _persistCredentials(client, key);
+      if (persisted case Failed<void>(:final failure)) {
+        client.close();
+        return _fail(failure);
+      }
+    }
     final Outcome<AccountSubject> identity;
     if (expectedNonce != null) {
       final idToken = credentials.idToken;
@@ -582,13 +707,19 @@ final class LinuxAuthorization implements AuthorizationPort {
         client.close();
         return _fail(_identityFailure());
       }
-      identity = await _identityVerifier.verify(
-        idToken,
-        clientId: _config.clientId,
-        expectedNonce: expectedNonce,
+      identity = await _boundedIdentity(
+        _identityVerifier.verify(
+          idToken,
+          clientId: _config.clientId,
+          expectedNonce: expectedNonce,
+        ),
+        abort: client.close,
       );
     } else {
-      identity = await _identityVerifier.resolveSubject(client);
+      identity = await _boundedIdentity(
+        _identityVerifier.resolveSubject(client),
+        abort: client.close,
+      );
     }
     if (identity case Failed<AccountSubject>(:final failure)) {
       client.close();
@@ -606,22 +737,24 @@ final class LinuxAuthorization implements AuthorizationPort {
         return _fail(failure);
       }
     }
-    final stored = await _credentialStore.replace(
-      CredentialBundle(
-        refreshToken: refreshToken,
-        dpopPrivateKeyJwk: key.privateJwkJson,
-      ),
-    );
-    if (stored case Failed<void>(:final failure)) {
-      client.close();
-      return _fail(failure);
+    if (expectedPinnedSubject == null) {
+      final stored = await _persistCredentials(client, key);
+      if (stored case Failed<void>(:final failure)) {
+        client.close();
+        return _fail(failure);
+      }
     }
     final session = LinuxAuthorizedSession(
       subject: subject,
       client: client,
+      resourceTransport: resourceTransport,
       dpopKey: key,
     );
+    final previousSession = _session;
     _session = session;
+    if (previousSession != null && !identical(previousSession, session)) {
+      previousSession._client.close();
+    }
     _emit(TasksAuthorized(subject));
     return Outcome<LinuxAuthorizedSession>.success(session);
   }
@@ -629,31 +762,99 @@ final class LinuxAuthorization implements AuthorizationPort {
   Future<Outcome<LinuxAuthorizedSession>> _validateRefreshedSession(
     LinuxAuthorizedSession session,
   ) async {
-    final identity = await _identityVerifier.resolveSubject(
-      session.authenticatedClient,
+    final stored = await _persistCredentials(session._client, session._dpopKey);
+    if (stored case Failed<void>(:final failure)) {
+      return _fail(failure);
+    }
+    final identity = await _boundedIdentity(
+      _identityVerifier.resolveSubject(session.authenticatedClient),
+      abort: session._client.close,
     );
     if (identity case Failed<AccountSubject>(:final failure)) {
+      _discardSession(session);
       return _fail(failure);
     }
     final subject = (identity as Success<AccountSubject>).value;
     if (subject != session.subject) {
+      _discardSession(session);
       return _fail(_subjectMismatchFailure());
-    }
-    final refreshToken = session.credentials.refreshToken;
-    if (refreshToken == null) {
-      return _fail(_refreshTokenAbsentFailure());
-    }
-    final stored = await _credentialStore.replace(
-      CredentialBundle(
-        refreshToken: refreshToken,
-        dpopPrivateKeyJwk: session._dpopKey.privateJwkJson,
-      ),
-    );
-    if (stored case Failed<void>(:final failure)) {
-      return _fail(failure);
     }
     _emit(TasksAuthorized(subject));
     return Outcome<LinuxAuthorizedSession>.success(session);
+  }
+
+  Future<Outcome<void>> _persistCredentials(
+    oauth2.Client client,
+    DpopKeyPair key,
+  ) async {
+    final refreshToken = client.credentials.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return Outcome<void>.failure(_refreshTokenAbsentFailure());
+    }
+    return _credentialStore.replace(
+      CredentialBundle(
+        refreshToken: refreshToken,
+        dpopPrivateKeyJwk: key.privateJwkJson,
+      ),
+    );
+  }
+
+  Future<Outcome<AccountSubject>> _boundedIdentity(
+    Future<Outcome<AccountSubject>> operation, {
+    required void Function() abort,
+  }) async {
+    try {
+      return await _withNetworkDeadline(operation, abort: abort);
+    } on _AuthorizationNetworkTimeout {
+      return Outcome<AccountSubject>.failure(_networkTimeoutFailure());
+    } on _AuthorizationClosed {
+      return Outcome<AccountSubject>.failure(_closedFailure());
+    } on http.ClientException {
+      return Outcome<AccountSubject>.failure(_authorizationTransportFailure());
+    }
+  }
+
+  Future<T> _withNetworkDeadline<T>(
+    Future<T> operation, {
+    required void Function() abort,
+  }) {
+    if (_closed) return Future<T>.error(const _AuthorizationClosed());
+    final result = Completer<T>();
+    final timer = _scheduler.schedule(_networkDeadline, () {
+      if (result.isCompleted) return;
+      result.completeError(const _AuthorizationNetworkTimeout());
+      abort();
+    });
+    operation.then<void>(
+      (value) {
+        if (!result.isCompleted) result.complete(value);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!result.isCompleted) result.completeError(error, stackTrace);
+      },
+    );
+    _closedSignal.future.then<void>((_) {
+      if (result.isCompleted) return;
+      result.completeError(const _AuthorizationClosed());
+      abort();
+    });
+    return result.future.whenComplete(timer.cancel);
+  }
+
+  Future<Outcome<String>> _accessTokenForRequest() async {
+    var session = _session;
+    if (session == null) {
+      return Outcome<String>.failure(_credentialsAbsentFailure());
+    }
+    if (session.credentials.isExpired) {
+      switch (await refresh()) {
+        case Success<LinuxAuthorizedSession>(:final value):
+          session = value;
+        case Failed<LinuxAuthorizedSession>(:final failure):
+          return Outcome<String>.failure(failure);
+      }
+    }
+    return Outcome<String>.success(session.credentials.accessToken);
   }
 
   DpopTokenClient _createTokenClient(DpopKeyPair key) {
@@ -672,10 +873,7 @@ final class LinuxAuthorization implements AuthorizationPort {
 
   Outcome<T> _fail<T>(Failure failure) {
     final terminal =
-        failure.code == 'auth.refresh_rejected' ||
-        failure.code == 'auth.dpop_key_rejected' ||
-        failure.code == 'auth.tasks_scope_absent' ||
-        failure.code == 'account.subject_mismatch';
+        failure.authorizationRecovery == AuthorizationRecovery.reauthorize;
     _emit(
       terminal
           ? AuthorizationRejected(failure)
@@ -709,9 +907,35 @@ final class LinuxAuthorization implements AuthorizationPort {
   }
 
   void close() {
-    _session?._client.close();
+    if (_closed) return;
+    _closed = true;
+    _closedSignal.complete();
+    _activeBrowserCancellation?.cancel();
+    _activeBrowserCancellation = null;
+    final session = _session;
+    final activeTokenClient = _activeTokenClient;
+    session?._client.close();
+    _session = null;
+    if (activeTokenClient != null &&
+        !identical(session?._resourceTransport, activeTokenClient)) {
+      activeTokenClient.close();
+    }
+    _activeTokenClient = null;
     unawaited(_states.close());
   }
+
+  void _discardSession(LinuxAuthorizedSession session) {
+    session._client.close();
+    if (identical(_session, session)) _session = null;
+  }
+}
+
+final class _AuthorizationNetworkTimeout implements Exception {
+  const _AuthorizationNetworkTimeout();
+}
+
+final class _AuthorizationClosed implements Exception {
+  const _AuthorizationClosed();
 }
 
 bool _isValidSubject(String value) =>
@@ -725,6 +949,7 @@ Failure _identityFailure() => const Failure(
   impact: 'The authenticated Google identity could not be verified.',
   action: FailureAction.connect,
   safeSummary: 'The authenticated identity token was invalid.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _pinnedSubjectAbsentFailure() => const Failure(
@@ -745,6 +970,7 @@ Failure _subjectMismatchFailure() => const Failure(
   impact: 'No Google Tasks data was read or changed.',
   action: FailureAction.reviewConfiguration,
   safeSummary: 'The authenticated subject does not match the pinned account.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _subjectStoreMissingFailure() => const Failure(
@@ -795,6 +1021,7 @@ Failure _credentialsAbsentFailure() => const Failure(
   impact: 'Google Tasks cannot be synchronized.',
   action: FailureAction.connect,
   safeSummary: 'Saved authorization is absent.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _dpopKeyInvalidFailure() => const Failure(
@@ -805,6 +1032,7 @@ Failure _dpopKeyInvalidFailure() => const Failure(
   impact: 'Saved Google authorization cannot be refreshed.',
   action: FailureAction.connect,
   safeSummary: 'The saved DPoP key is missing or invalid.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _missingScopeFailure(Iterable<String> grantedScopes) => Failure(
@@ -818,6 +1046,7 @@ Failure _missingScopeFailure(Iterable<String> grantedScopes) => Failure(
       'Google sign-in completed, but Google Tasks access was not granted. '
       'Reconnect and select Google Tasks access on the consent screen.',
   sensitiveContext: 'grantedScopes=${grantedScopes.join(',')}',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _refreshTokenAbsentFailure() => const Failure(
@@ -828,6 +1057,7 @@ Failure _refreshTokenAbsentFailure() => const Failure(
   impact: 'Google authorization cannot be restored after restart.',
   action: FailureAction.connect,
   safeSummary: 'Google did not return a refresh token.',
+  authorizationRecovery: AuthorizationRecovery.reauthorize,
 );
 
 Failure _oauthFailure(
@@ -843,17 +1073,19 @@ Failure _oauthFailure(
       impact: 'Google authorization must be renewed.',
       action: FailureAction.connect,
       safeSummary: 'Google terminally rejected the refresh grant.',
+      authorizationRecovery: AuthorizationRecovery.reauthorize,
     );
   }
   if (error.error == 'invalid_dpop_proof') {
     return const Failure(
-      code: 'auth.dpop_key_rejected',
-      category: FailureCategory.authorization,
+      code: 'auth.dpop_proof_rejected',
+      category: FailureCategory.internal,
       operation: FailureOperation.authorize,
       retry: RetryClassification.permanent,
-      impact: 'Saved Google authorization cannot be refreshed.',
-      action: FailureAction.connect,
-      safeSummary: 'Google rejected the DPoP proof.',
+      impact: 'Google authorization cannot proceed safely.',
+      action: FailureAction.reviewConfiguration,
+      safeSummary:
+          'Google rejected the DPoP proof. Review clock and implementation diagnostics.',
     );
   }
   return Failure(
@@ -875,6 +1107,35 @@ Failure _tokenResponseFailure() => const Failure(
   impact: 'Google authorization did not complete.',
   action: FailureAction.retry,
   safeSummary: 'The token response could not be accepted.',
+);
+
+Failure _networkTimeoutFailure() => const Failure(
+  code: 'auth.network_timeout',
+  category: FailureCategory.network,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.transient,
+  impact: 'Google authorization did not complete.',
+  action: FailureAction.retry,
+  safeSummary: 'The Google authorization request timed out after 30 seconds.',
+);
+
+Failure _authorizationTransportFailure() => const Failure(
+  code: 'auth.network',
+  category: FailureCategory.network,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.transient,
+  impact: 'Google authorization did not complete.',
+  action: FailureAction.retry,
+  safeSummary: 'The Google authorization service could not be reached.',
+);
+
+Failure _closedFailure() => const Failure(
+  code: 'auth.closed',
+  category: FailureCategory.internal,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.permanent,
+  impact: 'Google authorization did not complete.',
+  safeSummary: 'The authorization adapter is closed.',
 );
 
 Failure _tasksProbeFailure() => const Failure(
