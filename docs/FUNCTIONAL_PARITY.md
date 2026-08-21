@@ -263,17 +263,23 @@ No row is complete because a neighboring row works. Implementation commits
 must name the parity IDs they advance, and verification evidence must be linked
 from this file or the eventual task/backlog entry before a status changes.
 
-## Stage 5 gate result
+## Linux release-candidate gate (S35L)
 
-All previous `Investigate` items are resolved. Linux desktop implementation is
-substantially complete and the rows above record its current automated,
-platform, opt-in, and human evidence separately. The guarded
-`./scripts/verify_linux_acceptance.sh` command exists, but documentation never
-turns that availability into executed full-gate or human approval evidence; its
-deterministic shell orchestration test is the evidence currently recorded.
-Multi-account UI remains deferred while account partitioning is present from
-schema version 1. Android
-authorization, adaptive device behavior, physical-device evidence, and final
-Android visual/release qualification remain explicitly unverified and sequenced
-after Linux approval. Optional read-only tooling remains isolated test
-infrastructure, not a product feature.
+The S35L candidate is verified by the clean-worktree noninteractive command
+`./scripts/verify_linux_acceptance.sh`: it reruns quality, the deterministic
+deep-sync corpus, all classified non-live Linux integrations, privacy scanning,
+an XDG-isolated synthetic bundle smoke, and configured debug/release builds.
+The curated Fedora goldens and ignored synthetic screenshot runners provide the
+corresponding visual evidence. The rows above link their focused automated and
+visual evidence; this gate is the shared release-level evidence rather than an
+unsupported claim of live Google behavior.
+
+Only **HUMAN task 56** remains for Linux: run
+`./scripts/verify_linux_acceptance.sh --human --live-probes` with the dedicated
+account and explicitly review the production checklist. No approval is implied
+by the noninteractive gate. Multi-account UI remains deferred while account
+partitioning is present from schema version 1. Android authorization, adaptive
+device behavior, physical-device evidence, and final Android visual/release
+qualification remain explicitly unverified and sequenced after Linux approval.
+Optional read-only tooling remains isolated test infrastructure, not a product
+feature.

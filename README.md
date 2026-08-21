@@ -336,7 +336,9 @@ authorization, secure-storage, and cleanup-backed Google contract probes:
 ```
 
 `--live-probes` is rejected without `--human`. These commands are Linux release
-evidence only; Android remains unverified.
+evidence only; Android remains unverified. The live-account/product observation
+is deliberately the remaining evidence for **HUMAN task 56**: do not record
+approval until that checklist has been exercised with the dedicated account.
 
 ## Compile-time application compositions
 

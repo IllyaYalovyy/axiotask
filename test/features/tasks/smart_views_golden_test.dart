@@ -32,6 +32,7 @@ void main() {
         preferencesRepository: const _PreferencesRepository(),
         syncHealthRepository: const _HealthRepository(),
         clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+        refreshRequested: _noopRefresh,
       );
       addTearDown(viewModel.dispose);
 
@@ -87,6 +88,8 @@ void main() {
   }
 }
 
+Future<void> _noopRefresh() async {}
+
 Future<void> _loadFlutterRoboto() async {
   final packageConfig = File('.dart_tool/package_config.json');
   final document = jsonDecode(await packageConfig.readAsString());
@@ -110,6 +113,25 @@ Future<void> _loadFlutterRoboto() async {
   await (FontLoader('GoldenRoboto')..addFont(
         Future<ByteData>.value(
           ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.length),
+        ),
+      ))
+      .load();
+  final iconFile = File(
+    '${flutterRoot.path}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+  );
+  if (!iconFile.existsSync()) {
+    throw StateError(
+      'The locked Flutter SDK Material Icons font is unavailable.',
+    );
+  }
+  final iconBytes = await iconFile.readAsBytes();
+  await (FontLoader('MaterialIcons')..addFont(
+        Future<ByteData>.value(
+          ByteData.view(
+            iconBytes.buffer,
+            iconBytes.offsetInBytes,
+            iconBytes.length,
+          ),
         ),
       ))
       .load();
