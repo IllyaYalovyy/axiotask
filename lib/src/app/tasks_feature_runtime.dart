@@ -15,6 +15,7 @@ import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
 import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
+import '../data/links/url_launcher_adapter.dart';
 import '../data/preferences/device_preferences.dart';
 import '../data/preferences/preferences_repository.dart';
 import '../data/preferences/relational_preferences.dart';
@@ -232,6 +233,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           stopSyncRequested: coordinator.stop,
           resumeSyncRequested: coordinator.resume,
           diagnostics: composition.diagnostics,
+          externalLinkLauncher: const UrlLauncherAdapter(),
         ),
         database: database,
         coordinator: coordinator,

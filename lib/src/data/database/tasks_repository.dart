@@ -1116,6 +1116,7 @@ final class DatabaseTasksRepository
         t.notes AS task_notes,
         t.status AS task_status,
         t.due_epoch_day AS task_due_epoch_day,
+        remote_task.web_view_link AS task_web_view_link,
         (
           SELECT d.desired_previous_task_id
           FROM desired_states d
@@ -1238,6 +1239,9 @@ final class DatabaseTasksRepository
              )
          )
        )
+      LEFT JOIN task_remote_bases remote_task
+        ON remote_task.account_id = t.account_id
+       AND remote_task.task_id = t.id
       WHERE a.id = ?1
       ORDER BY l.id, t.position, t.id
       ''',
@@ -1249,6 +1253,7 @@ final class DatabaseTasksRepository
         _database.accounts,
         _database.taskListCacheRows,
         _database.taskCacheRows,
+        _database.taskRemoteBases,
         _database.scopeCompletenessRows,
         _database.desiredStateRows,
       },
@@ -1397,6 +1402,9 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
           _ => throw const CacheMappingException('unknown_task_status'),
         },
         due: _mapEpochDay(row.readNullable<int>('task_due_epoch_day')),
+        webViewLink: _mapAbsoluteUri(
+          row.readNullable<String>('task_web_view_link'),
+        ),
       ),
     );
     if (row.readNullable<int>('desired_order_sequence') case final sequence?) {
@@ -1415,6 +1423,20 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
     tasks: _projectDesiredOrder(tasks, desiredOrder),
     completeness: completeness,
   );
+}
+
+Uri? _mapAbsoluteUri(String? value) {
+  if (value == null) return null;
+  final Uri? uri;
+  try {
+    uri = Uri.tryParse(value);
+  } on FormatException {
+    throw const CacheMappingException('malformed_task_web_view_link');
+  }
+  if (uri == null || !uri.isAbsolute) {
+    throw const CacheMappingException('malformed_task_web_view_link');
+  }
+  return uri;
 }
 
 List<CachedTask> _projectDesiredOrder(

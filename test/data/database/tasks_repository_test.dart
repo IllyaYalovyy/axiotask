@@ -419,6 +419,13 @@ void main() {
           link: Uri.parse('https://example.invalid/link'),
         ),
       ]);
+      final projected = await repository
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
+      expect(
+        projected.tasks.single.webViewLink,
+        Uri.parse('https://example.invalid/view'),
+      );
     },
   );
 

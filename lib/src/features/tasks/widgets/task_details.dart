@@ -7,6 +7,7 @@ import '../../../domain/model/tasks.dart';
 import '../../../domain/policy/date_workflow.dart';
 import '../../../domain/policy/effective_due.dart';
 import '../../../domain/policy/subtask_progress.dart';
+import '../../../domain/policy/task_links.dart';
 import '../task_detail_view_model.dart';
 
 final class TaskDetailsPane extends StatelessWidget {
@@ -196,6 +197,8 @@ final class TaskDetailsPane extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             TaskNotesSection(notes: task.notes),
+            const SizedBox(height: 18),
+            TaskLinksSection(task: task, viewModel: viewModel),
             if (state.children.isNotEmpty) ...<Widget>[
               const SizedBox(height: 24),
               SubtaskProgressIndicator(progress: state.progress),
@@ -289,6 +292,130 @@ final class TaskDetailsPane extends StatelessWidget {
     );
   }
 }
+
+/// Keeps the Google task page separate from links a user placed in task text.
+///
+/// The Google action is deliberately visible for every task.  Google can omit
+/// its UI link, in which case the unavailable state explains why the action is
+/// disabled rather than suggesting the task has no Google-side capabilities.
+final class TaskLinksSection extends StatefulWidget {
+  const TaskLinksSection({
+    required this.task,
+    required this.viewModel,
+    super.key,
+  });
+
+  final CachedTask task;
+  final TaskDetailViewModel viewModel;
+
+  @override
+  State<TaskLinksSection> createState() => _TaskLinksSectionState();
+}
+
+final class _TaskLinksSectionState extends State<TaskLinksSection> {
+  String? _failureMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final googleTaskLink = TaskLinkPolicy.googleTaskLink(
+      widget.task.webViewLink,
+    );
+    final contentLinks = TaskLinkPolicy.userAuthoredLinks(
+      title: widget.task.title,
+      notes: widget.task.notes,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Google Tasks', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          googleTaskLink == null
+              ? 'Google has not provided a usable link for this task yet.'
+              : 'Open this task in Google Tasks for features not exposed by the API.',
+        ),
+        const SizedBox(height: 8),
+        Semantics(
+          button: true,
+          label: 'Open task in Google Tasks',
+          onTap: googleTaskLink == null
+              ? null
+              : () => unawaited(
+                  _launch(
+                    googleTaskLink,
+                    failureMessage: 'Could not open Google Tasks.',
+                  ),
+                ),
+          child: ExcludeSemantics(
+            child: OutlinedButton.icon(
+              key: const Key('open-in-google-tasks-action'),
+              onPressed: googleTaskLink == null
+                  ? null
+                  : () => _launch(
+                      googleTaskLink,
+                      failureMessage: 'Could not open Google Tasks.',
+                    ),
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Open in Google Tasks'),
+            ),
+          ),
+        ),
+        if (contentLinks.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 18),
+          Text(
+            'Links in task content',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          for (final (index, link) in contentLinks.indexed)
+            Semantics(
+              button: true,
+              label: 'Open external task link: ${_displayLink(link)}',
+              onTap: () => unawaited(
+                _launch(
+                  link,
+                  failureMessage: 'Could not open the external link.',
+                ),
+              ),
+              child: ExcludeSemantics(
+                child: TextButton.icon(
+                  key: Key('task-content-link-$index'),
+                  onPressed: () => _launch(
+                    link,
+                    failureMessage: 'Could not open the external link.',
+                  ),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: Text(_displayLink(link)),
+                ),
+              ),
+            ),
+        ],
+        if (_failureMessage case final message?) ...<Widget>[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: Text(
+              message,
+              key: const Key('task-link-launch-failure'),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _launch(Uri uri, {required String failureMessage}) async {
+    final launched = await widget.viewModel.launchExternalLink(uri);
+    if (!mounted) return;
+    setState(() => _failureMessage = launched ? null : failureMessage);
+  }
+}
+
+String _displayLink(Uri uri) => uri.hasQuery || uri.hasFragment
+    ? '${uri.host}${uri.path}${uri.hasQuery ? '?${uri.query}' : ''}'
+          '${uri.hasFragment ? '#${uri.fragment}' : ''}'
+    : '${uri.host}${uri.path}';
 
 final class TaskNotesSection extends StatelessWidget {
   const TaskNotesSection({required this.notes, super.key});

@@ -11,6 +11,7 @@ import 'package:axiotask/src/data/database/sync_settings_repository.dart';
 import 'package:axiotask/src/data/database/tasks_repository.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/external_link_launcher.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
@@ -50,8 +51,11 @@ void main() {
       remoteId: 'synthetic-detail-parent',
       title: 'Linux detail parent',
       position: '1',
-      notes: 'Original synthetic notes',
+      notes: 'Original synthetic notes https://docs.example.test/linux-detail',
       due: TaskDate(2026, 8, 10),
+      webViewLink: Uri.parse(
+        'https://tasks.google.com/task/synthetic-linux-detail-parent',
+      ),
     );
     final firstChild = await _putTask(
       cache,
@@ -86,7 +90,14 @@ void main() {
       );
     }
 
-    var viewModel = _viewModel(database, repository, account, clock);
+    final launcher = _RecordingExternalLinkLauncher();
+    var viewModel = _viewModel(
+      database,
+      repository,
+      account,
+      clock,
+      externalLinkLauncher: launcher,
+    );
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -103,7 +114,21 @@ void main() {
     await tester.pump();
     expect(find.text('Linux child A'), findsOneWidget);
     expect(find.text('Linux child B'), findsOneWidget);
+    expect(find.text('Open in Google Tasks'), findsOneWidget);
+    expect(find.text('Links in task content'), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('open-in-google-tasks-action')),
+    );
+    await tester.tap(find.byKey(const Key('open-in-google-tasks-action')));
+    await tester.ensureVisible(find.byKey(const Key('task-content-link-0')));
+    await tester.tap(find.byKey(const Key('task-content-link-0')));
+    await tester.pump();
+    expect(launcher.launched, <Uri>[
+      Uri.parse('https://tasks.google.com/task/synthetic-linux-detail-parent'),
+      Uri.parse('https://docs.example.test/linux-detail'),
+    ]);
 
+    await tester.ensureVisible(find.byTooltip('Complete selected task'));
     await tester.tap(find.byTooltip('Complete selected task'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Reopen selected task'), findsOneWidget);
@@ -198,8 +223,10 @@ TasksViewModel _viewModel(
   AppDatabase database,
   DatabaseTasksRepository repository,
   AccountId account,
-  ManualClock clock,
-) => TasksViewModel(
+  ManualClock clock, {
+  ExternalLinkLauncher externalLinkLauncher =
+      const UnavailableExternalLinkLauncher(),
+}) => TasksViewModel(
   accountId: account,
   tasksRepository: repository,
   syncHealthRepository: DatabaseSyncHealthRepository(
@@ -210,6 +237,7 @@ TasksViewModel _viewModel(
     ),
   ),
   clock: clock,
+  externalLinkLauncher: externalLinkLauncher,
 );
 
 Future<TaskId> _putTask(
@@ -222,6 +250,7 @@ Future<TaskId> _putTask(
   String? notes,
   TaskStatus status = TaskStatus.needsAction,
   TaskDate? due,
+  Uri? webViewLink,
 }) async {
   final task = await cache.putTask(
     accountId: account,
@@ -246,6 +275,17 @@ Future<TaskId> _putTask(
     due: due,
     position: position,
     etag: 'etag-$remoteId',
+    webViewLink: webViewLink,
   );
   return task;
+}
+
+final class _RecordingExternalLinkLauncher implements ExternalLinkLauncher {
+  final List<Uri> launched = <Uri>[];
+
+  @override
+  Future<bool> launch(Uri uri) async {
+    launched.add(uri);
+    return true;
+  }
 }

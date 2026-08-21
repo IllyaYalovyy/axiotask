@@ -47,8 +47,9 @@ Requests therefore keep `showAssigned=false`. The product supports a task and
 one subtask level, matching the intended Google Tasks UX; behavior below that
 level is outside product scope and must not influence synchronization design.
 
-Recurring-task configuration is a Google Tasks UI capability, not an Axiotask
-API feature. The `webViewLink` escape hatch for managing recurrence is separate
+Google Tasks UI capabilities, including recurring-task configuration, are not
+Axiotask API features. Every task instead exposes a validated `webViewLink`
+escape hatch to Google Tasks when Google supplies one; this remains separate
 from launching user-authored links in task content.
 
 ## Resource fields
@@ -91,7 +92,7 @@ Source: [Task resource](https://developers.google.com/workspace/tasks/reference/
 | `deleted` | Boolean deletion flag; default `false`. | **Officially documented** | Establishes a task tombstone shape, but not retention or field completeness. |
 | `hidden` | Read-only boolean; true when the task was completed when the list was last cleared. Default `false`. | **Officially documented** | Hidden completed tasks require explicit listing. |
 | `links[]` | Output-only links with `type`, `description`, and `link`. | **Officially documented** | Google-originated links, separate from URLs parsed from task text. |
-| `webViewLink` | Output-only absolute link to the task in Google Tasks Web UI. | **Officially documented** | Potential recurrence-management escape hatch; universal presence is not promised. |
+| `webViewLink` | Output-only absolute link to the task in Google Tasks Web UI. | **Officially documented** | All-task Google UI escape hatch when present; universal presence is not promised. |
 | `assignmentInfo` | Output-only cross-product assignment context. | **Officially documented** | Deliberately excluded from this product with `showAssigned=false`. |
 
 Discovery revision `20260804` exposes no recurrence rule, series identifier,
@@ -186,9 +187,9 @@ evidence for exact Tasks endpoint status codes or conditional behavior.
 | Completion timestamp | `completed` is RFC 3339 and absent for incomplete tasks. | **Officially documented** | Who assigns/clears it and its precision under status transitions are not documented. |
 | Hidden/completed listing | First-party-completed tasks may require both `showCompleted=true` and `showHidden=true`; `clear` makes completed tasks hidden. | **Officially documented** | A default request is not a complete account view. |
 | Web UI link meaning | `webViewLink` is an output-only absolute Google Tasks Web UI link. | **Officially documented** | It is distinct from a user-authored URL in task text. |
-| Web UI link presence/navigation | Google does not promise `webViewLink` is present for every ordinary task or that it opens a recurrence editor directly. | **Unknown** | Recurrence UX needs a current probe, but this does not block core content synchronization. |
+| Web UI link presence/navigation | Google does not promise `webViewLink` is present for every ordinary task or that it opens a recurrence editor directly. | **Unknown** | The all-task action remains visible with an explained unavailable state when absent. P10 remains required only before claiming live navigation coverage. |
 | Recurrence in Google UI | Google Tasks Help documents creating, editing, completing, and deleting repeating tasks in Google Tasks/Calendar; recurring tasks cannot move between task lists. | **Officially documented** | Recurrence exists in the product even though its rule is absent from the public Tasks schema. |
-| Public recurrence contract | Discovery revision `20260804` has no recurrence field or recurrence mutation. Therefore the current public API surface offers no documented way to read or configure the recurrence rule. | **Inference** | Axiotask cannot claim API recurrence support. `webViewLink` is the intended escape hatch, pending link-presence verification. |
+| Public recurrence contract | Discovery revision `20260804` has no recurrence field or recurrence mutation. Therefore the current public API surface offers no documented way to read or configure the recurrence rule. | **Inference** | Axiotask cannot claim API recurrence support. The all-task `webViewLink` action is an optional Google UI escape hatch, pending live link-presence verification. |
 
 Official recurrence source:
 [Manage repeating tasks in Google Tasks and Google Calendar](https://support.google.com/tasks/answer/12132599?co=GENIE.Platform%3DDesktop&hl=en).
@@ -377,7 +378,7 @@ adapter or later UX slice; none permits guessed behavior.
 | Optional writable-field clearing beyond `notes` and `due` | The S07 P12 follow-up proved JSON `null` for the two optional writable fields in Axiotask's supported task-content model. No representation is inferred for a future optional writable field. | `notes`/`due` writes are admitted; any expanded writable model needs its own evidence. |
 | Exact expired/revoked/wrong-scope auth mapping | Only malformed bearer is currently established. S19B uses adapter-proven terminal refresh, scope, and subject facts for durable reauthorization; unknown Tasks HTTP shapes do not become `noAuthorization` by guess. | P11 and platform auth tests gate any expansion of the affected Linux/Android response mapping. |
 | Due encoder implementation | P9 establishes UTC-midnight spelling and the offset hazard. | Adapter contract tests must reproduce P9 before admission. |
-| `webViewLink` presence and recurrence navigation | This does not affect core sync. | P10 gates only the recurrence-management UX slice. |
+| `webViewLink` presence and UI navigation | This does not affect core sync. The all-task action is visible even when Google has not supplied a usable link. | P10 is deferred evidence for a future claim of live Google-UI navigation coverage; it does not gate the all-task action. |
 | Full rate-limit/transient-error matrix | Use reason-aware conservative backoff and show the observed failure immediately. Unknown shapes fail closed. | Quota-safe observation may expand the adapter later; deliberate quota exhaustion is forbidden. |
 | Unexpected/malformed success bodies | Strict decoding fails the affected scope; it never invents server behavior. | Synthetic P12 fixtures gate decoder behavior. |
 

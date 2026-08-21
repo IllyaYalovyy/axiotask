@@ -165,6 +165,8 @@ final class TaskDetailViewModel implements Listenable {
     );
   }
 
+  Future<bool> launchExternalLink(Uri uri) => _tasks.launchExternalLink(uri);
+
   Future<void> moveSelectedUp() {
     final detail = state;
     if (detail == null) return Future<void>.value();

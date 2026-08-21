@@ -151,6 +151,7 @@ final class CachedTask {
     required this.notes,
     required this.status,
     required this.due,
+    this.webViewLink,
   });
 
   final TaskId id;
@@ -162,6 +163,7 @@ final class CachedTask {
   final String? notes;
   final TaskStatus status;
   final TaskDate? due;
+  final Uri? webViewLink;
 
   CachedTask copyWith({
     TaskListId? taskListId,
@@ -170,6 +172,7 @@ final class CachedTask {
     Object? notes = _notProvided,
     TaskStatus? status,
     Object? due = _notProvided,
+    Object? webViewLink = _notProvided,
   }) => CachedTask(
     id: id,
     accountId: accountId,
@@ -182,6 +185,9 @@ final class CachedTask {
     notes: identical(notes, _notProvided) ? this.notes : notes as String?,
     status: status ?? this.status,
     due: identical(due, _notProvided) ? this.due : due as TaskDate?,
+    webViewLink: identical(webViewLink, _notProvided)
+        ? this.webViewLink
+        : webViewLink as Uri?,
   );
 
   @override
@@ -195,7 +201,8 @@ final class CachedTask {
       title == other.title &&
       notes == other.notes &&
       status == other.status &&
-      due == other.due;
+      due == other.due &&
+      webViewLink == other.webViewLink;
 
   @override
   int get hashCode => Object.hash(
@@ -208,6 +215,7 @@ final class CachedTask {
     notes,
     status,
     due,
+    webViewLink,
   );
 }
 

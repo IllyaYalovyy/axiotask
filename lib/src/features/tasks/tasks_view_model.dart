@@ -13,6 +13,8 @@ import '../../domain/model/tasks.dart';
 import '../../domain/policy/bulk_task_operations.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/smart_views.dart';
+import '../../domain/policy/task_links.dart';
+import '../../domain/repository/external_link_launcher.dart';
 import '../../domain/repository/preferences_repository.dart';
 import '../../domain/repository/task_lists_repository.dart';
 import '../../domain/repository/tasks_repository.dart';
@@ -251,6 +253,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.stopSyncRequested,
     this.resumeSyncRequested,
     this.diagnostics,
+    this.externalLinkLauncher = const UnavailableExternalLinkLauncher(),
   }) : clock = clock ?? SystemClock(),
        calendarScheduler =
            calendarScheduler ??
@@ -293,6 +296,7 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function()? stopSyncRequested;
   final Future<void> Function()? resumeSyncRequested;
   final DiagnosticSink? diagnostics;
+  final ExternalLinkLauncher externalLinkLauncher;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
@@ -504,6 +508,20 @@ final class TasksViewModel extends ChangeNotifier {
       clearTaskSelection();
     } else {
       selectTask(parentTaskId);
+    }
+  }
+
+  /// Opens only a URI which has passed the shared HTTP(S) policy.
+  ///
+  /// Google-task links are additionally validated by the detail presentation
+  /// before reaching this common external-launch boundary.
+  Future<bool> launchExternalLink(Uri uri) async {
+    final safeUri = TaskLinkPolicy.safeUserAuthoredLink(uri);
+    if (safeUri == null) return false;
+    try {
+      return await externalLinkLauncher.launch(safeUri);
+    } on Object {
+      return false;
     }
   }
 

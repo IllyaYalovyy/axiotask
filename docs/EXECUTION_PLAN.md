@@ -1116,8 +1116,10 @@ slice.
 
 ### S32A — Add recurrence escape hatch and external links
 
-- **Capability:** Users can manage recurrence through a validated Google
-  `webViewLink` and separately open safe user-authored web links.
+- **Capability:** Every task exposes a validated Google `webViewLink` action
+  when available, so users can reach Google UI capabilities unavailable through
+  the API (including recurrence), and can separately open safe user-authored
+  web links.
 - **Scope / non-goals:** Implement URL policy/launcher port, separate labels, and
   launch failures. Do not simulate recurrence, conflate link types, or
   shell-execute URLs.
@@ -1128,9 +1130,11 @@ slice.
   semantics/accessibility labels.
 - **Verification / visuals:** Unit/adapter/widget/integration/device, quality,
   P10 probe, and actual desktop link states.
-- **Docs / acceptance / gates:** Accept only after current `webViewLink`
-  presence/navigation evidence; absence remains explained. Gates: S23A, S29B,
-  and API P10.
+- **Docs / acceptance / gates:** Accept when every task keeps a distinct,
+  explained Google-UI action; absence/invalidity remains explained and never
+  hides the action. P10 current-link presence/navigation evidence is deferred
+  to S34A and cannot determine whether the all-task action is shown. Gates:
+  S23A and S29B.
 - **Commit / push:** `Add safe task link actions`; push.
 
 ### S32B — Add onboarding, theme, and accessibility polish

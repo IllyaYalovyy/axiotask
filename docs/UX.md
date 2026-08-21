@@ -91,11 +91,13 @@ The product and local model support exactly one subtask level. There is no
 deeper-hierarchy UI. Unexpected deeper API data is not edited, flattened, or
 deleted; it produces a typed unsupported-data failure.
 
-## Recurrence and links
+## Google Tasks UI and links
 
-The Google Tasks API's `webViewLink` powers an explicit **Manage recurrence in
-Google Tasks** action. The copy explains that recurrence is managed by Google's
-UI because the API does not expose its configuration.
+Every task has an explicit **Open in Google Tasks** action backed by a validated
+Google `webViewLink`. It is an escape hatch for task capabilities that Google
+exposes in its UI but not through the public API, including recurrence
+configuration. If Google has not supplied a usable link, the disabled action
+explains that state rather than disappearing.
 
 Valid `http`/`https` links detected in task content are presented separately as
 ordinary external links. Link detection, safety validation, and launch failure

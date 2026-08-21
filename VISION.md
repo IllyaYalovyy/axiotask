@@ -127,9 +127,10 @@ designs are not acceptable substitutes for understanding the problem.
 - Smart views, bulk workflows, search, task details, subtasks, fast date actions,
   and adaptive desktop/mobile interactions remain parity targets unless the
   parity matrix records an intentional change.
-- "Open in Google Tasks" uses Google's task `webViewLink` as an explicit escape
-  hatch for configuring recurrence, which the documented Tasks API cannot read
-  or write.
+- Every task exposes an "Open in Google Tasks" action through Google's task
+  `webViewLink` as an explicit escape hatch to UI capabilities the documented
+  API cannot read or write, including recurrence configuration. Missing or
+  invalid links stay visibly unavailable rather than hiding the action.
 - Opening valid web links found in task content is a separate convenience and
   must not be conflated with the Google Tasks recurrence escape hatch.
 - Synchronization can be stopped and resumed without deleting authorization,

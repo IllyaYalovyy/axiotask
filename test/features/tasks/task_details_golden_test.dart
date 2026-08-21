@@ -51,6 +51,16 @@ void main() {
           '../../goldens/linux/task_details_long_${brightness.name}.png',
         ),
       );
+
+      await tester.ensureVisible(find.byKey(const Key('task-content-link-0')));
+      await tester.pump();
+
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile(
+          '../../goldens/linux/task_details_content_links_${brightness.name}.png',
+        ),
+      );
     });
   }
 }
@@ -104,7 +114,7 @@ final class _TasksRepository implements TasksRepository {
           title: 'Synthetic archive',
         ),
       ],
-      tasks: const <CachedTask>[
+      tasks: <CachedTask>[
         CachedTask(
           id: TaskId(11),
           accountId: AccountId(1),
@@ -117,9 +127,13 @@ final class _TasksRepository implements TasksRepository {
               'Keep multiline text exact and readable.\n'
               'Task text stays plain: <b>not markup</b>.\n'
               'The detail pane scrolls for longer content.\n'
+              'Read https://docs.example.test/task-details for synthetic help.\n'
               'No real account or personal data is present.',
           status: TaskStatus.needsAction,
           due: null,
+          webViewLink: Uri.parse(
+            'https://tasks.google.com/task/synthetic-detail-parent',
+          ),
         ),
         CachedTask(
           id: TaskId(12),

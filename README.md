@@ -563,6 +563,9 @@ flutter test test/domain/effective_due_test.dart
 flutter test test/domain/smart_views_test.dart
 flutter test test/domain/subtask_progress_test.dart
 flutter test test/domain/date_workflow_policy_test.dart
+flutter test test/domain/task_links_test.dart
+flutter test test/data/links/url_launcher_adapter_test.dart
+flutter test test/features/tasks/task_links_widget_test.dart
 flutter test test/data/database/due_cascade_repository_test.dart
 flutter test test/sync/health/sync_health_test.dart
 flutter test test/sync/read_sync_engine_test.dart
