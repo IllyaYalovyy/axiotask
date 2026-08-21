@@ -192,7 +192,22 @@ void main() {
       expect(find.text('Sync stopped'), findsWidgets);
       expect(find.text('2 unresolved'), findsOneWidget);
       expect(find.text('Offline renamed list'), findsWidgets);
-      expect(find.text('Updated offline task'), findsOneWidget);
+      // The offline edit completes the task. Completed tasks are hidden by the
+      // default view preference, but the full desired record must already be
+      // durable before synchronization resumes.
+      expect(find.text('Updated offline task'), findsNothing);
+      expect(find.text('0 cached tasks'), findsOneWidget);
+      expect(find.text('No cached tasks in this list'), findsOneWidget);
+      final offline = await tasks
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
+      final offlineTask = offline.tasks.singleWhere(
+        (task) => task.id == taskId,
+      );
+      expect(offlineTask.title, 'Updated offline task');
+      expect(offlineTask.notes, isNull);
+      expect(offlineTask.status, TaskStatus.completed);
+      expect(offlineTask.due, isNull);
 
       await coordinator.resume();
       await coordinator.whenIdle;
