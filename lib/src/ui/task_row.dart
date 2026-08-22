@@ -27,6 +27,28 @@ import '../model/dates.dart';
 import 'date_format.dart';
 import 'url_detect.dart';
 
+/// The background wash a row carries while ITS task is the one the detail panel
+/// currently shows (#221). Deliberately a SECONDARY tonal tint — the same
+/// "this is the current one" role the sidebar's selected view already wears,
+/// and a different hue family from [multiSelectWash], with no accent bar — so
+/// "this is what the detail is showing" can never be misread as "this is
+/// picked for a bulk op". Painted with no border and no padding, so it costs no
+/// row geometry (the #168 no-reflow class).
+///
+/// The alpha differs by brightness so the wash reads the SAME distance from the
+/// page in both themes: in the light scheme secondaryContainer already sits a
+/// hair off the surface, so it is used neat; in the dark scheme it is far
+/// lighter than the surface, so it is thinned to land the same step away
+/// (undiluted it would be a bold band, at the light theme's alpha it would be a
+/// near-invisible tint).
+Color openDetailWash(ColorScheme scheme) => scheme.secondaryContainer
+    .withValues(alpha: scheme.brightness == Brightness.dark ? 0.42 : 1.0);
+
+/// The background wash of a MULTI-SELECTED row — a primary tint that pairs with
+/// the left accent bar drawn in the same [ColorScheme.primary] (BulkOps).
+Color multiSelectWash(ColorScheme scheme) =>
+    scheme.primary.withValues(alpha: 0.08);
+
 /// Whether [platform] is a touch-primary platform — a coarse pointer with no
 /// hover and no secondary-tap (Android/iOS/Fuchsia). There the "⋯" overflow is
 /// the ONLY route to a row's context actions, so [TaskRow] renders it at EVERY
@@ -65,6 +87,7 @@ class TaskRow extends StatefulWidget {
     this.onOpenUrl,
     this.selected = false,
     this.selectionActive = false,
+    this.openInDetail = false,
     this.onSelectToggle,
     this.onContextMenu,
     this.onShowActions,
@@ -129,6 +152,12 @@ class TaskRow extends StatefulWidget {
   /// Whether this row is part of the current multi-select — draws the left
   /// accent bar and a tinted background (BulkOps).
   final bool selected;
+
+  /// Whether the detail panel is currently showing THIS task (#221) — draws the
+  /// [openDetailWash] so the list↔detail link is visible in the two-pane
+  /// layout. Driven by the router-derived selection, so it follows the detail
+  /// through every entry path; [selected] outranks it when both apply.
+  final bool openInDetail;
 
   /// Whether a multi-select is currently active anywhere in the list (at least
   /// one row selected). On a touch platform this flips a plain body tap from
@@ -630,20 +659,33 @@ class _TaskRowState extends State<TaskRow> {
     );
 
     // A selected row gets a left accent bar and a tinted wash so a multi-select
-    // reads at a glance (BulkOps). The right-click surface wraps the whole row
-    // so a secondary tap anywhere opens the context menu (desktop). Both are
-    // out of the row's default render, so the clean-state golden is unchanged.
-    final decorated = widget.selected
-        ? DecoratedBox(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.08),
-              border: Border(
-                left: BorderSide(color: theme.colorScheme.primary, width: 3),
-              ),
-            ),
-            child: content,
-          )
-        : content;
+    // reads at a glance (BulkOps); the row the DETAIL is showing gets the
+    // quieter [openDetailWash] instead, so the two-pane list↔detail link is
+    // visible without ever competing with a bulk-op selection — multi-select
+    // wins when a row is both. The right-click surface wraps the whole row so a
+    // secondary tap anywhere opens the context menu (desktop). Every one of
+    // these is out of the row's default render, so the clean-state golden is
+    // unchanged, and neither wash pads or insets, so the row's height and the
+    // content's position are identical washed or not (#168 no-reflow).
+    final Widget decorated;
+    if (widget.selected) {
+      decorated = DecoratedBox(
+        decoration: BoxDecoration(
+          color: multiSelectWash(theme.colorScheme),
+          border: Border(
+            left: BorderSide(color: theme.colorScheme.primary, width: 3),
+          ),
+        ),
+        child: content,
+      );
+    } else if (widget.openInDetail) {
+      decorated = DecoratedBox(
+        decoration: BoxDecoration(color: openDetailWash(theme.colorScheme)),
+        child: content,
+      );
+    } else {
+      decorated = content;
+    }
 
     // Secondary-tap (right-click) opens the desktop context menu anywhere on the
     // row; touch selection is the long-press bound by _wrapTouchGestures below.

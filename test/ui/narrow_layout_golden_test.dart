@@ -62,8 +62,11 @@ const _myTasks = StoredTaskList(
 );
 
 /// The real shell at [size] with task 'A' open in the REAL detail pane — the
-/// widget each collapsed-state golden captures.
-Widget _shellWithDetail(Size size) => MediaQuery(
+/// widget each collapsed-state golden captures. Task 'A' is also the row the
+/// open-in-detail wash lands on (#221), so the side-by-side scenarios pin that
+/// highlight in BOTH brightnesses; the collapsed scenario covers the list
+/// entirely, so it pins that the wash is absent there.
+Widget _shellWithDetail(Size size, {ThemeData? theme}) => MediaQuery(
   data: MediaQueryData(size: size),
   child: ProviderScope(
     overrides: [
@@ -72,7 +75,9 @@ Widget _shellWithDetail(Size size) => MediaQuery(
       listsProvider.overrideWith((ref) => Stream.value(const [_myTasks])),
     ],
     child: Theme(
-      data: buildLightTheme().copyWith(platform: TargetPlatform.linux),
+      data: (theme ?? buildLightTheme()).copyWith(
+        platform: TargetPlatform.linux,
+      ),
       child: ListDetailScaffold(
         sidebar: Sidebar(
           selectedViewId: SmartView.all.id,
@@ -145,6 +150,11 @@ void main() {
           name: 'side-by-side',
           constraints: BoxConstraints.tight(sideBySide),
           child: _shellWithDetail(sideBySide),
+        ),
+        GoldenTestScenario(
+          name: 'side-by-side · dark',
+          constraints: BoxConstraints.tight(sideBySide),
+          child: _shellWithDetail(sideBySide, theme: buildDarkTheme()),
         ),
       ],
     ),
