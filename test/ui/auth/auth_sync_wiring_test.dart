@@ -3,8 +3,9 @@
 // over a fake token provider and the in-memory fake API.
 //
 // These assert what the USER SEES: the footer's primary affordance and status
-// phrase before and after sign-in, and that a pull-to-refresh actually reaches
-// the (fake) server when a session is live — never "a method was called".
+// phrase before and after sign-in, that a FAILED sign-in gesture says so out
+// loud (#212), and that a pull-to-refresh actually reaches the (fake) server
+// when a session is live — never "a method was called".
 
 import 'dart:io';
 
@@ -14,12 +15,14 @@ import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
+import 'package:axiotask/src/auth/auth_error.dart';
 import 'package:axiotask/src/auth/token_provider.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
+import 'package:axiotask/src/ui/toast.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +30,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../detail_harness.dart' show FakeBackend, list, row;
+import '../toast_harness.dart' show wrapWithToast;
 
 void main() {
   late Directory tmp;
@@ -68,7 +72,12 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: runtime.overrides,
-        child: const MaterialApp(home: Scaffold(body: SidebarAuthSyncFooter())),
+        // The REAL toast overlay, bound to the ambient controller — the surface
+        // a failed sign-in gesture must reach (#212).
+        child: MaterialApp(
+          builder: wrapWithToast,
+          home: const Scaffold(body: SidebarAuthSyncFooter()),
+        ),
       ),
     );
     await settle(tester);
@@ -112,6 +121,85 @@ void main() {
     // Sign-in kicked off a first sync, so the status reads "Synced …".
     expect(find.textContaining('Synced'), findsOneWidget);
     expect(runtime.scheduler.status.totalSyncs, 1);
+  });
+
+  testWidgets('a sign-in that fails with a provider outage says so out loud', (
+    tester,
+  ) async {
+    // Play Services down / no network: the gesture cannot succeed and the user
+    // did NOT cancel it, so an inert button is a defect (#212).
+    final runtime = await makeRuntime(
+      tokenProvider: FakeTokenProvider.unavailable(
+        'SERVICE_DISABLED: com.google.android.gms raw detail',
+      ),
+    );
+    await pumpFooter(tester, runtime);
+
+    await tester.tap(find.byKey(const Key('auth-footer-signin')));
+    await settle(tester);
+
+    // ONE error toast, in words the user can act on.
+    expect(find.byType(ToastCard), findsOneWidget);
+    expect(
+      find.text(
+        "Couldn't sign in — Google sign-in is unavailable right now. "
+        'Check your connection and try again.',
+      ),
+      findsOneWidget,
+    );
+    // The provider's raw text never reaches the screen (#131/#187).
+    expect(find.textContaining('SERVICE_DISABLED'), findsNothing);
+    expect(find.textContaining('gms'), findsNothing);
+    // The failed gesture left the state exactly as it was (invariant #6).
+    expect(find.text('Sign in with Google'), findsOneWidget);
+    expect(find.text('Offline'), findsOneWidget);
+
+    // Let the toast lapse so no auto-dismiss timer outlives the test.
+    await tester.pump(kErrorToastDuration);
+  });
+
+  testWidgets('a cancelled sign-in stays silent — no toast', (tester) async {
+    // The user closed the account picker / never granted the scope: they know
+    // what happened, so feedback would be noise (#212).
+    final runtime = await makeRuntime(
+      tokenProvider: FakeTokenProvider.needsInteraction(),
+    );
+    await pumpFooter(tester, runtime);
+
+    await tester.tap(find.byKey(const Key('auth-footer-signin')));
+    await settle(tester);
+
+    expect(find.byType(ToastCard), findsNothing);
+    expect(find.text('Sign in with Google'), findsOneWidget);
+    expect(find.text('Offline'), findsOneWidget);
+  });
+
+  testWidgets('a sign-in the OAuth flow rejects says so out loud', (
+    tester,
+  ) async {
+    // The desktop loopback flow came back denied/mismatched: not a cancelled
+    // picker, so the user is owed an answer (#212).
+    final runtime = await makeRuntime(
+      tokenProvider: _ThrowingTokenProvider(
+        const AuthStateMismatch('oauth state mismatch: nonce=abc123'),
+      ),
+    );
+    await pumpFooter(tester, runtime);
+
+    await tester.tap(find.byKey(const Key('auth-footer-signin')));
+    await settle(tester);
+
+    expect(find.byType(ToastCard), findsOneWidget);
+    expect(
+      find.text("Couldn't sign in with Google. The details are in the log."),
+      findsOneWidget,
+    );
+    // The OAuth detail (which can carry a nonce/URL) stays in the log.
+    expect(find.textContaining('nonce'), findsNothing);
+    expect(find.textContaining('mismatch'), findsNothing);
+    expect(find.text('Sign in with Google'), findsOneWidget);
+
+    await tester.pump(kErrorToastDuration);
   });
 
   testWidgets('the footer Sync button runs a real sync when authed', (
@@ -218,3 +306,17 @@ void main() {
 }
 
 void _noop(String _) {}
+
+/// A [TokenProvider] whose interactive gesture always fails with [error] — the
+/// shapes [FakeTokenProvider] cannot produce (an OAuth-flow [AuthException]).
+class _ThrowingTokenProvider implements TokenProvider {
+  _ThrowingTokenProvider(this.error);
+
+  final Exception error;
+
+  @override
+  Future<String> authorize({required bool interactive}) async => throw error;
+
+  @override
+  Future<void> signOut() async {}
+}

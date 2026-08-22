@@ -12,6 +12,7 @@
 // written to the log at the call site.
 
 import '../app/command_watchdog.dart' show CommandTimeoutError;
+import '../auth/token_provider.dart';
 
 /// Fragments of messages WE author to explain a refusal — the allowlist. Each
 /// is distinctive to an authored message, never a generic word a raw error
@@ -91,4 +92,33 @@ String commandUserMessage(String family, Object error) {
   if (_isUserAuthored(msg)) return msg;
   return "Couldn't ${familyAction(family)} — a local error occurred. "
       'The details are in the log.';
+}
+
+/// The user-facing sentence for a FAILED interactive sign-in gesture, or null
+/// when the failure needs NO feedback (#212).
+///
+/// A user-initiated gesture that fails must say so — logging alone is invisible
+/// on Android (`Log` writes through `dart:developer`), which is what made a
+/// config error or a Play Services outage look like an inert Sign-in button.
+/// The one exception is the failure the user themselves caused: closing the
+/// account picker / declining the scope raises
+/// [TokenProviderInteractionRequired], and they need no toast to tell them what
+/// they just did.
+///
+/// Classification is by error TYPE, never by matching the error's text: a
+/// provider message can carry the signed-in account, a request URL, or raw
+/// Play-Services detail, and none of it may reach a toast (#131/#187). The full
+/// typed error is written to the log at the call site.
+String? signInUserMessage(Object error) {
+  if (error is TokenProviderInteractionRequired) return null;
+  if (error is TokenProviderUnavailable) {
+    // Transient and actionable — say which half is down and what to try, so the
+    // user does not read it as "this app is broken".
+    return "Couldn't sign in — Google sign-in is unavailable right now. "
+        'Check your connection and try again.';
+  }
+  // An OAuth-flow rejection (AuthException: denied consent, state mismatch,
+  // no refresh token, timeout) or anything unclassified: the user cannot act on
+  // the detail, so they get the calm sentence and the log keeps the specifics.
+  return "Couldn't sign in with Google. The details are in the log.";
 }

@@ -37,6 +37,8 @@ import '../auth/token_provider.dart';
 import '../store/store.dart';
 import '../sync/sync_error.dart';
 import '../ui/auth/sidebar_auth_sync_footer.dart';
+import '../ui/toast.dart';
+import '../ui/user_message.dart';
 import 'commands.dart';
 import 'config_controller.dart';
 import 'logging.dart';
@@ -125,7 +127,12 @@ class AuthSyncRuntime {
     syncStatusStreamProvider.overrideWith((ref) => _syncStatuses()),
     refreshActionProvider.overrideWithValue(refresh),
     freshSyncActionProvider.overrideWithValue(freshSync),
-    signInActionProvider.overrideWithValue(_signInAction),
+    // Built from the scope's Ref so the gesture can raise a toast on the ONE
+    // feedback surface the UI already renders (#212) — a failed sign-in must
+    // never be a silent no-op.
+    signInActionProvider.overrideWith(
+      (ref) => _signInAction(ref.read(toastControllerProvider)),
+    ),
     signOutActionProvider.overrideWithValue(_signOutAction),
     sidebarFooterProvider.overrideWithValue(const SidebarAuthSyncFooter()),
     // Mount THE mutation-triggering Commands (#209): without this override the
@@ -238,10 +245,28 @@ class AuthSyncRuntime {
     }
   }
 
-  VoidCallback get _signInAction =>
-      () => unawaited(_guarded(signIn, 'sign-in'));
+  VoidCallback _signInAction(ToastController toasts) =>
+      () => unawaited(_guardedSignIn(toasts));
   VoidCallback get _signOutAction =>
       () => unawaited(_guarded(signOut, 'sign-out'));
+
+  // The sign-in gesture is USER-INITIATED, so its failure needs an answer the
+  // user can see: `Log.warn` alone is invisible on Android (dart:developer
+  // only) and left a config error or a GMS outage looking like an inert button
+  // (#212). A failure the user themselves caused — they closed the account
+  // picker — stays silent; [signInUserMessage] draws that line and yields a
+  // sentence classified from the error TYPE, so raw provider text (which can
+  // carry account identifiers or a request URL) reaches the log only, never a
+  // toast (#131/#187).
+  Future<void> _guardedSignIn(ToastController toasts) async {
+    try {
+      await signIn();
+    } catch (e) {
+      Log.warn('sign-in failed: $e');
+      final message = signInUserMessage(e);
+      if (message != null) toasts.showError(message);
+    }
+  }
 
   // The footer/Account buttons are VoidCallbacks; a cancelled/denied gesture or
   // a transient outage must never surface as an unhandled async error — log it

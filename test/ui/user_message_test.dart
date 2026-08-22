@@ -10,6 +10,8 @@
 // log" sentence. These assert exactly what reaches the toast.
 
 import 'package:axiotask/src/app/command_watchdog.dart';
+import 'package:axiotask/src/auth/auth_error.dart';
+import 'package:axiotask/src/auth/token_provider.dart';
 import 'package:axiotask/src/ui/user_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -142,6 +144,52 @@ void main() {
       expect(msg, contains('sync_now'));
       expect(msg.toLowerCase(), contains('taking too long'));
       expect(msg.toLowerCase(), contains('still responsive'));
+    });
+  });
+
+  group('signInUserMessage — the sign-in gesture answers back (#212)', () {
+    test('a cancelled/never-granted gesture asks for no feedback', () {
+      // The user closed the account picker: they already know. A toast here
+      // would scold them for their own choice.
+      expect(
+        signInUserMessage(const TokenProviderInteractionRequired()),
+        isNull,
+      );
+    });
+
+    test('a provider outage names the outage, never its raw text', () {
+      final msg = signInUserMessage(
+        const TokenProviderUnavailable(
+          'SERVICE_DISABLED: com.google.android.gms account=user@example.com',
+        ),
+      );
+      expect(msg, isNotNull);
+      expect(msg, contains('unavailable'));
+      expect(msg!, isNot(contains('SERVICE_DISABLED')));
+      expect(msg, isNot(contains('gms')));
+      expect(msg, isNot(contains('@example.com')));
+    });
+
+    test('an OAuth-flow rejection is redacted to the log sentence', () {
+      final msg = signInUserMessage(
+        const AuthStateMismatch('state mismatch: sent=abc got=xyz'),
+      );
+      expect(msg, isNotNull);
+      expect(msg!.toLowerCase(), contains('log'));
+      expect(msg, isNot(contains('abc')));
+      expect(msg, isNot(contains('mismatch')));
+    });
+
+    test('an unexpected error still reaches the user, redacted', () {
+      // Anything the gesture can throw that we never classified — the user must
+      // not be left staring at an inert button (#212).
+      final msg = signInUserMessage(
+        Exception('sql: UNIQUE constraint failed: tokens.id'),
+      );
+      expect(msg, isNotNull);
+      expect(msg!.toLowerCase(), contains('log'));
+      expect(msg, isNot(contains('UNIQUE')));
+      expect(msg.toLowerCase(), isNot(contains('sql')));
     });
   });
 }
