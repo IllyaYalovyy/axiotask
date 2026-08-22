@@ -17,6 +17,7 @@ import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
+import 'package:axiotask/src/features/tasks/widgets/task_details.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter/gestures.dart';
@@ -267,7 +268,7 @@ void main() {
 
     await tester.tap(find.text('Cached parent'));
     await tester.pump();
-    final addSubtask = find.widgetWithText(OutlinedButton, 'Add subtask');
+    final addSubtask = find.widgetWithText(TextButton, 'Add subtask');
     await tester.ensureVisible(addSubtask);
     await tester.tap(addSubtask);
     await tester.pumpAndSettle();
@@ -284,7 +285,9 @@ void main() {
 
     await tester.tap(find.text('Cached child'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Change parent'));
+    await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change parent'));
     await tester.pumpAndSettle();
     await tester.tap(
       find.descendant(
@@ -297,7 +300,9 @@ void main() {
     expect(reparent.taskId, const TaskId(12));
     expect(reparent.parentTaskId, const TaskId(13));
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Promote'));
+    await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Promote to task'));
     await tester.pump();
     expect(fixture.tasks.applied.last, isA<PromoteTaskCommand>());
     expect(
@@ -307,7 +312,9 @@ void main() {
 
     await tester.tap(find.text('Leaf task'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Make subtask'));
+    await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Make subtask'));
     await tester.pumpAndSettle();
     await tester.tap(
       find.descendant(
@@ -544,6 +551,59 @@ void main() {
     );
     expect(find.byKey(const Key('task-detail-scroll-view')), findsOneWidget);
   });
+
+  testWidgets(
+    'compact inspector keeps one due control and lower actions reachable',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 480);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _detailSnapshot,
+      );
+      addTearDown(fixture.dispose);
+      fixture.viewModel.start();
+      final detail = TaskDetailViewModel.fromTasks(fixture.viewModel);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AnimatedBuilder(
+              animation: detail,
+              builder: (context, _) =>
+                  TaskDetailsPane(viewModel: detail, compact: true),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Select a cached task to view details'), findsOneWidget);
+      expect(
+        find.byKey(const Key('task-detail-empty-scroll-view')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      fixture.viewModel.selectTask(const TaskId(21));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Status'), findsOneWidget);
+      expect(find.text('Due'), findsOneWidget);
+      expect(find.text('Notes'), findsOneWidget);
+      expect(find.text('Google Tasks'), findsOneWidget);
+      expect(find.text('Subtasks'), findsOneWidget);
+      expect(find.byKey(const Key('task-detail-due-action')), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Choose date'), findsNothing);
+
+      final inspector = find.byKey(const Key('task-detail-scroll-view'));
+      await tester.drag(inspector, const Offset(0, -1200));
+      await tester.pumpAndSettle();
+      final taskActions = find.byKey(const Key('task-detail-actions-menu'));
+      await tester.ensureVisible(taskActions);
+      expect(taskActions, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Refresh button invokes the ViewModel foreground action', (
     tester,
@@ -922,14 +982,16 @@ void main() {
       expect(completion.taskId, const TaskId(11));
       expect(completion.status, TaskStatus.completed);
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Date'));
+      await tester.tap(find.byKey(const Key('task-detail-due-action')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Today'));
       await tester.pump();
       expect(fixture.tasks.dueChanges.single.taskId, const TaskId(11));
       expect(fixture.tasks.dueChanges.single.due, TaskDate(2026, 8, 15));
 
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Choose date'));
+      await tester.tap(find.byKey(const Key('task-detail-due-action')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose date'));
       await tester.pumpAndSettle();
       final dueField = find.byWidgetPredicate(
         (widget) =>
@@ -1000,7 +1062,11 @@ void main() {
       await tester.tap(find.text('Cached parent'));
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Delete task'));
+      final taskActions = find.byKey(const Key('task-detail-actions-menu'));
+      await tester.ensureVisible(taskActions);
+      await tester.tap(taskActions);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete task'));
       await tester.pump();
       expect(fixture.tasks.deleted.single.taskId, const TaskId(11));
 

@@ -41,10 +41,7 @@ void main() {
       expect(find.text('Open in Google Tasks'), findsOneWidget);
       expect(find.text('Links in task content'), findsOneWidget);
       expect(find.text('docs.example.test/guide'), findsOneWidget);
-      expect(
-        find.textContaining('features not exposed by the API'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('unavailable features'), findsOneWidget);
       expect(find.byKey(const Key('task-content-link-1')), findsNothing);
 
       final semantics = tester.getSemantics(

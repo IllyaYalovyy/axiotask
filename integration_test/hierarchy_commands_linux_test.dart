@@ -109,8 +109,10 @@ void main() {
     expect(find.text('Restarted subtask'), findsOneWidget);
     await tester.tap(find.text('Restarted subtask'));
     await tester.pump();
-    expect(find.widgetWithText(OutlinedButton, 'Promote'), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Promote'));
+    expect(find.byKey(const Key('task-detail-structure-menu')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Promote to task'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(OutlinedButton, 'Move down'), findsOneWidget);
     await tester.tap(find.widgetWithText(OutlinedButton, 'Move down'));

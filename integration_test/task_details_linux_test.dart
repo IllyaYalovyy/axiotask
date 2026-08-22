@@ -146,7 +146,7 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Add subtask'));
+    await tester.tap(find.widgetWithText(TextButton, 'Add subtask'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.descendant(
@@ -160,7 +160,7 @@ void main() {
     expect(find.text('Created Linux child'), findsOneWidget);
     expect(find.textContaining('1 of 3 subtasks complete'), findsNWidgets(2));
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Date'));
+    await tester.tap(find.byKey(const Key('task-detail-due-action')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Next week'));
     await tester.pumpAndSettle();

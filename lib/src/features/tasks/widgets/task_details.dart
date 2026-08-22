@@ -24,20 +24,28 @@ final class TaskDetailsPane extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = viewModel.state;
     if (state == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(
-                Icons.task_alt,
-                size: 44,
-                color: Theme.of(context).colorScheme.outline,
+      return LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          key: const Key('task-detail-empty-scroll-view'),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      Icons.task_alt,
+                      size: 44,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Select a cached task to view details'),
+                  ],
+                ),
               ),
-              const SizedBox(height: 12),
-              const Text('Select a cached task to view details'),
-            ],
+            ),
           ),
         ),
       );
@@ -50,11 +58,12 @@ final class TaskDetailsPane extends StatelessWidget {
     return FocusTraversalGroup(
       child: SingleChildScrollView(
         key: const Key('task-detail-scroll-view'),
+        primary: false,
         padding: EdgeInsets.fromLTRB(
-          compact ? 18 : 24,
-          20,
-          compact ? 18 : 24,
-          32,
+          compact ? 12 : 16,
+          12,
+          compact ? 12 : 16,
+          24,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -91,7 +100,7 @@ final class TaskDetailsPane extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -120,21 +129,9 @@ final class TaskDetailsPane extends StatelessWidget {
                     key: const Key('task-detail-completion-action'),
                   ),
                 ),
-                _DateShortcutMenu(
-                  enabled: !state.isCommandPending,
-                  taskId: task.id,
-                  viewModel: viewModel,
-                ),
-                OutlinedButton.icon(
-                  onPressed: state.isCommandPending
-                      ? null
-                      : () => showTaskDateDialog(context, viewModel, task),
-                  icon: const Icon(Icons.calendar_month_outlined),
-                  label: const Text('Choose date'),
-                ),
                 Tooltip(
                   message: 'Edit task content',
-                  child: OutlinedButton.icon(
+                  child: TextButton.icon(
                     onPressed: state.isCommandPending
                         ? null
                         : () => showTaskContentDialog(context, viewModel, task),
@@ -142,155 +139,296 @@ final class TaskDetailsPane extends StatelessWidget {
                     label: const Text('Edit task'),
                   ),
                 ),
-                Tooltip(
-                  message: 'Delete task',
-                  child: OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => unawaited(viewModel.deleteTask(task.id)),
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Delete'),
-                  ),
-                ),
               ],
             ),
-            const SizedBox(height: 18),
-            _DetailLabel(label: 'Status', value: _statusLabel(task.status)),
-            _DetailLabel(
-              label: 'Due',
-              value: _effectiveDueLabel(state.effectiveDue),
-            ),
-            if (state.dueChangeUndo case final undo?) ...<Widget>[
-              const SizedBox(height: 4),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          const Icon(Icons.history),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Date changed for ${undo.cascadedCount + 1} related tasks',
-                            ),
-                          ),
-                        ],
-                      ),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: state.isCommandPending
-                              ? null
-                              : () => unawaited(
-                                  viewModel.undoDueChange(undo.groupId),
-                                ),
-                          child: const Text('Undo due changes'),
-                        ),
-                      ),
-                    ],
+            if (state.isCommandPending ||
+                state.failureMessage != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  state.failureMessage ?? 'Updating task…',
+                  style: TextStyle(
+                    color: state.failureMessage == null
+                        ? Theme.of(context).colorScheme.onSurfaceVariant
+                        : Theme.of(context).colorScheme.error,
                   ),
                 ),
               ),
             ],
-            const SizedBox(height: 12),
-            TaskNotesSection(notes: task.notes),
-            const SizedBox(height: 18),
-            TaskLinksSection(task: task, viewModel: viewModel),
-            if (state.children.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 24),
-              SubtaskProgressIndicator(progress: state.progress),
+            const SizedBox(height: 16),
+            _InspectorSection(
+              title: 'Status',
+              child: Text(_statusLabel(task.status)),
+            ),
+            _InspectorSection(
+              title: 'Due',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(_effectiveDueLabel(state.effectiveDue)),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _DateShortcutMenu(
+                      enabled: !state.isCommandPending,
+                      task: task,
+                      viewModel: viewModel,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (state.dueChangeUndo case final undo?) ...<Widget>[
               const SizedBox(height: 8),
-              SubtaskList(viewModel: viewModel, children: state.children),
+              Row(
+                children: <Widget>[
+                  const Icon(Icons.history, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Date changed for ${undo.cascadedCount + 1} related tasks',
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: state.isCommandPending
+                        ? null
+                        : () =>
+                              unawaited(viewModel.undoDueChange(undo.groupId)),
+                    child: const Text('Undo due changes'),
+                  ),
+                ],
+              ),
             ],
-            const SizedBox(height: 22),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                if (state.canCreateSubtask)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => _showCreateSubtaskDialog(context, viewModel),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add subtask'),
+            _InspectorSection(
+              title: 'Notes',
+              child: TaskNotesSection(notes: task.notes),
+            ),
+            _InspectorSection(
+              title: 'Google Tasks',
+              child: TaskLinksSection(task: task, viewModel: viewModel),
+            ),
+            _InspectorSection(
+              title: 'Subtasks',
+              trailing: state.canCreateSubtask
+                  ? TextButton.icon(
+                      onPressed: state.isCommandPending
+                          ? null
+                          : () => _showCreateSubtaskDialog(context, viewModel),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Add subtask'),
+                    )
+                  : null,
+              child: state.children.isEmpty
+                  ? Text(
+                      'No subtasks',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        SubtaskProgressIndicator(progress: state.progress),
+                        const SizedBox(height: 4),
+                        SubtaskList(
+                          viewModel: viewModel,
+                          children: state.children,
+                        ),
+                      ],
+                    ),
+            ),
+            _InspectorSection(
+              title: 'Organization',
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  if (siblingIndex > 0)
+                    OutlinedButton.icon(
+                      onPressed: state.isCommandPending
+                          ? null
+                          : () => unawaited(viewModel.moveSelectedUp()),
+                      icon: const Icon(Icons.arrow_upward),
+                      label: const Text('Move up'),
+                    ),
+                  if (siblingIndex >= 0 &&
+                      siblingIndex < state.siblings.length - 1)
+                    OutlinedButton.icon(
+                      onPressed: state.isCommandPending
+                          ? null
+                          : () => unawaited(viewModel.moveSelectedDown()),
+                      icon: const Icon(Icons.arrow_downward),
+                      label: const Text('Move down'),
+                    ),
+                  if (state.destinationLists.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: state.isCommandPending
+                          ? null
+                          : () => showTaskMoveListDialog(
+                              context,
+                              viewModel,
+                              task,
+                              state.destinationLists,
+                            ),
+                      icon: const Icon(Icons.drive_file_move_outline),
+                      label: const Text('Move to list'),
+                    ),
+                  _TaskStructureMenu(
+                    enabled: !state.isCommandPending,
+                    task: task,
+                    hasChildren: state.hasChildren,
+                    parents: state.parentCandidates,
+                    alternateParents: alternateParents,
+                    viewModel: viewModel,
                   ),
-                if (task.parentTaskId == null &&
-                    !state.hasChildren &&
-                    state.parentCandidates.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => _showParentDialog(
-                            context,
-                            viewModel,
-                            task,
-                            state.parentCandidates,
-                          ),
-                    icon: const Icon(Icons.subdirectory_arrow_right),
-                    label: const Text('Make subtask'),
+                  _TaskActionsMenu(
+                    enabled: !state.isCommandPending,
+                    taskId: task.id,
+                    viewModel: viewModel,
                   ),
-                if (task.parentTaskId != null)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => unawaited(viewModel.promote(task.id)),
-                    icon: const Icon(Icons.arrow_upward),
-                    label: const Text('Promote'),
-                  ),
-                if (task.parentTaskId != null && alternateParents.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => _showParentDialog(
-                            context,
-                            viewModel,
-                            task,
-                            alternateParents,
-                          ),
-                    icon: const Icon(Icons.account_tree_outlined),
-                    label: const Text('Change parent'),
-                  ),
-                if (siblingIndex > 0)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => unawaited(viewModel.moveSelectedUp()),
-                    icon: const Icon(Icons.arrow_upward),
-                    label: const Text('Move up'),
-                  ),
-                if (siblingIndex >= 0 &&
-                    siblingIndex < state.siblings.length - 1)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => unawaited(viewModel.moveSelectedDown()),
-                    icon: const Icon(Icons.arrow_downward),
-                    label: const Text('Move down'),
-                  ),
-                if (state.destinationLists.isNotEmpty)
-                  OutlinedButton.icon(
-                    onPressed: state.isCommandPending
-                        ? null
-                        : () => showTaskMoveListDialog(
-                            context,
-                            viewModel,
-                            task,
-                            state.destinationLists,
-                          ),
-                    icon: const Icon(Icons.drive_file_move_outline),
-                    label: const Text('Move to list'),
-                  ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+final class _InspectorSection extends StatelessWidget {
+  const _InspectorSection({
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
+
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            Text(title, style: Theme.of(context).textTheme.titleSmall),
+            ?trailing,
+          ],
+        ),
+        const SizedBox(height: 4),
+        child,
+      ],
+    ),
+  );
+}
+
+final class _TaskStructureMenu extends StatelessWidget {
+  const _TaskStructureMenu({
+    required this.enabled,
+    required this.task,
+    required this.hasChildren,
+    required this.parents,
+    required this.alternateParents,
+    required this.viewModel,
+  });
+
+  final bool enabled;
+  final CachedTask task;
+  final bool hasChildren;
+  final List<CachedTask> parents;
+  final List<CachedTask> alternateParents;
+  final TaskDetailViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final canMakeSubtask =
+        task.parentTaskId == null && !hasChildren && parents.isNotEmpty;
+    final canPromote = task.parentTaskId != null;
+    final canChangeParent = canPromote && alternateParents.isNotEmpty;
+    if (!canMakeSubtask && !canPromote && !canChangeParent) {
+      return const SizedBox.shrink();
+    }
+    return MenuAnchor(
+      menuChildren: <Widget>[
+        if (canMakeSubtask)
+          MenuItemButton(
+            onPressed: enabled
+                ? () => _showParentDialog(context, viewModel, task, parents)
+                : null,
+            child: const Text('Make subtask'),
+          ),
+        if (canPromote)
+          MenuItemButton(
+            onPressed: enabled
+                ? () => unawaited(viewModel.promote(task.id))
+                : null,
+            child: const Text('Promote to task'),
+          ),
+        if (canChangeParent)
+          MenuItemButton(
+            onPressed: enabled
+                ? () => _showParentDialog(
+                    context,
+                    viewModel,
+                    task,
+                    alternateParents,
+                  )
+                : null,
+            child: const Text('Change parent'),
+          ),
+      ],
+      builder: (context, controller, _) => OutlinedButton.icon(
+        key: const Key('task-detail-structure-menu'),
+        onPressed: enabled
+            ? () => controller.isOpen ? controller.close() : controller.open()
+            : null,
+        icon: const Icon(Icons.account_tree_outlined),
+        label: const Text('Structure'),
+      ),
+    );
+  }
+}
+
+final class _TaskActionsMenu extends StatelessWidget {
+  const _TaskActionsMenu({
+    required this.enabled,
+    required this.taskId,
+    required this.viewModel,
+  });
+
+  final bool enabled;
+  final TaskId taskId;
+  final TaskDetailViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) => MenuAnchor(
+    menuChildren: <Widget>[
+      const MenuItemButton(onPressed: null, child: Text('Destructive actions')),
+      MenuItemButton(
+        onPressed: enabled
+            ? () => unawaited(viewModel.deleteTask(taskId))
+            : null,
+        leadingIcon: const Icon(Icons.delete_outline),
+        child: const Text('Delete task'),
+      ),
+    ],
+    builder: (context, controller, _) => OutlinedButton.icon(
+      key: const Key('task-detail-actions-menu'),
+      onPressed: enabled
+          ? () => controller.isOpen ? controller.close() : controller.open()
+          : null,
+      icon: const Icon(Icons.more_horiz),
+      label: const Text('More actions'),
+    ),
+  );
 }
 
 /// Keeps the Google task page separate from links a user placed in task text.
@@ -327,14 +465,12 @@ final class _TaskLinksSectionState extends State<TaskLinksSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Google Tasks', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 6),
         Text(
           googleTaskLink == null
               ? 'Google has not provided a usable link for this task yet.'
-              : 'Open this task in Google Tasks for features not exposed by the API.',
+              : 'Open Google Tasks for unavailable features, including recurrence.',
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Semantics(
           button: true,
           label: 'Open task in Google Tasks',
@@ -361,12 +497,12 @@ final class _TaskLinksSectionState extends State<TaskLinksSection> {
           ),
         ),
         if (contentLinks.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 18),
+          const SizedBox(height: 8),
           Text(
             'Links in task content',
-            style: Theme.of(context).textTheme.titleMedium,
+            style: Theme.of(context).textTheme.labelLarge,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 2),
           for (final (index, link) in contentLinks.indexed)
             Semantics(
               button: true,
@@ -435,8 +571,6 @@ final class TaskNotesSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('Notes', style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 6),
           SelectableText(switch (value) {
             null => 'No notes',
             '' => 'Empty notes',
@@ -451,12 +585,12 @@ final class TaskNotesSection extends StatelessWidget {
 final class _DateShortcutMenu extends StatelessWidget {
   const _DateShortcutMenu({
     required this.enabled,
-    required this.taskId,
+    required this.task,
     required this.viewModel,
   });
 
   final bool enabled;
-  final TaskId taskId;
+  final CachedTask task;
   final TaskDetailViewModel viewModel;
 
   @override
@@ -471,17 +605,24 @@ final class _DateShortcutMenu extends StatelessWidget {
       ])
         MenuItemButton(
           onPressed: enabled
-              ? () => unawaited(viewModel.setDueShortcut(taskId, entry.$1))
+              ? () => unawaited(viewModel.setDueShortcut(task.id, entry.$1))
               : null,
           child: Text(entry.$2),
         ),
+      MenuItemButton(
+        onPressed: enabled
+            ? () => showTaskDateDialog(context, viewModel, task)
+            : null,
+        child: const Text('Choose date'),
+      ),
     ],
     builder: (context, controller, _) => OutlinedButton.icon(
+      key: const Key('task-detail-due-action'),
       onPressed: enabled
           ? () => controller.isOpen ? controller.close() : controller.open()
           : null,
       icon: const Icon(Icons.event_outlined),
-      label: const Text('Date'),
+      label: const Text('Change due date'),
     ),
   );
 }
@@ -498,10 +639,8 @@ final class SubtaskProgressIndicator extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Subtasks', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 4),
         Text(progress.label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         LinearProgressIndicator(value: progress.fraction),
       ],
     ),
@@ -952,27 +1091,6 @@ String _effectiveDueLabel(EffectiveDue due) {
     return '$effective (earliest subtask; task date ${due.explicit})';
   }
   return effective.toString();
-}
-
-final class _DetailLabel extends StatelessWidget {
-  const _DetailLabel({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Row(
-      children: <Widget>[
-        SizedBox(
-          width: 72,
-          child: Text(label, style: Theme.of(context).textTheme.labelLarge),
-        ),
-        Expanded(child: Text(value)),
-      ],
-    ),
-  );
 }
 
 String _statusLabel(TaskStatus status) => switch (status) {

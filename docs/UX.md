@@ -126,6 +126,18 @@ The product and local model support exactly one subtask level. There is no
 deeper-hierarchy UI. Unexpected deeper API data is not edited, flattened, or
 deleted; it produces a typed unsupported-data failure.
 
+## Desktop task inspector
+
+The desktop inspector is an independently scrolling, compact editor. Complete
+is the clear primary action and Edit remains direct. Status, Due, Notes, Google
+Tasks, Subtasks, and Organization use short, ordered sections; absent notes or
+subtasks use one concise line rather than reserving blank space. Due has one
+Change due date menu containing fast dates and the custom-date route. Add
+subtask appears beside its section heading. Reorder and move-to-list actions
+are grouped in Organization, while hierarchy changes and deletion remain in
+labeled menus with the existing task-delete Undo contract. Every control stays
+reachable by scrolling at the inspector's minimum supported width and height.
+
 ## Google Tasks UI and links
 
 Every task has an explicit **Open in Google Tasks** action backed by a validated

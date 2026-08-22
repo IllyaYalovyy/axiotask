@@ -133,7 +133,9 @@ void main() {
 
       await tester.tap(find.text('Synthetic delete target'));
       await tester.pump();
-      await tester.tap(find.byTooltip('Delete task'));
+      await tester.tap(find.byKey(const Key('task-detail-actions-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete task'));
       await tester.pumpAndSettle();
       expect(find.text('“Synthetic delete target” deleted'), findsOneWidget);
       expect(remote.callCount(FakeGoogleTasksMethod.deleteTask), 0);
@@ -153,7 +155,9 @@ void main() {
       await coordinator.whenIdle;
       viewModel.selectTask(restored.id);
       await tester.pump();
-      await tester.tap(find.byTooltip('Delete task'));
+      await tester.tap(find.byKey(const Key('task-detail-actions-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete task'));
       await tester.pumpAndSettle();
       clock.advance(const Duration(seconds: 29, milliseconds: 999));
       await tester.pump();

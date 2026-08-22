@@ -537,6 +537,15 @@ and optional due date; progressive paste discovery, preview, and cancellation;
 offline pending acknowledgement; and narrow 200% text scale. The Linux capture
 and parser/mutation regressions use only synthetic data and isolated storage.
 
+S36H adds inspector coverage for the compact no-selection state, the single
+due-date menu (fast and custom date routes), direct Complete/Edit actions,
+section hierarchy, absent content, labeled structure/destructive menus, Undo,
+and independent scrolling to bottom actions at 320 logical pixels. Existing
+detail, subtask, movement, delete, link, 200%-text, and isolated Linux restart
+suites remain the behavioral regressions; curated light/dark detail goldens and
+ignored synthetic screenshots are visually reviewed for Standard and Compact
+density.
+
 S31 adds curated 1280×720 `local-data-reset-warning-light`,
 `local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 
