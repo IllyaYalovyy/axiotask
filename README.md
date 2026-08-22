@@ -91,13 +91,16 @@ refresh/Reauthorize, and first-run Connect are wired through the normal
 coordinator. Android authorization, lifecycle, and device qualification remain
 later work.
 
-The desktop collection also provides one-line quick capture with an explicit
-Google-list target. A terminal ISO date or the exact today, tomorrow, next week,
-or next month phrase produces a visible stripped-title/date preview before
-Enter; dismissing the date keeps the phrase as literal title text. Smart views
-show their honest date default before acknowledgement, and every accepted task
-uses the same restart-safe desired-state create and Google publication path as
-ordinary task creation.
+The desktop collection provides a compact one-line quick capture: a concrete
+Google list is its default destination, while smart views expose a destination
+chooser. Due date, another destination, and bulk paste are progressive options.
+A terminal ISO date or the exact today, tomorrow, next week, or next month
+phrase produces a visible stripped-title/date preview before Enter; dismissing
+the date keeps the phrase as literal title text. Smart views show their honest
+date default before acknowledgement, and every accepted task uses the same
+restart-safe desired-state create and Google publication path as ordinary task
+creation. Local success says it is waiting for Google rather than claiming sync
+success.
 
 Validated bulk paste accepts either one non-empty task per line or
 blank-line-separated paragraphs whose first line is the title and remaining

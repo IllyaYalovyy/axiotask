@@ -4,11 +4,29 @@ import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/policy/date_workflow.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/quick_add_view_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('empty capture is rejected without a durable mutation', () async {
+    final repository = _Repository();
+    final model = QuickAddViewModel(
+      accountId: const AccountId(1),
+      repository: repository,
+      today: () => TaskDate(2026, 8, 16),
+      lists: () => _lists,
+      defaultTarget: () => const TaskListId(7),
+    );
+
+    await model.submit();
+
+    expect(repository.created, isEmpty);
+    expect(model.state.failureMessage, 'Enter a task title.');
+    expect(model.state.isSubmitting, isFalse);
+  });
+
   test('shows stripped title, target, and interpreted date before submit', () {
     final repository = _Repository();
     final model = QuickAddViewModel(
@@ -44,6 +62,37 @@ void main() {
     expect(repository.created.single.title, 'Discuss tomorrow');
     expect(repository.created.single.due, isNull);
   });
+
+  test(
+    'explicit destination and optional due date override contextual defaults',
+    () async {
+      final repository = _Repository();
+      final model = QuickAddViewModel(
+        accountId: const AccountId(1),
+        repository: repository,
+        today: () => TaskDate(2026, 8, 16),
+        lists: () => _twoLists,
+        defaultTarget: () => const TaskListId(7),
+        defaultDue: () => TaskDate(2026, 8, 16),
+        destinationRequired: () => true,
+      );
+      model
+        ..setInput('Plan synthetic errand')
+        ..selectTarget(const TaskListId(8))
+        ..selectDueShortcut(DateShortcut.nextWeek);
+
+      expect(model.state.destinationRequired, isTrue);
+      expect(model.state.targetName, 'Synthetic errands');
+      expect(model.state.previewDue, TaskDate(2026, 8, 23));
+      expect(model.state.hasExplicitDue, isTrue);
+
+      await model.submit();
+
+      expect(repository.created.single.taskListId, const TaskListId(8));
+      expect(repository.created.single.due, TaskDate(2026, 8, 23));
+      expect(model.state.successMessage, 'Saved locally. Waiting for Google.');
+    },
+  );
 
   test('rejects a target removed before acknowledgement', () async {
     final repository = _Repository();
@@ -119,6 +168,16 @@ const _lists = <CachedTaskList>[
     accountId: AccountId(1),
     remoteId: TaskListRemoteId('synthetic-list'),
     title: 'Synthetic inbox',
+  ),
+];
+
+const _twoLists = <CachedTaskList>[
+  ..._lists,
+  CachedTaskList(
+    id: TaskListId(8),
+    accountId: AccountId(1),
+    remoteId: TaskListRemoteId('synthetic-list-two'),
+    title: 'Synthetic errands',
   ),
 ];
 

@@ -299,6 +299,13 @@ Focused parser, SQLite, ViewModel, widget, and isolated Linux tests use only
 synthetic data and temporary files. Ignored actual preview/result captures use
 the synthetic screenshot composition and never read normal storage or Google.
 
+S36F keeps the desktop capture surface compact: the concrete collection's
+Google list is the default destination, while smart views show a compact target
+chooser. Due date, another destination, and bulk paste are disclosed only from
+capture options. The local-success message deliberately says that Google
+confirmation is pending; it is not a sync-success claim. Focused tests and
+screenshots use the existing synthetic capture composition and isolated paths.
+
 S25 adds no dependency, schema version, OAuth configuration, account access, or
 storage namespace. Search observes the existing account-scoped supported task
 projection, so deleted, unsupported, unsynchronizable, and cross-account rows

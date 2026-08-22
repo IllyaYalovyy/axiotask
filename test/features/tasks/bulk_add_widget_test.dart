@@ -85,6 +85,35 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets('cancel closes an unsubmitted paste preview', (tester) async {
+    var cancelled = false;
+    final model = BulkAddViewModel(
+      accountId: const AccountId(1),
+      repository: _Repository(),
+      lists: () => _lists,
+      defaultTarget: () => const TaskListId(7),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BulkAddDialog(
+          viewModel: model,
+          lists: _lists,
+          onClose: () => cancelled = true,
+        ),
+      ),
+    );
+    await tester.enterText(
+      find.byKey(const Key('bulk-add-input')),
+      'Synthetic preview',
+    );
+    await tester.pump();
+
+    expect(find.text('1 task ready'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+
+    expect(cancelled, isTrue);
+  });
 }
 
 const _lists = <CachedTaskList>[

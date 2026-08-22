@@ -530,6 +530,13 @@ and responsive desktop widths. Curated collection light/dark and selection
 captures use only synthetic tasks; Good renders a plain count while stale and
 unverified states retain truthful stale/cached wording.
 
+S36F adds compact-capture ViewModel and widget coverage for empty, valid,
+submitting, durable-success, and failure states; Enter/IME focus retention;
+concrete-list versus smart-view destination disclosure; explicit destination
+and optional due date; progressive paste discovery, preview, and cancellation;
+offline pending acknowledgement; and narrow 200% text scale. The Linux capture
+and parser/mutation regressions use only synthetic data and isolated storage.
+
 S31 adds curated 1280×720 `local-data-reset-warning-light`,
 `local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 

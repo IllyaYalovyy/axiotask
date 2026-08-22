@@ -85,6 +85,17 @@ inspector collapses completely. The device/profile-local presentation preference
 restores requested widths on restart but clamps stale values to those limits;
 it never belongs to task, account, or sync state.
 
+Desktop quick capture is one compact title-field row with an Add button and
+Enter submission. In a concrete Google-list collection that list is the
+destination, so it is not repeated as an always-open selector. Smart views show
+the destination because the target is otherwise ambiguous. Destination, due
+date, and Paste multiple tasks are compact progressive options; a parsed or
+explicit due date remains visible before acknowledgement, and parsing can still
+be dismissed to retain literal title text. After a durable local acknowledgement
+the capture reports that Google confirmation is pending and returns keyboard
+focus to the title field. `Ctrl+N` and `Ctrl+Shift+V` remain discoverable
+accelerators for the visible capture and paste routes.
+
 In a Google-list collection using manual order, pointer drag shows an overlay
 row plus a before/after insertion marker without moving the canonical rows until
 the shared structure command commits. Dropping on another Google list uses the

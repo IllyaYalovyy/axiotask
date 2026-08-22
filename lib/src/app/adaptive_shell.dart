@@ -184,6 +184,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     today: () => widget.viewModel.state.today,
     lists: () => widget.viewModel.state.orderedTaskLists,
     defaultTarget: _defaultQuickAddTarget,
+    destinationRequired: () =>
+        widget.viewModel.state.selectedTaskListId == null,
     defaultDue: _defaultQuickAddDue,
     localEditCommitted: widget.viewModel.localEditCommitted,
     created: (_, due) async {
@@ -2317,6 +2319,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                     viewModel: quickAdd,
                     lists: state.orderedTaskLists,
                     focusNode: quickAddFocus,
+                    onPasteMultiple: openBulkAdd,
                   ),
                   const SizedBox(height: 4),
                   Text(
