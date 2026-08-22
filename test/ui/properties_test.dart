@@ -21,6 +21,7 @@ import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/properties.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -251,6 +252,61 @@ void main() {
         findsOneWidget,
       );
     });
+  });
+
+  group('Sync tab — last synced (#222)', () {
+    SyncStatusView statusView({String? lastSynced}) => SyncStatusView(
+      lastSynced: lastSynced,
+      lastPulled: 0,
+      lastPushed: 0,
+      lastConflicts: 0,
+      lastDeleted: 0,
+      totalSyncs: 1,
+      lastError: null,
+      needsAttention: false,
+      needsReauth: false,
+    );
+
+    testWidgets('the stat reads the relative phrase AND the absolute time', (
+      tester,
+    ) async {
+      // This tab is the stats surface: "3m ago" alone cannot be checked against
+      // anything, so the absolute LOCAL time sits beside it. Built from LOCAL
+      // calendar fields and stored as the UTC instant sync persists, so a
+      // UTC-rendering implementation shows different digits and fails here.
+      final syncedAt = DateTime(2026, 8, 22, 10, 48);
+      await withClock(
+        Clock.fixed(syncedAt.add(const Duration(minutes: 3))),
+        () async {
+          await pumpProps(
+            tester,
+            settings: settingsView(
+              authenticated: true,
+              sync: statusView(lastSynced: syncedAt.toUtc().toIso8601String()),
+            ),
+          );
+
+          expect(find.text('3m ago · Aug 22 10:48'), findsOneWidget);
+          // Never the raw stored form.
+          expect(find.textContaining('T10:48'), findsNothing);
+        },
+      );
+    });
+
+    testWidgets(
+      'never synced reads "never" with no absolute time (non-happy)',
+      (tester) async {
+        await pumpProps(
+          tester,
+          settings: settingsView(authenticated: true, sync: statusView()),
+        );
+
+        // Exact text: a stat that appended an absolute time to a stamp it does
+        // not have ("never · …") would not match.
+        expect(find.text('never'), findsOneWidget);
+        expect(find.textContaining('never ·'), findsNothing);
+      },
+    );
   });
 
   group('Sync tab — fresh sync', () {

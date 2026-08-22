@@ -170,13 +170,7 @@ class SyncActivityScreen extends ConsumerWidget {
     final last = DateTime.tryParse(settings.sync.lastSynced ?? '');
     return [
       _heading(theme, 'Where sync stands'),
-      _stat(
-        theme,
-        'Last synced',
-        last == null
-            ? formatRelativeSince(null)
-            : '${formatRelativeSince(last)} · ${formatAbsoluteLocal(last)}',
-      ),
+      _stat(theme, 'Last synced', formatLastSynced(last)),
       _stat(theme, 'Syncs this session', '${settings.sync.totalSyncs}'),
       _stat(theme, 'Pending local changes', '${settings.pendingPushes}'),
     ];

@@ -310,7 +310,7 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       );
     }
     children.addAll([
-      _stat(theme, 'Last synced', _relativeSince(s.lastSynced)),
+      _stat(theme, 'Last synced', _lastSyncedLabel(s.lastSynced)),
       _stat(theme, 'Pending changes', '${settings.pendingPushes}'),
       _stat(
         theme,
@@ -634,8 +634,10 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
     );
   }
 
-  /// A short relative label for an RFC-3339 timestamp: "never" / "just now" /
-  /// "Nm ago" / "Nh ago" / "Nd ago" (port of the reference `relativeTime`).
-  String _relativeSince(String? rfc3339) =>
-      formatRelativeSince(DateTime.tryParse(rfc3339 ?? ''));
+  /// The "Last synced" value: the relative phrase and, behind it, the absolute
+  /// LOCAL time — "3m ago · Aug 22 10:48", or "never" (#222). This tab is the
+  /// stats surface, so the absolute time belongs inline here (in the sidebar
+  /// footer it stays one hover/long-press away).
+  String _lastSyncedLabel(String? rfc3339) =>
+      formatLastSynced(DateTime.tryParse(rfc3339 ?? ''));
 }

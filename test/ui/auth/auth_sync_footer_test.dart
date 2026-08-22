@@ -163,4 +163,81 @@ void main() {
     // Still a live session, so Sync-now remains the action.
     expect(find.text('Sync now'), findsOneWidget);
   });
+
+  testWidgets('the synced phrase hides the absolute local time in a tooltip', (
+    tester,
+  ) async {
+    // #222: "Synced 12m ago" is friendly but unverifiable. The absolute time is
+    // one hover/long-press away — never inline (no clutter), never UTC/ISO.
+    // The moment is built from LOCAL calendar fields and stored as the UTC
+    // instant sync persists, so a UTC-rendering implementation shows different
+    // digits in any non-UTC zone and fails here.
+    final syncedAt = DateTime(2026, 8, 22, 10, 48);
+    final now = syncedAt.add(const Duration(minutes: 12));
+    await withClock(Clock.fixed(now), () async {
+      await pumpFooter(
+        tester,
+        AuthSyncStatus(
+          isAuthenticated: true,
+          needsReauth: false,
+          lastSynced: syncedAt.toUtc().toIso8601String(),
+        ),
+      );
+
+      expect(find.text('Synced 12m ago'), findsOneWidget);
+      // Nothing absolute on screen until the user asks for it.
+      expect(find.text('Last sync: Aug 22 10:48'), findsNothing);
+
+      // Touch has no hover: the coarse-pointer path is a long press.
+      await tester.longPress(find.text('Synced 12m ago'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Last sync: Aug 22 10:48'), findsOneWidget);
+
+      // Let the tooltip time out and fade so no timer outlives the test.
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets('a footer with nothing to date carries no tooltip (non-happy)', (
+    tester,
+  ) async {
+    // Never synced: there is no absolute time, so there must be no tooltip to
+    // long-press — an empty or "Last sync: recently" bubble would be a lie.
+    await pumpFooter(
+      tester,
+      const AuthSyncStatus(isAuthenticated: true, needsReauth: false),
+    );
+
+    expect(find.text('Ready'), findsOneWidget);
+    await tester.longPress(find.text('Ready'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Last sync'), findsNothing);
+    expect(find.byType(Tooltip), findsNothing);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('an unparseable stamp carries no tooltip (non-happy)', (
+    tester,
+  ) async {
+    // The relative label degrades to "recently" for a stamp it cannot parse;
+    // there is no absolute time behind it, so nothing may claim one.
+    await pumpFooter(
+      tester,
+      const AuthSyncStatus(
+        isAuthenticated: true,
+        needsReauth: false,
+        lastSynced: 'not-a-timestamp',
+      ),
+    );
+
+    expect(find.text('Synced recently'), findsOneWidget);
+    await tester.longPress(find.text('Synced recently'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Last sync'), findsNothing);
+    expect(find.byType(Tooltip), findsNothing);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+  });
 }

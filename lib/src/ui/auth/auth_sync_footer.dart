@@ -14,6 +14,7 @@
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
+import '../date_format.dart';
 import 'auth_sync_status.dart';
 
 /// The auth/sync footer, rendered from a standalone [AuthSyncStatus].
@@ -140,6 +141,13 @@ class _StatusRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final phrase = Text(
+      _statusText(),
+      style: textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+      overflow: TextOverflow.ellipsis,
+    );
+    final absolute = _absoluteLastSync();
+
     return Row(
       children: [
         Container(
@@ -149,14 +157,12 @@ class _StatusRow extends StatelessWidget {
           decoration: BoxDecoration(color: _dotColor(), shape: BoxShape.circle),
         ),
         const SizedBox(width: 8),
+        // The Tooltip wraps only the phrase and adds no geometry of its own, so
+        // the footer's layout (and its goldens) are untouched by #222.
         Expanded(
-          child: Text(
-            _statusText(),
-            style: textTheme.bodySmall?.copyWith(
-              color: colors.onSurfaceVariant,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
+          child: absolute == null
+              ? phrase
+              : Tooltip(message: absolute, child: phrase),
         ),
         if (status.isAuthenticated) ...[
           const SizedBox(width: 8),
@@ -176,6 +182,20 @@ class _StatusRow extends StatelessWidget {
         ],
       ],
     );
+  }
+
+  /// The absolute LOCAL time behind the "Synced N ago" phrase, as the tooltip
+  /// message — or null when there is nothing to show (#222).
+  ///
+  /// "Synced 12m ago" is friendly but unverifiable, so the exact moment lives
+  /// one hover (or, on touch, one long press) away rather than inline. Every
+  /// other state has no moment to name: a never-synced footer and a stamp too
+  /// broken to parse both get NO tooltip, instead of an empty bubble or one
+  /// that could only repeat "recently".
+  String? _absoluteLastSync() {
+    if (status.status != FooterStatus.synced) return null;
+    final at = DateTime.tryParse(status.lastSynced ?? '');
+    return at == null ? null : 'Last sync: ${formatAbsoluteLocal(at)}';
   }
 
   Color _dotColor() {
