@@ -1203,6 +1203,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       listTag: listTag,
       selected: _selectedIds.contains(t.id),
       selectionActive: _selectedIds.isNotEmpty,
+      // Straight from the ROUTER-derived selection (#221), never from a
+      // tap-local field, so the highlight follows the detail through every
+      // entry path — row tap, search jump, detail prev/next, the quick-add
+      // follow, or a bare URL change — all of which move the route.
+      openInDetail: widget.selectedTaskId == t.id,
       onSelectToggle: () => _toggleSelect(t.id),
       onContextMenu: (pos) => _showRowActions(stored, globalPosition: pos),
       onShowActions: () => _showRowActions(stored),

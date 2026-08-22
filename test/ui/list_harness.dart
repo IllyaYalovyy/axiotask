@@ -24,6 +24,11 @@ final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 /// Pump [TaskListView] on a desktop-width surface (or [size]) over a
 /// [FakeBackend] seeded with [initial] and [lists]. Navigation callbacks are
 /// captured into [opened] / [openedNotes] so a test can assert the intent.
+///
+/// [selection] stands in for the ROUTER-derived `selectedTaskId` the real
+/// ViewListPane passes down: pushing a new value into it and pumping is exactly
+/// what a route change (row tap, search jump, detail prev/next) does to this
+/// widget, without needing a router in the test. Omit it for a closed detail.
 Future<FakeBackend> pumpList(
   WidgetTester tester, {
   required List<StoredTask> initial,
@@ -37,6 +42,7 @@ Future<FakeBackend> pumpList(
   TargetPlatform? platform,
   UrlOpener? urlOpener,
   String Function()? newId,
+  ValueNotifier<String?>? selection,
 }) async {
   // A unique-id generator by default: the manual-sort list is a
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
@@ -48,6 +54,9 @@ Future<FakeBackend> pumpList(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+
+  final selected = selection ?? ValueNotifier<String?>(null);
+  if (selection == null) addTearDown(selected.dispose);
 
   await withClock(testClock, () async {
     await tester.pumpWidget(
@@ -70,11 +79,14 @@ Future<FakeBackend> pumpList(
           // Mount the F19 toast overlay so migrated undo/info toasts render.
           builder: wrapWithToast,
           home: Scaffold(
-            body: TaskListView(
-              viewId: viewId,
-              selectedTaskId: null,
-              onOpenTask: (opened ?? <String>[]).add,
-              onOpenTaskNotes: (openedNotes ?? <String>[]).add,
+            body: ValueListenableBuilder<String?>(
+              valueListenable: selected,
+              builder: (context, selectedTaskId, _) => TaskListView(
+                viewId: viewId,
+                selectedTaskId: selectedTaskId,
+                onOpenTask: (opened ?? <String>[]).add,
+                onOpenTaskNotes: (openedNotes ?? <String>[]).add,
+              ),
             ),
           ),
         ),
