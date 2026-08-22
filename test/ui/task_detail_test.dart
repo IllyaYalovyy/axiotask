@@ -378,6 +378,81 @@ void main() {
     });
   });
 
+  // #220 — the section leads with a textual "x of y complete" so the user reads
+  // the progress instead of estimating it from the row's bar. It counts EVERY
+  // subtask, including ones the hide-completed toggle removes from view.
+  group('subtask progress summary (#220)', () {
+    testWidgets('states how many of the subtasks are complete', (tester) async {
+      await pumpDetail(
+        tester,
+        taskId: 'P',
+        initial: [
+          row('P', 'parent'),
+          row('C1', 'kid one', parent: 'P', position: '1', done: true),
+          row('C2', 'kid two', parent: 'P', position: '2'),
+          row('C3', 'kid three', parent: 'P', position: '3'),
+        ],
+      );
+      expect(find.text('1 of 3 complete'), findsOneWidget);
+    });
+
+    testWidgets('re-counts as soon as a subtask is toggled', (tester) async {
+      final fake = await pumpDetail(
+        tester,
+        taskId: 'P',
+        initial: [
+          row('P', 'parent'),
+          row('C1', 'kid one', parent: 'P', position: '1', done: true),
+          row('C2', 'kid two', parent: 'P', position: '2'),
+          row('C3', 'kid three', parent: 'P', position: '3'),
+        ],
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('C2')),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await settleDetail(tester);
+
+      expect(
+        fake.tasks.firstWhere((t) => t.task.id == 'C2').task.status,
+        TaskStatus.completed,
+      );
+      expect(find.text('2 of 3 complete'), findsOneWidget);
+      expect(find.text('1 of 3 complete'), findsNothing);
+    });
+
+    testWidgets('keeps counting the completed ones while they are hidden', (
+      tester,
+    ) async {
+      await pumpDetail(
+        tester,
+        taskId: 'P',
+        initial: [
+          row('P', 'parent'),
+          row('C1', 'kid one', parent: 'P', position: '1', done: true),
+          row('C2', 'kid two', parent: 'P', position: '2'),
+          row('C3', 'kid three', parent: 'P', position: '3'),
+        ],
+      );
+      await tester.tap(find.text('Hide completed'));
+      await settleDetail(tester);
+
+      expect(find.text('kid one'), findsNothing, reason: 'hidden from view');
+      expect(
+        find.text('1 of 3 complete'),
+        findsOneWidget,
+        reason: 'hidden subtasks still count toward the total',
+      );
+    });
+
+    testWidgets('a task with no subtasks states no count', (tester) async {
+      await pumpDetail(tester, taskId: 'P', initial: [row('P', 'parent')]);
+      expect(find.textContaining(' complete'), findsNothing);
+    });
+  });
+
   group('hide-completed / un-complete-all', () {
     testWidgets('hides completed subtasks when the toggle is on', (
       tester,
@@ -526,7 +601,7 @@ void main() {
   // ellipsizing element — it stays on ONE line so the fixed reorder arrows and
   // due button are never pushed off the edge (a wrapping title would balloon the
   // row height and, at the extreme, overflow).
-  group('narrow detail: subtask title ellipsizes (G9 #208)', () {
+  group('narrow detail: nothing overflows (G9 #208)', () {
     testWidgets('a long subtask title stays on a single line', (tester) async {
       const longTitle =
           'A very long subtask title that would wrap onto several lines in a '
@@ -567,6 +642,69 @@ void main() {
         lessThan(30),
         reason: 'the subtask title must ellipsize to one line, not wrap',
       );
+    });
+
+    // The #220 summary is new text in the subtasks header, which already packs
+    // the "Subtasks" label and the Hide-completed toggle onto one line. At a
+    // phone-narrow pane with the system font enlarged, that section must still
+    // lay out with ZERO RenderFlex overflow (the G9 #208 pattern: capture the
+    // framework's overflow errors and assert none were reported).
+    //
+    // 360dp is a real small-phone width, and this suite declares no fonts, so
+    // the test font measures roughly 1em per character — every string here is
+    // WIDER than it renders in production. Zero overflow at this width is
+    // therefore a strictly harder bar than the shipping app faces.
+    testWidgets('the progress summary never overflows a 360dp pane at text '
+        'scale 1.3', (tester) async {
+      tester.view.physicalSize = const Size(360, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final overflows = <String>[];
+      final previous = FlutterError.onError;
+      FlutterError.onError = (details) {
+        final text = details.exceptionAsString();
+        if (text.contains('overflowed')) {
+          overflows.add(text);
+        } else {
+          previous?.call(details);
+        }
+      };
+      addTearDown(() => FlutterError.onError = previous);
+
+      final fake = FakeBackend([
+        row('P', 'parent'),
+        row('C1', 'kid one', parent: 'P', position: '1', done: true),
+        row('C2', 'kid two', parent: 'P', position: '2'),
+        row('C3', 'kid three', parent: 'P', position: '3'),
+      ]);
+      addTearDown(fake.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            commandsProvider.overrideWithValue(fake),
+            allTasksProvider.overrideWith((ref) => fake.tasksStream),
+          ],
+          child: MaterialApp(
+            home: MediaQuery.withClampedTextScaling(
+              minScaleFactor: 1.3,
+              maxScaleFactor: 1.3,
+              child: Scaffold(
+                body: TaskDetail(
+                  taskId: 'P',
+                  onClose: () {},
+                  onOpenTask: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await settleDetail(tester);
+
+      expect(find.text('1 of 3 complete'), findsOneWidget);
+      expect(overflows, isEmpty, reason: overflows.join('\n'));
     });
   });
 }

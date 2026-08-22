@@ -535,6 +535,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                 const SizedBox(height: 24),
                 _SubtaskHeader(
                   completedCount: completedCount,
+                  totalCount: children.length,
                   hideCompleted: hideCompleted,
                   onHideCompleted: (v) => ref
                       .read(prefsControllerProvider.notifier)
@@ -780,17 +781,24 @@ class _Links extends StatelessWidget {
   }
 }
 
-/// The subtasks section header: the "Subtasks" label, the count-gated "Hide
-/// completed" toggle, and the count-gated "Un-complete all subtasks" action.
+/// The subtasks section header: the "Subtasks" label, the "x of y complete"
+/// summary, the count-gated "Hide completed" toggle, and the count-gated
+/// "Un-complete all subtasks" action.
 class _SubtaskHeader extends StatelessWidget {
   const _SubtaskHeader({
     required this.completedCount,
+    required this.totalCount,
     required this.hideCompleted,
     required this.onHideCompleted,
     required this.onUncompleteAll,
   });
 
   final int completedCount;
+
+  /// EVERY subtask, including the completed ones "Hide completed" removes from
+  /// view — the summary states the task's real progress, not the visible slice
+  /// (#220).
+  final int totalCount;
   final bool hideCompleted;
   final ValueChanged<bool> onHideCompleted;
   final VoidCallback onUncompleteAll;
@@ -827,6 +835,18 @@ class _SubtaskHeader extends StatelessWidget {
               ),
           ],
         ),
+        // The bar on the task row shows the same progress as a shape; here the
+        // number is spelled out so nothing has to be estimated (#220).
+        if (totalCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: Text(
+              '$completedCount of $totalCount complete',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
         if (completedCount > 0)
           Align(
             alignment: Alignment.centerLeft,
