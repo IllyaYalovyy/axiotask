@@ -42,6 +42,26 @@ class BulkAddResult {
 List<String> splitBulkLines(String text) =>
     text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
 
+/// The ONE-LINE draft a pasted [raw] clipboard collapses to (#219): the same
+/// non-blank, trimmed lines [splitBulkLines] would create, joined by spaces.
+///
+/// A single-line paste is returned VERBATIM — only a line break is collapsed —
+/// so splicing an ordinary fragment into a draft still inserts exactly what was
+/// copied. The collapse exists because a single-line field's built-in formatter
+/// DELETES newlines outright ("buy milk\ncall bob" → "buy milkcall bob"); the
+/// quick-add composer pastes this instead, so the fallback draft still reads.
+String collapsePastedLines(String raw) =>
+    raw.contains('\n') ? splitBulkLines(raw).join(' ') : raw;
+
+/// Whether pasting [raw] should offer the bulk split (#219). The gesture is
+/// "paste a LIST into the composer": nothing of the draft may SURVIVE the paste
+/// ([draft] is what is left around it — empty for a paste into an empty field or
+/// over a select-all, non-empty when lines are spliced into a half-typed title,
+/// which is a title and not a list), and the clipboard must hold at least two
+/// real lines.
+bool offersBulkSplit({required String draft, required String raw}) =>
+    draft.trim().isEmpty && splitBulkLines(raw).length >= 2;
+
 /// How many tasks [text] would create in [mode] — drives the live preview and
 /// disables Add at zero.
 int bulkAddCount(String text, BulkAddMode mode) {
