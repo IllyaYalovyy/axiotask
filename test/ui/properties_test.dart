@@ -9,6 +9,7 @@ import 'package:axiotask/src/app/app_settings.dart';
 import 'package:axiotask/src/app/backup_service.dart';
 import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
+import 'package:axiotask/src/app/local_data_reset.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/sync_status.dart';
@@ -93,6 +94,7 @@ void main() {
     WidgetTester tester, {
     AppSettingsView? settings,
     BackupService? backup,
+    LocalDataReset? localDataReset,
     Future<void> Function()? freshSync,
     Future<void> Function()? refreshAction,
     Prefs prefs = const Prefs(),
@@ -108,6 +110,8 @@ void main() {
           configControllerProvider.overrideWithValue(tempConfig()),
           appSettingsProvider.overrideWithValue(settings ?? settingsView()),
           if (backup != null) backupServiceProvider.overrideWithValue(backup),
+          if (localDataReset != null)
+            localDataResetProvider.overrideWithValue(localDataReset),
           if (freshSync != null)
             freshSyncActionProvider.overrideWithValue(freshSync),
           if (refreshAction != null)
@@ -361,6 +365,160 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Not signed in'), findsOneWidget);
       expect(find.byKey(const Key('account-signin')), findsOneWidget);
+    });
+  });
+
+  // ── #215: the account-switch reset, end to end through the dialog ─────────
+  //
+  // Driven against a REAL store and a real dump target, so what is asserted is
+  // what the user is left with: an empty store, a recovery file on disk, and a
+  // sentence in the dialog telling them so. A refusal must leave the data.
+  group('Account tab — reset local data (#215)', () {
+    Future<void> openAccountTab(WidgetTester tester) async {
+      await tester.tap(find.text('Account'));
+      await tester.pumpAndSettle();
+    }
+
+    /// Walk the whole gate: open the confirm, type the word, confirm. Bounded
+    /// pumps only — the focused field's caret animation never settles.
+    Future<void> runResetGate(WidgetTester tester) async {
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('account-reset-data')),
+        300,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('account-tab-scroll')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('account-reset-data')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.enterText(
+        find.byKey(const Key('reset-data-confirm-field')),
+        'RESET',
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.byKey(const Key('reset-data-confirm-button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // The reset does REAL file IO (the durable recovery dump) with store
+      // writes chained after it; only runAsync lets those futures complete
+      // (fake timers starve them), and each stage needs a pump to hand control
+      // back. A few alternating rounds settle the whole chain deterministically.
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 60)),
+        );
+        await tester.pump();
+      }
+    }
+
+    testWidgets('the confirmed reset empties the store and reports it', (
+      tester,
+    ) async {
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      final store = Store(db);
+      await store.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'L1', title: 'Inbox', updated: 't'),
+          syncState: SyncState.clean,
+          localUpdated: 't',
+        ),
+      );
+      await store.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'T1',
+            position: '1',
+            title: 'old account task',
+            status: TaskStatus.needsAction,
+            updated: 't',
+          ),
+          listId: 'L1',
+          syncState: SyncState.clean,
+          localUpdated: 't',
+        ),
+      );
+
+      await pumpProps(
+        tester,
+        localDataReset: LocalDataReset(
+          database: db,
+          store: store,
+          dbPath: p.join(tmp.path, 'axiotask.sqlite'),
+        ),
+      );
+      await openAccountTab(tester);
+      await runResetGate(tester);
+
+      // The store is empty and the recovery copy is on disk.
+      expect(await store.allLists(), isEmpty);
+      expect(await store.allTasks(), isEmpty);
+      final dump = tmp.listSync().whereType<File>().where(
+        (f) => p.basename(f.path).startsWith('axiotask-prereset-'),
+      );
+      expect(dump, hasLength(1));
+      expect(dump.single.readAsStringSync(), contains('old account task'));
+
+      // ...and the user is told, inside the dialog where they acted.
+      expect(find.byKey(const Key('account-reset-notice')), findsOneWidget);
+      expect(
+        find.textContaining('Erased 1 task(s) in 1 list(s)'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a refused reset keeps the data and says so', (tester) async {
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      final store = Store(db);
+      await store.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'L1', title: 'Inbox', updated: 't'),
+          syncState: SyncState.clean,
+          localUpdated: 't',
+        ),
+      );
+
+      await pumpProps(
+        tester,
+        localDataReset: LocalDataReset(
+          database: db,
+          store: store,
+          // No such directory ⇒ the recovery copy cannot be written.
+          dbPath: p.join(tmp.path, 'missing-dir', 'axiotask.sqlite'),
+        ),
+      );
+      await openAccountTab(tester);
+      await runResetGate(tester);
+
+      expect((await store.allLists()).map((l) => l.list.id), [
+        'L1',
+      ], reason: 'no dump, no erase');
+      expect(find.byKey(const Key('account-reset-notice')), findsOneWidget);
+      expect(find.textContaining('NOT erased'), findsOneWidget);
+    });
+
+    testWidgets('a live session leaves the reset inert', (tester) async {
+      await pumpProps(tester, settings: settingsView(authenticated: true));
+      await openAccountTab(tester);
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('account-reset-data')),
+        300,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('account-tab-scroll')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+
+      expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('account-reset-data')))
+            .onPressed,
+        isNull,
+        reason: 'the ratified order is sign out, then reset',
+      );
     });
   });
 }

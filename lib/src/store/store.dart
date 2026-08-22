@@ -872,8 +872,28 @@ class Store {
   // ── fresh-sync clears ─────────────────────────────────────────────────────
 
   /// Drop ALL local tasks, lists, moves and in-flight markers (fresh sync from
-  /// an empty cache).
-  Future<void> clearAll() async {
+  /// an empty cache). The sync log — a record of THIS install's runs, not of
+  /// any account's content — survives; see [resetLocalData] for the switch-
+  /// accounts nuke that clears it too.
+  Future<void> clearAll() => _clearRows(includeSyncLog: false);
+
+  /// The account-switch nuke (#215): erase EVERY local row — the synced cache
+  /// and the local-only lists/tasks that exist nowhere else — plus every push
+  /// drain (dirty rows, tombstones, queued moves, in-flight create markers) and
+  /// the sync log of the account being left behind.
+  ///
+  /// Stricter than [clearSynced] on purpose. Fresh sync spares local-only lists
+  /// because Google cannot recreate them; an account switch must not, or the
+  /// previous account's private lists would surface under the next one. Once
+  /// this has run, a push carrying the old account's data is impossible —
+  /// nothing is left to drain.
+  ///
+  /// Destructive and irreversible: the caller is responsible for the durable
+  /// recovery dump and the user's explicit confirmation (see `LocalDataReset`).
+  /// `config.json` / `prefs.json` live outside the database and are untouched.
+  Future<void> resetLocalData() => _clearRows(includeSyncLog: true);
+
+  Future<void> _clearRows({required bool includeSyncLog}) async {
     await _db.transaction(() async {
       await _db.customUpdate(
         'DELETE FROM tasks',
@@ -895,6 +915,13 @@ class Store {
         updates: {_db.inflightCreates},
         updateKind: UpdateKind.delete,
       );
+      if (includeSyncLog) {
+        await _db.customUpdate(
+          'DELETE FROM sync_log',
+          updates: {_db.syncLog},
+          updateKind: UpdateKind.delete,
+        );
+      }
     });
   }
 

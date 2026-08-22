@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/app_settings.dart';
 import '../app/backup_service.dart';
+import '../app/local_data_reset.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import 'auth/account_section.dart';
@@ -45,6 +46,11 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   // the confirmation lives inside the dialog where it is actually seen.
   String? _notice;
   bool _noticeIsError = false;
+
+  // The Account tab's own notice — the reset outcome, shown beside the button
+  // that ran it rather than on the Sync tab the user is not looking at.
+  String? _resetNotice;
+  bool _resetNoticeIsError = false;
 
   @override
   void initState() {
@@ -382,13 +388,19 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
 
   // ── Account ───────────────────────────────────────────────────────────────
   Widget _accountTab(AppSettingsView settings) => SingleChildScrollView(
+    key: const Key('account-tab-scroll'),
     padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
     child: AccountSection(
       isAuthenticated: settings.authenticated,
       needsReauth: settings.needsReauth,
       scopes: settings.scopes,
+      pendingPushes: settings.pendingPushes,
+      resetNotice: _resetNotice,
+      resetNoticeIsError: _resetNoticeIsError,
+      resetBusy: _busy,
       onSignIn: ref.read(signInActionProvider),
       onSignOut: ref.read(signOutActionProvider),
+      onResetLocalData: _resetLocalData,
     ),
   );
 
@@ -527,6 +539,41 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Run the account-switch reset (#215). The confirm gate has already been
+  /// passed inside [AccountSection]; this only executes and reports. A refusal
+  /// (no durable recovery copy) is reported in the SAME place as a success —
+  /// the user must never be left guessing whether their data is still there.
+  Future<void> _resetLocalData() async {
+    setState(() {
+      _busy = true;
+      _resetNotice = null;
+    });
+    try {
+      final r = await ref.read(localDataResetProvider).run();
+      // The pending-push stat is a one-shot read; after the nuke it would keep
+      // reporting the erased account's queue until the dialog was reopened.
+      ref.invalidate(pendingPushCountProvider);
+      _notifyReset(
+        'Erased ${r.tasks} task(s) in ${r.lists} list(s). A recovery copy was '
+        'saved to ${r.dumpPath}. Sign in with the other account to pull its '
+        'tasks.',
+        isError: false,
+      );
+    } on ResetAborted catch (e) {
+      _notifyReset(e.message, isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _notifyReset(String message, {required bool isError}) {
+    if (!mounted) return;
+    setState(() {
+      _resetNotice = message;
+      _resetNoticeIsError = isError;
+    });
   }
 
   void _notify(String message, {required bool isError}) {
