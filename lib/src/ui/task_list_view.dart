@@ -165,13 +165,32 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // publish/retract its open editor without a `ref` lookup at call time.
   late final RenameBackHandle _renameBack;
 
+  // The list the user aimed the quick-add at (#217), or null while it still
+  // follows the view's own default. Ratified semantics: the pick applies to
+  // this add AND to every subsequent one (it is NOT a one-shot), it is NEVER
+  // persisted as a default (no prefs write), and it resets on a view change
+  // (see [didUpdateWidget]).
+  String? _pickedListId;
+
   bool get _isSmartView => SmartView.byId(widget.viewId) != null;
 
-  /// The list a fresh bulk insert targets: the current list, or the first list
-  /// when a smart view is active (mirrors the reference's bulkTargetList).
-  String? get _bulkTargetList => _isSmartView
+  /// The list a fresh insert targets when the user has picked nothing: the
+  /// current list, or the first list when a smart view is active (mirrors the
+  /// reference's bulkTargetList). Also the bulk-add dialog's default, which
+  /// carries its own list selector.
+  String? get _defaultTargetList => _isSmartView
       ? (_lists.isEmpty ? null : _lists.first.list.id)
       : widget.viewId;
+
+  /// The list a quick-add creates into: the user's pick while it is still a
+  /// KNOWN list, else the view's default. A picked list can vanish under the
+  /// composer (a sync deletes it elsewhere) — falling back keeps the add
+  /// landing somewhere real instead of against a dead id.
+  String? get _quickAddTargetList {
+    final picked = _pickedListId;
+    if (picked != null && _lists.any((l) => l.list.id == picked)) return picked;
+    return _defaultTargetList;
+  }
 
   /// The natural-language due parsed from the current input, unless the user
   /// dismissed it for this exact text.
@@ -204,6 +223,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // lookup on a deactivated widget.
     _pendingEdits = ref.read(pendingEditsProvider)
       ..register(PendingEdit.quickAdd, _flushDraft);
+  }
+
+  @override
+  void didUpdateWidget(covariant TaskListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The quick-add target belongs to the VIEW, not the session (#217): moving
+    // to another view drops the aim back to that view's own default rather than
+    // silently keeping tasks flowing into the list you left behind. The shell
+    // keys this widget per view (so a switch usually remounts); this covers the
+    // in-place update too, so the contract does not depend on the key.
+    if (oldWidget.viewId != widget.viewId) _pickedListId = null;
   }
 
   @override
@@ -255,6 +285,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             controller: _quickAdd,
             focusNode: quickAddFocus,
             dateIgnoredFor: _dateIgnoredFor,
+            lists: _lists,
+            targetListId: _quickAddTargetList,
+            onTargetChanged: (id) {
+              setState(() => _pickedListId = id);
+              // The sheet is its own route — re-render its content too.
+              setSheetState(() {});
+              quickAddFocus.requestFocus();
+            },
             onSubmit: () {
               _submit();
               // Rapid entry: the field cleared; keep composing.
@@ -363,12 +401,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final due =
         explicitDue ?? (_isSmartView ? quickAddDueFor(widget.viewId) : null);
 
-    // A smart view imposes no target list, so the first list wins (the default
-    // "My Tasks"); a concrete list view targets itself. [_lists] is kept current
-    // by the build's watch.
-    final target = _isSmartView
-        ? (_lists.isEmpty ? null : _lists.first.list.id)
-        : widget.viewId;
+    // Where it lands: the composer's picked list (#217) when the user aimed it
+    // somewhere, else the view's default — a smart view imposes no target list,
+    // so the first list wins (the default "My Tasks"); a concrete list view
+    // targets itself. [_lists] is kept current by the build's watch.
+    final target = _quickAddTargetList;
     if (target == null) return null; // no list to create in
 
     final stored = await ref
@@ -682,7 +719,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// Open the BulkAdd dialog (prefilled with [initialText]) and create the
   /// tasks it returns, then toast the count (BulkAdd / PasteCreate bulk-split).
   Future<void> _openBulkAdd({String initialText = ''}) async {
-    final target = _bulkTargetList;
+    final target = _defaultTargetList;
     if (target == null) return;
     final result = await showBulkAddDialog(
       context,
@@ -805,6 +842,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             controller: _quickAdd,
             focusNode: quickAddFocus,
             dateIgnoredFor: _dateIgnoredFor,
+            lists: _lists,
+            targetListId: _quickAddTargetList,
+            onTargetChanged: (id) {
+              setState(() => _pickedListId = id);
+              // Aiming is a detour, not a destination: hand the caret straight
+              // back so the next keystroke goes into the draft.
+              quickAddFocus.requestFocus();
+            },
             onSubmit: _submit,
             onDismissPreview: () {
               setState(() => _dateIgnoredFor = _quickAdd.text);
@@ -817,7 +862,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           sort: sort,
           showCompleted: prefs.showCompleted,
           onSearch: _openSearch,
-          onBulkAdd: _bulkTargetList == null ? null : () => _openBulkAdd(),
+          onBulkAdd: _defaultTargetList == null ? null : () => _openBulkAdd(),
           onSort: (m) => ref
               .read(prefsControllerProvider.notifier)
               .setSort(widget.viewId, m),
@@ -1259,12 +1304,25 @@ class _QuickAddBar extends StatefulWidget {
     required this.controller,
     required this.focusNode,
     required this.dateIgnoredFor,
+    required this.lists,
+    required this.targetListId,
+    required this.onTargetChanged,
     required this.onSubmit,
     required this.onDismissPreview,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
+
+  /// Every known list — the destinations the target picker offers (#217).
+  final List<StoredTaskList> lists;
+
+  /// The list the next add will land in (the user's pick, or the view's
+  /// default). Owned by the parent, which also performs the create.
+  final String? targetListId;
+
+  /// Aim the composer at another list.
+  final ValueChanged<String> onTargetChanged;
 
   /// The exact input text whose parsed date the user chose to keep as literal
   /// title text (the preview chip's ×), so its phrase is not re-read as a due
@@ -1289,7 +1347,25 @@ class _QuickAddBarState extends State<_QuickAddBar> {
   @override
   Widget build(BuildContext context) {
     final preview = _previewDue;
+    final hasPreview = preview != null && preview.isNotEmpty;
+    final touch = coarsePointerPlatform(Theme.of(context).platform);
+    // A destination picker only earns its slot when there IS a choice: with one
+    // list the default is the only answer, and dead chrome is not a feature.
+    final picker = widget.lists.length > 1 && widget.targetListId != null
+        ? _TargetListButton(
+            lists: widget.lists,
+            targetListId: widget.targetListId!,
+            onChanged: widget.onTargetChanged,
+            // A coarse pointer with the date chip up spends the row on the
+            // chip (147dp), the 48dp × and the send button, leaving the input
+            // ~125dp: a labelled picker would not fit inside it. The composer
+            // sheds the destination LABEL there — never the control, whose menu
+            // still shows which list is checked.
+            compact: touch && hasPreview,
+          )
+        : null;
     return Padding(
+      key: const Key('quick-add-bar'),
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
@@ -1297,11 +1373,16 @@ class _QuickAddBarState extends State<_QuickAddBar> {
             child: TextField(
               controller: widget.controller,
               focusNode: widget.focusNode,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'Add a task',
-                prefixIcon: Icon(Icons.add),
+                // The decorative "+" yields its 48dp to the destination picker
+                // (#217) when there is one: the picker carries its own icon and
+                // sits on the same line, so the composer says "add" once and
+                // the input keeps exactly the room it had. With a single list
+                // there is nothing to pick and the "+" stays.
+                prefixIcon: picker == null ? const Icon(Icons.add) : null,
                 isDense: true,
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
               ),
               textInputAction: TextInputAction.done,
               // Rebuild THIS bar only, to refresh the date preview — the task
@@ -1310,15 +1391,30 @@ class _QuickAddBarState extends State<_QuickAddBar> {
               onSubmitted: (_) => widget.onSubmit(),
             ),
           ),
-          if (preview != null && preview.isNotEmpty) ...[
+          if (hasPreview) ...[
             const SizedBox(width: 8),
             // The chip renders a FRIENDLY relative date, never the raw ISO
             // (#78b); its × keeps the phrase as literal title text. On a touch
             // pointer the InputChip's built-in delete glyph is a sub-48dp target,
             // so the × becomes a standalone 48dp IconButton beside a plain chip
             // (F19 #198); the mouse keeps the compact inline InputChip.
-            if (coarsePointerPlatform(Theme.of(context).platform)) ...[
-              Chip(label: Text(formatDue(preview))),
+            if (touch) ...[
+              // The label is width-capped so the chip cannot grow without
+              // bound at an accessibility text scale: at 2.0 an uncapped
+              // "Aug 15, 2027" pushed the chip past 230dp and overflowed the
+              // row once the destination picker joined it. Every label
+              // [formatDue] produces fits inside the cap at normal scale, so
+              // nothing truncates until the font is enlarged.
+              Chip(
+                label: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 120),
+                  child: Text(
+                    formatDue(preview),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.close, size: 18),
                 tooltip: 'Keep as text',
@@ -1332,6 +1428,9 @@ class _QuickAddBarState extends State<_QuickAddBar> {
                 onDeleted: widget.onDismissPreview,
               ),
           ],
+          // The destination sits between the draft and the send button, so the
+          // row reads "<title> → <list> ↑" (#217).
+          if (picker != null) ...[const SizedBox(width: 4), picker],
           const SizedBox(width: 8),
           IconButton.filled(
             tooltip: 'Add task',
@@ -1339,6 +1438,100 @@ class _QuickAddBarState extends State<_QuickAddBar> {
             onPressed: widget.onSubmit,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The quick-add's target-list picker (#217) — a compact anchored menu naming
+/// where the next add lands, and retargeting it in one tap WITHOUT costing the
+/// composer a second line (the ratified mobile constraint).
+///
+/// The pick is transient by design: it survives consecutive adds but is never
+/// written to prefs and resets when the view changes, so the composer's aim is
+/// always either "here" or something the user set moments ago.
+class _TargetListButton extends StatelessWidget {
+  const _TargetListButton({
+    required this.lists,
+    required this.targetListId,
+    required this.onChanged,
+    required this.compact,
+  });
+
+  final List<StoredTaskList> lists;
+
+  /// The list the next add lands in — checked in the menu, named on the button.
+  final String targetListId;
+  final ValueChanged<String> onChanged;
+
+  /// Drop the label and show the icon alone (a crowded phone row).
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = lists
+        .firstWhere((l) => l.list.id == targetListId, orElse: () => lists.first)
+        .list
+        .title;
+    // The menu never claims more height than the screen leaves once the soft
+    // keyboard is up — the composer is ALWAYS typed into, so an uncapped menu
+    // over a long list of lists puts its last entries behind the IME where no
+    // finger can reach them. Capped, it scrolls instead.
+    final media = MediaQuery.of(context);
+    final maxMenuHeight = media.size.height - media.viewInsets.bottom - 64;
+    return MenuAnchor(
+      style: MenuStyle(
+        maximumSize: WidgetStatePropertyAll(
+          Size.fromHeight(maxMenuHeight.clamp(96.0, double.infinity)),
+        ),
+      ),
+      menuChildren: [
+        for (final l in lists)
+          MenuItemButton(
+            key: Key('quick-add-list-${l.list.id}'),
+            leadingIcon: l.list.id == targetListId
+                ? const Icon(Icons.check, size: 18)
+                : const SizedBox(width: 18),
+            onPressed: () => onChanged(l.list.id),
+            child: Text(l.list.title),
+          ),
+      ],
+      builder: (context, controller, _) => Tooltip(
+        // The compact form is icon-only, so the destination has to be readable
+        // some other way: hover on the desktop, long-press on a phone, and the
+        // screen-reader label either way.
+        message: 'Add to list: $title',
+        child: ConstrainedBox(
+          // The label truncates rather than pushing the input out of the row.
+          constraints: BoxConstraints(maxWidth: compact ? 48 : 132),
+          child: TextButton(
+            key: const Key('quick-add-list-picker'),
+            style: TextButton.styleFrom(
+              // A finger-sized target on the composer's single line.
+              minimumSize: const Size(48, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            onPressed: () =>
+                controller.isOpen ? controller.close() : controller.open(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.playlist_add, size: 20),
+                if (!compact) ...[
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
