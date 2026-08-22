@@ -4,9 +4,11 @@ set -euo pipefail
 
 usage() {
   printf '%s\n' \
-    "Usage: ${0##*/} run [--config <private.env>]" \
-    "       ${0##*/} build <debug|release> [--config <private.env>]" \
-    "       ${0##*/} install <debug|release> <absolute-directory> [--config <private.env>]" \
+    "Usage: ${0##*/} run" \
+    "       ${0##*/} dev" \
+    "       ${0##*/} build <debug|release>" \
+    "       ${0##*/} build-dev <debug|release>" \
+    "       ${0##*/} install <debug|release> <absolute-directory>" \
     "       ${0##*/} remove <absolute-directory>" \
     "       ${0##*/} synthetic <isolated-instance>" >&2
 }
@@ -17,8 +19,6 @@ fail() {
 }
 
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
-default_config="$repository_root/.ktask/gates/stage7.env"
-config_path=$default_config
 cleanup_directory=
 
 cleanup() {
@@ -32,83 +32,30 @@ require_flutter() {
   command -v flutter >/dev/null 2>&1 || fail "required command 'flutter' is unavailable"
 }
 
-parse_config_option() {
-  if [[ $# -eq 0 ]]; then
-    return
-  fi
-  if [[ $# -ne 2 || "$1" != '--config' || -z "$2" ]]; then
-    usage
-    exit 2
-  fi
-  config_path=$2
-}
-
-validate_private_config() {
-  [[ -e "$config_path" ]] ||
-    fail 'private configuration is missing; create .ktask/gates/stage7.env'
-  [[ -f "$config_path" && ! -L "$config_path" && -r "$config_path" ]] ||
-    fail 'private configuration must be a readable regular file, not a symlink'
-
-  local mode owner
-  mode=$(stat -c '%a' -- "$config_path") ||
-    fail 'private configuration metadata is unavailable'
-  [[ "$mode" == '600' ]] ||
-    fail 'private configuration permissions must be 600'
-  owner=$(stat -c '%u' -- "$config_path") ||
-    fail 'private configuration ownership is unavailable'
-  [[ "$owner" == "$(id -u)" ]] ||
-    fail 'private configuration must be owned by the current user'
-
-  local canonical_config
-  canonical_config=$(realpath -- "$config_path") ||
-    fail 'private configuration path cannot be resolved'
-  if [[ "$canonical_config" == "$repository_root/"* ]]; then
-    git -C "$repository_root" check-ignore -q -- "$canonical_config" ||
-      fail 'private configuration inside the repository must be ignored by Git'
-  fi
-  config_path=$canonical_config
-
-  declare -A seen=()
-  local line key value client_id='' client_secret=''
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line=${line%$'\r'}
-    [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]] ||
-      fail 'private configuration contains an invalid line'
-    key=${line%%=*}
-    value=${line#*=}
-    [[ ! -v "seen[$key]" ]] ||
-      fail 'private configuration repeats a key'
-    seen["$key"]=1
-    case "$key" in
-      AXIOTASK_LINUX_AUTH_CLIENT_ID) client_id=$value ;;
-      AXIOTASK_LINUX_AUTH_CLIENT_SECRET) client_secret=$value ;;
-    esac
-  done <"$config_path"
-
-  [[ -n "$client_id" ]] ||
-    fail "private configuration is missing 'AXIOTASK_LINUX_AUTH_CLIENT_ID'"
-  [[ "$client_id" == *.apps.googleusercontent.com ]] ||
-    fail "private configuration has an invalid 'AXIOTASK_LINUX_AUTH_CLIENT_ID'"
-  [[ -n "$client_secret" ]] ||
-    fail "private configuration is missing 'AXIOTASK_LINUX_AUTH_CLIENT_SECRET'"
-}
-
 run_production() {
-  validate_private_config
   require_flutter
   cd "$repository_root"
-  flutter run -d linux --debug -t lib/main.dart \
-    "--dart-define-from-file=$config_path"
+  flutter run -d linux --debug -t lib/main.dart
+}
+
+run_development() {
+  require_flutter
+  cd "$repository_root"
+  flutter run -d linux --debug -t lib/main_development.dart
 }
 
 build_production() {
   local mode=$1
-  validate_private_config
   require_flutter
   cd "$repository_root"
-  flutter build linux "--$mode" -t lib/main.dart \
-    "--dart-define-from-file=$config_path"
+  flutter build linux "--$mode" -t lib/main.dart
+}
+
+build_development() {
+  local mode=$1
+  require_flutter
+  cd "$repository_root"
+  flutter build linux "--$mode" -t lib/main_development.dart
 }
 
 validate_local_target() {
@@ -211,28 +158,41 @@ command_name=$1
 shift
 case "$command_name" in
   run)
-    parse_config_option "$@"
+    [[ $# -eq 0 ]] || {
+      usage
+      exit 2
+    }
     run_production
     ;;
+  dev)
+    [[ $# -eq 0 ]] || {
+      usage
+      exit 2
+    }
+    run_development
+    ;;
   build)
-    [[ $# -ge 1 && ("$1" == debug || "$1" == release) ]] || {
+    [[ $# -eq 1 && ("$1" == debug || "$1" == release) ]] || {
       usage
       exit 2
     }
     mode=$1
-    shift
-    parse_config_option "$@"
     build_production "$mode"
     ;;
+  build-dev)
+    [[ $# -eq 1 && ("$1" == debug || "$1" == release) ]] || {
+      usage
+      exit 2
+    }
+    build_development "$1"
+    ;;
   install)
-    [[ $# -ge 2 && ("$1" == debug || "$1" == release) ]] || {
+    [[ $# -eq 2 && ("$1" == debug || "$1" == release) ]] || {
       usage
       exit 2
     }
     mode=$1
     target=$2
-    shift 2
-    parse_config_option "$@"
     install_local_bundle "$mode" "$target"
     ;;
   remove)

@@ -1,0 +1,6 @@
+# Copy to ~/.config/axiotask/config.toml for the production app.
+
+[google]
+client_id = "<desktop-client-id>.apps.googleusercontent.com"
+client_secret = "<desktop-client-secret>"
+scopes = ["https://www.googleapis.com/auth/tasks"]

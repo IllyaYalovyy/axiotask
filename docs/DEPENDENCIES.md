@@ -20,6 +20,7 @@ added merely because it appears in this design.
 | `path_provider` | Correct per-platform application support and temporary paths | Accepted at the storage composition boundary; tests inject paths/connections. It may arrive through Drift but direct use is declared when APIs are imported directly. |
 | `shared_preferences` | Small device-local presentation settings that need no relational integrity | Use only the current `SharedPreferencesAsync` API behind `PreferencesRepository`. Never store sync-critical, account-scoped, relational, or irreplaceable data because the package does not guarantee critical-write durability. |
 | `file_selector` | Native user-selected backup file destinations on Fedora | Accepted for the S30A Fedora export surface. Use the Flutter-team package behind the backup save-location port; cancellation is not failure, the confirm label identifies a private backup, and normal tests inject paths. Android save-location support is not claimed by this desktop-first slice. |
+| `toml` | Parse the existing Rust-compatible XDG profile configuration without a handwritten or partial parser | Accepted for Linux runtime configuration only. Lock 0.18.0, validate the decoded application schema separately, never echo source text in failures, and keep profile/path selection in application code. |
 
 ## Planned development dependencies
 
@@ -201,6 +202,24 @@ dependency. The adapter checks file length, reads at most 64 MiB, rejects invali
 UTF-8, reports only the filename, and treats cancellation as a non-error. The
 strict codec validates JSON/version/value/reference structure before restore.
 
+## Admitted for first-class Linux profiles
+
+The Linux profile boundary locks `toml` 0.18.0. Dart has no standard TOML
+decoder, and a handwritten subset would make valid configuration behavior
+dependent on application-specific parsing. The package implements TOML 1.1,
+supports Dart 3.8 and later, has no native component, and is confined to one
+startup adapter. Axiotask still owns the decoded schema: it requires the
+`[google]` table, validates the desktop client identifier and non-empty values,
+requires the pinned subject only for development, and returns redacted
+path-specific failures.
+
+Production and development resolve separate fixed XDG paths compatible with
+the Rust profile layout. Tests cover both paths, the HOME fallback, Rust-shaped
+documents, malformed input, symlinks, and fail-closed development identity.
+Removing the package requires another complete TOML implementation or an
+explicit configuration-format migration; replacing it with line parsing is not
+an accepted fallback.
+
 ## Deliberately not selected
 
 | Candidate | Reason |
@@ -242,3 +261,4 @@ Primary references:
 - [`connectivity_plus`](https://pub.dev/packages/connectivity_plus)
 - [`shared_preferences`](https://pub.dev/packages/shared_preferences)
 - [`file_selector`](https://pub.dev/packages/file_selector)
+- [`toml`](https://pub.dev/packages/toml)

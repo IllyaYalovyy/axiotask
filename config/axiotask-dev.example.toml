@@ -1,0 +1,7 @@
+# Copy to ~/.config/axiotask-dev/config.toml for the isolated development app.
+
+[google]
+client_id = "<desktop-client-id>.apps.googleusercontent.com"
+client_secret = "<desktop-client-secret>"
+account_subject = "<dedicated-test-account-google-sub>"
+scopes = ["https://www.googleapis.com/auth/tasks"]

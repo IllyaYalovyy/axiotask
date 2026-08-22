@@ -19,7 +19,7 @@ flutter test
 printf 'Testing interactive capability gates...\n'
 ./test/preflight_capability_gate_test.sh
 
-printf 'Testing private-config-aware Linux commands...\n'
+printf 'Testing first-class Linux profile commands...\n'
 ./test/linux_app_test.sh
 
 printf 'Testing the privacy checker...\n'

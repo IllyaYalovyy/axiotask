@@ -193,6 +193,7 @@ run_noninteractive_gate() {
   run_isolated_bundle_smoke
   ./scripts/linux_app.sh build debug
   ./scripts/linux_app.sh build release
+  ./scripts/linux_app.sh build-dev debug
   require_clean_worktree
   printf 'Noninteractive Linux acceptance evidence passed.\n'
 }
@@ -213,7 +214,6 @@ EOF
 }
 
 run_human_review() {
-  "$repository_root/scripts/preflight_capability_gate.sh" linux-auth
   print_human_checklist
 
   local release_bundle
@@ -223,6 +223,7 @@ run_human_review() {
   "$release_bundle"
 
   if [[ "$live_probes" == true ]]; then
+    "$repository_root/scripts/preflight_capability_gate.sh" linux-auth
     AXIOTASK_RUN_LINUX_AUTH_PROBE=1 \
       "$repository_root/scripts/probe_linux_auth.sh"
     AXIOTASK_RUN_LINUX_SECURE_STORAGE_PROBE=1 \

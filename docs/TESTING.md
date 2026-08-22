@@ -814,7 +814,7 @@ flutter test integration_test/database_native_probe_test.dart -d <android-device
 The clean-tree Linux release gate is
 `./scripts/verify_linux_acceptance.sh`. Its default mode adds deep-sync,
 every classified non-live Linux integration, an XDG-isolated synthetic bundle
-launch, and configured debug/release builds without starting browser
+launch, debug/release production builds, and a development debug build without starting browser
 authorization or making a Google request.
 `--human` adds the production-app checklist; live authorization,
 secure-storage, and cleanup-backed contract probes run only with the explicit

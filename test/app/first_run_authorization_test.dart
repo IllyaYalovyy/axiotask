@@ -197,29 +197,32 @@ void main() {
     },
   );
 
-  test('missing OAuth build configuration fails visibly and closed', () async {
-    final database = AppDatabase.inMemory();
-    final google = FakeGoogleTasksService();
-    final runtime = await TasksFeatureRuntime.open(
-      _FirstRunComposition(<_TransportPlan>[
-        _TransportPlan(const UnavailableAuthorization(), google),
-      ]),
-      injectedDatabase: database,
-      injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
-    );
-    addTearDown(runtime.close);
-    runtime.viewModel.start();
+  test(
+    'missing OAuth runtime configuration fails visibly and closed',
+    () async {
+      final database = AppDatabase.inMemory();
+      final google = FakeGoogleTasksService();
+      final runtime = await TasksFeatureRuntime.open(
+        _FirstRunComposition(<_TransportPlan>[
+          _TransportPlan(const UnavailableAuthorization(), google),
+        ]),
+        injectedDatabase: database,
+        injectedDevicePreferencesBackend: InMemoryDevicePreferencesBackend(),
+      );
+      addTearDown(runtime.close);
+      runtime.viewModel.start();
 
-    await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
-    await pumpEventQueue();
+      await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+      await pumpEventQueue();
 
-    expect(await database.allAccounts(), isEmpty);
-    expect(google.calls, isEmpty);
-    expect(
-      runtime.viewModel.state.syncControlFailureMessage,
-      'No platform authorization adapter is configured.',
-    );
-  });
+      expect(await database.allAccounts(), isEmpty);
+      expect(google.calls, isEmpty);
+      expect(
+        runtime.viewModel.state.syncControlFailureMessage,
+        'No platform authorization adapter is configured.',
+      );
+    },
+  );
 
   testWidgets(
     'fresh install presents onboarding and device Settings before Connect',

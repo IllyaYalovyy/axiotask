@@ -142,6 +142,7 @@ assert_before 'flutter:build linux --debug' 'timeout:'
 assert_before 'timeout:' 'synthetic-bundle'
 assert_before 'synthetic-bundle' 'linux-app:build debug'
 assert_before 'linux-app:build debug' 'linux-app:build release'
+assert_before 'linux-app:build release' 'linux-app:build-dev debug'
 [[ $(grep -c '^flutter:test integration_test/.* -d linux$' "$command_log") -eq 19 ]] ||
   fail 'default mode did not run every safe Linux integration test exactly once'
 assert_absent 'google_tasks_contract_probe_test.dart'
@@ -181,8 +182,8 @@ human_output=$("${common_env[@]}" "$verifier" --human 2>&1)
   fail 'human mode did not print its review checklist'
 [[ "$human_output" == *'No approval is recorded by this command'* ]] ||
   fail 'human mode claimed or implied automatic approval'
-assert_before 'linux-app:build release' 'preflight-capability-gate:linux-auth'
-assert_before 'preflight-capability-gate:linux-auth' 'production-app'
+assert_before 'linux-app:build release' 'production-app'
+assert_absent 'preflight-capability-gate:'
 assert_absent 'probe-linux-auth:'
 assert_absent 'probe-linux-secure-storage:'
 assert_absent 'test-google:'
@@ -192,6 +193,8 @@ live_output=$("${common_env[@]}" "$verifier" --human --live-probes 2>&1)
 [[ "$live_output" != *'never-print-this-secret'* ]] ||
   fail 'live-mode output disclosed environment content'
 assert_before 'production-app' 'probe-linux-auth:'
+assert_before 'production-app' 'preflight-capability-gate:linux-auth'
+assert_before 'preflight-capability-gate:linux-auth' 'probe-linux-auth:'
 assert_before 'probe-linux-auth:' 'probe-linux-secure-storage:'
 assert_before 'probe-linux-secure-storage:' 'test-google:'
 

@@ -241,49 +241,57 @@ desktop-first slice.
 Linux secure storage requires an active Secret Service in the user session;
 GNOME normally supplies it through `gnome-keyring`.
 
-## Linux private configuration, build, run, and local install
+## Linux profiles, configuration, build, run, and local install
 
-The production entry point requires a Google OAuth **Desktop app** client ID
-and client secret. Create the ignored private file once and restrict it to the
-current user:
+Application configuration is ordinary per-user XDG configuration. It is never
+read from `.ktask`, passed through a task runner, or compiled into the binary.
+The two real profiles use separate fixed roots:
+
+| Profile | Command | Configuration | Local application state |
+|---|---|---|---|
+| Production | `./scripts/linux_app.sh run` | `~/.config/axiotask/config.toml` | Production database, preferences, credentials, and diagnostics |
+| Development | `./scripts/linux_app.sh dev` | `~/.config/axiotask-dev/config.toml` | Dedicated development database, preferences, credentials, and sensitive diagnostics |
+
+`XDG_CONFIG_HOME` replaces `~/.config` when set. A relative XDG path, missing
+file, malformed TOML, symlink, invalid client ID, or incomplete profile fails
+closed with the exact configuration path; no profile falls back to production.
+
+The files use the Rust application's established `[google]` TOML shape. Copy
+the appropriate checked example on first setup, restrict it to the current
+user, and edit it without placing values in shell history:
 
 ```bash
-mkdir -p .ktask/gates
-chmod 700 .ktask .ktask/gates
-touch .ktask/gates/stage7.env
-chmod 600 .ktask/gates/stage7.env
+mkdir -p "$HOME/.config/axiotask" "$HOME/.config/axiotask-dev"
+chmod 700 "$HOME/.config/axiotask" "$HOME/.config/axiotask-dev"
+cp --no-clobber config/axiotask.example.toml "$HOME/.config/axiotask/config.toml"
+cp --no-clobber config/axiotask-dev.example.toml "$HOME/.config/axiotask-dev/config.toml"
+chmod 600 "$HOME/.config/axiotask/config.toml" "$HOME/.config/axiotask-dev/config.toml"
 ```
 
-Open `.ktask/gates/stage7.env` in your preferred text editor without placing
-either value in shell history.
+An existing Rust development configuration at
+`~/.config/axiotask-dev/config.toml` is reused directly. Flutter adds one
+development-only `[google]` key, `account_subject`, containing the dedicated
+test account's verified Google `sub` value. It is not an email address. The
+development profile refuses Google access when that value is absent or when
+the authenticated subject differs, before any Tasks request.
 
-Its contents are:
+A fresh production app needs only `client_id` and `client_secret`. It offers
+**Connect**, verifies the signed-in Google subject, and only then creates that
+account's durable local partition.
 
-```text
-AXIOTASK_LINUX_AUTH_CLIENT_ID=<desktop-client-id>.apps.googleusercontent.com
-AXIOTASK_LINUX_AUTH_CLIENT_SECRET=<desktop-client-secret>
-```
-
-No account subject, token, or existing authorization is required. A fresh
-production app offers **Connect**, obtains and verifies the signed-in Google
-subject, and only then creates that account's durable local partition. The
-interactive sign-in is therefore separate from build configuration.
-
-Use the checked wrapper for every production run or build:
+Run either profile directly:
 
 ```bash
 ./scripts/linux_app.sh run
+./scripts/linux_app.sh dev
 ./scripts/linux_app.sh build debug
 ./scripts/linux_app.sh build release
+./scripts/linux_app.sh build-dev debug
 ```
 
-The wrapper validates that the private file is a mode-`600`, current-user-owned
-regular file with both required values before invoking Flutter. It passes only
-the filename through `--dart-define-from-file`; it neither sources the file nor
-prints its values. Missing, malformed, unignored in-worktree, or incomplete
-configuration fails before launch or compilation. Do not replace these commands
-with plain `flutter run` or `flutter build`: those commands can compile empty
-OAuth constants into an unusable production app.
+The wrapper selects only the checked entry point and build mode. The application
+itself loads and validates its runtime profile, so direct Flutter invocations
+also work without task-runner state or Dart defines.
 
 Debug and release bundles are produced under
 `build/linux/x64/<debug|release>/bundle` on supported Fedora x86-64 hosts. To
@@ -326,9 +334,9 @@ product review:
 ./scripts/verify_linux_acceptance.sh --human
 ```
 
-That reruns the noninteractive gate, checks the configured GNOME Secret Service,
-prints the concise product checklist, and opens the configured production
-release app. It does not declare approval. The agent executes and remediates
+That reruns the noninteractive gate, prints the concise product checklist, and
+opens the production release app using its normal XDG profile. It does not
+declare approval. The agent executes and remediates
 this command; the human is responsible only for unavoidable browser consent and
 hands-on product acceptance. When the dedicated test account is ready, the
 agent explicitly includes the isolated authorization, secure-storage, and
@@ -344,14 +352,14 @@ command execution or screenshot review: it records only hands-on product
 acceptance and the decision to begin Android work after any necessary browser
 consent.
 
-## Compile-time application compositions
+## Application profiles
 
 Composition is selected only by the Dart entry point. The release root has no
 runtime option that can construct sensitive diagnostics:
 
 | Composition | Entry point | Google access | Diagnostic boundary |
 |---|---|---|---|
-| Production-safe | `lib/main.dart` | Offers first-run Connect, verifies the Google subject before creating its account partition, restores existing Linux authorization, and uses the normal synchronization coordinator; missing build configuration fails visibly and authorization failures remain non-green | Up to 500 persisted safe structured records in `axiotask-diagnostics-safe.json` |
+| Production-safe | `lib/main.dart` | Loads `axiotask/config.toml`, offers first-run Connect, verifies the Google subject before creating its account partition, restores existing Linux authorization, and uses the normal synchronization coordinator; invalid configuration fails before profile state opens and authorization failures remain non-green | Up to 500 persisted safe structured records in `axiotask-diagnostics-safe.json` |
 | Sensitive development | `lib/main_development.dart` | Verification and eligible create publication require the explicit dedicated-account subject to match before any Google request | Up to 1000 persisted private-context records in `axiotask-development-diagnostics-sensitive.json`; credentials always redacted |
 | Synthetic test | `lib/main_test.dart` | Creates only its isolated synthetic account and verifies against an in-process synthetic read service | Safe in-memory history |
 
@@ -375,30 +383,20 @@ Linux runner retains its compiled native application ID and explicitly uses
 comes from the injected storage and service boundaries, not from a distinct GTK
 application ID. Use a new instance name for a separate manual test.
 
-Run sensitive development only with a dedicated Google account. Obtain that
-account's stable Google subject through the opt-in authorization probe; do not
-use an email address and do not guess it. Add the subject to the ignored,
-mode-`600` `.ktask/gates/stage7.env` beside the OAuth values:
-
-```text
-AXIOTASK_DEVELOPMENT_ACCOUNT_SUBJECT=<dedicated-subject>
-```
-
-Supply that file at compilation without putting credential values directly on
-the command line:
+Run sensitive development only with a dedicated Google account. Its normal
+configuration is `~/.config/axiotask-dev/config.toml`; it is neither a Ktask
+gate nor a build input. Start it with:
 
 ```bash
-flutter run -d linux --debug -t lib/main_development.dart \
-  --dart-define-from-file=.ktask/gates/stage7.env
+./scripts/linux_app.sh dev
 ```
 
-Omitting the subject or OAuth configuration is safe: the composition fails
-closed as No authorization. A mismatched authenticated subject also fails
-before a Tasks read. Initial authorization still requires the configured
-dedicated account and its composition-specific credential namespace. After a
-terminal rejection, S19B wires the Linux Reauthorize action through the same
-isolated authorization adapter and requires a matching subject before a full
-verification run.
+The equivalent direct command is
+`flutter run -d linux --debug -t lib/main_development.dart`. Omitting the
+subject or OAuth configuration stops startup with a configuration error. A
+mismatched authenticated subject fails before a Tasks read. Authorization uses
+the development-only secure credential namespace and requires the same subject
+before a full verification run.
 
 The read service itself is page-oriented so later synchronization can publish
 validated pages incrementally. Task-list requests use the documented maximum
@@ -641,9 +639,9 @@ authorize exactly one physical Google Play Services device, then run:
 ./scripts/preflight_capability_gate.sh android-auth
 ```
 
-Before interactive Linux authorization or final human review, confirm
-`pkg-config --exists libsecret-1` succeeds and run from a GNOME user session
-with Secret Service available, then run:
+Before an opt-in Linux authorization probe, confirm `pkg-config --exists
+libsecret-1` succeeds and run from a GNOME user session with Secret Service
+available, then run:
 
 ```bash
 ./scripts/preflight_capability_gate.sh linux-auth
