@@ -28,6 +28,7 @@ import 'app_version.dart';
 import 'backup_service.dart';
 import 'commands.dart';
 import 'config_controller.dart';
+import 'local_data_reset.dart';
 import 'prefs.dart';
 import 'prefs_controller.dart';
 import 'sync_status.dart';
@@ -280,6 +281,18 @@ final backupServiceProvider = Provider<BackupService>(
   (ref) => BackupService(
     store: ref.watch(storeProvider),
     backupsDir: ref.watch(backupsDirProvider),
+  ),
+);
+
+/// The account-switch reset (#215): the durable pre-reset dump + the store
+/// nuke, over the opened database and its real file path. Reading it needs the
+/// bootstrap overrides, so the Account tab only touches it inside the confirmed
+/// gesture — never at build time.
+final localDataResetProvider = Provider<LocalDataReset>(
+  (ref) => LocalDataReset(
+    database: ref.watch(appDatabaseProvider),
+    store: ref.watch(storeProvider),
+    dbPath: ref.watch(dbPathProvider),
   ),
 );
 

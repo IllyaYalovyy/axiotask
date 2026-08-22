@@ -4,6 +4,14 @@
 // OAuth scopes in friendly terms, the privacy assurance, and the state-correct
 // sign-in/out actions.
 //
+// It also hosts the SWITCH-ACCOUNT flow (#215): sign out → reset this device's
+// local data → sign in with the other account → the first sync pulls it. The
+// reset is the one operation the app cannot undo, so its affordance is
+// deliberately awkward: it lives at the bottom of a tab nobody opens by
+// accident, it is inert until the session is gone (the ratified order), and it
+// takes a typed-out word inside a dialog before it will run. Full multi-account
+// support is explicitly future work — this is the supported way to switch.
+//
 // Standalone: it takes its state and callbacks directly, so this task's tests
 // and goldens drive every state without a controller. Fresh Material 3 visuals
 // (Q3), not a pixel port of the Tauri dialog.
@@ -26,6 +34,11 @@ class AccountSection extends StatelessWidget {
     required this.scopes,
     required this.onSignIn,
     required this.onSignOut,
+    required this.onResetLocalData,
+    this.pendingPushes = 0,
+    this.resetNotice,
+    this.resetNoticeIsError = false,
+    this.resetBusy = false,
     super.key,
   });
 
@@ -44,6 +57,23 @@ class AccountSection extends StatelessWidget {
 
   /// Drop the session.
   final VoidCallback onSignOut;
+
+  /// Erase every local list and task (#215). Invoked ONLY after the typed
+  /// confirm inside this widget — never straight off the button.
+  final VoidCallback onResetLocalData;
+
+  /// Local changes that have not reached Google. Named in the confirm so the
+  /// user is told, before erasing, what is about to be lost for good.
+  final int pendingPushes;
+
+  /// The outcome of the last reset, shown where the action was taken.
+  final String? resetNotice;
+
+  /// Whether [resetNotice] reports a failure (an erase that was refused).
+  final bool resetNoticeIsError;
+
+  /// A reset is running; the affordance is held so it cannot be re-entered.
+  final bool resetBusy;
 
   @override
   Widget build(BuildContext context) {
@@ -99,8 +129,108 @@ class AccountSection extends StatelessWidget {
         ],
         const SizedBox(height: 24),
         _actions(context),
+        const SizedBox(height: 28),
+        const Divider(height: 1),
+        const SizedBox(height: 20),
+        _switchAccount(context, theme, colors),
       ],
     );
+  }
+
+  // ── Switch account (#215) ─────────────────────────────────────────────────
+  Widget _switchAccount(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme colors,
+  ) {
+    // A live session — including a DEAD one, which still holds tokens and can
+    // be revived by signing in again — keeps the erase inert. Erasing first
+    // would destroy data that is still recoverable, and the ratified flow is
+    // sign out, then reset, then sign in with the other account.
+    final gated = isAuthenticated || resetBusy;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _heading(context, 'Switch account'),
+        const SizedBox(height: 8),
+        Text(
+          'To use a different Google account: sign out, reset this device\'s '
+          'local data, then sign in with the other account — the first sync '
+          'pulls it. The reset erases every task and list stored here and '
+          'cannot be undone; your preferences are kept.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+          ),
+        ),
+        if (resetNotice != null) ...[
+          const SizedBox(height: 12),
+          _resetNoticeBanner(theme, colors),
+        ],
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('account-reset-data'),
+          onPressed: gated ? null : () => _confirmReset(context),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: colors.error,
+            side: BorderSide(color: colors.error.withValues(alpha: 0.5)),
+          ),
+          icon: const Icon(Icons.delete_forever_outlined, size: 18),
+          label: const Text('Reset local data…'),
+        ),
+        if (isAuthenticated) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Sign out first — the reset is only offered with no session.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _resetNoticeBanner(ThemeData theme, ColorScheme colors) => Container(
+    key: const Key('account-reset-notice'),
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: resetNoticeIsError
+          ? colors.errorContainer
+          : colors.secondaryContainer,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          resetNoticeIsError ? Icons.error_outline : Icons.check_circle_outline,
+          size: 18,
+          color: resetNoticeIsError
+              ? colors.onErrorContainer
+              : colors.onSecondaryContainer,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            resetNotice!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: resetNoticeIsError
+                  ? colors.onErrorContainer
+                  : colors.onSecondaryContainer,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _confirmReset(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _ResetConfirmDialog(pendingPushes: pendingPushes),
+    );
+    if (ok == true) onResetLocalData();
   }
 
   Widget _heading(BuildContext context, String text) => Text(
@@ -165,5 +295,113 @@ class AccountSection extends StatelessWidget {
       );
     }
     return Wrap(spacing: 12, runSpacing: 8, children: children);
+  }
+}
+
+/// The typed confirm gate. The button stays inert until the user has written
+/// [_word] out in full — the deliberate friction the one un-undoable action in
+/// the app earns. The field is NOT autofocused: on a phone that would throw the
+/// keyboard over the very warning the user needs to read first.
+class _ResetConfirmDialog extends StatefulWidget {
+  const _ResetConfirmDialog({required this.pendingPushes});
+
+  final int pendingPushes;
+
+  @override
+  State<_ResetConfirmDialog> createState() => _ResetConfirmDialogState();
+}
+
+class _ResetConfirmDialogState extends State<_ResetConfirmDialog> {
+  static const String _word = 'RESET';
+
+  final TextEditingController _controller = TextEditingController();
+  bool _armed = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return AlertDialog(
+      key: const Key('reset-data-confirm'),
+      // Scrollable: the warning, the unsynced-changes line and the field are a
+      // tall stack, and on a phone the keyboard takes half the screen. Without
+      // this, a large text scale or the raised IME would push the confirm field
+      // out of reach behind a clipped overflow.
+      scrollable: true,
+      title: const Text('Reset local data?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Every task and list on this device is removed — including '
+            'local-only lists, which exist nowhere else. This cannot be '
+            'undone. A recovery copy is written next to the database first, '
+            'and your preferences are kept.',
+          ),
+          if (widget.pendingPushes > 0) ...[
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: 18,
+                  color: colors.error,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${widget.pendingPushes} change(s) on this device never '
+                    'reached Google. Sign in and sync before resetting if you '
+                    'want to keep them.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.error,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          TextField(
+            key: const Key('reset-data-confirm-field'),
+            controller: _controller,
+            textCapitalization: TextCapitalization.characters,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Type $_word to confirm',
+              border: OutlineInputBorder(),
+            ),
+            onChanged: (v) {
+              final armed = v.trim().toUpperCase() == _word;
+              if (armed != _armed) setState(() => _armed = armed);
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('reset-data-cancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('reset-data-confirm-button'),
+          onPressed: _armed ? () => Navigator.of(context).pop(true) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: colors.error,
+            foregroundColor: colors.onError,
+          ),
+          child: const Text('Reset local data'),
+        ),
+      ],
+    );
   }
 }

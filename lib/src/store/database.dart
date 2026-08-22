@@ -306,25 +306,52 @@ class AppDatabase extends _$AppDatabase {
   /// reports [_BackupDurable].
   Future<_BackupOutcome> _exportBeforeWipe(String? backupDbPath) async {
     if (backupDbPath == null) return const _BackupDurable();
+    try {
+      await writeRawDump(label: 'prewipe', dbPath: backupDbPath);
+      return const _BackupDurable();
+    } on RawDumpFailed catch (e) {
+      return _BackupFailed(e.reason);
+    }
+  }
+
+  /// Write a schema-agnostic JSON dump of every user table beside the database
+  /// file at [dbPath], flushed to durable storage before returning, and return
+  /// the path written. The file is named `axiotask-<label>-<stamp>.json`.
+  ///
+  /// This is the pre-1.0 wipe safety net (#129) exposed for reuse: any
+  /// destructive step that empties the store leaves the SAME recoverable
+  /// artifact a schema wipe does — the account-switch reset (#215) writes a
+  /// `prereset` dump before erasing everything.
+  ///
+  /// Returns `null` when [dbPath] is `null` — an in-memory database has no file
+  /// and nothing a user would miss. Throws (dump failure or write failure) so
+  /// the caller can refuse to proceed with the destructive step; the message
+  /// carries the target path, so it belongs in the LOG, never in a user-facing
+  /// string (#187).
+  Future<String?> writeRawDump({
+    required String label,
+    required String? dbPath,
+  }) async {
+    if (dbPath == null) return null;
     final String json;
     try {
-      json = await _rawDumpJson();
+      json = await _rawDumpJson(label);
     } on Object catch (e) {
-      return _BackupFailed('dump: $e');
+      throw RawDumpFailed('dump: $e');
     }
-    final out = _preWipeBackupPath(backupDbPath);
+    final out = _dumpPath(dbPath, label);
     try {
-      _writeDurably(out, utf8.encode(json));
-      return const _BackupDurable();
+      await _writeDurably(out, utf8.encode(json));
     } on Object catch (e) {
-      return _BackupFailed('write $out: $e');
+      throw RawDumpFailed('write $out: $e');
     }
+    return out;
   }
 
   /// Schema-agnostic dump of every user table to a single JSON document. Reads
   /// whatever columns exist (it cannot assume the current schema — that is the
   /// point); drift decodes each cell to a Dart value, and BLOBs are base64'd.
-  Future<String> _rawDumpJson() async {
+  Future<String> _rawDumpJson(String label) async {
     final tableRows = await customSelect(
       "SELECT name FROM sqlite_master WHERE type='table' "
       "AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -340,21 +367,21 @@ class AppDatabase extends _$AppDatabase {
     }
     final doc = {
       'app': 'axiotask',
-      'kind': 'pre-wipe-raw-dump',
+      'kind': '$label-raw-dump',
       'exported_at': nowUtcString(),
       'tables': tables,
     };
     return const JsonEncoder.withIndent('  ').convert(doc);
   }
 
-  static String _preWipeBackupPath(String dbPath) {
+  static String _dumpPath(String dbPath, String label) {
     final t = clock.now();
     String pad(int n) => n.toString().padLeft(2, '0');
     final stamp =
         '${t.year.toString().padLeft(4, '0')}${pad(t.month)}${pad(t.day)}'
         '-${pad(t.hour)}${pad(t.minute)}${pad(t.second)}';
     final dir = File(dbPath).parent.path;
-    return '$dir${Platform.pathSeparator}axiotask-prewipe-$stamp.json';
+    return '$dir${Platform.pathSeparator}axiotask-$label-$stamp.json';
   }
 
   /// Write [bytes] to [path] and flush them to durable storage before
@@ -363,10 +390,14 @@ class AppDatabase extends _$AppDatabase {
   /// wipe was told had been taken (#129). Parent-directory fsync (the
   /// reference's extra guard) is not exposed by dart:io; the file flush is the
   /// guarantee. Throws when the target directory is missing/unwritable — the
-  /// signal the caller turns into [_BackupFailed].
-  static void _writeDurably(String path, List<int> bytes) {
-    File(path).writeAsBytesSync(bytes, flush: true);
-  }
+  /// signal the caller turns into [_BackupFailed] or a refused reset.
+  ///
+  /// ASYNC: a full-store dump is not a small file, and this now runs from a
+  /// user gesture (the account-switch reset, #215) as well as from startup. A
+  /// synchronous write of that size on the UI isolate is an ANR risk on a phone
+  /// — the same reason `BackupService.export` uses async IO.
+  static Future<void> _writeDurably(String path, List<int> bytes) =>
+      File(path).writeAsBytes(bytes, flush: true);
 }
 
 /// Decode one drift/SQLite cell into a JSON-encodable value; a BLOB
@@ -389,6 +420,21 @@ QueryExecutor _openFile(File file) => NativeDatabase(
     raw.execute('PRAGMA foreign_keys = ON');
   },
 );
+
+/// The raw JSON dump could not be produced or durably written. [reason] carries
+/// the target path / underlying IO error, so it is LOG material only — never a
+/// user-facing string (#187). Deliberately outside the sealed [StoreError]
+/// union: it is an internal signal callers turn into their own outcome (a
+/// `_BackupFailed`, or a refused reset).
+class RawDumpFailed implements Exception {
+  const RawDumpFailed(this.reason);
+
+  /// The underlying failure, including the target path.
+  final String reason;
+
+  @override
+  String toString() => 'RawDumpFailed: $reason';
+}
 
 /// Outcome of the pre-wipe backup attempt, so the caller can decide whether the
 /// destructive wipe is safe to proceed with (#129).

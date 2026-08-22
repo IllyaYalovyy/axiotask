@@ -36,7 +36,10 @@ Widget _footer(AuthSyncStatus status) => Theme(
   ),
 );
 
-/// An Account section under the real light theme.
+/// An Account section under the real light theme. `pendingPushes` stays 0 and
+/// no reset notice is set, so every scenario is a pure function of the auth
+/// state — the destructive "Switch account" block (#215) renders in all three,
+/// which is the point: its gating is part of the pinned chrome.
 Widget _account({
   required bool isAuthenticated,
   required bool needsReauth,
@@ -55,6 +58,7 @@ Widget _account({
           scopes: scopes,
           onSignIn: () {},
           onSignOut: () {},
+          onResetLocalData: () {},
         ),
       ),
     ),
