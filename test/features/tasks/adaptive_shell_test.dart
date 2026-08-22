@@ -1437,6 +1437,69 @@ void main() {
   );
 
   testWidgets(
+    'desktop rows keep a compact two-line rhythm in both density preferences',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final standard = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _scrollSnapshot,
+      );
+      addTearDown(standard.dispose);
+      await tester.pumpWidget(standard.widget);
+      await tester.pump();
+      expect(
+        tester.getSize(find.byKey(const Key('desktop-task-row-100'))).height,
+        inInclusiveRange(52, 60),
+        reason: 'standard rows leave room for a concise metadata line',
+      );
+      final scaled = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _snapshot,
+      );
+      addTearDown(scaled.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: AdaptiveShell(viewModel: scaled.viewModel),
+        ),
+      );
+      await tester.pump();
+      expect(
+        tester.getSize(find.byKey(const Key('desktop-task-row-11'))).height,
+        greaterThan(60),
+        reason: 'large text grows a row instead of clipping its readable title',
+      );
+
+      final preferences = _WorkspacePreferences()
+        ..current = const DevicePreferences.defaults().copyWith(
+          density: DensityPreference.compact,
+        );
+      final compact = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _scrollSnapshot,
+        preferencesRepository: preferences,
+      );
+      addTearDown(compact.dispose);
+      await tester.pumpWidget(compact.widget);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(const Key('desktop-task-row-100'))).height,
+        inInclusiveRange(44, 52),
+        reason: 'compact rows improve visible desktop density without clipping',
+      );
+    },
+  );
+
+  testWidgets(
     'PAR-DESKTOP-003 drag previews without reflow and drops through MOVE anchor',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);

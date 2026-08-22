@@ -197,6 +197,12 @@ and 8px section gap; body text remains at the Standard readable size. Desktop
 buttons and fields use an 8px corner radius. Pills are limited to semantic
 status or toggle treatments, not routine commands.
 
+Desktop task rows use a stable two-line rhythm: 56px minimum in Standard and
+48px minimum in Compact, with a title and one concise metadata line when
+present. Long or scaled text grows the row rather than clipping. Completion,
+selection, hover, focus, fixed action space, and reorder insertion/rejection
+states remain distinct without shifting row text.
+
 The native window title is the sole Axiotask brand treatment. The in-app
 desktop header is a compact, labeled application-control bar: frequent
 navigation, search, and sync controls remain visible, while keyboard help,

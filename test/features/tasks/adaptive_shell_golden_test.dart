@@ -180,7 +180,11 @@ void main() {
 
   for (final (width, brightness) in <(double, Brightness)>[
     (1024, Brightness.light),
-    (1280, Brightness.dark),
+    (1024, Brightness.dark),
+    (1355, Brightness.light),
+    (1355, Brightness.dark),
+    (1600, Brightness.light),
+    (1600, Brightness.dark),
   ]) {
     testWidgets('Linux desktop interactions $width ${brightness.name}', (
       tester,

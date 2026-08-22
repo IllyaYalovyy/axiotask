@@ -1063,6 +1063,7 @@ final class _ShellBody extends StatelessWidget {
                   onDragPreview: onDragPreview,
                   onDragCanceled: onDragCanceled,
                   onDrop: onDrop,
+                  density: density,
                 )
               : _DesktopPaneFocus(
                   key: const Key('desktop-detail-pane'),
@@ -1139,6 +1140,7 @@ final class _ShellBody extends StatelessWidget {
                       onDragPreview: onDragPreview,
                       onDragCanceled: onDragCanceled,
                       onDrop: onDrop,
+                      density: density,
                     ),
                   ),
                   if (hasDetail) ...<Widget>[
@@ -2172,6 +2174,7 @@ final class _TaskCollection extends StatefulWidget {
     required this.onDragPreview,
     required this.onDragCanceled,
     required this.onDrop,
+    required this.density,
     super.key,
   });
 
@@ -2187,6 +2190,7 @@ final class _TaskCollection extends StatefulWidget {
   final ValueChanged<_DesktopDropPreview> onDragPreview;
   final VoidCallback onDragCanceled;
   final ValueChanged<DesktopTaskDropIntent> onDrop;
+  final DensityPreference density;
 
   @override
   State<_TaskCollection> createState() => _TaskCollectionState();
@@ -2263,6 +2267,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     final projection = state.visibleProjection;
     final rows = projection.rows;
     final tasks = rows.map((row) => row.task).toList(growable: false);
+    final rowMetrics = _DesktopTaskRowMetrics.forDensity(widget.density);
     final clearSelection = state.clearCompletedSelection;
     final clearCompletedCount = clearSelection == null
         ? 0
@@ -2344,10 +2349,10 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 ListView.separated(
                   key: const Key('desktop-task-scroll'),
                   controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: EdgeInsets.symmetric(vertical: rowMetrics.listInset),
                   itemCount: tasks.length,
                   separatorBuilder: (_, _) =>
-                      const Divider(height: 1, indent: 72),
+                      Divider(height: 1, indent: rowMetrics.contentStart),
                   itemBuilder: (context, index) {
                     final row = rows[index];
                     final task = row.task;
@@ -2379,6 +2384,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                       onDragCanceled: widget.onDragCanceled,
                       onDrop: widget.onDrop,
                       onDragMove: _autoscroll,
+                      density: widget.density,
                       task: task,
                       canMove: state.orderedTaskLists.any(
                         (list) => list.id != task.taskListId,
@@ -2449,6 +2455,7 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.onDragCanceled,
     required this.onDrop,
     required this.onDragMove,
+    required this.density,
     super.key,
   });
 
@@ -2473,6 +2480,7 @@ final class _DesktopTaskRow extends StatefulWidget {
   final VoidCallback onDragCanceled;
   final ValueChanged<DesktopTaskDropIntent> onDrop;
   final ValueChanged<Offset> onDragMove;
+  final DensityPreference density;
 
   @override
   State<_DesktopTaskRow> createState() => _DesktopTaskRowState();
@@ -2581,59 +2589,94 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
     );
   }
 
-  Widget _tile(CachedTask task) => ListTile(
-    selected: widget.selected || widget.focusNode.hasFocus,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-    leading: widget.selectionMode
-        ? Checkbox(
-            key: Key('bulk-select-task-${task.id.value}'),
-            value: widget.bulkSelected,
-            onChanged: widget.enabled
-                ? (_) => widget.onSelectionToggle()
-                : null,
+  Widget _tile(CachedTask task) {
+    final metrics = _DesktopTaskRowMetrics.forDensity(widget.density);
+    final theme = Theme.of(context);
+    final focused = widget.focusNode.hasFocus;
+    final selected = widget.selected || focused;
+    final completed = task.status == TaskStatus.completed;
+    final foreground = completed
+        ? theme.colorScheme.onSurfaceVariant
+        : theme.colorScheme.onSurface;
+    final background = selected
+        ? theme.colorScheme.secondaryContainer
+        : _hovered
+        ? theme.axiotaskTokens.hoverColor
+        : Colors.transparent;
+    final titleStyle = theme.textTheme.bodyLarge?.copyWith(
+      color: foreground,
+      decoration: completed ? TextDecoration.lineThrough : null,
+    );
+    final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+      decoration: completed ? TextDecoration.lineThrough : null,
+    );
+    final controlStyle = IconButton.styleFrom(
+      minimumSize: Size.square(metrics.controlSize),
+      maximumSize: Size.square(metrics.controlSize),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.standard,
+    );
+    final completion = widget.selectionMode
+        ? SizedBox(
+            width: metrics.controlSize,
+            height: metrics.controlSize,
+            child: Checkbox(
+              key: Key('bulk-select-task-${task.id.value}'),
+              value: widget.bulkSelected,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              onChanged: widget.enabled
+                  ? (_) => widget.onSelectionToggle()
+                  : null,
+            ),
           )
         : IconButton(
-            tooltip: task.status == TaskStatus.completed
-                ? 'Reopen task'
-                : 'Complete task',
+            tooltip: completed ? 'Reopen task' : 'Complete task',
+            style: controlStyle,
             onPressed: widget.enabled
                 ? () => widget.onAction(DesktopTaskAction.toggleCompletion)
                 : null,
             icon: Icon(
-              task.status == TaskStatus.completed
-                  ? Icons.check_circle
-                  : Icons.radio_button_unchecked,
+              completed ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: metrics.iconSize,
             ),
-          ),
-    title: Text(task.title),
-    subtitle: Text(widget.subtitle),
-    trailing: widget.selectionMode
-        ? null
+          );
+    final actions = widget.selectionMode
+        ? const SizedBox.shrink()
         : SizedBox(
-            width: 100,
+            width: metrics.actionSlotWidth,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: <Widget>[
                 AnimatedOpacity(
-                  opacity: _hovered || widget.focusNode.hasFocus ? 1 : 0,
+                  opacity: _hovered || focused ? 1 : 0,
                   duration: const Duration(milliseconds: 120),
                   child: IgnorePointer(
-                    ignoring: !_hovered && !widget.focusNode.hasFocus,
+                    ignoring: !_hovered && !focused,
                     child: IconButton(
                       tooltip: 'Open ${task.title}',
+                      style: controlStyle,
                       onPressed: widget.enabled
                           ? () => widget.onAction(DesktopTaskAction.open)
                           : null,
-                      icon: const Icon(Icons.open_in_new),
+                      icon: Icon(Icons.open_in_new, size: metrics.iconSize),
                     ),
                   ),
                 ),
                 Semantics(
+                  container: true,
                   button: true,
                   label: 'Task actions for ${task.title}',
                   child: PopupMenuButton<DesktopTaskAction>(
                     tooltip: 'Task actions for ${task.title}',
                     enabled: widget.enabled,
+                    iconSize: metrics.iconSize,
+                    constraints: BoxConstraints.tightFor(
+                      width: metrics.controlSize,
+                      height: metrics.controlSize,
+                    ),
                     onSelected: widget.onAction,
                     itemBuilder: (_) =>
                         _taskActionMenuItems(task, canMove: widget.canMove),
@@ -2641,13 +2684,77 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
                 ),
               ],
             ),
+          );
+    return Stack(
+      fit: StackFit.passthrough,
+      children: <Widget>[
+        Material(
+          color: background,
+          child: InkWell(
+            excludeFromSemantics: true,
+            onTap: widget.enabled
+                ? widget.selectionMode
+                      ? widget.onSelectionToggle
+                      : () => widget.onAction(DesktopTaskAction.open)
+                : null,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: metrics.minimumHeight),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: metrics.horizontalInset,
+                  vertical: metrics.verticalInset,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    SizedBox(
+                      width: metrics.leadingWidth,
+                      child: Center(child: completion),
+                    ),
+                    SizedBox(width: metrics.contentGap),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            task.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: titleStyle,
+                          ),
+                          if (widget.subtitle.isNotEmpty)
+                            Text(
+                              widget.subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: subtitleStyle,
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (!widget.selectionMode) actions,
+                  ],
+                ),
+              ),
+            ),
           ),
-    onTap: widget.enabled
-        ? widget.selectionMode
-              ? widget.onSelectionToggle
-              : () => widget.onAction(DesktopTaskAction.open)
-        : null,
-  );
+        ),
+        if (focused)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: theme.colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2661,6 +2768,8 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       child: _tile(task),
     );
     final draggable = Semantics(
+      container: true,
+      explicitChildNodes: true,
       label:
           'Drag ${task.title} to reorder or move. '
           'Move buttons are available in task details.',
@@ -2752,6 +2861,60 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       ),
     );
   }
+}
+
+/// Keeps desktop task rows calm and compact while allowing larger text to grow
+/// the row naturally instead of clipping either line or the focus treatment.
+final class _DesktopTaskRowMetrics {
+  const _DesktopTaskRowMetrics({
+    required this.minimumHeight,
+    required this.horizontalInset,
+    required this.verticalInset,
+    required this.leadingWidth,
+    required this.contentGap,
+    required this.actionSlotWidth,
+    required this.controlSize,
+    required this.iconSize,
+    required this.listInset,
+  });
+
+  factory _DesktopTaskRowMetrics.forDensity(DensityPreference density) =>
+      switch (density) {
+        DensityPreference.standard => const _DesktopTaskRowMetrics(
+          minimumHeight: 56,
+          horizontalInset: 16,
+          verticalInset: 4,
+          leadingWidth: 40,
+          contentGap: 8,
+          actionSlotWidth: 96,
+          controlSize: 40,
+          iconSize: 20,
+          listInset: 4,
+        ),
+        DensityPreference.compact => const _DesktopTaskRowMetrics(
+          minimumHeight: 48,
+          horizontalInset: 12,
+          verticalInset: 2,
+          leadingWidth: 36,
+          contentGap: 8,
+          actionSlotWidth: 96,
+          controlSize: 36,
+          iconSize: 20,
+          listInset: 2,
+        ),
+      };
+
+  final double minimumHeight;
+  final double horizontalInset;
+  final double verticalInset;
+  final double leadingWidth;
+  final double contentGap;
+  final double actionSlotWidth;
+  final double controlSize;
+  final double iconSize;
+  final double listInset;
+
+  double get contentStart => horizontalInset + leadingWidth + contentGap;
 }
 
 final class _DesktopPointerDraggable<T extends Object> extends Draggable<T> {
