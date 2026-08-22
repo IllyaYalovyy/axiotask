@@ -148,18 +148,13 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Synthetic linked task'));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('open-in-google-tasks-action')));
+    final googleAction = find.byKey(const Key('open-in-google-tasks-action'));
+    await tester.ensureVisible(googleAction);
+    await tester.tap(googleAction);
     await tester.pump();
 
     expect(find.text('Could not open Google Tasks.'), findsOneWidget);
-    expect(
-      tester
-          .widget<OutlinedButton>(
-            find.byKey(const Key('open-in-google-tasks-action')),
-          )
-          .onPressed,
-      isNotNull,
-    );
+    expect(tester.widget<OutlinedButton>(googleAction).onPressed, isNotNull);
 
     await tester.ensureVisible(find.byKey(const Key('task-content-link-0')));
     await tester.tap(find.byKey(const Key('task-content-link-0')));

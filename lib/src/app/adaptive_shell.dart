@@ -239,9 +239,10 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   }
 
   void _startTaskDrag(DesktopTaskDragPayload payload) {
+    widget.viewModel.startTaskDragFeedback();
     setState(() {
       _dragPayload = payload;
-      _dropPreview = _DesktopDropPreview.invalid(payload);
+      _dropPreview = null;
     });
   }
 
@@ -252,10 +253,12 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 
   void _cancelTaskDrag() {
     if (_dragPayload == null && _dropPreview == null) return;
+    final rejection = _dropPreview?.rejectionMessage;
     setState(() {
       _dragPayload = null;
       _dropPreview = null;
     });
+    if (rejection != null) widget.viewModel.reportInvalidTaskDrop(rejection);
   }
 
   void _acceptTaskDrop(DesktopTaskDropIntent intent) {
@@ -1219,6 +1222,55 @@ final class _BulkActionBar extends StatelessWidget {
   }
 }
 
+final class _TransientTaskFeedbackSlot extends StatelessWidget {
+  const _TransientTaskFeedbackSlot({required this.feedback});
+
+  final TransientTaskFeedback? feedback;
+
+  @override
+  Widget build(BuildContext context) {
+    final currentFeedback = feedback;
+    final label = switch (currentFeedback) {
+      TransientTaskFeedback(
+        kind: TransientTaskFeedbackKind.invalidDrop,
+        :final message?,
+      ) =>
+        message,
+      TransientTaskFeedback(
+        kind: TransientTaskFeedbackKind.bulkSuccess,
+        bulkOperation: final summary?,
+      ) =>
+        '${_bulkKindLabel(summary.kind)}: '
+            '${summary.confirmedCount} confirmed with Google',
+      null => null,
+      _ => null,
+    };
+    if (label == null) return const SizedBox.shrink();
+    return Semantics(
+      liveRegion: true,
+      child: Material(
+        key: const Key('transient-task-feedback'),
+        color: currentFeedback!.kind == TransientTaskFeedbackKind.invalidDrop
+            ? Theme.of(context).colorScheme.errorContainer
+            : Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(
+            label,
+            style: TextStyle(
+              color:
+                  currentFeedback.kind == TransientTaskFeedbackKind.invalidDrop
+                  ? Theme.of(context).colorScheme.onErrorContainer
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 final class _BulkOperationResultBanner extends StatelessWidget {
   const _BulkOperationResultBanner({required this.summary});
 
@@ -1554,24 +1606,35 @@ final class _DesktopTaskListDropTarget extends StatelessWidget {
       onWillAcceptWithDetails: (details) => _intent(details.data) != null,
       onMove: (details) {
         final intent = _intent(details.data);
-        if (intent != null) {
-          onPreview!(
-            _DesktopDropPreview(
-              intent: intent,
-              label: 'Move “${details.data.title}” to “${taskList.title}”',
-              targetKey: targetKey,
-            ),
-          );
-        }
+        onPreview!(
+          intent == null
+              ? _DesktopDropPreview.invalid(
+                  message:
+                      DesktopTaskDragAdapter.moveToListRejectionReason(
+                        payload: details.data,
+                        destinationTaskListId: taskList.id,
+                      ) ??
+                      'This drop target is not available.',
+                  targetKey: targetKey,
+                )
+              : _DesktopDropPreview(
+                  intent: intent,
+                  label: 'Move “${details.data.title}” to “${taskList.title}”',
+                  targetKey: targetKey,
+                ),
+        );
       },
       onAcceptWithDetails: (details) {
         final intent = _intent(details.data);
         if (intent != null) onDrop!(intent);
       },
       builder: (context, _, _) => Material(
-        color: preview?.targetKey == targetKey
+        key: Key('desktop-list-drop-target-${taskList.id.value}'),
+        color: preview?.targetKey != targetKey
+            ? Colors.transparent
+            : preview!.valid
             ? Theme.of(context).colorScheme.primaryContainer
-            : Colors.transparent,
+            : Theme.of(context).colorScheme.errorContainer,
         child: child,
       ),
     );
@@ -1771,7 +1834,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
         : clearSelection.completedTaskCount -
               clearSelection.skippedParentTaskIds.length;
     _ensureFocusNodes(tasks.length);
-    return Column(
+    final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Padding(
@@ -2034,30 +2097,23 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                     );
                   },
                 ),
-              if (widget.dropPreview case final preview?)
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  top: 8,
-                  child: IgnorePointer(
-                    child: Material(
-                      key: const Key('desktop-task-drag-preview'),
-                      elevation: 4,
-                      color: preview.valid
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(context).colorScheme.errorContainer,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        child: Text(preview.label),
-                      ),
-                    ),
-                  ),
-                ),
             ],
+          ),
+        ),
+      ],
+    );
+    final feedback = state.transientFeedback;
+    if (feedback == null) return content;
+
+    return Stack(
+      children: <Widget>[
+        content,
+        Positioned(
+          top: 20,
+          right: 24,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 300),
+            child: _TransientTaskFeedbackSlot(feedback: feedback),
           ),
         ),
       ],
@@ -2199,7 +2255,20 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
   ) {
     final placement = _placement(globalPosition);
     final intent = _dropIntent(payload, globalPosition);
-    if (intent == null) return _DesktopDropPreview.invalid(payload);
+    if (intent == null) {
+      return _DesktopDropPreview.invalid(
+        message:
+            DesktopTaskDragAdapter.reorderRejectionReason(
+              payload: payload,
+              target: widget.task,
+              placement: placement,
+              canonicalSiblings: widget.canonicalSiblings,
+              manualOrderEnabled: widget.manualOrderEnabled,
+            ) ??
+            'This drop target is not available.',
+        targetKey: 'row-${widget.task.id.value}-${placement.name}',
+      );
+    }
     return _DesktopDropPreview(
       intent: intent,
       label: 'Move “${payload.title}” ${placement.name} “${widget.task.title}”',
@@ -2322,7 +2391,12 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       },
       onLeave: (payload) {
         if (payload != null) {
-          widget.onDragPreview(_DesktopDropPreview.invalid(payload));
+          widget.onDragPreview(
+            _DesktopDropPreview.invalid(
+              message: 'This drop target is not available.',
+              targetKey: 'row-${widget.task.id.value}',
+            ),
+          );
         }
       },
       onAcceptWithDetails: (details) {
@@ -2341,19 +2415,34 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
             ),
           ),
           if (widget.dropPreview case final preview?
-              when preview.targetKey.startsWith('row-${widget.task.id.value}-'))
-            Positioned(
-              left: 16,
-              right: 16,
-              top: preview.targetKey.endsWith('-before') ? 0 : null,
-              bottom: preview.targetKey.endsWith('-after') ? 0 : null,
-              child: Divider(
-                key: Key('desktop-task-drop-indicator-${task.id.value}'),
-                height: 2,
-                thickness: 2,
-                color: Theme.of(context).colorScheme.primary,
+              when preview.targetKey.startsWith('row-${widget.task.id.value}'))
+            if (preview.valid)
+              Positioned(
+                left: 16,
+                right: 16,
+                top: preview.targetKey.endsWith('-before') ? 0 : null,
+                bottom: preview.targetKey.endsWith('-after') ? 0 : null,
+                child: Divider(
+                  key: Key('desktop-task-drop-indicator-${task.id.value}'),
+                  height: 2,
+                  thickness: 2,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              )
+            else
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    key: Key('desktop-task-drop-rejection-${task.id.value}'),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.error,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
         ],
       ),
     );
@@ -2387,17 +2476,16 @@ final class _DesktopDropPreview {
     required this.targetKey,
   });
 
-  factory _DesktopDropPreview.invalid(DesktopTaskDragPayload payload) =>
-      _DesktopDropPreview(
-        intent: null,
-        label: 'Cannot drop “${payload.title}” here',
-        targetKey: 'invalid',
-      );
+  factory _DesktopDropPreview.invalid({
+    required String message,
+    required String targetKey,
+  }) => _DesktopDropPreview(intent: null, label: message, targetKey: targetKey);
 
   final DesktopTaskDropIntent? intent;
   final String label;
   final String targetKey;
   bool get valid => intent != null;
+  String? get rejectionMessage => valid ? null : label;
 
   @override
   bool operator ==(Object other) =>

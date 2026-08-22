@@ -26,6 +26,10 @@ final class BulkOperationSummary {
   final DateTime createdAt;
 
   bool get isSettled => pendingCount == 0;
+
+  /// An incomplete Google result or a member failure must stay visible until
+  /// the underlying durable work has an ordinary recovery path.
+  bool get requiresAttention => pendingCount > 0 || failedCount > 0;
 }
 
 final class BulkOperationReceipt {

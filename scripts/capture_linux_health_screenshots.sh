@@ -10,8 +10,11 @@ scenarios=(
   bulk-operation-selection-light
   bulk-operation-result-dark
   bulk-operation-confirmation-light
+  bulk-operation-success-light
   drag-preview-light
   drag-failure-dark
+  drag-rejection-dark
+  drag-cleared-light
   desktop-interactions-1024-light
   desktop-interactions-1280-dark
   search-results-light

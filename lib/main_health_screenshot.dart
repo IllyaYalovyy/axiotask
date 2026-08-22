@@ -64,7 +64,8 @@ final class _HealthScreenshotSequenceState
           _viewModel.selectSmartView(SmartView.focus);
         }
         if (scenario.name == 'bulk-operation-selection-light' ||
-            scenario.name == 'bulk-operation-confirmation-light') {
+            scenario.name == 'bulk-operation-confirmation-light' ||
+            scenario.name == 'bulk-operation-success-light') {
           _viewModel.beginBulkSelection(const TaskId(11));
           _viewModel.toggleBulkSelection(const TaskId(13));
         } else if (!scenario.name.startsWith('search-results-') &&
@@ -80,6 +81,10 @@ final class _HealthScreenshotSequenceState
         }
         if (scenario.name == 'bulk-operation-confirmation-light') {
           _pressButton(const Key('bulk-complete-open'));
+          await _settleFrames();
+        }
+        if (scenario.name == 'bulk-operation-success-light') {
+          await _viewModel.completeBulkSelection();
           await _settleFrames();
         }
         if (scenario.name == 'clear-completed-confirmation-dark') {
@@ -104,6 +109,14 @@ final class _HealthScreenshotSequenceState
           dragHeld = true;
         } else if (scenario.name == 'drag-failure-dark') {
           await _performSyntheticDrag(release: true);
+        } else if (scenario.name == 'drag-rejection-dark') {
+          await _performSyntheticInvalidDrag();
+        } else if (scenario.name == 'drag-cleared-light') {
+          _viewModel.reportInvalidTaskDrop(
+            'This drop target is not available.',
+          );
+          _viewModel.startTaskDragFeedback();
+          await _settleFrames();
         }
         final boundary =
             _boundaryKey.currentContext!.findRenderObject()!
@@ -193,6 +206,46 @@ final class _HealthScreenshotSequenceState
         PointerRemovedEvent(pointer: 42, position: targetPosition),
       );
     }
+    await _settleFrames();
+  }
+
+  Future<void> _performSyntheticInvalidDrag() async {
+    final source = _renderBoxFor(const Key('desktop-task-row-13'));
+    final focus = _renderBoxFor(const Key('desktop-navigation-pane'));
+    final sourcePosition = source.localToGlobal(
+      source.size.center(Offset.zero),
+    );
+    final targetPosition = focus.localToGlobal(const Offset(80, 80));
+    GestureBinding.instance.handlePointerEvent(
+      PointerAddedEvent(pointer: 43, position: sourcePosition),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerDownEvent(
+        pointer: 43,
+        position: sourcePosition,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerMoveEvent(
+        pointer: 43,
+        position: targetPosition,
+        delta: targetPosition - sourcePosition,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerUpEvent(
+        pointer: 43,
+        position: targetPosition,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerRemovedEvent(pointer: 43, position: targetPosition),
+    );
     await _settleFrames();
   }
 
@@ -311,6 +364,9 @@ TasksViewModel _createViewModel(_ScreenshotScenario scenario) => TasksViewModel(
           bulkSummary: scenario.name == 'bulk-operation-result-dark'
               ? _bulkScreenshotSummary
               : null,
+          bulkResult: scenario.name == 'bulk-operation-success-light'
+              ? _bulkSuccessScreenshotSummary
+              : _bulkScreenshotSummary,
           failMoves: scenario.name == 'drag-failure-dark',
           undos: scenario.name == 'delete-undo'
               ? <TaskDeleteUndo>[
@@ -351,6 +407,7 @@ class _ScreenshotTasksRepository
     this.dueUndos = const <TaskDueChangeUndo>[],
     this.failMoves = false,
     this.bulkSummary,
+    this.bulkResult,
   });
 
   final CachedTasksSnapshot snapshot;
@@ -358,6 +415,7 @@ class _ScreenshotTasksRepository
   final List<TaskDueChangeUndo> dueUndos;
   final bool failMoves;
   final BulkOperationSummary? bulkSummary;
+  final BulkOperationSummary? bulkResult;
 
   @override
   Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
@@ -368,7 +426,7 @@ class _ScreenshotTasksRepository
     BulkExistingTaskCommand command,
   ) async => Outcome.success(
     BulkOperationReceipt(
-      summary: _bulkScreenshotSummary,
+      summary: bulkResult ?? _bulkScreenshotSummary,
       taskIds: command.taskIds.toList(growable: false),
     ),
   );
@@ -623,6 +681,11 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
     ),
   ),
   (
+    name: 'bulk-operation-success-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(SyncHealthOutcome.good, counts: const SyncWorkCounts()),
+  ),
+  (
     name: 'drag-preview-light',
     snapshot: _smartViewsSnapshot,
     health: _health(
@@ -637,6 +700,24 @@ final List<_ScreenshotScenario> _scenarios = <_ScreenshotScenario>[
     health: _health(
       SyncHealthOutcome.failed,
       failureReason: SyncFailureReason.remoteFailure,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'drag-rejection-dark',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
+      counts: const SyncWorkCounts(pending: 1),
+    ),
+  ),
+  (
+    name: 'drag-cleared-light',
+    snapshot: _smartViewsSnapshot,
+    health: _health(
+      SyncHealthOutcome.pending,
+      pendingReason: SyncPendingReason.localChanges,
       counts: const SyncWorkCounts(pending: 1),
     ),
   ),
@@ -1045,6 +1126,17 @@ final _bulkScreenshotSummary = BulkOperationSummary(
   confirmedCount: 1,
   pendingCount: 0,
   failedCount: 1,
+  createdAt: DateTime.utc(2026, 8, 16, 14),
+);
+
+final _bulkSuccessScreenshotSummary = BulkOperationSummary(
+  operationId: 29,
+  kind: BulkOperationKind.complete,
+  selectedCount: 2,
+  affectedCount: 2,
+  confirmedCount: 2,
+  pendingCount: 0,
+  failedCount: 0,
   createdAt: DateTime.utc(2026, 8, 16, 14),
 );
 

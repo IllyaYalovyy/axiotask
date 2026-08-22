@@ -801,8 +801,9 @@ light/dark task details plus effective-date/completion/durable-Undo workflow
 states, plus keyboard-focused light/dark quick-capture previews and validated
 light/dark bulk-capture preview/result states and title/notes search with child
 parent context, plus Fedora desktop interactions at 1024×720 light and
-1280×720 dark, plus an in-progress light drag preview and dark canonical
-drag-failure recovery, plus bulk-operation selection, exact result, local
+1280×720 dark, plus an in-progress light drag preview, immediate dark rejection,
+cleared light feedback, and dark canonical drag-failure recovery, plus
+bulk-operation selection, brief settled success, exact partial result, local
 confirmation, grouped-delete Undo, and Clear-completed confirmation states,
 into the ignored `screenshots/actual/` directory, then inspect each PNG:
 

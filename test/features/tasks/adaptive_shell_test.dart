@@ -1466,11 +1466,7 @@ void main() {
       await tester.pump();
 
       expect(
-        find.byKey(const Key('desktop-task-drag-preview')),
-        findsOneWidget,
-      );
-      expect(
-        find.text('Move “Leaf task” before “Cached parent”'),
+        find.byKey(const Key('desktop-task-drop-indicator-11')),
         findsOneWidget,
       );
       expect(tester.getRect(source), sourceBefore);
@@ -1483,34 +1479,44 @@ void main() {
       expect(command.destinationTaskListId, const TaskListId(7));
       expect(command.parentTaskId, isNull);
       expect(command.previousTaskId, isNull);
-      expect(find.byKey(const Key('desktop-task-drag-preview')), findsNothing);
+      expect(
+        find.byKey(const Key('desktop-task-drop-indicator-11')),
+        findsNothing,
+      );
     },
   );
 
-  testWidgets('drag cancel and invalid targets commit nothing', (tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
-    addTearDown(fixture.dispose);
-    await tester.pumpWidget(fixture.widget);
-    await tester.pump();
+  testWidgets(
+    'drag rejection marks its target and uses a bounded row-safe message',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
 
-    final source = find.byKey(const Key('desktop-task-row-13'));
-    final drag = await tester.startGesture(
-      tester.getCenter(source),
-      kind: PointerDeviceKind.mouse,
-    );
-    await drag.moveTo(tester.getCenter(find.text('Focus').first));
-    await tester.pump();
-    expect(find.text('Cannot drop “Leaf task” here'), findsOneWidget);
-    await drag.up();
-    await tester.pumpAndSettle();
+      final source = find.byKey(const Key('desktop-task-row-13'));
+      final drag = await tester.startGesture(
+        tester.getCenter(source),
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveTo(tester.getCenter(find.text('Focus').first));
+      await tester.pump();
+      expect(find.byKey(const Key('desktop-task-drag-preview')), findsNothing);
+      await drag.up();
+      await tester.pumpAndSettle();
 
-    expect(fixture.tasks.applied, isEmpty);
-    expect(find.text('Leaf task'), findsOneWidget);
-  });
+      expect(fixture.tasks.applied, isEmpty);
+      expect(find.text('Leaf task'), findsOneWidget);
+      expect(find.byKey(const Key('transient-task-feedback')), findsOneWidget);
+      expect(find.text('This drop target is not available.'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.byKey(const Key('transient-task-feedback')), findsNothing);
+    },
+  );
 
   testWidgets('touch input does not activate the Fedora pointer adapter', (
     tester,
@@ -1562,10 +1568,7 @@ void main() {
     );
     await drag.moveTo(tester.getCenter(archiveTarget));
     await tester.pump();
-    expect(
-      find.text('Move “Cached parent” to “Synthetic archive”'),
-      findsOneWidget,
-    );
+    expect(find.byKey(const Key('desktop-list-drop-target-8')), findsOneWidget);
     await drag.up();
     await tester.pumpAndSettle();
 

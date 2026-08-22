@@ -686,6 +686,13 @@ and one “Undo all” action; the Clear image states that the action has no Und
 and that the unsafe completed parent is retained. Both use fixed synthetic
 content only.
 
+S36C adds fake-clock ViewModel coverage for bounded bulk-success and rejected-
+drop feedback, deadline supersession, context/new-drag clearing, disposal, and
+restart. The same tests retain pending, failed, and partial durable bulk counts.
+Desktop drag/widget and Linux integration coverage verify target-local invalid
+feedback, canonical rows, and a feedback lane that never covers the first row;
+the scoped drag/bulk goldens are visually reviewed with synthetic data.
+
 S30A adds actual `account-backup-warning-light.png` and
 `account-backup-result-dark.png` Fedora captures at 1280×720. The warning view
 identifies the current selected Google account, exact v1 JSON contents and

@@ -6,6 +6,7 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/policy/smart_views.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
@@ -13,7 +14,87 @@ import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/fake_clock.dart';
+
 void main() {
+  test(
+    'invalid drop feedback clears on a new drag, context change, or deadline',
+    () {
+      final clock = FakeClock(DateTime.utc(2026, 8, 16, 14));
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: _TasksRepository(),
+        syncHealthRepository: _HealthRepository(),
+        clock: clock,
+      );
+      addTearDown(viewModel.dispose);
+
+      viewModel.reportInvalidTaskDrop('Manual order is required here.');
+      expect(
+        viewModel.state.transientFeedback?.message,
+        'Manual order is required here.',
+      );
+      viewModel.startTaskDragFeedback();
+      expect(viewModel.state.transientFeedback, isNull);
+
+      viewModel.reportInvalidTaskDrop('This drop keeps the current order.');
+      viewModel.selectSmartView(SmartView.all);
+      expect(viewModel.state.transientFeedback, isNull);
+
+      viewModel.reportInvalidTaskDrop(
+        'Tasks can only move with their siblings.',
+      );
+      clock.advance(const Duration(seconds: 4));
+      expect(viewModel.state.transientFeedback, isNull);
+    },
+  );
+
+  test('a superseded feedback deadline cannot clear newer feedback', () {
+    final clock = FakeClock(DateTime.utc(2026, 8, 16, 14));
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _TasksRepository(),
+      syncHealthRepository: _HealthRepository(),
+      clock: clock,
+    );
+    addTearDown(viewModel.dispose);
+
+    viewModel.reportInvalidTaskDrop('Manual order is required here.');
+    clock.advance(const Duration(seconds: 2));
+    viewModel.reportInvalidTaskDrop('This drop keeps the current order.');
+    clock.advance(const Duration(seconds: 2));
+
+    expect(
+      viewModel.state.transientFeedback?.message,
+      'This drop keeps the current order.',
+    );
+    clock.advance(const Duration(seconds: 2));
+    expect(viewModel.state.transientFeedback, isNull);
+  });
+
+  test('disposing cancels feedback and a replacement model starts clear', () {
+    final clock = FakeClock(DateTime.utc(2026, 8, 16, 14));
+    final first = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _TasksRepository(),
+      syncHealthRepository: _HealthRepository(),
+      clock: clock,
+    );
+    first.reportInvalidTaskDrop('Manual order is required here.');
+    expect(clock.pendingTimerCount, 1);
+    first.dispose();
+    expect(clock.pendingTimerCount, 0);
+
+    final replacement = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _TasksRepository(),
+      syncHealthRepository: _HealthRepository(),
+      clock: clock,
+    );
+    addTearDown(replacement.dispose);
+    expect(replacement.state.transientFeedback, isNull);
+  });
+
   test(
     'renders cached rows immediately and keeps health as independent truth',
     () async {

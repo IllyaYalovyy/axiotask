@@ -21,6 +21,26 @@ import '../../domain/repository/tasks_repository.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/health/sync_health_repository.dart';
 
+enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess }
+
+/// A short-lived result which is intentionally not restored from durable state.
+///
+/// Durable bulk summaries remain available separately whenever remote work or a
+/// failure needs action. This value owns only bounded acknowledgement feedback.
+final class TransientTaskFeedback {
+  const TransientTaskFeedback.invalidDrop(this.message)
+    : kind = TransientTaskFeedbackKind.invalidDrop,
+      bulkOperation = null;
+
+  const TransientTaskFeedback.bulkSuccess(this.bulkOperation)
+    : kind = TransientTaskFeedbackKind.bulkSuccess,
+      message = null;
+
+  final TransientTaskFeedbackKind kind;
+  final String? message;
+  final BulkOperationSummary? bulkOperation;
+}
+
 final class TasksViewState {
   const TasksViewState({
     required this.isLoading,
@@ -50,6 +70,7 @@ final class TasksViewState {
     this.preferenceFailureMessage,
     this.bulkCommandFailureMessage,
     this.latestBulkOperation,
+    this.transientFeedback,
   });
 
   final bool isLoading;
@@ -79,6 +100,7 @@ final class TasksViewState {
   final String? preferenceFailureMessage;
   final String? bulkCommandFailureMessage;
   final BulkOperationSummary? latestBulkOperation;
+  final TransientTaskFeedback? transientFeedback;
 
   bool get isBulkSelectionActive => bulkSelectedTaskIds.isNotEmpty;
 
@@ -180,6 +202,7 @@ final class TasksViewState {
     Object? preferenceFailureMessage = _notProvided,
     Object? bulkCommandFailureMessage = _notProvided,
     Object? latestBulkOperation = _notProvided,
+    Object? transientFeedback = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -233,6 +256,9 @@ final class TasksViewState {
     latestBulkOperation: identical(latestBulkOperation, _notProvided)
         ? this.latestBulkOperation
         : latestBulkOperation as BulkOperationSummary?,
+    transientFeedback: identical(transientFeedback, _notProvided)
+        ? this.transientFeedback
+        : transientFeedback as TransientTaskFeedback?,
   );
 }
 
@@ -243,6 +269,7 @@ final class TasksViewModel extends ChangeNotifier {
     required this.syncHealthRepository,
     Clock? clock,
     MonotonicScheduler? calendarScheduler,
+    MonotonicScheduler? feedbackScheduler,
     this.preferencesRepository,
     this.taskListsRepository,
     this.localEditCommitted,
@@ -259,6 +286,12 @@ final class TasksViewModel extends ChangeNotifier {
        calendarScheduler =
            calendarScheduler ??
            (clock is MonotonicScheduler ? clock as MonotonicScheduler : null),
+       feedbackScheduler =
+           feedbackScheduler ??
+           calendarScheduler ??
+           (clock is MonotonicScheduler
+               ? clock as MonotonicScheduler
+               : SystemClock()),
        _state = TasksViewState(
          isLoading: true,
          isRefreshing: false,
@@ -287,6 +320,7 @@ final class TasksViewModel extends ChangeNotifier {
   final SyncHealthRepository syncHealthRepository;
   final Clock clock;
   final MonotonicScheduler? calendarScheduler;
+  final MonotonicScheduler feedbackScheduler;
   final PreferencesRepository? preferencesRepository;
   final TaskListsRepository? taskListsRepository;
   final Future<void> Function()? localEditCommitted;
@@ -319,6 +353,11 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void>? _preferenceCommandInFlight;
   Future<void>? _bulkCommandInFlight;
   ScheduledTimer? _calendarTimer;
+  ScheduledTimer? _transientFeedbackTimer;
+  var _transientFeedbackGeneration = 0;
+  var _hasReceivedBulkOperationSnapshot = false;
+
+  static const transientFeedbackDuration = Duration(seconds: 4);
 
   TasksViewState get state => _state;
 
@@ -377,6 +416,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void selectSmartView(SmartView smartView) {
+    _clearInvalidDropFeedback();
     _replaceState(
       _state.copyWith(
         selectedSmartView: smartView,
@@ -389,6 +429,7 @@ final class TasksViewModel extends ChangeNotifier {
 
   void selectTaskList(TaskListId taskListId) {
     if (!_state.taskLists.any((value) => value.id == taskListId)) return;
+    _clearInvalidDropFeedback();
     _replaceState(
       _state.copyWith(
         selectedSmartView: null,
@@ -402,7 +443,16 @@ final class TasksViewModel extends ChangeNotifier {
   void selectTask(TaskId taskId) {
     final task = _firstWhereOrNull(_state.tasks, (value) => value.id == taskId);
     if (task == null) return;
+    _clearInvalidDropFeedback();
     _replaceState(_state.copyWith(selectedTaskId: taskId));
+  }
+
+  /// Begins a new pointer drag and removes only an earlier rejection message.
+  void startTaskDragFeedback() => _clearInvalidDropFeedback();
+
+  /// Keeps a rejected drop visible just long enough to explain the target.
+  void reportInvalidTaskDrop(String message) {
+    _showTransientFeedback(TransientTaskFeedback.invalidDrop(message));
   }
 
   Future<void> setViewSort(ViewSort sort) {
@@ -804,9 +854,9 @@ final class TasksViewModel extends ChangeNotifier {
             bulkSelectedTaskIds: clearSelection
                 ? const <TaskId>{}
                 : _state.bulkSelectedTaskIds,
-            latestBulkOperation: value.summary,
           ),
         );
+        _publishBulkOutcome(value.summary, showSettledSuccess: true);
         if (value.notBefore case final notBefore?) {
           await taskDeleteCommitted?.call(notBefore);
         } else {
@@ -1149,7 +1199,65 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _acceptBulkOperation(BulkOperationSummary? value) {
-    _replaceState(_state.copyWith(latestBulkOperation: value));
+    final isInitial = !_hasReceivedBulkOperationSnapshot;
+    _hasReceivedBulkOperationSnapshot = true;
+    if (value == null) {
+      _replaceState(_state.copyWith(latestBulkOperation: null));
+      return;
+    }
+    _publishBulkOutcome(value, showSettledSuccess: !isInitial);
+  }
+
+  void _publishBulkOutcome(
+    BulkOperationSummary summary, {
+    required bool showSettledSuccess,
+  }) {
+    if (summary.requiresAttention) {
+      _clearBulkSuccessFeedback();
+      _replaceState(_state.copyWith(latestBulkOperation: summary));
+      return;
+    }
+    _replaceState(_state.copyWith(latestBulkOperation: null));
+    if (showSettledSuccess) {
+      _showTransientFeedback(TransientTaskFeedback.bulkSuccess(summary));
+    }
+  }
+
+  void _showTransientFeedback(TransientTaskFeedback feedback) {
+    _transientFeedbackTimer?.cancel();
+    final generation = ++_transientFeedbackGeneration;
+    _replaceState(_state.copyWith(transientFeedback: feedback));
+    _transientFeedbackTimer = feedbackScheduler.schedule(
+      transientFeedbackDuration,
+      () {
+        if (generation != _transientFeedbackGeneration) return;
+        _transientFeedbackTimer = null;
+        _replaceState(_state.copyWith(transientFeedback: null));
+      },
+    );
+  }
+
+  void _clearInvalidDropFeedback() {
+    if (_state.transientFeedback?.kind !=
+        TransientTaskFeedbackKind.invalidDrop) {
+      return;
+    }
+    _clearTransientFeedback();
+  }
+
+  void _clearBulkSuccessFeedback() {
+    if (_state.transientFeedback?.kind !=
+        TransientTaskFeedbackKind.bulkSuccess) {
+      return;
+    }
+    _clearTransientFeedback();
+  }
+
+  void _clearTransientFeedback() {
+    _transientFeedbackTimer?.cancel();
+    _transientFeedbackTimer = null;
+    _transientFeedbackGeneration += 1;
+    _replaceState(_state.copyWith(transientFeedback: null));
   }
 
   void _acceptBulkOperationError(Object _) {
@@ -1280,6 +1388,7 @@ final class TasksViewModel extends ChangeNotifier {
       unawaited(bulkOperationSubscription.cancel());
     }
     _calendarTimer?.cancel();
+    _transientFeedbackTimer?.cancel();
     super.dispose();
   }
 }

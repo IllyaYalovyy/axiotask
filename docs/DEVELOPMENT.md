@@ -321,8 +321,9 @@ S26B likewise adds no dependency, schema, configuration, account access, or
 storage namespace. Pointer drag state is transient presentation over the
 existing structure-command boundary; its isolated Linux integration uses a
 unique temporary SQLite file. The screenshot entry adds ignored
-`drag-preview-light.png` and `drag-failure-dark.png` Fedora captures with only
-fixed synthetic tasks and identities.
+`drag-preview-light.png`, `drag-rejection-dark.png`, `drag-cleared-light.png`,
+and `drag-failure-dark.png` Fedora captures with only fixed synthetic tasks and
+identities.
 
 S28A adds no dependency, OAuth configuration, Google-account access, or storage
 namespace. It extends schema version 1 with account-scoped `bulk_operations`
@@ -331,8 +332,9 @@ must remain fresh. Focused domain/store/sync/ViewModel/widget/golden tests and
 `integration_test/bulk_operations_linux_test.dart` use only synthetic data and
 unique temporary SQLite files. The ignored screenshot runner adds
 `bulk-operation-selection-light.png`, `bulk-operation-result-dark.png`, and
-`bulk-operation-confirmation-light.png`; inspect all three 1280×720 images
-after capture. No scenario opens normal storage, credentials, OAuth
+`bulk-operation-confirmation-light.png`; S36C additionally adds
+`bulk-operation-success-light.png`. Inspect all four 1280×720 images after
+capture. No scenario opens normal storage, credentials, OAuth
 configuration, diagnostics, or Google.
 
 S28B adds the account-scoped `task_delete_groups` table and extends the S28A
@@ -344,6 +346,19 @@ synthetic tasks and temporary SQLite files. The ignored screenshot runner adds
 `bulk-delete-undo-light.png` and `clear-completed-confirmation-dark.png`.
 Capture and inspect both 1280×720 images; neither scenario opens normal storage,
 credentials, OAuth configuration, diagnostics, or Google.
+
+S36C bounds desktop operation feedback through the task ViewModel's injected
+monotonic scheduler, never a widget timer. A settled bulk success is a
+four-second acknowledgement only and is not restored from durable history;
+pending, failed, and partial bulk outcomes instead retain their exact durable
+counts in the persistent actionable result surface. An invalid pointer drop is
+marked at its target before release when a target is available, then uses the
+same short model-owned feedback lane. A new drag, relevant collection change,
+deadline, disposal, or newer feedback supersedes it deterministically. The
+feedback lane is overlaid in the desktop header, so it neither covers nor
+reflows a task row. Focused fake-clock ViewModel, drag adapter, shell, Linux
+integration, and curated golden checks use synthetic data only; diagnostics
+record no task title.
 
 S30A locks `file_selector` 1.1.0 for the Fedora native save-location dialog and
 adds no schema or storage namespace. The account backup repository reads only

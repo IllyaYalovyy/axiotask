@@ -60,26 +60,19 @@ abstract final class DesktopTaskDragAdapter {
     required List<CachedTask> canonicalSiblings,
     required bool manualOrderEnabled,
   }) {
-    if (!manualOrderEnabled ||
-        payload.taskId == target.id ||
-        payload.sourceTaskListId != target.taskListId ||
-        payload.parentTaskId != target.parentTaskId) {
-      return null;
-    }
-    if (canonicalSiblings.any(
-      (task) =>
-          task.taskListId != target.taskListId ||
-          task.parentTaskId != target.parentTaskId,
-    )) {
+    if (reorderRejectionReason(
+          payload: payload,
+          target: target,
+          placement: placement,
+          canonicalSiblings: canonicalSiblings,
+          manualOrderEnabled: manualOrderEnabled,
+        ) !=
+        null) {
       return null;
     }
     final sourceIndex = canonicalSiblings.indexWhere(
       (task) => task.id == payload.taskId,
     );
-    final targetIndex = canonicalSiblings.indexWhere(
-      (task) => task.id == target.id,
-    );
-    if (sourceIndex < 0 || targetIndex < 0) return null;
 
     final reordered = canonicalSiblings.toList(growable: true);
     final moved = reordered.removeAt(sourceIndex);
@@ -90,8 +83,6 @@ abstract final class DesktopTaskDragAdapter {
         reducedTargetIndex +
         (placement == DesktopTaskDropPlacement.after ? 1 : 0);
     reordered.insert(insertionIndex, moved);
-    if (_sameOrder(canonicalSiblings, reordered)) return null;
-
     return DesktopTaskDropIntent.reorder(
       taskId: payload.taskId,
       destinationTaskListId: target.taskListId,
@@ -102,11 +93,62 @@ abstract final class DesktopTaskDragAdapter {
     );
   }
 
+  static String? reorderRejectionReason({
+    required DesktopTaskDragPayload payload,
+    required CachedTask target,
+    required DesktopTaskDropPlacement placement,
+    required List<CachedTask> canonicalSiblings,
+    required bool manualOrderEnabled,
+  }) {
+    if (!manualOrderEnabled) return 'Manual order is required here.';
+    if (payload.taskId == target.id) {
+      return 'A task cannot be dropped on itself.';
+    }
+    if (payload.sourceTaskListId != target.taskListId ||
+        payload.parentTaskId != target.parentTaskId) {
+      return 'Tasks can only be reordered with their siblings.';
+    }
+    if (canonicalSiblings.any(
+      (task) =>
+          task.taskListId != target.taskListId ||
+          task.parentTaskId != target.parentTaskId,
+    )) {
+      return 'This drop target is not available.';
+    }
+    final sourceIndex = canonicalSiblings.indexWhere(
+      (task) => task.id == payload.taskId,
+    );
+    final targetIndex = canonicalSiblings.indexWhere(
+      (task) => task.id == target.id,
+    );
+    if (sourceIndex < 0 || targetIndex < 0) {
+      return 'This drop target is not available.';
+    }
+    final reordered = canonicalSiblings.toList(growable: true);
+    final moved = reordered.removeAt(sourceIndex);
+    final reducedTargetIndex = reordered.indexWhere(
+      (task) => task.id == target.id,
+    );
+    final insertionIndex =
+        reducedTargetIndex +
+        (placement == DesktopTaskDropPlacement.after ? 1 : 0);
+    reordered.insert(insertionIndex, moved);
+    return _sameOrder(canonicalSiblings, reordered)
+        ? 'This drop keeps the current order.'
+        : null;
+  }
+
   static DesktopTaskDropIntent? moveToList({
     required DesktopTaskDragPayload payload,
     required TaskListId destinationTaskListId,
   }) {
-    if (payload.sourceTaskListId == destinationTaskListId) return null;
+    if (moveToListRejectionReason(
+          payload: payload,
+          destinationTaskListId: destinationTaskListId,
+        ) !=
+        null) {
+      return null;
+    }
     return DesktopTaskDropIntent.reorder(
       taskId: payload.taskId,
       destinationTaskListId: destinationTaskListId,
@@ -114,6 +156,13 @@ abstract final class DesktopTaskDragAdapter {
       previousTaskId: null,
     );
   }
+
+  static String? moveToListRejectionReason({
+    required DesktopTaskDragPayload payload,
+    required TaskListId destinationTaskListId,
+  }) => payload.sourceTaskListId == destinationTaskListId
+      ? 'This task is already in that list.'
+      : null;
 
   static bool _sameOrder(List<CachedTask> left, List<CachedTask> right) {
     if (left.length != right.length) return false;

@@ -11,6 +11,8 @@ import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/fake_clock.dart';
+
 void main() {
   test('PAR-BULK-001 selection is transient and collection-scoped', () async {
     final repository = _BulkRepository();
@@ -34,7 +36,7 @@ void main() {
   });
 
   test(
-    'bulk success clears selection and publishes the durable summary',
+    'bulk result with pending Google work clears selection and remains actionable',
     () async {
       final repository = _BulkRepository();
       final edits = <String>[];
@@ -56,10 +58,88 @@ void main() {
       expect(repository.commands.single, isA<BulkCompleteTasksCommand>());
       expect(model.state.bulkSelectedTaskIds, isEmpty);
       expect(model.state.latestBulkOperation, same(_summary));
+      expect(model.state.transientFeedback, isNull);
       expect(model.state.bulkCommandFailureMessage, isNull);
       expect(edits, <String>['committed']);
     },
   );
+
+  test(
+    'settled bulk success clears after its deterministic short deadline',
+    () async {
+      final clock = FakeClock(DateTime.utc(2026, 8, 16, 14));
+      final repository = _BulkRepository()
+        ..result = Outcome<BulkOperationReceipt>.success(
+          BulkOperationReceipt(
+            summary: _settledSummary,
+            taskIds: const <TaskId>[TaskId(11)],
+          ),
+        );
+      final model = _model(repository, clock: clock)..start();
+      addTearDown(model.dispose);
+      repository.tasks.add(_snapshot);
+      repository.health.add(_pendingHealth);
+      await pumpEventQueue();
+      model.beginBulkSelection(const TaskId(11));
+
+      await model.completeBulkSelection();
+
+      expect(
+        model.state.transientFeedback?.bulkOperation,
+        same(_settledSummary),
+      );
+      clock.advance(const Duration(seconds: 3));
+      expect(
+        model.state.transientFeedback?.bulkOperation,
+        same(_settledSummary),
+      );
+      clock.advance(const Duration(seconds: 1));
+      expect(model.state.transientFeedback, isNull);
+    },
+  );
+
+  test(
+    'pending, partial, and failed bulk outcomes remain actionable',
+    () async {
+      final repository = _BulkRepository();
+      final model = _model(repository)..start();
+      addTearDown(model.dispose);
+      repository.tasks.add(_snapshot);
+      repository.health.add(_pendingHealth);
+      await pumpEventQueue();
+
+      repository.summaries.add(_summary);
+      await pumpEventQueue();
+      expect(model.state.latestBulkOperation, same(_summary));
+      expect(model.state.transientFeedback, isNull);
+
+      final failed = BulkOperationSummary(
+        operationId: 5,
+        kind: BulkOperationKind.reschedule,
+        selectedCount: 2,
+        affectedCount: 2,
+        confirmedCount: 1,
+        pendingCount: 0,
+        failedCount: 1,
+        createdAt: DateTime.utc(2026, 8, 16, 14),
+      );
+      repository.summaries.add(failed);
+      await pumpEventQueue();
+
+      expect(model.state.latestBulkOperation, same(failed));
+      expect(model.state.transientFeedback, isNull);
+    },
+  );
+
+  test('settled bulk history does not reappear after restart', () async {
+    final repository = _BulkRepository()..initialSummary = _settledSummary;
+    final first = _model(repository)..start();
+    addTearDown(first.dispose);
+    await pumpEventQueue();
+
+    expect(first.state.latestBulkOperation, isNull);
+    expect(first.state.transientFeedback, isNull);
+  });
 
   test(
     'bulk transaction failure retains selection and reports no success',
@@ -88,11 +168,13 @@ void main() {
 TasksViewModel _model(
   _BulkRepository repository, {
   Future<void> Function()? localEditCommitted,
+  FakeClock? clock,
 }) => TasksViewModel(
   accountId: const AccountId(1),
   tasksRepository: repository,
   syncHealthRepository: repository,
   localEditCommitted: localEditCommitted,
+  clock: clock,
 );
 
 final class _BulkRepository
@@ -104,6 +186,7 @@ final class _BulkRepository
   final health = StreamController<SyncHealth>.broadcast();
   final summaries = StreamController<BulkOperationSummary?>.broadcast();
   final commands = <BulkExistingTaskCommand>[];
+  BulkOperationSummary? initialSummary;
   Outcome<BulkOperationReceipt> result = Outcome<BulkOperationReceipt>.success(
     BulkOperationReceipt(
       summary: _summary,
@@ -121,7 +204,7 @@ final class _BulkRepository
 
   @override
   Stream<BulkOperationSummary?> watchLatestBulkOperation(AccountId accountId) =>
-      summaries.stream;
+      initialSummary == null ? summaries.stream : Stream.value(initialSummary);
 
   @override
   Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) => tasks.stream;
@@ -220,6 +303,17 @@ final _summary = BulkOperationSummary(
   affectedCount: 2,
   confirmedCount: 1,
   pendingCount: 1,
+  failedCount: 0,
+  createdAt: DateTime.utc(2026, 8, 16, 14),
+);
+
+final _settledSummary = BulkOperationSummary(
+  operationId: 6,
+  kind: BulkOperationKind.complete,
+  selectedCount: 1,
+  affectedCount: 1,
+  confirmedCount: 1,
+  pendingCount: 0,
   failedCount: 0,
   createdAt: DateTime.utc(2026, 8, 16, 14),
 );
