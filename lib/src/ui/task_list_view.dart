@@ -12,6 +12,7 @@
 // aggregate with completed tasks hidden by default.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/commands.dart' show CommandError, CompleteToken, DeleteToken;
@@ -296,6 +297,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             onSubmit: () {
               _submit();
               // Rapid entry: the field cleared; keep composing.
+              quickAddFocus.requestFocus();
+            },
+            onAddPastedLines: (raw) {
+              _addPastedLines(raw);
+              // The sheet is its own route — re-render its content too.
+              setSheetState(() {});
               quickAddFocus.requestFocus();
             },
             onDismissPreview: () {
@@ -728,8 +735,20 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       initialText: initialText,
     );
     if (result == null || !mounted) return;
+    await _commitBulkAdd(result);
+  }
+
+  /// Create the tasks a confirmed [result] describes and toast the count — the
+  /// ONE bulk-split commit path, shared by the toolbar dialog and the composer's
+  /// multi-line-paste offer (#219), so both create identically.
+  ///
+  /// Per-line mode reads each line's trailing natural-language date exactly as
+  /// the quick-add bar does (title kept verbatim, only the due parsed), so a
+  /// pasted "call bob tomorrow" lands dated instead of arriving unscheduled.
+  Future<void> _commitBulkAdd(BulkAddResult result) async {
     final commands = ref.read(commandsProvider);
     final createdIds = <String>[];
+    final dues = <String?>{};
     if (result.mode == BulkAddMode.titleNotes) {
       final all = result.text.split('\n');
       final title = all.first.trim();
@@ -741,29 +760,41 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         );
         if (notes.isNotEmpty) await commands.setNotes(task.task.id, notes);
         createdIds.add(task.task.id);
+        dues.add(null);
       }
     } else {
       for (final line in splitBulkLines(result.text)) {
+        final due = parseQuickAddDue(line);
         final task = await commands.createTask(
           listId: result.listId,
           title: line,
+          due: due,
         );
         createdIds.add(task.task.id);
+        dues.add(due);
       }
     }
     if (mounted && createdIds.isNotEmpty) {
       final n = createdIds.length;
       final countPrefix = 'Added $n task${n == 1 ? '' : 's'}';
-      // Bulk-added rows are always undated, so from a dated smart view they land
-      // in Unscheduled, invisible to that view — name where they went (#190).
-      final dest = landingDestinationFor(
-        viewId: widget.viewId,
-        due: null,
-        listId: result.listId,
-        listTitle: _listTitle(result.listId),
-        excludedLists: ref.read(prefsControllerProvider).excludedLists.toSet(),
-        window: dateWindowNow(),
-      );
+      // Where they went (#190): undated rows from a dated smart view land in
+      // Unscheduled, invisible to the view that created them. A landing hint
+      // can only name ONE place, so it is offered only when every new row
+      // shares a date — mixed per-line dates scatter, and the honest feedback
+      // is then the bare count.
+      final dest = dues.length == 1
+          ? landingDestinationFor(
+              viewId: widget.viewId,
+              due: dues.single,
+              listId: result.listId,
+              listTitle: _listTitle(result.listId),
+              excludedLists: ref
+                  .read(prefsControllerProvider)
+                  .excludedLists
+                  .toSet(),
+              window: dateWindowNow(),
+            )
+          : null;
       final toasts = ref.read(toastControllerProvider);
       if (dest == null) {
         toasts.showInfo(countPrefix);
@@ -771,6 +802,22 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         _landingToast(toasts, dest, subject: countPrefix, taskIds: createdIds);
       }
     }
+  }
+
+  /// Accept the composer's multi-line-paste offer (#219): split the RAW pasted
+  /// text into one task per line through the shared BulkAdd commit, aimed at the
+  /// list the composer is currently pointing at (#217). The collapsed draft is
+  /// consumed, so the composer is empty and ready for the next entry.
+  Future<void> _addPastedLines(String raw) async {
+    final target = _quickAddTargetList;
+    if (target == null) return;
+    setState(() {
+      _quickAdd.clear();
+      _dateIgnoredFor = '';
+    });
+    await _commitBulkAdd(
+      BulkAddResult(text: raw, mode: BulkAddMode.perLine, listId: target),
+    );
   }
 
   @override
@@ -851,6 +898,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               quickAddFocus.requestFocus();
             },
             onSubmit: _submit,
+            onAddPastedLines: _addPastedLines,
             onDismissPreview: () {
               setState(() => _dateIgnoredFor = _quickAdd.text);
               quickAddFocus.requestFocus();
@@ -1308,6 +1356,7 @@ class _QuickAddBar extends StatefulWidget {
     required this.targetListId,
     required this.onTargetChanged,
     required this.onSubmit,
+    required this.onAddPastedLines,
     required this.onDismissPreview,
   });
 
@@ -1329,6 +1378,10 @@ class _QuickAddBar extends StatefulWidget {
   /// date. Owned by the parent; changing it flows a fresh value down here.
   final String dateIgnoredFor;
   final VoidCallback onSubmit;
+
+  /// Accept the multi-line-paste offer (#219): create one task per line of the
+  /// RAW pasted text. The parent owns the create (and clears the draft).
+  final ValueChanged<String> onAddPastedLines;
   final VoidCallback onDismissPreview;
 
   @override
@@ -1336,6 +1389,112 @@ class _QuickAddBar extends StatefulWidget {
 }
 
 class _QuickAddBarState extends State<_QuickAddBar> {
+  /// The RAW multi-line text the last paste put into an empty composer, while
+  /// the offer to split it into one task per line still stands (#219); `null`
+  /// when nothing is on offer.
+  String? _pasteOffer;
+
+  /// The exact draft the standing offer belongs to. Editing away from it
+  /// retracts the offer — "Add as N tasks" must never describe lines the field
+  /// no longer shows.
+  String _offerDraft = '';
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_retractStaleOffer);
+  }
+
+  @override
+  void dispose() {
+    // The controller is the parent's; only the listener is ours.
+    widget.controller.removeListener(_retractStaleOffer);
+    super.dispose();
+  }
+
+  /// Retract a standing paste offer as soon as the draft is no longer the text
+  /// that paste produced — a keystroke, or the parent clearing the field after
+  /// a submit. "Add as N tasks" must never outlive the lines it describes.
+  void _retractStaleOffer() {
+    if (_pasteOffer == null || widget.controller.text == _offerDraft) return;
+    setState(() => _pasteOffer = null);
+  }
+
+  /// Handle a paste ourselves (#219). A single-line [TextField] runs
+  /// [FilteringTextInputFormatter.singleLineFormatter] BEFORE any formatter we
+  /// could add, which DELETES the newlines ("buy milk\ncall bob" →
+  /// "buy milkcall bob") and destroys the line structure before anything can
+  /// read it. Intercepting the paste itself — the Ctrl+V intent and the
+  /// selection toolbar's Paste, the two ways text arrives from the clipboard —
+  /// is what keeps the raw text intact.
+  ///
+  /// It reads the clipboard exactly ONCE per paste (replacing, not adding to,
+  /// the framework's own read), inserts the space-collapsed text at the caret,
+  /// and raises the split offer when a list landed in an empty composer.
+  Future<void> _handlePaste() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final raw = data?.text ?? '';
+    if (raw.isEmpty || !mounted) return;
+    final draft = widget.controller.text;
+    final insert = collapsePastedLines(raw);
+    final selection = widget.controller.selection;
+    final valid = selection.isValid && selection.start >= 0;
+    final start = valid ? selection.start : draft.length;
+    final end = valid ? selection.end : draft.length;
+    final text = draft.replaceRange(start, end, insert);
+    widget.controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: start + insert.length),
+    );
+    setState(() {
+      // What SURVIVES the paste decides: a list pasted over an empty field (or
+      // over a select-all) is a list; lines spliced into a half-typed title are
+      // part of that title.
+      final remainder = draft.replaceRange(start, end, '');
+      _pasteOffer = offersBulkSplit(draft: remainder, raw: raw) ? raw : null;
+      _offerDraft = text;
+    });
+  }
+
+  /// Retract the offer (the × / "Keep as one task"): the collapsed draft stays
+  /// exactly as it is, an ordinary single-task draft.
+  void _dismissOffer() => setState(() => _pasteOffer = null);
+
+  /// The offer's label — width-capped so an accessibility text scale ellipsises
+  /// it rather than overflowing the phone's single composer line.
+  Widget _pasteOfferLabel(int count) => ConstrainedBox(
+    constraints: const BoxConstraints(maxWidth: 120),
+    child: Text(
+      'Add as $count tasks',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    ),
+  );
+
+  /// The selection toolbar with its Paste button rerouted through
+  /// [_handlePaste] (#219) — the only clipboard route a finger has, and the one
+  /// the phone's bottom-sheet composer uses. Every other button is the
+  /// platform's own.
+  Widget _pasteAwareContextMenu(
+    BuildContext context,
+    EditableTextState editableState,
+  ) => AdaptiveTextSelectionToolbar.buttonItems(
+    anchors: editableState.contextMenuAnchors,
+    buttonItems: [
+      for (final item in editableState.contextMenuButtonItems)
+        if (item.type == ContextMenuButtonType.paste)
+          ContextMenuButtonItem(
+            type: ContextMenuButtonType.paste,
+            onPressed: () {
+              editableState.hideToolbar();
+              _handlePaste();
+            },
+          )
+        else
+          item,
+    ],
+  );
+
   /// The natural-language due parsed from the CURRENT input, unless the user
   /// dismissed it for this exact text. Recomputed on each local rebuild so a
   /// keystroke updates only this bar. Mirrors [_TaskListViewState._previewDue],
@@ -1346,8 +1505,14 @@ class _QuickAddBarState extends State<_QuickAddBar> {
 
   @override
   Widget build(BuildContext context) {
+    final offer = _pasteOffer;
+    final offerCount = offer == null ? 0 : splitBulkLines(offer).length;
     final preview = _previewDue;
-    final hasPreview = preview != null && preview.isNotEmpty;
+    // One decision at a time: while the split is on offer the question is "one
+    // task or N?", so the date chip stands down (it would also fight the offer
+    // for the phone's single line). Declining brings it straight back — and the
+    // per-line split parses each line's own date anyway.
+    final hasPreview = offer == null && preview != null && preview.isNotEmpty;
     final touch = coarsePointerPlatform(Theme.of(context).platform);
     // A destination picker only earns its slot when there IS a choice: with one
     // list the default is the only answer, and dead chrome is not a feature.
@@ -1361,7 +1526,7 @@ class _QuickAddBarState extends State<_QuickAddBar> {
             // ~125dp: a labelled picker would not fit inside it. The composer
             // sheds the destination LABEL there — never the control, whose menu
             // still shows which list is checked.
-            compact: touch && hasPreview,
+            compact: touch && (hasPreview || offer != null),
           )
         : null;
     return Padding(
@@ -1370,27 +1535,83 @@ class _QuickAddBarState extends State<_QuickAddBar> {
       child: Row(
         children: [
           Expanded(
-            child: TextField(
-              controller: widget.controller,
-              focusNode: widget.focusNode,
-              decoration: InputDecoration(
-                hintText: 'Add a task',
-                // The decorative "+" yields its 48dp to the destination picker
-                // (#217) when there is one: the picker carries its own icon and
-                // sits on the same line, so the composer says "add" once and
-                // the input keeps exactly the room it had. With a single list
-                // there is nothing to pick and the "+" stays.
-                prefixIcon: picker == null ? const Icon(Icons.add) : null,
-                isDense: true,
-                border: const OutlineInputBorder(),
+            // Both clipboard routes are rerouted through [_handlePaste] (#219):
+            // the keyboard's paste intent here (EditableText's own paste action
+            // is overridable from an ancestor), and the selection toolbar's
+            // Paste below. Nothing else about the field's editing changes.
+            child: Actions(
+              actions: <Type, Action<Intent>>{
+                PasteTextIntent: CallbackAction<PasteTextIntent>(
+                  onInvoke: (_) {
+                    _handlePaste();
+                    return null;
+                  },
+                ),
+              },
+              child: TextField(
+                controller: widget.controller,
+                focusNode: widget.focusNode,
+                decoration: InputDecoration(
+                  hintText: 'Add a task',
+                  // The decorative "+" yields its 48dp to the destination
+                  // picker (#217) when there is one: the picker carries its own
+                  // icon and sits on the same line, so the composer says "add"
+                  // once and the input keeps exactly the room it had. With a
+                  // single list there is nothing to pick and the "+" stays.
+                  prefixIcon: picker == null ? const Icon(Icons.add) : null,
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.done,
+                contextMenuBuilder: _pasteAwareContextMenu,
+                // Rebuild THIS bar only, to refresh the date preview — the task
+                // list is untouched by a keystroke (F20 #199).
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) => widget.onSubmit(),
               ),
-              textInputAction: TextInputAction.done,
-              // Rebuild THIS bar only, to refresh the date preview — the task
-              // list is untouched by a keystroke (F20 #199).
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) => widget.onSubmit(),
             ),
           ),
+          if (offer != null) ...[
+            const SizedBox(width: 8),
+            // The offer itself (#219). Same idiom — and same footprint — as the
+            // date chip it stands in for: an action plus a dismiss, so the
+            // composer never grows a second line. The label is width-capped so
+            // an accessibility text scale ellipsises it instead of overflowing
+            // the phone row.
+            if (touch) ...[
+              // ELEVATED, unlike the flat date chip in the same slot: this one
+              // is pressable, and a filled, raised surface is what says so at a
+              // glance (an outlined chip beside an outlined field reads as a
+              // label). No width is spent on a leading icon — the phone row has
+              // none to spare.
+              ActionChip.elevated(
+                key: const Key('quick-add-paste-split'),
+                label: _pasteOfferLabel(offerCount),
+                onPressed: () => widget.onAddPastedLines(offer),
+              ),
+              IconButton(
+                key: const Key('quick-add-paste-split-dismiss'),
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Keep as one task',
+                onPressed: _dismissOffer,
+              ),
+            ] else
+              // The mouse keeps the compact inline form: a hover highlight and
+              // a pointer cursor already say "pressable", so no elevation is
+              // needed to earn the row's width back.
+              InputChip(
+                key: const Key('quick-add-paste-split'),
+                label: _pasteOfferLabel(offerCount),
+                onPressed: () => widget.onAddPastedLines(offer),
+                deleteIcon: const Icon(
+                  Icons.close,
+                  size: 18,
+                  key: Key('quick-add-paste-split-dismiss'),
+                ),
+                deleteButtonTooltipMessage: 'Keep as one task',
+                onDeleted: _dismissOffer,
+              ),
+          ],
           if (hasPreview) ...[
             const SizedBox(width: 8),
             // The chip renders a FRIENDLY relative date, never the raw ISO

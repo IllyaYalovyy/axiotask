@@ -7,6 +7,7 @@
 
 import 'package:axiotask/src/ui/bulk_add.dart';
 import 'package:axiotask/src/ui/task_row.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +30,29 @@ void main() {
         expect(splitBulkLines('   \n  \n'), isEmpty);
       },
     );
+
+    test('a pasted multi-line clipboard collapses to one readable draft', () {
+      // A single-line field DELETES newlines outright, so without this the
+      // fallback draft reads "buy milkcall bob" (#219).
+      expect(collapsePastedLines('buy milk\ncall bob'), 'buy milk call bob');
+      expect(collapsePastedLines('  a \n\n b \n   \nc'), 'a b c');
+    });
+
+    test('a single-line paste is inserted verbatim, never re-trimmed', () {
+      // Splicing an ordinary fragment into a draft must insert exactly what was
+      // copied — the collapse only ever removes a line BREAK.
+      expect(collapsePastedLines(' buy milk '), ' buy milk ');
+    });
+
+    test('the split is offered only for a LIST pasted into an empty draft', () {
+      expect(offersBulkSplit(draft: '', raw: 'a\nb'), isTrue);
+      expect(offersBulkSplit(draft: '   ', raw: 'a\nb'), isTrue);
+      // One real line is one task — nothing to offer.
+      expect(offersBulkSplit(draft: '', raw: 'a\n\n  '), isFalse);
+      expect(offersBulkSplit(draft: '', raw: 'buy milk'), isFalse);
+      // Spliced into a half-typed title, the lines are not a standalone list.
+      expect(offersBulkSplit(draft: 'today: ', raw: 'a\nb'), isFalse);
+    });
 
     test(
       'per-line count ignores blank lines; title-notes counts the title',
@@ -99,6 +123,35 @@ void main() {
     expect(fake.tasks.length, 1);
     expect(fake.tasks.single.task.title, 'Groceries');
     expect(fake.tasks.single.task.notes, 'milk\neggs');
+  });
+
+  testWidgets('each line\'s trailing natural-language date becomes that '
+      'task\'s due', (tester) async {
+    // One split, one rule (#219): the per-line create reads a trailing date
+    // exactly as the quick-add bar does — title verbatim, only the due parsed —
+    // so a pasted "call bob tomorrow" is not filed as unscheduled.
+    final fake = await pumpList(tester, initial: const [], lists: lists);
+    // The fixed harness clock resolves "tomorrow" — never the wall clock. The
+    // dialog is OPENED inside the zone too: the create runs in the awaiting
+    // continuation of that tap, which carries the zone it started in.
+    await withClock(testClock, () async {
+      await openBulkAdd(tester);
+      await tester.enterText(
+        find.byKey(const Key('bulk-add-text')),
+        'call bob tomorrow\nbuy milk',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('bulk-add-submit')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+    });
+
+    final byTitle = {for (final t in fake.tasks) t.task.title: t.task.due};
+    expect(byTitle['call bob tomorrow'], '2026-06-16T00:00:00.000Z');
+    expect(byTitle['buy milk'], isNull);
+    // Mixed dates scatter across views, so the toast claims no single landing
+    // place — just the honest count.
+    expect(find.text('Added 2 tasks'), findsOneWidget);
   });
 
   testWidgets('shows a confirmation toast naming the count after creating', (
