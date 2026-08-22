@@ -71,6 +71,8 @@ void main() {
         MaterialApp(home: AdaptiveShell(viewModel: viewModel)),
       );
       await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('bulk-add-open')));
       await tester.pumpAndSettle();
       await tester.enterText(

@@ -502,6 +502,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Collection actions'));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('clear-completed-open')));
     await tester.pumpAndSettle();
 

@@ -227,6 +227,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('clear-completed-open')));
       await tester.pumpAndSettle();
       expect(find.textContaining('1 completed parent is kept'), findsOneWidget);
@@ -237,6 +239,8 @@ void main() {
             .tasks,
         hasLength(3),
       );
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('clear-completed-open')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('clear-completed-confirm')));

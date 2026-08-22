@@ -44,12 +44,10 @@ void main() {
     expect(find.text('Other list today'), findsOneWidget);
     expect(find.text('Completed today'), findsNothing);
     expect(find.text('2 cached tasks'), findsOneWidget);
-    expect(
-      find.bySemanticsLabel(RegExp('Show completed tasks')),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byType(Checkbox));
+    await tester.tap(find.byTooltip('Collection actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Show completed'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('collection-show-completed')));
     await tester.pumpAndSettle();
     expect(find.text('Completed today'), findsOneWidget);
     expect(find.text('3 cached tasks'), findsOneWidget);

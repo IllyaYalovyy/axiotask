@@ -523,6 +523,13 @@ text. The synthetic Linux capture runs Good, Pending, Failed, No authorization,
 stale, and stopped at 1024×800 and 1355×800 in both themes; reviewed images
 remain ignored under `screenshots/actual/`.
 
+S36E adds collection-command widget coverage for normal and selection-mode
+replacement, zero/one/many selection, labeled overflow commands, completed-task
+eligibility, failure retention, tooltips, ordered keyboard focus, 200% text,
+and responsive desktop widths. Curated collection light/dark and selection
+captures use only synthetic tasks; Good renders a plain count while stale and
+unverified states retain truthful stale/cached wording.
+
 S31 adds curated 1280×720 `local-data-reset-warning-light`,
 `local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 

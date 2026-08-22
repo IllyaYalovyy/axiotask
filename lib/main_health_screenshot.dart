@@ -88,7 +88,7 @@ final class _HealthScreenshotSequenceState
           await _settleFrames();
         }
         if (scenario.name == 'clear-completed-confirmation-dark') {
-          _pressButton(const Key('clear-completed-open'));
+          await _pressCollectionAction(const Key('clear-completed-open'));
           await _settleFrames();
         }
         if (scenario.name == 'delete-list-confirmation') {
@@ -323,6 +323,40 @@ final class _HealthScreenshotSequenceState
 
   void _pressBulkAddSubmit() {
     _pressButton(const Key('bulk-add-submit'));
+  }
+
+  Future<void> _pressCollectionAction(Key actionKey) async {
+    _tapWidget(const Key('collection-actions-menu'));
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await _settleFrames();
+    _tapWidget(actionKey);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+
+  void _tapWidget(Key key) {
+    final box = _renderBoxFor(key);
+    final position = box.localToGlobal(box.size.center(Offset.zero));
+    GestureBinding.instance.handlePointerEvent(
+      PointerAddedEvent(pointer: 61, position: position),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerDownEvent(
+        pointer: 61,
+        position: position,
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerUpEvent(
+        pointer: 61,
+        position: position,
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    GestureBinding.instance.handlePointerEvent(
+      PointerRemovedEvent(pointer: 61, position: position),
+    );
   }
 
   void _pressButton(Key key) {

@@ -86,7 +86,9 @@ void main() {
       2,
     );
 
-    await tester.tap(find.byTooltip('Rename selected task list'));
+    await tester.tap(find.byTooltip('Collection actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('collection-rename-list')));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.descendant(

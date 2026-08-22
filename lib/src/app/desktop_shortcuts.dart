@@ -51,7 +51,11 @@ const List<DesktopShortcutReference> desktopShortcutReference =
       (keys: 'D', description: 'Choose due date', taskOnly: true),
       (keys: 'M', description: 'Move task to a Google list', taskOnly: true),
       (keys: 'Delete', description: 'Delete task with Undo', taskOnly: true),
-      (keys: 'Esc', description: 'Close the current surface', taskOnly: false),
+      (
+        keys: 'Esc',
+        description: 'Exit selection or close the current surface',
+        taskOnly: false,
+      ),
       (keys: 'F1', description: 'Show keyboard shortcuts', taskOnly: false),
     ];
 

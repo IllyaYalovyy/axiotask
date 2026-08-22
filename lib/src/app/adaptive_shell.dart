@@ -1331,80 +1331,328 @@ final class _BulkActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final count = state.bulkSelectedTaskIds.length;
     final enabled = !state.isBulkCommandPending;
-    return Material(
-      key: const Key('bulk-action-bar'),
-      color: Theme.of(context).colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: <Widget>[
-            Semantics(
-              liveRegion: true,
-              label: '$count tasks selected',
-              child: Text('$count selected'),
-            ),
-            FilledButton.icon(
-              key: const Key('bulk-complete-open'),
-              onPressed: enabled
-                  ? () => unawaited(
-                      _showBulkCompleteConfirmation(context, viewModel),
-                    )
-                  : null,
-              icon: const Icon(Icons.check_circle_outline),
-              label: const Text('Complete'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('bulk-reschedule-open'),
-              onPressed: enabled
-                  ? () => unawaited(_showBulkDateDialog(context, viewModel))
-                  : null,
-              icon: const Icon(Icons.event_outlined),
-              label: const Text('Reschedule'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('bulk-move-open'),
-              onPressed: enabled && state.orderedTaskLists.isNotEmpty
-                  ? () => unawaited(
-                      _showBulkMoveDialog(
-                        context,
-                        viewModel,
-                        state.orderedTaskLists,
-                      ),
-                    )
-                  : null,
-              icon: const Icon(Icons.drive_file_move_outline),
-              label: const Text('Move'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('bulk-delete-open'),
-              onPressed: enabled
-                  ? () => unawaited(
-                      _showBulkDeleteConfirmation(context, viewModel),
-                    )
-                  : null,
-              icon: const Icon(Icons.delete_outline),
-              label: const Text('Delete'),
-            ),
-            IconButton(
-              key: const Key('bulk-selection-close'),
-              tooltip: 'Exit task selection',
-              onPressed: enabled ? viewModel.clearBulkSelection : null,
-              icon: const Icon(Icons.close),
-            ),
-            if (state.isBulkCommandPending)
-              const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+    return FocusTraversalGroup(
+      key: const Key('selection-collection-command-bar'),
+      policy: OrderedTraversalPolicy(),
+      child: Material(
+        key: const Key('bulk-action-bar'),
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Semantics(
+                liveRegion: true,
+                label: '$count tasks selected',
+                child: Text('$count selected'),
               ),
-          ],
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(1),
+                child: FilledButton.icon(
+                  key: const Key('bulk-complete-open'),
+                  onPressed: enabled
+                      ? () => unawaited(
+                          _showBulkCompleteConfirmation(context, viewModel),
+                        )
+                      : null,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Complete'),
+                ),
+              ),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(2),
+                child: OutlinedButton.icon(
+                  key: const Key('bulk-reschedule-open'),
+                  onPressed: enabled
+                      ? () => unawaited(_showBulkDateDialog(context, viewModel))
+                      : null,
+                  icon: const Icon(Icons.event_outlined),
+                  label: const Text('Reschedule'),
+                ),
+              ),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(3),
+                child: OutlinedButton.icon(
+                  key: const Key('bulk-move-open'),
+                  onPressed: enabled && state.orderedTaskLists.isNotEmpty
+                      ? () => unawaited(
+                          _showBulkMoveDialog(
+                            context,
+                            viewModel,
+                            state.orderedTaskLists,
+                          ),
+                        )
+                      : null,
+                  icon: const Icon(Icons.drive_file_move_outline),
+                  label: const Text('Move'),
+                ),
+              ),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(4),
+                child: OutlinedButton.icon(
+                  key: const Key('bulk-delete-open'),
+                  onPressed: enabled
+                      ? () => unawaited(
+                          _showBulkDeleteConfirmation(context, viewModel),
+                        )
+                      : null,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete'),
+                ),
+              ),
+              FocusTraversalOrder(
+                order: const NumericFocusOrder(5),
+                child: IconButton(
+                  key: const Key('bulk-selection-close'),
+                  tooltip: 'Exit task selection',
+                  onPressed: enabled ? viewModel.clearBulkSelection : null,
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+              if (state.isBulkCommandPending)
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+enum _CollectionMenuAction {
+  addTaskWithDetails,
+  pasteMultiple,
+  createList,
+  renameList,
+  deleteList,
+  clearCompleted,
+  toggleShowCompleted,
+}
+
+final class _NormalCollectionCommandBar extends StatelessWidget {
+  const _NormalCollectionCommandBar({
+    required this.state,
+    required this.viewModel,
+    required this.tasks,
+    required this.clearCompletedCount,
+    required this.openBulkAdd,
+  });
+
+  final TasksViewState state;
+  final TasksViewModel viewModel;
+  final List<CachedTask> tasks;
+  final int clearCompletedCount;
+  final VoidCallback openBulkAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final canSelect =
+        viewModel.tasksRepository is BulkTaskOperationsRepository &&
+        tasks.isNotEmpty;
+    final canManageLists = viewModel.taskListsRepository != null;
+    final hasList = state.selectedTaskList != null;
+    final canToggleCompleted = viewModel.preferencesRepository != null;
+    final canClearCompleted =
+        viewModel.tasksRepository is DestructiveTaskOperationsRepository &&
+        hasList &&
+        clearCompletedCount > 0;
+    final hasMenuActions =
+        (hasList && !state.isTaskCommandPending) ||
+        viewModel.tasksRepository is BulkTasksRepository ||
+        canManageLists ||
+        canToggleCompleted ||
+        canClearCompleted;
+
+    return FocusTraversalGroup(
+      key: const Key('normal-collection-command-bar'),
+      policy: OrderedTraversalPolicy(),
+      child: Wrap(
+        spacing: 4,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          if (viewModel.preferencesRepository != null)
+            FocusTraversalOrder(
+              order: const NumericFocusOrder(1),
+              child: PopupMenuButton<ViewSort>(
+                key: const Key('collection-sort'),
+                tooltip: 'Sort tasks',
+                initialValue: state.selectedViewPreferences.sort,
+                enabled: !state.isPreferenceCommandPending,
+                onSelected: (value) => unawaited(viewModel.setViewSort(value)),
+                itemBuilder: (_) => <PopupMenuEntry<ViewSort>>[
+                  for (final value in ViewSort.values)
+                    CheckedPopupMenuItem<ViewSort>(
+                      value: value,
+                      checked: value == state.selectedViewPreferences.sort,
+                      child: Text(_viewSortLabel(value)),
+                    ),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Icon(Icons.sort, size: 20),
+                      const SizedBox(width: 4),
+                      Text(_viewSortLabel(state.selectedViewPreferences.sort)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (canSelect)
+            FocusTraversalOrder(
+              order: const NumericFocusOrder(2),
+              child: OutlinedButton.icon(
+                key: const Key('bulk-select-open'),
+                onPressed: () => viewModel.beginBulkSelection(tasks.first.id),
+                icon: const Icon(Icons.library_add_check_outlined),
+                label: const Text('Select'),
+              ),
+            ),
+          if (hasMenuActions)
+            FocusTraversalOrder(
+              order: const NumericFocusOrder(3),
+              child: PopupMenuButton<_CollectionMenuAction>(
+                key: const Key('collection-actions-menu'),
+                tooltip: 'Collection actions',
+                onSelected: (action) => _handleAction(context, action),
+                itemBuilder: (menuContext) => _menuItems(
+                  menuContext,
+                  hasList: hasList,
+                  canManageLists: canManageLists,
+                  canToggleCompleted: canToggleCompleted,
+                  canClearCompleted: canClearCompleted,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  List<PopupMenuEntry<_CollectionMenuAction>> _menuItems(
+    BuildContext context, {
+    required bool hasList,
+    required bool canManageLists,
+    required bool canToggleCompleted,
+    required bool canClearCompleted,
+  }) => <PopupMenuEntry<_CollectionMenuAction>>[
+    if (hasList)
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-add-task-with-details'),
+        value: _CollectionMenuAction.addTaskWithDetails,
+        enabled: !state.isTaskCommandPending,
+        child: Text('Add task with details'),
+      ),
+    if (viewModel.tasksRepository is BulkTasksRepository)
+      const PopupMenuItem<_CollectionMenuAction>(
+        key: Key('bulk-add-open'),
+        value: _CollectionMenuAction.pasteMultiple,
+        child: Text('Paste multiple tasks'),
+      ),
+    if (hasList || viewModel.tasksRepository is BulkTasksRepository)
+      const PopupMenuDivider(),
+    if (canManageLists)
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-create-list'),
+        value: _CollectionMenuAction.createList,
+        enabled: !state.isListCommandPending,
+        child: Text('Create Google task list'),
+      ),
+    if (canManageLists && hasList)
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-rename-list'),
+        value: _CollectionMenuAction.renameList,
+        enabled: !state.isListCommandPending,
+        child: Text('Rename task list'),
+      ),
+    if (canManageLists && hasList)
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-delete-list'),
+        value: _CollectionMenuAction.deleteList,
+        enabled: !state.isListCommandPending,
+        child: Text(
+          'Delete task list',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      ),
+    if (canManageLists && hasList && (canToggleCompleted || canClearCompleted))
+      const PopupMenuDivider(),
+    if (canToggleCompleted)
+      CheckedPopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-show-completed'),
+        value: _CollectionMenuAction.toggleShowCompleted,
+        enabled: !state.isPreferenceCommandPending,
+        checked: state.selectedViewPreferences.showCompleted,
+        child: const Text('Show completed'),
+      ),
+    if (canClearCompleted)
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('clear-completed-open'),
+        value: _CollectionMenuAction.clearCompleted,
+        enabled: !state.isBulkCommandPending,
+        child: Text(
+          'Clear completed',
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      ),
+  ];
+
+  void _handleAction(BuildContext context, _CollectionMenuAction action) {
+    final list = state.selectedTaskList;
+    switch (action) {
+      case _CollectionMenuAction.addTaskWithDetails:
+        if (list != null) _showCreateTaskDialog(context, viewModel, list.id);
+      case _CollectionMenuAction.pasteMultiple:
+        openBulkAdd();
+      case _CollectionMenuAction.createList:
+        _showCreateTaskListDialog(context, viewModel);
+      case _CollectionMenuAction.renameList:
+        if (list != null) _showRenameTaskListDialog(context, viewModel, list);
+      case _CollectionMenuAction.deleteList:
+        if (list != null) {
+          unawaited(_showDeleteTaskListConfirmation(context, viewModel, list));
+        }
+      case _CollectionMenuAction.clearCompleted:
+        unawaited(_showClearCompletedConfirmation(context, viewModel));
+      case _CollectionMenuAction.toggleShowCompleted:
+        unawaited(
+          viewModel.setShowCompleted(
+            !state.selectedViewPreferences.showCompleted,
+          ),
+        );
+    }
+  }
+}
+
+String _viewSortLabel(ViewSort value) => switch (value) {
+  ViewSort.manual => 'My order',
+  ViewSort.effectiveDue => 'Due date',
+  ViewSort.title => 'Title',
+  ViewSort.created => 'Reverse order',
+};
+
+String _collectionCountLabel(SyncHealth health, int count) {
+  final noun = count == 1 ? 'task' : 'tasks';
+  return switch (health.outcome) {
+    SyncHealthOutcome.good => '$count $noun',
+    SyncHealthOutcome.failed
+        when health.failureReason == SyncFailureReason.stale =>
+      '$count stale $noun',
+    _ => '$count cached $noun',
+  };
 }
 
 final class _TransientTaskFeedbackSlot extends StatelessWidget {
@@ -2023,194 +2271,63 @@ final class _TaskCollectionState extends State<_TaskCollection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 22, 24, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
+          key: const Key('collection-header'),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow =
+                  MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
+              final title = Text(
                 switch (state.selectedView) {
                   SmartTaskView(:final smartView) => smartView.title,
-                  TaskListView() =>
-                    state.selectedTaskList?.title ?? 'Cached tasks',
+                  TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
                 },
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
+                maxLines: narrow ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              );
+              final commands = state.isBulkSelectionActive
+                  ? _BulkActionBar(state: state, viewModel: viewModel)
+                  : _NormalCollectionCommandBar(
+                      state: state,
+                      viewModel: viewModel,
+                      tasks: tasks,
+                      clearCompletedCount: clearCompletedCount,
+                      openBulkAdd: openBulkAdd,
+                    );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  if (viewModel.preferencesRepository != null) ...<Widget>[
-                    Semantics(
-                      label: 'Sort tasks',
-                      child: DropdownButton<ViewSort>(
-                        value: state.selectedViewPreferences.sort,
-                        onChanged: state.isPreferenceCommandPending
-                            ? null
-                            : (value) {
-                                if (value != null) {
-                                  unawaited(viewModel.setViewSort(value));
-                                }
-                              },
-                        items: const <DropdownMenuItem<ViewSort>>[
-                          DropdownMenuItem(
-                            value: ViewSort.manual,
-                            child: Text('My order'),
-                          ),
-                          DropdownMenuItem(
-                            value: ViewSort.effectiveDue,
-                            child: Text('Effective due'),
-                          ),
-                          DropdownMenuItem(
-                            value: ViewSort.title,
-                            child: Text('Title'),
-                          ),
-                          DropdownMenuItem(
-                            value: ViewSort.created,
-                            child: Text('Reverse order'),
-                          ),
-                        ],
-                      ),
+                  if (narrow) ...<Widget>[
+                    title,
+                    const SizedBox(height: 4),
+                    Align(alignment: Alignment.centerLeft, child: commands),
+                  ] else
+                    Row(
+                      children: <Widget>[
+                        Expanded(child: title),
+                        const SizedBox(width: 8),
+                        commands,
+                      ],
                     ),
-                  ],
-                  if (viewModel.tasksRepository
-                          is BulkTaskOperationsRepository &&
-                      tasks.isNotEmpty)
-                    OutlinedButton.icon(
-                      key: const Key('bulk-select-open'),
-                      onPressed: state.isBulkSelectionActive
-                          ? null
-                          : () => viewModel.beginBulkSelection(tasks.first.id),
-                      icon: const Icon(Icons.library_add_check_outlined),
-                      label: const Text('Select tasks'),
-                    ),
-                  if (viewModel.tasksRepository
-                          is DestructiveTaskOperationsRepository &&
-                      state.selectedTaskList != null)
-                    OutlinedButton.icon(
-                      key: const Key('clear-completed-open'),
-                      onPressed:
-                          state.isBulkCommandPending || clearCompletedCount == 0
-                          ? null
-                          : () => unawaited(
-                              _showClearCompletedConfirmation(
-                                context,
-                                viewModel,
-                              ),
-                            ),
-                      icon: const Icon(Icons.delete_sweep_outlined),
-                      label: const Text('Clear completed'),
-                    ),
-                  IconButton(
-                    tooltip: 'Create task',
-                    onPressed:
-                        state.isTaskCommandPending ||
-                            state.selectedTaskList == null
-                        ? null
-                        : () => _showCreateTaskDialog(
-                            context,
-                            viewModel,
-                            state.selectedTaskList!.id,
-                          ),
-                    icon: const Icon(Icons.add_task),
+                  const SizedBox(height: 2),
+                  QuickAddBar(
+                    viewModel: quickAdd,
+                    lists: state.orderedTaskLists,
+                    focusNode: quickAddFocus,
                   ),
-                  IconButton(
-                    tooltip: 'Create Google task list',
-                    onPressed:
-                        state.isListCommandPending ||
-                            viewModel.taskListsRepository == null
-                        ? null
-                        : () => _showCreateTaskListDialog(context, viewModel),
-                    icon: const Icon(Icons.playlist_add),
-                  ),
-                  IconButton(
-                    tooltip: 'Rename selected task list',
-                    onPressed:
-                        state.isListCommandPending ||
-                            viewModel.taskListsRepository == null ||
-                            state.selectedTaskList == null
-                        ? null
-                        : () => _showRenameTaskListDialog(
-                            context,
-                            viewModel,
-                            state.selectedTaskList!,
-                          ),
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                  IconButton(
-                    tooltip: 'Delete selected task list',
-                    onPressed:
-                        state.isListCommandPending ||
-                            viewModel.taskListsRepository == null ||
-                            state.selectedTaskList == null
-                        ? null
-                        : () => _showDeleteTaskListConfirmation(
-                            context,
-                            viewModel,
-                            state.selectedTaskList!,
-                          ),
-                    icon: const Icon(Icons.delete_forever_outlined),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              if (state.isBulkSelectionActive) ...<Widget>[
-                _BulkActionBar(state: state, viewModel: viewModel),
-                const SizedBox(height: 12),
-              ],
-              QuickAddBar(
-                viewModel: quickAdd,
-                lists: state.orderedTaskLists,
-                focusNode: quickAddFocus,
-              ),
-              if (viewModel.tasksRepository is BulkTasksRepository)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    key: const Key('bulk-add-open'),
-                    onPressed: state.orderedTaskLists.isNotEmpty
-                        ? openBulkAdd
-                        : null,
-                    icon: const Icon(Icons.content_paste_outlined),
-                    label: const Text('Paste multiple'),
-                  ),
-                ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 16,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
+                  const SizedBox(height: 4),
                   Text(
-                    '${tasks.length} cached ${tasks.length == 1 ? 'task' : 'tasks'}',
+                    _collectionCountLabel(state.health, tasks.length),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  if (viewModel.preferencesRepository != null)
-                    Semantics(
-                      label: 'Show completed tasks',
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Checkbox(
-                            value: state.selectedViewPreferences.showCompleted,
-                            onChanged: state.isPreferenceCommandPending
-                                ? null
-                                : (value) => unawaited(
-                                    viewModel.setShowCompleted(value ?? false),
-                                  ),
-                          ),
-                          const Text('Show completed'),
-                        ],
-                      ),
-                    ),
                 ],
-              ),
-            ],
+              );
+            },
           ),
         ),
         const Divider(height: 1),
@@ -2295,7 +2412,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
         content,
         Positioned(
           top: 20,
-          right: 24,
+          left: 24,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 300),
             child: _TransientTaskFeedbackSlot(feedback: feedback),

@@ -93,6 +93,16 @@ targets do not commit; cancel or failure removes the preview and exposes the
 canonical projection. Detail Move up/down and Move to list controls remain the
 focusable non-pointer equivalents.
 
+Collection headers use two distinct command modes. Normal mode keeps the
+collection title, a compact visible sort/order control, Select, and one labeled
+collection-actions overflow; infrequent creation, list management, completed
+visibility, and destructive clear commands live in that overflow with text
+labels. Selection mode replaces that normal command row with a selected count,
+explicit Exit selection, and labeled bulk actions. It never leaves both command
+rows visible. A Good collection reports a plain task count; cache/stale wording
+is reserved for health states that have not established current data. Escape
+exits selection through the existing back route.
+
 ## Task hierarchy
 
 Collection views show top-level tasks. Parent rows expose subtask progress and

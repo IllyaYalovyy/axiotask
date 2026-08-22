@@ -654,7 +654,7 @@ void main() {
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Create Google task list'));
+      await _chooseCollectionAction(tester, 'Create Google task list');
       await tester.pumpAndSettle();
       expect(find.text('Create task list'), findsOneWidget);
       expect(find.textContaining('local-only'), findsNothing);
@@ -702,7 +702,7 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Rename selected task list'));
+    await _chooseCollectionAction(tester, 'Rename task list');
     await tester.pumpAndSettle();
     expect(find.text('Rename task list'), findsOneWidget);
     await tester.enterText(
@@ -736,7 +736,7 @@ void main() {
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Create task'));
+      await _chooseCollectionAction(tester, 'Add task with details');
       await tester.pumpAndSettle();
       await tester.enterText(
         find.descendant(
@@ -838,7 +838,7 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('bulk-add-open')));
+    await _chooseCollectionAction(tester, 'Paste multiple tasks');
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('bulk-add-input')),
@@ -1037,7 +1037,7 @@ void main() {
     await tester.pumpWidget(fixture.widget);
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Delete selected task list'));
+    await _chooseCollectionAction(tester, 'Delete task list');
     await tester.pumpAndSettle();
     expect(find.text('Delete “Synthetic inbox”?'), findsOneWidget);
     expect(find.textContaining('cannot be undone'), findsOneWidget);
@@ -1047,7 +1047,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(lists.deleted, isEmpty);
 
-    await tester.tap(find.byTooltip('Delete selected task list'));
+    await _chooseCollectionAction(tester, 'Delete task list');
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Delete list'));
     await tester.pumpAndSettle();
@@ -1769,6 +1769,165 @@ void main() {
   );
 
   testWidgets(
+    'collection command modes replace each other and describe freshness truthfully',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.good),
+        preferencesRepository: _WorkspacePreferences(),
+        taskListsRepository: _TaskListsRepository(),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+
+      expect(
+        find.byKey(const Key('normal-collection-command-bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('selection-collection-command-bar')),
+        findsNothing,
+      );
+      expect(find.byKey(const Key('collection-sort')), findsOneWidget);
+      expect(find.byKey(const Key('bulk-select-open')), findsOneWidget);
+      expect(find.byTooltip('Collection actions'), findsOneWidget);
+      expect(find.text('2 tasks'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('cached tasks'), findsNothing);
+      expect(find.byTooltip('Create Google task list'), findsNothing);
+      expect(
+        tester.getSize(find.byKey(const Key('collection-header'))).height,
+        lessThanOrEqualTo(144),
+      );
+
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Add task with details'), findsOneWidget);
+      expect(find.text('Create Google task list'), findsOneWidget);
+      expect(find.text('Rename task list'), findsOneWidget);
+      expect(find.text('Delete task list'), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('bulk-select-open')));
+      await tester.pump();
+      expect(
+        find.byKey(const Key('normal-collection-command-bar')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('selection-collection-command-bar')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('collection-sort')), findsNothing);
+      expect(find.text('1 selected'), findsOneWidget);
+      expect(find.byTooltip('Exit task selection'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('bulk-select-task-13')));
+      await tester.pump();
+      expect(find.text('2 selected'), findsOneWidget);
+      expect(find.byKey(const Key('bulk-complete-open')), findsOneWidget);
+      expect(find.byKey(const Key('bulk-delete-open')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('bulk-selection-close')));
+      await tester.pump();
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+      expect(
+        find.byKey(const Key('normal-collection-command-bar')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('collection count calls stale data stale, never current', (
+    tester,
+  ) async {
+    final fixture = _ShellFixture(
+      _health(
+        SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.stale,
+        action: SyncHealthAction.retry,
+      ),
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pump();
+
+    expect(find.text('2 stale tasks'), findsOneWidget);
+    expect(find.text('2 tasks'), findsNothing);
+  });
+
+  testWidgets(
+    'collection commands retain ordered focus and fit responsive large text',
+    (tester) async {
+      tester.view.physicalSize = const Size(1024, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final density in DensityPreference.values) {
+        for (final textScale in <double>[1, 2]) {
+          final fixture = _ShellFixture(
+            _health(SyncHealthOutcome.good),
+            preferencesRepository: _WorkspacePreferences(),
+          );
+          addTearDown(fixture.dispose);
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: axiotaskTheme(
+                Brightness.light,
+                density,
+                platform: TargetPlatform.linux,
+              ),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(textScale)),
+                child: child!,
+              ),
+              home: AdaptiveShell(viewModel: fixture.viewModel),
+            ),
+          );
+          await tester.pump();
+          final orders = tester
+              .widgetList<FocusTraversalOrder>(
+                find.descendant(
+                  of: find.byKey(const Key('normal-collection-command-bar')),
+                  matching: find.byType(FocusTraversalOrder),
+                ),
+              )
+              .map((widget) => (widget.order as NumericFocusOrder).order)
+              .toList();
+          expect(orders, <double>[1, 2, 3]);
+          expect(
+            tester
+                .getRect(find.byKey(const Key('normal-collection-command-bar')))
+                .bottom,
+            lessThanOrEqualTo(800),
+          );
+          if (textScale == 1) {
+            expect(
+              tester.getSize(find.byKey(const Key('collection-header'))).height,
+              lessThanOrEqualTo(
+                density == DensityPreference.standard ? 144 : 128,
+              ),
+            );
+          }
+          expect(
+            tester.takeException(),
+            isNull,
+            reason: '$density at ${textScale * 100}%',
+          );
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+      }
+    },
+  );
+
+  testWidgets(
     'bulk selection, confirmation, exact result, and back share route state',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
@@ -1946,7 +2105,9 @@ void main() {
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
 
-      await tester.tap(find.byKey(const Key('clear-completed-open')));
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear completed'));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('clear-completed-confirmation')),
@@ -1957,7 +2118,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(fixture.tasks.clearedCompleted, isEmpty);
 
-      await tester.tap(find.byKey(const Key('clear-completed-open')));
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear completed'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('clear-completed-confirm')));
       await tester.pumpAndSettle();
@@ -1972,6 +2135,13 @@ void main() {
       );
     },
   );
+}
+
+Future<void> _chooseCollectionAction(WidgetTester tester, String label) async {
+  await tester.tap(find.byTooltip('Collection actions'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(label));
+  await tester.pumpAndSettle();
 }
 
 final class _ShellFixture {
@@ -1990,6 +2160,7 @@ final class _ShellFixture {
       accountId: const AccountId(1),
       tasksRepository: tasks,
       taskListsRepository: taskListsRepository,
+      preferencesRepository: preferencesRepository,
       syncHealthRepository: healthRepository,
       refreshRequested: refreshRequested,
       stopSyncRequested: stopSyncRequested,
