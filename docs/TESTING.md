@@ -517,6 +517,12 @@ Goldens complement behavior assertions; they do not replace them. A changed
 golden is reviewed visually before acceptance and is never bulk-regenerated as
 a way to clear failures.
 
+S36B adds focused sync-health header assertions for all outcomes, recovery
+actions, zero/nonzero unresolved work, accessible exact-time details, and 200%
+text. The synthetic Linux capture runs Good, Pending, Failed, No authorization,
+stale, and stopped at 1024×800 and 1355×800 in both themes; reviewed images
+remain ignored under `screenshots/actual/`.
+
 S31 adds curated 1280×720 `local-data-reset-warning-light`,
 `local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 

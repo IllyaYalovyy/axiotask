@@ -87,7 +87,11 @@ void main() {
       await second.coordinator!.whenIdle;
       await tester.pumpAndSettle();
       expect(secondComposition.service.listCalls, 2);
+      await tester.tap(find.byTooltip('Sync details'));
+      await tester.pumpAndSettle();
       expect(find.textContaining('2026-01-01 12:01 UTC'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
 
       secondComposition.clock.advance(const Duration(minutes: 1));
       lifecycle.enterBackground();
@@ -96,7 +100,10 @@ void main() {
       await second.coordinator!.whenIdle;
       await tester.pumpAndSettle();
       expect(secondComposition.service.listCalls, 3);
+      await tester.tap(find.byTooltip('Sync details'));
+      await tester.pumpAndSettle();
       expect(find.textContaining('2026-01-01 12:02 UTC'), findsOneWidget);
+      await tester.tap(find.text('Close'));
     },
   );
 
@@ -141,7 +148,7 @@ void main() {
   );
 
   testWidgets(
-    'malformed remote data is Failed and no authorization is Inactive',
+    'malformed remote data and an unavailable authorization adapter fail closed',
     (tester) async {
       final malformedComposition = _IntegrationComposition(
         instanceId: 'malformed',
@@ -178,8 +185,14 @@ void main() {
       await unavailable.start();
       await tester.pumpAndSettle();
 
-      expect(find.text('Inactive'), findsWidgets);
-      expect(find.text('No authorization'), findsOneWidget);
+      expect(
+        unavailable.viewModel.state.health.outcome,
+        SyncHealthOutcome.failed,
+      );
+      expect(
+        unavailable.viewModel.state.health.failureReason,
+        SyncFailureReason.applicationFailure,
+      );
       expect(find.text('Synced'), findsNothing);
       expect(unavailableComposition.service.listCalls, 0);
     },
@@ -307,7 +320,7 @@ void main() {
       expect(secondComposition.service.listCalls, 1);
       expect(secondComposition.service.patchCalls, 1);
       expect(find.text('Synced'), findsWidgets);
-      expect(find.text('0 unresolved'), findsOneWidget);
+      expect(find.text('0 unresolved'), findsNothing);
     },
   );
 }

@@ -39,7 +39,7 @@ void main() {
     expect(
       find.bySemanticsLabel(
         'Synchronization Pending. Verifying with Google. '
-        'Last successful sync Never. 0 unresolved changes.',
+        'Last successful sync Never. No unresolved changes.',
       ),
       findsOneWidget,
     );
@@ -1204,7 +1204,9 @@ void main() {
             .toList();
         expect(
           focusOrders,
-          width < 900 ? <double>[1, 2, 3, 4, 5] : <double>[2, 3, 4, 5],
+          width < 900
+              ? <double>[1, 2, 2.5, 3, 4, 5]
+              : <double>[2, 2.5, 3, 4, 5],
         );
         await tester.tap(find.byTooltip('More app actions'));
         await tester.pumpAndSettle();

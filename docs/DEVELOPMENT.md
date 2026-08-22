@@ -177,6 +177,11 @@ flutter test test/features/tasks/adaptive_shell_golden_test.dart
 ./scripts/capture_linux_health_screenshots.sh
 ```
 
+The health capture includes Good, Pending, Failed, No authorization, stale,
+and stopped at 1024×800 and 1355×800 in both themes. It uses only fixed
+synthetic data; inspect those output images before accepting a health-layout
+change.
+
 S32B adds a first-run-only, synthetic onboarding capture. It opens no
 database, preferences, credentials, diagnostics, or Google boundary and writes
 only fixed copy to ignored output:

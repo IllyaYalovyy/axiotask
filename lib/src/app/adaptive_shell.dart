@@ -764,9 +764,7 @@ final class _ApplicationHeader extends StatelessWidget {
   );
 
   Widget _buildForWidth(BuildContext context, double width) {
-    // Labels are retained only when the available desktop width can carry them
-    // without competing with the active workspace.
-    final compact = width < 1200;
+    final largeText = MediaQuery.textScalerOf(context).scale(14) > 18.2;
     final tokens = Theme.of(context).axiotaskTokens;
     return Column(
       children: <Widget>[
@@ -806,85 +804,49 @@ final class _ApplicationHeader extends StatelessWidget {
                         icon: const Icon(Icons.search),
                       ),
                     ),
+                  if (health.outcome == SyncHealthOutcome.good)
+                    _HeaderFocusOrder(
+                      order: 2.5,
+                      child: SyncHealthHeader(
+                        health: health,
+                        diagnosticsBuilder: diagnosticsBuilder,
+                        iconOnly: largeText,
+                      ),
+                    ),
                   _HeaderFocusOrder(
                     order: 3,
-                    child: compact
-                        ? IconButton(
-                            tooltip: 'Refresh',
-                            onPressed:
-                                isRefreshing ||
-                                    isSyncControlPending ||
-                                    onRefresh == null ||
-                                    health.outcome == SyncHealthOutcome.inactive
-                                ? null
-                                : onRefresh,
-                            icon: isRefreshing
-                                ? const SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.refresh),
-                          )
-                        : Tooltip(
-                            message: 'Refresh',
-                            child: FilledButton.icon(
-                              onPressed:
-                                  isRefreshing ||
-                                      isSyncControlPending ||
-                                      onRefresh == null ||
-                                      health.outcome ==
-                                          SyncHealthOutcome.inactive
-                                  ? null
-                                  : onRefresh,
-                              icon: isRefreshing
-                                  ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.refresh),
-                              label: const Text('Refresh'),
-                            ),
-                          ),
+                    child: IconButton(
+                      tooltip: 'Refresh',
+                      onPressed:
+                          isRefreshing ||
+                              isSyncControlPending ||
+                              onRefresh == null ||
+                              health.outcome == SyncHealthOutcome.inactive
+                          ? null
+                          : onRefresh,
+                      icon: isRefreshing
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh),
+                    ),
                   ),
                   if (health.outcome != SyncHealthOutcome.inactive)
                     _HeaderFocusOrder(
                       order: 4,
-                      child: compact
-                          ? IconButton(
-                              tooltip: 'Stop sync',
-                              onPressed: isSyncControlPending
-                                  ? null
-                                  : onStopSync,
-                              icon: isSyncControlPending
-                                  ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.pause_circle_outline),
-                            )
-                          : Tooltip(
-                              message: 'Stop sync',
-                              child: OutlinedButton.icon(
-                                onPressed: isSyncControlPending
-                                    ? null
-                                    : onStopSync,
-                                icon: isSyncControlPending
-                                    ? const SizedBox.square(
-                                        dimension: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.pause_circle_outline),
-                                label: const Text('Stop sync'),
-                              ),
-                            ),
+                      child: IconButton(
+                        tooltip: 'Stop sync',
+                        onPressed: isSyncControlPending ? null : onStopSync,
+                        icon: isSyncControlPending
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.pause_circle_outline),
+                      ),
                     ),
                   _HeaderFocusOrder(
                     order: 5,
@@ -900,11 +862,12 @@ final class _ApplicationHeader extends StatelessWidget {
             ),
           ),
         ),
-        SyncHealthHeader(
-          health: health,
-          onAction: onHealthAction,
-          diagnosticsBuilder: diagnosticsBuilder,
-        ),
+        if (health.outcome != SyncHealthOutcome.good)
+          SyncHealthHeader(
+            health: health,
+            onAction: onHealthAction,
+            diagnosticsBuilder: diagnosticsBuilder,
+          ),
       ],
     );
   }

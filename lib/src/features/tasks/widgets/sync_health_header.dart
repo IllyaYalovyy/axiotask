@@ -7,103 +7,292 @@ final class SyncHealthHeader extends StatelessWidget {
     required this.health,
     this.onAction,
     this.diagnosticsBuilder,
+    this.iconOnly = false,
     super.key,
   });
 
   final SyncHealth health;
   final ValueChanged<SyncHealthAction>? onAction;
   final WidgetBuilder? diagnosticsBuilder;
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
+    if (health.outcome == SyncHealthOutcome.good) {
+      return _CompactSyncHealth(
+        health: health,
+        diagnosticsBuilder: diagnosticsBuilder,
+        iconOnly: iconOnly,
+      );
+    }
     final colors = Theme.of(context).colorScheme;
     final visual = _visualFor(health.outcome, colors);
-    final unresolved = health.counts.total;
-    final semantics =
-        'Synchronization ${health.summary}. '
-        '${health.reasonLabel}. Last successful sync ${health.lastSuccessLabel}. '
-        '$unresolved unresolved ${unresolved == 1 ? 'change' : 'changes'}.';
     final actionLabel = _actionLabel(health.action);
 
     return Semantics(
       container: true,
       excludeSemantics: true,
-      label: semantics,
+      label: _semanticsLabel(health),
       child: Material(
         color: visual.background,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: Row(
-            children: <Widget>[
-              Icon(visual.icon, color: visual.foreground, size: 24),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Row(
-                      children: <Widget>[
-                        Text(
-                          health.summary,
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(
-                                color: visual.foreground,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            health.reasonLabel,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: visual.foreground),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Last successful sync: ${health.lastSuccessLabel}',
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: visual.foreground),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              _CountChip(counts: health.counts, foreground: visual.foreground),
-              if (diagnosticsBuilder != null) ...<Widget>[
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: 'Open diagnostics',
-                  color: visual.foreground,
-                  onPressed: () => Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(builder: diagnosticsBuilder!),
-                  ),
-                  icon: const Icon(Icons.receipt_long_outlined),
-                ),
-              ],
-              if (actionLabel != null) ...<Widget>[
-                const SizedBox(width: 12),
-                OutlinedButton(
-                  onPressed: onAction == null
-                      ? null
-                      : () => onAction!(health.action),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: visual.foreground,
-                    side: BorderSide(color: visual.foreground),
-                  ),
-                  child: Text(actionLabel),
-                ),
-              ],
-            ],
+          child: _ExpandedHealthContent(
+            health: health,
+            visual: visual,
+            actionLabel: actionLabel,
+            onAction: onAction,
+            diagnosticsBuilder: diagnosticsBuilder,
           ),
         ),
       ),
     );
   }
+}
+
+final class _CompactSyncHealth extends StatelessWidget {
+  const _CompactSyncHealth({
+    required this.health,
+    required this.iconOnly,
+    this.diagnosticsBuilder,
+  });
+
+  final SyncHealth health;
+  final WidgetBuilder? diagnosticsBuilder;
+  final bool iconOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final visual = _visualFor(health.outcome, colors);
+    final relative = health.lastSuccessRelativeLabel ?? 'verification required';
+    return Semantics(
+      button: true,
+      label: '${_semanticsLabel(health)} Open synchronization details.',
+      child: Tooltip(
+        message: 'Sync details',
+        child: iconOnly
+            ? IconButton(
+                key: const Key('sync-health-good'),
+                tooltip: 'Sync details',
+                onPressed: () => _showSyncDetails(
+                  context,
+                  health: health,
+                  diagnosticsBuilder: diagnosticsBuilder,
+                ),
+                icon: Icon(visual.icon, color: visual.foreground),
+              )
+            : TextButton.icon(
+                key: const Key('sync-health-good'),
+                onPressed: () => _showSyncDetails(
+                  context,
+                  health: health,
+                  diagnosticsBuilder: diagnosticsBuilder,
+                ),
+                icon: Icon(visual.icon, color: visual.foreground, size: 20),
+                label: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      'Synced',
+                      style: TextStyle(
+                        color: visual.foreground,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(relative, style: TextStyle(color: visual.foreground)),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+final class _ExpandedHealthContent extends StatelessWidget {
+  const _ExpandedHealthContent({
+    required this.health,
+    required this.visual,
+    required this.actionLabel,
+    required this.onAction,
+    this.diagnosticsBuilder,
+  });
+
+  final SyncHealth health;
+  final ({Color background, Color foreground, IconData icon}) visual;
+  final String? actionLabel;
+  final ValueChanged<SyncHealthAction>? onAction;
+  final WidgetBuilder? diagnosticsBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.textScalerOf(context).scale(14) > 18.2;
+    final summary = _Summary(health: health, visual: visual);
+    final controls = _HealthControls(
+      health: health,
+      visual: visual,
+      actionLabel: actionLabel,
+      onAction: onAction,
+      diagnosticsBuilder: diagnosticsBuilder,
+    );
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[summary, const SizedBox(height: 8), controls],
+      );
+    }
+    return Row(
+      children: <Widget>[
+        Expanded(child: summary),
+        const SizedBox(width: 12),
+        controls,
+      ],
+    );
+  }
+}
+
+final class _Summary extends StatelessWidget {
+  const _Summary({required this.health, required this.visual});
+
+  final SyncHealth health;
+  final ({Color background, Color foreground, IconData icon}) visual;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Icon(visual.icon, color: visual.foreground, size: 24),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              health.summary,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: visual.foreground,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            Text(
+              health.reasonLabel,
+              style: TextStyle(color: visual.foreground),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Last successful sync: ${health.lastSuccessLabel}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: visual.foreground),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+final class _HealthControls extends StatelessWidget {
+  const _HealthControls({
+    required this.health,
+    required this.visual,
+    required this.actionLabel,
+    required this.onAction,
+    this.diagnosticsBuilder,
+  });
+
+  final SyncHealth health;
+  final ({Color background, Color foreground, IconData icon}) visual;
+  final String? actionLabel;
+  final ValueChanged<SyncHealthAction>? onAction;
+  final WidgetBuilder? diagnosticsBuilder;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 4,
+    runSpacing: 4,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    children: <Widget>[
+      if (health.counts.total > 0)
+        _CountChip(counts: health.counts, foreground: visual.foreground),
+      IconButton(
+        tooltip: 'Sync details',
+        color: visual.foreground,
+        onPressed: () => _showSyncDetails(
+          context,
+          health: health,
+          diagnosticsBuilder: diagnosticsBuilder,
+        ),
+        icon: const Icon(Icons.info_outline),
+      ),
+      if (actionLabel != null)
+        OutlinedButton(
+          onPressed: onAction == null ? null : () => onAction!(health.action),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: visual.foreground,
+            side: BorderSide(color: visual.foreground),
+          ),
+          child: Text(actionLabel!),
+        ),
+    ],
+  );
+}
+
+Future<void> _showSyncDetails(
+  BuildContext context, {
+  required SyncHealth health,
+  WidgetBuilder? diagnosticsBuilder,
+}) => showDialog<void>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    title: const Text('Synchronization details'),
+    content: SizedBox(
+      width: 420,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text('${health.summary}: ${health.reasonLabel}'),
+          const SizedBox(height: 12),
+          const Text('Last successful sync'),
+          Text(health.lastSuccessExactLabel),
+          if (health.lastSuccessRelativeLabel case final relative?)
+            Text(relative),
+          const SizedBox(height: 12),
+          Text(_unresolvedLabel(health.counts)),
+        ],
+      ),
+    ),
+    actions: <Widget>[
+      if (diagnosticsBuilder != null)
+        TextButton.icon(
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            Navigator.of(
+              context,
+            ).push<void>(MaterialPageRoute<void>(builder: diagnosticsBuilder));
+          },
+          icon: const Icon(Icons.receipt_long_outlined),
+          label: const Text('Open diagnostics'),
+        ),
+      TextButton(
+        onPressed: () => Navigator.of(dialogContext).pop(),
+        child: const Text('Close'),
+      ),
+    ],
+  ),
+);
+
+String _semanticsLabel(SyncHealth health) =>
+    'Synchronization ${health.summary}. ${health.reasonLabel}. '
+    'Last successful sync ${health.lastSuccessLabel}. '
+    '${_unresolvedLabel(health.counts)}.';
+
+String _unresolvedLabel(SyncWorkCounts counts) {
+  final total = counts.total;
+  if (total == 0) return 'No unresolved changes';
+  return '$total unresolved ${total == 1 ? 'change' : 'changes'}';
 }
 
 final class _CountChip extends StatelessWidget {

@@ -52,6 +52,29 @@ for scenario in "${scenarios[@]}"; do
     --dart-define="AXIOTASK_SCREENSHOT_SCENARIO=$scenario"
 done
 
+# S36B review captures use both desktop widths and themes. They are synthetic
+# and intentionally remain in the ignored screenshot output directory.
+health_review_scenarios=(
+  health-first-good
+  health-cached-pending
+  health-partial-failed
+  health-no-authorization
+  health-stale-failed
+  health-sync-stopped
+)
+
+for width in 1024 1355; do
+  for theme in light dark; do
+    for scenario in "${health_review_scenarios[@]}"; do
+      flutter run -d linux --debug -t lib/main_health_screenshot.dart \
+        --dart-define="AXIOTASK_SCREENSHOT_SCENARIO=$scenario" \
+        --dart-define="AXIOTASK_SCREENSHOT_SIZE=${width}x800" \
+        --dart-define="AXIOTASK_SCREENSHOT_THEME=$theme" \
+        --dart-define="AXIOTASK_SCREENSHOT_OUTPUT_SUFFIX=${width}-${theme}"
+    done
+  done
+done
+
 flutter run -d linux --debug -t lib/main_database_recovery_screenshot.dart
 
 printf 'Synthetic Linux screenshots written beneath screenshots/actual/.\n'

@@ -62,7 +62,9 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.byTooltip('Open diagnostics'));
+    await tester.tap(find.byTooltip('Sync details'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open diagnostics'));
     await tester.pumpAndSettle();
     expect(find.textContaining('private test-account data'), findsOneWidget);
     expect(find.textContaining(taskCanary), findsOneWidget);

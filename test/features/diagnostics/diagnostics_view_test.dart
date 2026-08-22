@@ -49,7 +49,7 @@ void main() {
     expect(find.textContaining('private test-account data'), findsOneWidget);
   });
 
-  testWidgets('development diagnostics are one interaction from sync details', (
+  testWidgets('development diagnostics are reachable from sync details', (
     tester,
   ) async {
     final fixture = _Fixture();
@@ -66,7 +66,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Open diagnostics'));
+    await tester.tap(find.byTooltip('Sync details'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open diagnostics'));
     await tester.pumpAndSettle();
 
     expect(find.byType(DevelopmentDiagnosticsView), findsOneWidget);

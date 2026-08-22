@@ -23,7 +23,11 @@ competing top-level statuses. The account being connected is not itself evidence
 of sync health.
 
 Desktop places health in the always-visible application header and exposes
-details without leaving the current work. Android uses the top app bar plus a
+details without leaving the current work. A healthy desktop status is a calm
+`Synced` label with a relative age; its exact completion time and diagnostics
+route are in Sync details. Zero unresolved work stays out of the header.
+Pending, failed, stopped, and unauthorized states expand with their reason,
+nonzero unresolved count, and recovery action. Android uses the top app bar plus a
 persistent banner for failed states. Neither platform hides
 an expired token in a settings screen or transient toast.
 

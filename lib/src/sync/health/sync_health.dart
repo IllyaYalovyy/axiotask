@@ -231,30 +231,41 @@ final class SyncHealth {
   }
 
   String get lastSuccessLabel {
+    final exact = lastSuccessExactLabel;
+    final relative = lastSuccessRelativeLabel;
+    return relative == null ? exact : '$exact ($relative)';
+  }
+
+  String get lastSuccessExactLabel {
     final value = lastSuccessfulSyncAt;
     if (value == null) return 'Never';
     final utc = value.toUtc();
-    final exact =
-        '${utc.year.toString().padLeft(4, '0')}-'
+    return '${utc.year.toString().padLeft(4, '0')}-'
         '${utc.month.toString().padLeft(2, '0')}-'
         '${utc.day.toString().padLeft(2, '0')} '
         '${utc.hour.toString().padLeft(2, '0')}:'
         '${utc.minute.toString().padLeft(2, '0')} UTC';
+  }
+
+  String? get lastSuccessRelativeLabel {
+    final value = lastSuccessfulSyncAt;
+    if (value == null) return null;
+    final utc = value.toUtc();
     final age = evaluatedAt.toUtc().difference(utc);
-    if (age.isNegative) return '$exact (clock changed; verification required)';
+    if (age.isNegative) return 'clock changed; verification required';
     if (age < const Duration(minutes: 1)) {
-      return '$exact (less than a minute ago)';
+      return 'less than a minute ago';
     }
     if (age < const Duration(hours: 1)) {
       final minutes = age.inMinutes;
-      return '$exact ($minutes ${minutes == 1 ? 'minute' : 'minutes'} ago)';
+      return '$minutes ${minutes == 1 ? 'minute' : 'minutes'} ago';
     }
     if (age < const Duration(days: 1)) {
       final hours = age.inHours;
-      return '$exact ($hours ${hours == 1 ? 'hour' : 'hours'} ago)';
+      return '$hours ${hours == 1 ? 'hour' : 'hours'} ago';
     }
     final days = age.inDays;
-    return '$exact ($days ${days == 1 ? 'day' : 'days'} ago)';
+    return '$days ${days == 1 ? 'day' : 'days'} ago';
   }
 }
 

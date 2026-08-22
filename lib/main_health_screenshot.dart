@@ -221,9 +221,7 @@ final class _HealthScreenshotSequenceState
         navigatorKey: _navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: axiotaskTheme(
-          _captureScenarios[_index].name.endsWith('-dark')
-              ? Brightness.dark
-              : Brightness.light,
+          _screenshotBrightness(_captureScenarios[_index].name),
           DensityPreference.standard,
         ),
         home: AdaptiveShell(
@@ -1055,6 +1053,7 @@ const _requestedScenario = String.fromEnvironment(
 );
 
 const _requestedSize = String.fromEnvironment('AXIOTASK_SCREENSHOT_SIZE');
+const _requestedTheme = String.fromEnvironment('AXIOTASK_SCREENSHOT_THEME');
 const _screenshotOutputSuffix = String.fromEnvironment(
   'AXIOTASK_SCREENSHOT_OUTPUT_SUFFIX',
 );
@@ -1064,6 +1063,13 @@ Size? get _screenshotSize {
   if (match == null) return null;
   return Size(double.parse(match.group(1)!), double.parse(match.group(2)!));
 }
+
+Brightness _screenshotBrightness(String scenarioName) =>
+    switch (_requestedTheme) {
+      'dark' => Brightness.dark,
+      'light' => Brightness.light,
+      _ => scenarioName.endsWith('-dark') ? Brightness.dark : Brightness.light,
+    };
 
 final List<_ScreenshotScenario> _captureScenarios = _requestedScenario.isEmpty
     ? _scenarios
