@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:axiotask/src/app/adaptive_shell.dart';
 import 'package:axiotask/src/app/navigation_state.dart';
+import 'package:axiotask/src/app/visual_tokens.dart';
 import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/bulk_operations.dart';
+import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/policy/smart_views.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
@@ -515,6 +517,11 @@ void main() {
     addTearDown(fixture.dispose);
     await tester.pumpWidget(
       MaterialApp(
+        theme: axiotaskTheme(
+          Brightness.light,
+          DensityPreference.standard,
+          platform: TargetPlatform.linux,
+        ),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context).copyWith(
             padding: const EdgeInsets.fromLTRB(18, 28, 14, 20),
@@ -531,7 +538,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(
-      tester.getTopLeft(find.text('Axiotask')).dy,
+      tester.getTopLeft(find.byKey(const Key('desktop-application-header'))).dy,
       greaterThanOrEqualTo(28),
     );
     expect(find.byKey(const Key('task-detail-scroll-view')), findsOneWidget);
@@ -1058,7 +1065,9 @@ void main() {
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Keyboard shortcuts'));
+      await tester.tap(find.byTooltip('More app actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Keyboard shortcuts'));
       await tester.pumpAndSettle();
       expect(find.text('Keyboard shortcuts'), findsOneWidget);
       expect(find.text('Ctrl+N'), findsOneWidget);
@@ -1114,8 +1123,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byTooltip('Settings'), findsOneWidget);
-    await tester.tap(find.byTooltip('Settings'));
+    expect(find.byTooltip('More app actions'), findsOneWidget);
+    await tester.tap(find.byTooltip('More app actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(find.text('Settings presentation'), findsOneWidget);
 
@@ -1125,7 +1136,7 @@ void main() {
   });
 
   testWidgets(
-    'desktop header keeps the complete action set reachable at supported widths',
+    'desktop header keeps frequent controls visible and app actions in overflow',
     (tester) async {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -1139,6 +1150,11 @@ void main() {
         );
         await tester.pumpWidget(
           MaterialApp(
+            theme: axiotaskTheme(
+              Brightness.light,
+              DensityPreference.standard,
+              platform: TargetPlatform.linux,
+            ),
             home: AdaptiveShell(
               viewModel: fixture.viewModel,
               diagnosticsBuilder: (_) => const Scaffold(),
@@ -1153,13 +1169,9 @@ void main() {
         final expectedActions = <String>[
           if (width < 900) 'Open navigation',
           'Search tasks',
-          'Keyboard shortcuts',
-          'Settings',
-          'Account backup',
-          'Local data recovery',
           'Refresh',
           'Stop sync',
-          'Open diagnostics',
+          'More app actions',
         ];
         for (final label in expectedActions) {
           final action = find.byTooltip(label);
@@ -1170,24 +1182,127 @@ void main() {
           expect(center.dy, inInclusiveRange(0, 800), reason: label);
         }
         expect(tester.takeException(), isNull, reason: '${width}px header');
-        if (width < 1200) {
+        expect(find.text('Axiotask'), findsNothing);
+        expect(
+          find.byKey(const Key('desktop-application-header')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .getSize(find.byKey(const Key('desktop-application-header')))
+              .height,
+          lessThanOrEqualTo(64),
+        );
+        final focusOrders = tester
+            .widgetList<FocusTraversalOrder>(
+              find.descendant(
+                of: find.byKey(const Key('desktop-application-header')),
+                matching: find.byType(FocusTraversalOrder),
+              ),
+            )
+            .map((widget) => (widget.order as NumericFocusOrder).order)
+            .toList();
+        expect(
+          focusOrders,
+          width < 900 ? <double>[1, 2, 3, 4, 5] : <double>[2, 3, 4, 5],
+        );
+        await tester.tap(find.byTooltip('More app actions'));
+        await tester.pumpAndSettle();
+        for (final label in <String>[
+          'Keyboard shortcuts',
+          'Settings',
+          'Account backup',
+          'Local data recovery',
+        ]) {
           expect(
-            find.widgetWithIcon(IconButton, Icons.refresh),
+            find.text(label),
             findsOneWidget,
-          );
-          expect(
-            find.widgetWithIcon(IconButton, Icons.pause_circle_outline),
-            findsOneWidget,
-          );
-        } else {
-          expect(find.widgetWithText(FilledButton, 'Refresh'), findsOneWidget);
-          expect(
-            find.widgetWithText(OutlinedButton, 'Stop sync'),
-            findsOneWidget,
+            reason: '$label at ${width}px',
           );
         }
+        await tester.tapAt(const Offset(0, 0));
+        await tester.pumpAndSettle();
         fixture.dispose();
       }
+    },
+  );
+
+  testWidgets(
+    'desktop chrome keeps visible state and density at 100 and 200 percent text',
+    (tester) async {
+      tester.view.physicalSize = const Size(1024, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.good),
+        refreshRequested: () async {},
+        stopSyncRequested: () async {},
+      );
+      addTearDown(fixture.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey<String>('standard-theme'),
+          theme: axiotaskTheme(
+            Brightness.light,
+            DensityPreference.standard,
+            platform: TargetPlatform.linux,
+          ),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
+      await tester.pump();
+      final standardHeader = tester.getSize(
+        find.byKey(const Key('desktop-application-header')),
+      );
+      final search = find.byTooltip('Search tasks');
+      await tester.tap(search);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey<String>('compact-theme'),
+          theme: axiotaskTheme(
+            Brightness.dark,
+            DensityPreference.compact,
+            platform: TargetPlatform.linux,
+          ),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
+      await tester.pump();
+      final compactHeader = tester.getSize(
+        find.byKey(const Key('desktop-application-header')),
+      );
+      expect(standardHeader.height, 48);
+      expect(compactHeader.height, 44);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          key: const ValueKey<String>('large-text-theme'),
+          theme: axiotaskTheme(
+            Brightness.light,
+            DensityPreference.standard,
+            platform: TargetPlatform.linux,
+          ),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const Key('desktop-application-header')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 

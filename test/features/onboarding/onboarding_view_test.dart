@@ -141,7 +141,9 @@ void main() {
         'onboarding.dismissal_write_failed',
       );
 
-      await tester.tap(find.byTooltip('Keyboard shortcuts'));
+      await tester.tap(find.byTooltip('More app actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Keyboard shortcuts'));
       await tester.pumpAndSettle();
       expect(find.text('Keyboard shortcuts'), findsWidgets);
       expect(tester.takeException(), isNull);

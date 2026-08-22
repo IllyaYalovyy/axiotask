@@ -79,6 +79,11 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        theme: axiotaskTheme(
+          Brightness.light,
+          DensityPreference.standard,
+          platform: TargetPlatform.linux,
+        ),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
@@ -102,7 +107,11 @@ void main() {
 }
 
 Widget _app(SettingsViewModel viewModel) => MaterialApp(
-  theme: axiotaskTheme(Brightness.light, DensityPreference.standard),
+  theme: axiotaskTheme(
+    Brightness.light,
+    DensityPreference.standard,
+    platform: TargetPlatform.linux,
+  ),
   home: SettingsView(viewModel: viewModel),
 );
 

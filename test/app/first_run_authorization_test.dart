@@ -260,9 +260,10 @@ void main() {
 
       expect(find.text('Welcome to Axiotask'), findsNothing);
       expect(find.text('Connect'), findsOneWidget);
-      expect(find.byTooltip('Settings'), findsOneWidget);
-
-      await tester.tap(find.byTooltip('Settings'));
+      expect(find.byTooltip('More app actions'), findsOneWidget);
+      await tester.tap(find.byTooltip('More app actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
       expect(find.text('Settings'), findsWidgets);
       await tester.tap(find.byKey(const Key('settings-theme-dark')));
@@ -314,7 +315,7 @@ void main() {
       expect(find.text('Welcome to Axiotask'), findsNothing);
       expect(find.byKey(const Key('onboarding-persistence-notice')), findsOne);
       expect(find.text('Connect'), findsOneWidget);
-      expect(find.byTooltip('Settings'), findsOneWidget);
+      expect(find.byTooltip('More app actions'), findsOneWidget);
       expect(await database.allAccounts(), isEmpty);
       expect(google.calls, isEmpty);
 

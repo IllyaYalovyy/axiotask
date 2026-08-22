@@ -152,6 +152,23 @@ production-safe diagnostic history and have no hidden gesture, setting, or
 runtime flag that can enable the sensitive development view. Neither build logs
 credentials or uploads diagnostics automatically.
 
+## Desktop visual system
+
+Fedora uses one compact, documented desktop rhythm. The 4dp spacing scale is
+4, 8, 12, 16, and 24 logical pixels. Standard density uses a 48px application
+header, 40px ordinary fields and buttons, 20px icons, 16px horizontal inset,
+and 12px section gap. Compact uses a 44px header, 36px controls, 12px inset,
+and 8px section gap; body text remains at the Standard readable size. Desktop
+buttons and fields use an 8px corner radius. Pills are limited to semantic
+status or toggle treatments, not routine commands.
+
+The native window title is the sole Axiotask brand treatment. The in-app
+desktop header is a compact, labeled application-control bar: frequent
+navigation, search, and sync controls remain visible, while keyboard help,
+settings, backup, and local recovery are available in its labeled overflow.
+Hover and keyboard focus have distinct visible state treatments in both themes.
+These desktop reductions do not apply to Android touch targets.
+
 ## Accessibility and visual validation
 
 - Semantics labels and roles are part of widget acceptance tests.

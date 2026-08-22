@@ -23,7 +23,10 @@ void main() {
     await tester.pump();
 
     expect(find.byType(MaterialApp), findsOneWidget);
-    expect(find.text('Axiotask'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Axiotask application controls'),
+      findsOneWidget,
+    );
     expect(find.text('No authorization'), findsOneWidget);
     expect(find.text('No cached tasks in this list'), findsOneWidget);
     expect(tester.takeException(), isNull);

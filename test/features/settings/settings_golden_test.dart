@@ -5,6 +5,7 @@ import 'package:axiotask/src/app/visual_tokens.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/features/settings/settings_view.dart';
 import 'package:axiotask/src/features/settings/settings_view_model.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -60,6 +61,7 @@ void main() {
             scenario.effectiveBrightness,
             scenario.density,
             fontFamily: 'GoldenRoboto',
+            platform: TargetPlatform.linux,
           ),
           home: SettingsView(viewModel: viewModel),
         ),

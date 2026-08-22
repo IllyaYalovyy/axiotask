@@ -25,6 +25,7 @@ void main() {
             brightness,
             DensityPreference.standard,
             fontFamily: 'GoldenRoboto',
+            platform: TargetPlatform.linux,
           ),
           home: const OnboardingView(onDismiss: _dismiss),
         ),

@@ -86,7 +86,10 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(attempts, 3);
-      expect(find.text('Axiotask'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Axiotask application controls'),
+        findsOneWidget,
+      );
       expect(find.text('Tasks unavailable'), findsNothing);
 
       expect(history.records, hasLength(2));
@@ -130,7 +133,10 @@ void main() {
     retry.complete(_FakeRuntime());
     await tester.pump();
     await tester.pump();
-    expect(find.text('Axiotask'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Axiotask application controls'),
+      findsOneWidget,
+    );
     expect(attempts, 2);
   });
 
@@ -151,7 +157,10 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Axiotask'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Axiotask application controls'),
+      findsOneWidget,
+    );
 
     failedRuntime.failStorage(
       const SchemaVerificationException('database_unreadable'),
@@ -209,7 +218,10 @@ void main() {
       expect(first.closeCalls, 1);
       expect(attempts, 2);
       expect(find.text('Tasks unavailable'), findsNothing);
-      expect(find.text('Axiotask'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Axiotask application controls'),
+        findsOneWidget,
+      );
     },
   );
 

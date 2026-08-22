@@ -764,153 +764,140 @@ final class _ApplicationHeader extends StatelessWidget {
   );
 
   Widget _buildForWidth(BuildContext context, double width) {
-    // This threshold reserves room for the brand, navigation/search, every
-    // optional application action, and both synchronization controls.
+    // Labels are retained only when the available desktop width can carry them
+    // without competing with the active workspace.
     final compact = width < 1200;
     final tokens = Theme.of(context).axiotaskTokens;
     return Column(
       children: <Widget>[
-        Container(
-          height: tokens.headerHeight,
-          padding: EdgeInsets.symmetric(horizontal: tokens.horizontalInset),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            border: Border(
-              bottom: BorderSide(color: Theme.of(context).dividerColor),
-            ),
-          ),
-          child: Row(
-            children: <Widget>[
-              Icon(
-                Icons.check_circle_outline,
-                color: Theme.of(context).colorScheme.primary,
+        Semantics(
+          container: true,
+          label: 'Axiotask application controls',
+          child: FocusTraversalGroup(
+            policy: OrderedTraversalPolicy(),
+            child: Container(
+              key: const Key('desktop-application-header'),
+              height: tokens.headerHeight,
+              padding: EdgeInsets.symmetric(horizontal: tokens.horizontalInset),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border(
+                  bottom: BorderSide(color: Theme.of(context).dividerColor),
+                ),
               ),
-              const SizedBox(width: 10),
-              Text(
-                'Axiotask',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              const Spacer(),
-              if (width < 900) ...<Widget>[
-                IconButton(
-                  tooltip: 'Open navigation',
-                  onPressed: onOpenNavigation,
-                  icon: const Icon(Icons.menu),
-                ),
-                const SizedBox(width: 4),
-              ],
-              if (showSearch) ...<Widget>[
-                IconButton(
-                  tooltip: 'Search tasks',
-                  onPressed: onSearch,
-                  icon: const Icon(Icons.search),
-                ),
-                const SizedBox(width: 4),
-              ],
-              IconButton(
-                tooltip: 'Keyboard shortcuts',
-                onPressed: onShowShortcuts,
-                icon: const Icon(Icons.keyboard_outlined),
-              ),
-              const SizedBox(width: 4),
-              if (settingsBuilder case final builder?) ...<Widget>[
-                IconButton(
-                  tooltip: 'Settings',
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).push(MaterialPageRoute<void>(builder: builder)),
-                  icon: const Icon(Icons.settings_outlined),
-                ),
-                const SizedBox(width: 4),
-              ],
-              if (accountBackupBuilder case final builder?) ...<Widget>[
-                IconButton(
-                  tooltip: 'Account backup',
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).push(MaterialPageRoute<void>(builder: builder)),
-                  icon: const Icon(Icons.save_alt_outlined),
-                ),
-                const SizedBox(width: 4),
-              ],
-              if (localDataRecoveryBuilder case final builder?) ...<Widget>[
-                IconButton(
-                  tooltip: 'Local data recovery',
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).push(MaterialPageRoute<void>(builder: builder)),
-                  icon: const Icon(Icons.settings_backup_restore),
-                ),
-                const SizedBox(width: 4),
-              ],
-              if (compact)
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed:
-                      isRefreshing ||
-                          isSyncControlPending ||
-                          onRefresh == null ||
-                          health.outcome == SyncHealthOutcome.inactive
-                      ? null
-                      : onRefresh,
-                  icon: isRefreshing
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                )
-              else
-                Tooltip(
-                  message: 'Refresh',
-                  child: FilledButton.icon(
-                    onPressed:
-                        isRefreshing ||
-                            isSyncControlPending ||
-                            onRefresh == null ||
-                            health.outcome == SyncHealthOutcome.inactive
-                        ? null
-                        : onRefresh,
-                    icon: isRefreshing
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+              child: Row(
+                children: <Widget>[
+                  const Spacer(),
+                  if (width < 900)
+                    _HeaderFocusOrder(
+                      order: 1,
+                      child: IconButton(
+                        tooltip: 'Open navigation',
+                        onPressed: onOpenNavigation,
+                        icon: const Icon(Icons.menu),
+                      ),
+                    ),
+                  if (showSearch)
+                    _HeaderFocusOrder(
+                      order: 2,
+                      child: IconButton(
+                        tooltip: 'Search tasks',
+                        onPressed: onSearch,
+                        icon: const Icon(Icons.search),
+                      ),
+                    ),
+                  _HeaderFocusOrder(
+                    order: 3,
+                    child: compact
+                        ? IconButton(
+                            tooltip: 'Refresh',
+                            onPressed:
+                                isRefreshing ||
+                                    isSyncControlPending ||
+                                    onRefresh == null ||
+                                    health.outcome == SyncHealthOutcome.inactive
+                                ? null
+                                : onRefresh,
+                            icon: isRefreshing
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.refresh),
                           )
-                        : const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
+                        : Tooltip(
+                            message: 'Refresh',
+                            child: FilledButton.icon(
+                              onPressed:
+                                  isRefreshing ||
+                                      isSyncControlPending ||
+                                      onRefresh == null ||
+                                      health.outcome ==
+                                          SyncHealthOutcome.inactive
+                                  ? null
+                                  : onRefresh,
+                              icon: isRefreshing
+                                  ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.refresh),
+                              label: const Text('Refresh'),
+                            ),
+                          ),
                   ),
-                ),
-              if (health.outcome != SyncHealthOutcome.inactive) ...<Widget>[
-                SizedBox(width: compact ? 4 : 12),
-                if (compact)
-                  IconButton(
-                    tooltip: 'Stop sync',
-                    onPressed: isSyncControlPending ? null : onStopSync,
-                    icon: isSyncControlPending
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.pause_circle_outline),
-                  )
-                else
-                  Tooltip(
-                    message: 'Stop sync',
-                    child: OutlinedButton.icon(
-                      onPressed: isSyncControlPending ? null : onStopSync,
-                      icon: isSyncControlPending
-                          ? const SizedBox.square(
-                              dimension: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                  if (health.outcome != SyncHealthOutcome.inactive)
+                    _HeaderFocusOrder(
+                      order: 4,
+                      child: compact
+                          ? IconButton(
+                              tooltip: 'Stop sync',
+                              onPressed: isSyncControlPending
+                                  ? null
+                                  : onStopSync,
+                              icon: isSyncControlPending
+                                  ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.pause_circle_outline),
                             )
-                          : const Icon(Icons.pause_circle_outline),
-                      label: const Text('Stop sync'),
+                          : Tooltip(
+                              message: 'Stop sync',
+                              child: OutlinedButton.icon(
+                                onPressed: isSyncControlPending
+                                    ? null
+                                    : onStopSync,
+                                icon: isSyncControlPending
+                                    ? const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.pause_circle_outline),
+                                label: const Text('Stop sync'),
+                              ),
+                            ),
+                    ),
+                  _HeaderFocusOrder(
+                    order: 5,
+                    child: _ApplicationOverflow(
+                      onShowShortcuts: onShowShortcuts,
+                      settingsBuilder: settingsBuilder,
+                      accountBackupBuilder: accountBackupBuilder,
+                      localDataRecoveryBuilder: localDataRecoveryBuilder,
                     ),
                   ),
-              ],
-            ],
+                ],
+              ),
+            ),
           ),
         ),
         SyncHealthHeader(
@@ -921,6 +908,72 @@ final class _ApplicationHeader extends StatelessWidget {
       ],
     );
   }
+}
+
+final class _HeaderFocusOrder extends StatelessWidget {
+  const _HeaderFocusOrder({required this.order, required this.child});
+
+  final double order;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      FocusTraversalOrder(order: NumericFocusOrder(order), child: child);
+}
+
+final class _ApplicationOverflow extends StatelessWidget {
+  const _ApplicationOverflow({
+    required this.onShowShortcuts,
+    this.settingsBuilder,
+    this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
+  });
+
+  final VoidCallback onShowShortcuts;
+  final WidgetBuilder? settingsBuilder;
+  final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
+
+  void _open(BuildContext context, WidgetBuilder builder) {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: builder));
+  }
+
+  @override
+  Widget build(BuildContext context) => MenuAnchor(
+    menuChildren: <Widget>[
+      MenuItemButton(
+        leadingIcon: const Icon(Icons.keyboard_outlined),
+        onPressed: onShowShortcuts,
+        child: const Text('Keyboard shortcuts'),
+      ),
+      if (settingsBuilder case final builder?)
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.settings_outlined),
+          onPressed: () => _open(context, builder),
+          child: const Text('Settings'),
+        ),
+      if (accountBackupBuilder case final builder?)
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.save_alt_outlined),
+          onPressed: () => _open(context, builder),
+          child: const Text('Account backup'),
+        ),
+      if (localDataRecoveryBuilder case final builder?)
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.settings_backup_restore),
+          onPressed: () => _open(context, builder),
+          child: const Text('Local data recovery'),
+        ),
+    ],
+    builder: (context, controller, _) => Tooltip(
+      message: 'More app actions',
+      child: TextButton.icon(
+        onPressed: controller.isOpen ? controller.close : controller.open,
+        icon: const Icon(Icons.more_horiz),
+        label: const Text('More'),
+      ),
+    ),
+  );
 }
 
 final class _ShellBody extends StatelessWidget {

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'src/app/adaptive_shell.dart';
+import 'src/app/visual_tokens.dart';
 import 'src/core/clock.dart';
 import 'src/core/failure.dart';
 import 'src/core/outcome.dart';
@@ -111,9 +112,11 @@ final class _HealthScreenshotSequenceState
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         image.dispose();
         if (bytes == null) throw StateError('PNG encoding failed.');
-        await File(
-          '${output.path}/${_captureScenarios[index].name}.png',
-        ).writeAsBytes(
+        final suffix = _screenshotOutputSuffix;
+        final outputName = suffix.isEmpty
+            ? _captureScenarios[index].name
+            : '${_captureScenarios[index].name}-$suffix';
+        await File('${output.path}/$outputName.png').writeAsBytes(
           bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
           flush: true,
         );
@@ -217,12 +220,11 @@ final class _HealthScreenshotSequenceState
         key: ValueKey<String>('app-${_captureScenarios[_index].name}'),
         navigatorKey: _navigatorKey,
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorSchemeSeed: const Color(0xff315da8),
-          brightness: _captureScenarios[_index].name.endsWith('-dark')
+        theme: axiotaskTheme(
+          _captureScenarios[_index].name.endsWith('-dark')
               ? Brightness.dark
               : Brightness.light,
-          useMaterial3: true,
+          DensityPreference.standard,
         ),
         home: AdaptiveShell(
           key: ValueKey<String>(_captureScenarios[_index].name),
@@ -243,6 +245,21 @@ final class _HealthScreenshotSequenceState
         ),
       ),
     );
+    final requestedSize = _screenshotSize;
+    if (requestedSize != null) {
+      return OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: requestedSize.width,
+        maxWidth: requestedSize.width,
+        minHeight: requestedSize.height,
+        maxHeight: requestedSize.height,
+        child: SizedBox(
+          width: requestedSize.width,
+          height: requestedSize.height,
+          child: boundary,
+        ),
+      );
+    }
     if (_captureScenarios[_index].name != 'desktop-interactions-1024-light') {
       return boundary;
     }
@@ -1036,6 +1053,17 @@ final _bulkScreenshotSummary = BulkOperationSummary(
 const _requestedScenario = String.fromEnvironment(
   'AXIOTASK_SCREENSHOT_SCENARIO',
 );
+
+const _requestedSize = String.fromEnvironment('AXIOTASK_SCREENSHOT_SIZE');
+const _screenshotOutputSuffix = String.fromEnvironment(
+  'AXIOTASK_SCREENSHOT_OUTPUT_SUFFIX',
+);
+
+Size? get _screenshotSize {
+  final match = RegExp(r'^(\d+)x(\d+)$').firstMatch(_requestedSize);
+  if (match == null) return null;
+  return Size(double.parse(match.group(1)!), double.parse(match.group(2)!));
+}
 
 final List<_ScreenshotScenario> _captureScenarios = _requestedScenario.isEmpty
     ? _scenarios
