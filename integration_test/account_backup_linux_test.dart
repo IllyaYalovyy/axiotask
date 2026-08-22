@@ -102,7 +102,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Account backup'));
+      await _openAccountBackup(tester);
       await tester.pumpAndSettle();
       expect(find.textContaining('private Google Tasks data'), findsOneWidget);
       await tester.tap(find.text('Choose file and export'));
@@ -214,7 +214,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Account backup'));
+    await _openAccountBackup(tester);
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView), const Offset(0, -600));
     await tester.pumpAndSettle();
@@ -238,6 +238,12 @@ void main() {
       hasLength(1),
     );
   });
+}
+
+Future<void> _openAccountBackup(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('More app actions'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Account backup'));
 }
 
 final class _Picker implements AccountBackupSaveLocationPicker {

@@ -26,7 +26,7 @@ void main() {
       addTearDown(fixture.close);
       await _render(tester, fixture);
 
-      await tester.tap(find.byTooltip('Local data recovery'));
+      await _openLocalDataRecovery(tester);
       await tester.pumpAndSettle();
       expect(find.text('Local data recovery'), findsOneWidget);
       expect(
@@ -59,7 +59,7 @@ void main() {
     addTearDown(fixture.close);
     await _render(tester, fixture);
 
-    await tester.tap(find.byTooltip('Local data recovery'));
+    await _openLocalDataRecovery(tester);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Reset Local Data'));
     await tester.pumpAndSettle();
@@ -100,6 +100,12 @@ Future<void> _render(WidgetTester tester, _Fixture fixture) async {
     ),
   );
   await tester.pumpAndSettle();
+}
+
+Future<void> _openLocalDataRecovery(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('More app actions'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Local data recovery'));
 }
 
 final class _Fixture {

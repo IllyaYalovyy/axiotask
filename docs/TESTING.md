@@ -546,6 +546,20 @@ suites remain the behavioral regressions; curated light/dark detail goldens and
 ignored synthetic screenshots are visually reviewed for Standard and Compact
 density.
 
+S36I reruns the complete deterministic Fedora capture suite one scenario per
+fresh app launch, then reviews the integrated workspace at 1024×720 Standard,
+1355×1125 Compact, and 1600×1000 Standard. The representative matrix covers
+normal and selection command modes, compact quick capture, long details and
+subtasks, every health outcome, Stop, invalid drag before and after clearing,
+and destructive confirmation. The screenshot entry point accepts an explicit
+`AXIOTASK_SCREENSHOT_DENSITY` value so the same synthetic fixture can exercise
+both Standard and Compact desktop geometry without reading profiles or OAuth
+state. Existing adaptive-shell, workspace-preference, feedback-lifecycle, and
+shortcut tests cover 200% text, restart/profile-local pane restoration,
+deterministic notice expiry, and keyboard-only traversal. Curated goldens were
+unchanged because the capture harness, rather than product rendering, gained
+the density selector.
+
 S31 adds curated 1280×720 `local-data-reset-warning-light`,
 `local-data-reset-rebuilt-light`, and `local-data-reset-failed-dark` goldens.
 

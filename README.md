@@ -827,6 +827,23 @@ That command also captures `database-recovery.png` at the Linux runner's
 1280×720 size. The recovery image contains no path, exception, account
 identity, task content, or credential material.
 
+For a deterministic integrated desktop comparison, the same synthetic runner
+accepts an explicit form factor and density. For example, this writes an
+ignored 1355×1125 Compact selection capture and never opens a profile, OAuth,
+secure storage, or Google connection:
+
+```bash
+flutter run -d linux --debug -t lib/main_health_screenshot.dart \
+  --dart-define=AXIOTASK_SCREENSHOT_SCENARIO=bulk-operation-selection-light \
+  --dart-define=AXIOTASK_SCREENSHOT_SIZE=1355x1125 \
+  --dart-define=AXIOTASK_SCREENSHOT_DENSITY=compact \
+  --dart-define=AXIOTASK_SCREENSHOT_OUTPUT_SUFFIX=1355x1125-compact
+```
+
+Use the same command with `standard` or `compact` and inspect the ignored PNG
+under `screenshots/actual/`; this capture facility is test-only and is not an
+application runtime profile.
+
 The diagnostics capture command writes `diagnostics-release-light.png` and
 `diagnostics-development-dark.png` at the Linux runner's 1280×720 size. Inspect
 both images: release must show safe summaries and redaction only; development

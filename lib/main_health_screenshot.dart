@@ -63,6 +63,9 @@ final class _HealthScreenshotSequenceState
             scenario.name.startsWith('bulk-operation-')) {
           _viewModel.selectSmartView(SmartView.focus);
         }
+        if (scenario.name == 'clear-completed-confirmation-dark') {
+          _viewModel.selectTaskList(scenario.snapshot.taskLists.first.id);
+        }
         if (scenario.name == 'bulk-operation-selection-light' ||
             scenario.name == 'bulk-operation-confirmation-light' ||
             scenario.name == 'bulk-operation-success-light') {
@@ -275,7 +278,7 @@ final class _HealthScreenshotSequenceState
         debugShowCheckedModeBanner: false,
         theme: axiotaskTheme(
           _screenshotBrightness(_captureScenarios[_index].name),
-          DensityPreference.standard,
+          _screenshotDensity,
         ),
         home: AdaptiveShell(
           key: ValueKey<String>(_captureScenarios[_index].name),
@@ -1185,6 +1188,7 @@ const _requestedScenario = String.fromEnvironment(
 
 const _requestedSize = String.fromEnvironment('AXIOTASK_SCREENSHOT_SIZE');
 const _requestedTheme = String.fromEnvironment('AXIOTASK_SCREENSHOT_THEME');
+const _requestedDensity = String.fromEnvironment('AXIOTASK_SCREENSHOT_DENSITY');
 const _screenshotOutputSuffix = String.fromEnvironment(
   'AXIOTASK_SCREENSHOT_OUTPUT_SUFFIX',
 );
@@ -1201,6 +1205,11 @@ Brightness _screenshotBrightness(String scenarioName) =>
       'light' => Brightness.light,
       _ => scenarioName.endsWith('-dark') ? Brightness.dark : Brightness.light,
     };
+
+DensityPreference get _screenshotDensity => switch (_requestedDensity) {
+  'compact' => DensityPreference.compact,
+  _ => DensityPreference.standard,
+};
 
 final List<_ScreenshotScenario> _captureScenarios = _requestedScenario.isEmpty
     ? _scenarios
