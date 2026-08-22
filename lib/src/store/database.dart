@@ -79,6 +79,11 @@ CREATE TABLE pending_moves (
   parent_id   TEXT,
   previous_id TEXT
 )''',
+  // `error` holds a SyncFailureKind NAME, never provider or API text (#218):
+  // the Sync activity screen reads this column, so anything written here is
+  // user-visible. Write it through Store.writeSyncLog, which takes the enum.
+  // (The column keeps its name: renaming it would change the schema
+  // fingerprint and cost every user a full re-pull for no user-visible gain.)
   '''
 CREATE TABLE sync_log (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

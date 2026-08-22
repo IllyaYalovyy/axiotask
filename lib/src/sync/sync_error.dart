@@ -9,6 +9,7 @@
 // exists so backoff/attention never mis-fires when one does.
 
 import '../api/api_error.dart';
+import '../model/sync_run.dart';
 import '../store/store_error.dart';
 
 /// What can go wrong during a sync run.
@@ -31,6 +32,30 @@ sealed class SyncError implements Exception {
   bool get isAuthExpired => switch (this) {
     SyncApiError(:final error) => error is AuthExpired,
     _ => false,
+  };
+
+  /// This failure's classification — the ONLY form of it that is persisted
+  /// (`sync_log.error`) or shown to the user (the Sync activity screen, #218).
+  ///
+  /// The mapping deliberately loses every detail the variants carry: a request
+  /// URL with its query params (#135), a refresh-denial string, raw SQL, the
+  /// body of a captive-portal login page. Provider text we cannot vouch for
+  /// ([OtherApiError]) collapses to [SyncFailureKind.unknown] rather than
+  /// getting a pass-through kind of its own (#131/#187). The full typed detail
+  /// still reaches the log at the scheduler's call site.
+  SyncFailureKind get failureKind => switch (this) {
+    SyncStoreError() => SyncFailureKind.store,
+    SyncInternalError() => SyncFailureKind.internal,
+    SyncApiError(:final error) => switch (error) {
+      Network() => SyncFailureKind.network,
+      AuthExpired() => SyncFailureKind.auth,
+      Unauthorized() => SyncFailureKind.unauthorized,
+      RateLimited() => SyncFailureKind.rateLimited,
+      ServerError() => SyncFailureKind.server,
+      NotFound() => SyncFailureKind.notFound,
+      PreconditionFailed() => SyncFailureKind.precondition,
+      OtherApiError() => SyncFailureKind.unknown,
+    },
   };
 }
 

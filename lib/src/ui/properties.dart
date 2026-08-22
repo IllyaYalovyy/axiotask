@@ -10,7 +10,6 @@
 // reference's gating — and the Account sign-in/out call the (currently no-op)
 // action seams. Every control is exercised in tests via provider overrides.
 
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -20,6 +19,8 @@ import '../app/local_data_reset.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import 'auth/account_section.dart';
+import 'date_format.dart';
+import 'sync_activity.dart';
 
 /// Open the Properties dialog over the current app surface.
 Future<void> showProperties(BuildContext context) => showDialog<void>(
@@ -173,7 +174,20 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
           onChanged: _busy ? null : (v) => _setAutoSync(v),
         ),
         const SizedBox(height: 16),
-        _sectionHeading(theme, 'Status'),
+        // The Status block summarises where sync stands; the per-run history
+        // lives one tap away on its own screen (#218) rather than on the front
+        // page or crowded in here.
+        Row(
+          children: [
+            Expanded(child: _sectionHeading(theme, 'Status')),
+            TextButton.icon(
+              key: const Key('sync-activity-button'),
+              onPressed: () => showSyncActivity(context),
+              icon: const Icon(Icons.history, size: 18),
+              label: const Text('View activity'),
+            ),
+          ],
+        ),
         _statusBlock(theme, settings),
         const SizedBox(height: 12),
         Wrap(
@@ -622,14 +636,6 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
 
   /// A short relative label for an RFC-3339 timestamp: "never" / "just now" /
   /// "Nm ago" / "Nh ago" / "Nd ago" (port of the reference `relativeTime`).
-  String _relativeSince(String? rfc3339) {
-    if (rfc3339 == null || rfc3339.isEmpty) return 'never';
-    final then = DateTime.tryParse(rfc3339);
-    if (then == null) return 'never';
-    final diff = clock.now().toUtc().difference(then.toUtc());
-    if (diff.inSeconds < 60) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
+  String _relativeSince(String? rfc3339) =>
+      formatRelativeSince(DateTime.tryParse(rfc3339 ?? ''));
 }

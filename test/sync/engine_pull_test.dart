@@ -597,14 +597,28 @@ void main() {
     expect(log.error, isNull);
   });
 
-  test('sync log written on error', () async {
-    final (client, eng) = await engine();
-    client.failNext(Method.listTasklists, () => const OtherApiError('fatal'));
-    await expectLater(eng.run(), throwsA(isA<Object>()));
+  test(
+    'a failed run persists a CLASSIFICATION, never the provider text',
+    () async {
+      // #218/#187: `sync_log.error` is read back by the Sync activity screen, so
+      // whatever lands in it is user-visible. Provider text can carry a request
+      // URL with query params, or the body of a captive-portal login page — the
+      // column must hold a closed-vocabulary code and nothing else.
+      final (client, eng) = await engine();
+      client.failNext(
+        Method.listTasklists,
+        () => const OtherApiError(
+          '<html>sign in at http://wifi.local/login?token=SECRET</html>',
+        ),
+      );
+      await expectLater(eng.run(), throwsA(isA<Object>()));
 
-    final log = await lastSyncLog(eng);
-    expect(log.error, contains('fatal'));
-  });
+      final log = await lastSyncLog(eng);
+      expect(log.error, 'unknown');
+      expect(log.error, isNot(contains('SECRET')));
+      expect(log.error, isNot(contains('<html')));
+    },
+  );
 
   // ─── D7 flatten (RFC-009 §F/§G residual third levels) ──────────────────────
 

@@ -79,3 +79,32 @@ String formatDue(String? due) {
   final month = _monthAbbr[d.month - 1];
   return d.year != now.year ? '$month ${d.day}, ${d.year}' : '$month ${d.day}';
 }
+
+/// An absolute LOCAL date-and-time label for a stored instant — "Jun 15 14:05",
+/// with the year added only when it differs from the current one.
+///
+/// Sync stamps are persisted as UTC instants but read by a human sitting in a
+/// local timezone, so [instant] is converted with [DateTime.toLocal] before a
+/// single field is read (#218). 24-hour, zero-padded: unambiguous without a
+/// locale, and every row lines up in the Sync activity list. "The current year"
+/// comes from `package:clock`, never the wall clock.
+String formatAbsoluteLocal(DateTime instant) {
+  final t = instant.toLocal();
+  final now = clock.now();
+  String pad(int n) => n.toString().padLeft(2, '0');
+  final time = '${pad(t.hour)}:${pad(t.minute)}';
+  final day = '${_monthAbbr[t.month - 1]} ${t.day}';
+  return t.year != now.year ? '$day, ${t.year} $time' : '$day $time';
+}
+
+/// A relative "how long ago" label for a past [instant] — `'never'` when there
+/// is none (the sync stats' "never synced" state, #218). "Now" comes from
+/// `package:clock`, never the wall clock.
+String formatRelativeSince(DateTime? instant) {
+  if (instant == null) return 'never';
+  final diff = clock.now().toUtc().difference(instant.toUtc());
+  if (diff.inSeconds < 60) return 'just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  return '${diff.inDays}d ago';
+}

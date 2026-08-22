@@ -65,4 +65,36 @@ void main() {
       expect(urgency(''), DueUrgency.none);
     });
   });
+
+  group('formatAbsoluteLocal (#218)', () {
+    // Sync timestamps are stored as UTC instants but READ by a human sitting in
+    // a local timezone. Rendering the UTC wall-clock would show a sync that just
+    // happened as "7 hours ago"-o'clock. The expectations below are built from
+    // LOCAL calendar fields, so on any machine whose zone is not UTC a
+    // UTC-rendering implementation shows different digits and fails.
+    String at(DateTime instant, DateTime now) =>
+        withClock(Clock.fixed(now), () => formatAbsoluteLocal(instant));
+
+    test(
+      'renders the LOCAL wall clock of a UTC instant, never the UTC one',
+      () {
+        // A local moment, converted to the UTC instant the store would hold.
+        final localMoment = DateTime(2026, 6, 15, 14, 5);
+        expect(at(localMoment.toUtc(), now), 'Jun 15 14:05');
+      },
+    );
+
+    test('pads single-digit hours and minutes', () {
+      expect(at(DateTime(2026, 6, 15, 9, 7).toUtc(), now), 'Jun 15 09:07');
+      expect(at(DateTime(2026, 6, 15, 0, 0).toUtc(), now), 'Jun 15 00:00');
+    });
+
+    test('shows the year only when it differs from the current one', () {
+      expect(
+        at(DateTime(2025, 12, 31, 23, 59).toUtc(), now),
+        'Dec 31, 2025 23:59',
+      );
+      expect(at(DateTime(2026, 1, 1, 0, 1).toUtc(), now), 'Jan 1 00:01');
+    });
+  });
 }
