@@ -77,6 +77,7 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.pump();
 
       await expectLater(
         find.byType(AdaptiveShell),
@@ -275,6 +276,11 @@ final class _PreferencesRepository implements PreferencesRepository {
   @override
   Future<Outcome<void>> setDensity(DensityPreference density) async =>
       const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async => const Outcome<void>.success(null);
 
   @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async =>

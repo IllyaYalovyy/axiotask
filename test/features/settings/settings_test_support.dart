@@ -52,6 +52,11 @@ final class MemorySettingsPreferences implements PreferencesRepository {
   }
 
   @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async {
     current = current.copyWith(onboardingDismissed: dismissed);
     _changes.add(current);

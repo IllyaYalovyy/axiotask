@@ -72,4 +72,9 @@ final class StoredPreferencesRepository implements PreferencesRepository {
   @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) =>
       _device.setOnboardingDismissed(dismissed);
+
+  @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) => _device.setWorkspacePreferences(preferences);
 }

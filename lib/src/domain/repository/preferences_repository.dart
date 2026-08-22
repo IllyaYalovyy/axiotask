@@ -45,4 +45,8 @@ abstract interface class PreferencesRepository {
   Future<Outcome<void>> setDensity(DensityPreference density);
 
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed);
+
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  );
 }

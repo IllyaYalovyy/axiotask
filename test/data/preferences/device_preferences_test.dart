@@ -153,6 +153,66 @@ void main() {
     expect(history.records.single.code, 'preferences.device_write_failed');
   });
 
+  test(
+    'workspace widths survive restart, clamp, isolate profiles, and diagnose write failure',
+    () async {
+      final backend = InMemoryDevicePreferencesBackend();
+      final history = InMemoryDiagnosticHistory();
+      var adapter = DevicePreferencesAdapter(
+        backend: backend,
+        namespace: 'synthetic-workspace',
+        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
+      );
+      expect(
+        await adapter.setWorkspacePreferences(
+          const DesktopWorkspacePreferences(
+            navigationWidth: 999,
+            detailWidth: 1,
+          ),
+        ),
+        isA<Success<void>>(),
+      );
+      await adapter.close();
+
+      adapter = DevicePreferencesAdapter(
+        backend: backend,
+        namespace: 'synthetic-workspace',
+        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
+      );
+      addTearDown(adapter.close);
+      expect(
+        (await adapter.watch().first).workspace,
+        const DesktopWorkspacePreferences(
+          navigationWidth: 360,
+          detailWidth: 240,
+        ),
+      );
+      final otherProfile = DevicePreferencesAdapter(
+        backend: backend,
+        namespace: 'synthetic-workspace-other-profile',
+        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
+      );
+      addTearDown(otherProfile.close);
+      expect(
+        (await otherProfile.watch().first).workspace,
+        const DesktopWorkspacePreferences.defaults(),
+      );
+
+      backend.failWrites = true;
+      expect(
+        await adapter.setWorkspacePreferences(
+          const DesktopWorkspacePreferences(
+            navigationWidth: 280,
+            detailWidth: 340,
+          ),
+        ),
+        isA<Failed<void>>(),
+      );
+      expect(history.records.last.code, 'preferences.device_write_failed');
+      expect(history.records.last.fields['preference'], 'workspace');
+    },
+  );
+
   test('device namespace must be explicit', () {
     expect(
       () => DevicePreferencesAdapter(

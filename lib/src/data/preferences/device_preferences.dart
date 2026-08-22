@@ -107,6 +107,10 @@ abstract interface class DevicePreferencesStore {
   Future<Outcome<void>> setDensity(DensityPreference density);
 
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed);
+
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  );
 }
 
 final class DevicePreferencesAdapter implements DevicePreferencesStore {
@@ -134,6 +138,7 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
   String get _themeKey => '$_namespace.theme';
   String get _densityKey => '$_namespace.density';
   String get _onboardingKey => '$_namespace.onboarding_dismissed';
+  String get _workspaceKey => '$_namespace.desktop_workspace';
 
   @override
   Stream<DevicePreferences> watch() {
@@ -195,6 +200,22 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
     );
   }
 
+  @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async {
+    await _initialize();
+    final normalized = _normalizeWorkspace(preferences);
+    return _write(
+      preference: 'workspace',
+      write: () => _backend.writeString(
+        _workspaceKey,
+        '${normalized.navigationWidth}:${normalized.detailWidth}',
+      ),
+      next: _current!.copyWith(workspace: normalized),
+    );
+  }
+
   Future<void> close() => _changes.close();
 
   Future<DevicePreferences> _initialize() {
@@ -229,12 +250,53 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
       key: _onboardingKey,
       fallback: false,
     );
+    final workspace = await _readWorkspace();
     return DevicePreferences(
       theme: theme,
       density: density,
       onboardingDismissed: onboardingDismissed,
+      workspace: workspace,
     );
   }
+
+  Future<DesktopWorkspacePreferences> _readWorkspace() async {
+    try {
+      final value = await _backend.readString(_workspaceKey);
+      if (value == null) return const DesktopWorkspacePreferences.defaults();
+      final parts = value.split(':');
+      if (parts.length != 2) throw const DevicePreferenceMalformedValue();
+      final navigation = double.tryParse(parts[0]);
+      final detail = double.tryParse(parts[1]);
+      if (navigation == null ||
+          detail == null ||
+          !navigation.isFinite ||
+          !detail.isFinite) {
+        throw const DevicePreferenceMalformedValue();
+      }
+      return _normalizeWorkspace(
+        DesktopWorkspacePreferences(
+          navigationWidth: navigation,
+          detailWidth: detail,
+        ),
+      );
+    } on DevicePreferenceMalformedValue {
+      await _defaultMalformed('workspace', _workspaceKey);
+      return const DesktopWorkspacePreferences.defaults();
+    } on TypeError {
+      await _defaultMalformed('workspace', _workspaceKey);
+      return const DesktopWorkspacePreferences.defaults();
+    } on Object {
+      _recordDefault('workspace', 'read_failed');
+      return const DesktopWorkspacePreferences.defaults();
+    }
+  }
+
+  DesktopWorkspacePreferences _normalizeWorkspace(
+    DesktopWorkspacePreferences preferences,
+  ) => DesktopWorkspacePreferences(
+    navigationWidth: preferences.navigationWidth.clamp(160, 360).toDouble(),
+    detailWidth: preferences.detailWidth.clamp(240, 480).toDouble(),
+  );
 
   Future<T> _readEnum<T extends Enum>({
     required String preference,

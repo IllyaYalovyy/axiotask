@@ -120,6 +120,11 @@ final class _Preferences implements PreferencesRepository {
       const Outcome<void>.success(null);
 
   @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setTheme(ThemePreference theme) async =>
       const Outcome<void>.success(null);
 

@@ -12,6 +12,7 @@ import '../domain/model/tasks.dart';
 import '../domain/policy/date_workflow.dart';
 import '../domain/policy/smart_views.dart';
 import '../domain/policy/subtask_progress.dart';
+import '../domain/repository/preferences_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/search/search_overlay.dart';
 import '../features/search/search_view_model.dart';
@@ -26,6 +27,7 @@ import '../features/tasks/widgets/task_details.dart';
 import '../sync/health/sync_health.dart';
 import 'desktop_shortcuts.dart';
 import 'desktop_task_drag.dart';
+import 'desktop_workspace.dart';
 import 'navigation_state.dart';
 import 'visual_tokens.dart';
 
@@ -37,6 +39,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.initialBulkAddInput,
     this.initialSearchQuery,
     this.navigation,
+    this.preferencesRepository,
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
@@ -50,6 +53,7 @@ final class AdaptiveShell extends StatefulWidget {
   final String? initialBulkAddInput;
   final String? initialSearchQuery;
   final AppNavigationController? navigation;
+  final PreferencesRepository? preferencesRepository;
   final WidgetBuilder? diagnosticsBuilder;
   final WidgetBuilder? accountBackupBuilder;
   final WidgetBuilder? localDataRecoveryBuilder;
@@ -80,6 +84,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   bool _suppressNavigationSync = false;
   DesktopTaskDragPayload? _dragPayload;
   _DesktopDropPreview? _dropPreview;
+  StreamSubscription<DevicePreferences>? _devicePreferences;
+  DesktopWorkspacePreferences _workspace =
+      const DesktopWorkspacePreferences.defaults();
+  DensityPreference _density = DensityPreference.standard;
+  bool _workspaceDirty = false;
 
   @override
   void initState() {
@@ -88,6 +97,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     _ownsNavigation = widget.navigation == null;
     _navigation = widget.navigation ?? AppNavigationController();
     _navigation.addListener(_navigationChanged);
+    _listenToDevicePreferences();
     _quickAdd = _createQuickAdd();
     _search = _createSearch();
     _openInitialSearch();
@@ -101,6 +111,21 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _maybeOpenInitialBulkAdd(),
     );
+  }
+
+  void _listenToDevicePreferences() {
+    _devicePreferences?.cancel();
+    final repository = widget.preferencesRepository;
+    if (repository == null) return;
+    _devicePreferences = repository.watchDevicePreferences().listen((value) {
+      if (!mounted) return;
+      if (_workspaceDirty && value.workspace != _workspace) return;
+      setState(() {
+        _workspace = value.workspace;
+        _density = value.density;
+        _workspaceDirty = false;
+      });
+    });
   }
 
   @override
@@ -133,6 +158,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       _navigation = widget.navigation ?? AppNavigationController();
       _navigation.addListener(_navigationChanged);
       _syncDetailRoute();
+    }
+    if (oldWidget.preferencesRepository != widget.preferencesRepository) {
+      _listenToDevicePreferences();
     }
   }
 
@@ -271,6 +299,17 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
         previousTaskId: intent.previousTaskId,
       ),
     );
+  }
+
+  void _updateWorkspace(DesktopWorkspacePreferences preferences) {
+    setState(() {
+      _workspace = preferences;
+      _workspaceDirty = true;
+    });
+    final repository = widget.preferencesRepository;
+    if (repository != null) {
+      unawaited(repository.setWorkspacePreferences(preferences));
+    }
   }
 
   void _openSearchResult(TaskSearchResult result) {
@@ -511,6 +550,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     _quickAddFocus.dispose();
     _navigationPaneFocus.dispose();
     _detailPaneFocus.dispose();
+    _devicePreferences?.cancel();
     super.dispose();
   }
 
@@ -631,7 +671,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
-                            final wide = constraints.maxWidth >= 1000;
+                            final wide = constraints.maxWidth >= 1024;
                             final pages = <Page<Object?>>[
                               _surfacePage(const CollectionRoute()),
                               for (final route in _navigation.state.routes.skip(
@@ -719,6 +759,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     onDragCanceled: _cancelTaskDrag,
     onDrop: _acceptTaskDrop,
     wide: wide,
+    workspace: _workspace,
+    density: _density,
+    onWorkspaceChanged: _updateWorkspace,
   );
 }
 
@@ -962,6 +1005,9 @@ final class _ShellBody extends StatelessWidget {
     required this.onDragPreview,
     required this.onDragCanceled,
     required this.onDrop,
+    required this.workspace,
+    required this.density,
+    required this.onWorkspaceChanged,
   });
 
   final TasksViewState state;
@@ -982,6 +1028,9 @@ final class _ShellBody extends StatelessWidget {
   final ValueChanged<_DesktopDropPreview> onDragPreview;
   final VoidCallback onDragCanceled;
   final ValueChanged<DesktopTaskDropIntent> onDrop;
+  final DesktopWorkspacePreferences workspace;
+  final DensityPreference density;
+  final ValueChanged<DesktopWorkspacePreferences> onWorkspaceChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1018,53 +1067,120 @@ final class _ShellBody extends StatelessWidget {
                   focusNode: detailPaneFocus,
                   child: TaskDetailsPane(viewModel: detail, compact: true),
                 )
-        : Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              SizedBox(
-                width: MediaQuery.sizeOf(context).width < 1200 ? 220 : 244,
-                child: _DesktopPaneFocus(
-                  key: const Key('desktop-navigation-pane'),
-                  focusNode: navigationPaneFocus,
-                  onKeyEvent: (_, event) =>
-                      _handleNavigationKey(event, state, viewModel),
-                  child: _ListNavigation(
-                    state: state,
-                    viewModel: viewModel,
-                    dropPreview: dropPreview,
-                    onDragPreview: onDragPreview,
-                    onDrop: onDrop,
+        : LayoutBuilder(
+            builder: (context, constraints) {
+              final hasDetail = detail.state != null;
+              final layout = DesktopWorkspaceLayout.resolve(
+                availableWidth: constraints.maxWidth,
+                textScale: MediaQuery.textScalerOf(context).scale(14) / 14,
+                density: density,
+                hasDetail: hasDetail,
+                preferences: workspace,
+              );
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(
+                    width: layout.navigationWidth,
+                    child: _DesktopPaneFocus(
+                      key: const Key('desktop-navigation-pane'),
+                      focusNode: navigationPaneFocus,
+                      onKeyEvent: (_, event) =>
+                          _handleNavigationKey(event, state, viewModel),
+                      child: _ListNavigation(
+                        state: state,
+                        viewModel: viewModel,
+                        dropPreview: dropPreview,
+                        onDragPreview: onDragPreview,
+                        onDrop: onDrop,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                child: _TaskCollection(
-                  key: taskCollectionKey,
-                  state: state,
-                  viewModel: viewModel,
-                  quickAdd: quickAdd,
-                  quickAddFocus: quickAddFocus,
-                  openBulkAdd: openBulkAdd,
-                  onTaskFocused: onTaskFocused,
-                  onTaskAction: onTaskAction,
-                  dropPreview: dropPreview,
-                  onDragStarted: onDragStarted,
-                  onDragPreview: onDragPreview,
-                  onDragCanceled: onDragCanceled,
-                  onDrop: onDrop,
-                ),
-              ),
-              const VerticalDivider(width: 1),
-              SizedBox(
-                width: MediaQuery.sizeOf(context).width < 1200 ? 320 : 360,
-                child: _DesktopPaneFocus(
-                  key: const Key('desktop-detail-pane'),
-                  focusNode: detailPaneFocus,
-                  child: TaskDetailsPane(viewModel: detail, compact: false),
-                ),
-              ),
-            ],
+                  _DesktopWorkspaceSplitter(
+                    key: const Key('desktop-navigation-splitter'),
+                    label: 'Resize navigation pane',
+                    value: layout.navigationWidth,
+                    onDrag: (delta) => onWorkspaceChanged(
+                      DesktopWorkspaceLayout.adjustNavigation(
+                        preferences: workspace,
+                        delta: delta,
+                        density: density,
+                      ),
+                    ),
+                    onIncrease: () => onWorkspaceChanged(
+                      DesktopWorkspaceLayout.adjustNavigation(
+                        preferences: workspace,
+                        delta: 16,
+                        density: density,
+                      ),
+                    ),
+                    onDecrease: () => onWorkspaceChanged(
+                      DesktopWorkspaceLayout.adjustNavigation(
+                        preferences: workspace,
+                        delta: -16,
+                        density: density,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _TaskCollection(
+                      key: taskCollectionKey,
+                      state: state,
+                      viewModel: viewModel,
+                      quickAdd: quickAdd,
+                      quickAddFocus: quickAddFocus,
+                      openBulkAdd: openBulkAdd,
+                      onTaskFocused: onTaskFocused,
+                      onTaskAction: onTaskAction,
+                      dropPreview: dropPreview,
+                      onDragStarted: onDragStarted,
+                      onDragPreview: onDragPreview,
+                      onDragCanceled: onDragCanceled,
+                      onDrop: onDrop,
+                    ),
+                  ),
+                  if (hasDetail) ...<Widget>[
+                    _DesktopWorkspaceSplitter(
+                      key: const Key('desktop-detail-splitter'),
+                      label: 'Resize task details pane',
+                      value: layout.detailWidth,
+                      onDrag: (delta) => onWorkspaceChanged(
+                        DesktopWorkspaceLayout.adjustDetail(
+                          preferences: workspace,
+                          delta: -delta,
+                          density: density,
+                        ),
+                      ),
+                      onIncrease: () => onWorkspaceChanged(
+                        DesktopWorkspaceLayout.adjustDetail(
+                          preferences: workspace,
+                          delta: 16,
+                          density: density,
+                        ),
+                      ),
+                      onDecrease: () => onWorkspaceChanged(
+                        DesktopWorkspaceLayout.adjustDetail(
+                          preferences: workspace,
+                          delta: -16,
+                          density: density,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: layout.detailWidth,
+                      child: _DesktopPaneFocus(
+                        key: const Key('desktop-detail-pane'),
+                        focusNode: detailPaneFocus,
+                        child: TaskDetailsPane(
+                          viewModel: detail,
+                          compact: false,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
           );
     return KeyedSubtree(key: const Key('desktop-task-pane'), child: body);
   }
@@ -1131,6 +1247,75 @@ final class _DesktopPaneFocus extends StatelessWidget {
           ),
         ),
         child: child,
+      ),
+    ),
+  );
+}
+
+final class _DesktopWorkspaceSplitter extends StatelessWidget {
+  const _DesktopWorkspaceSplitter({
+    required this.label,
+    required this.value,
+    required this.onDrag,
+    required this.onIncrease,
+    required this.onDecrease,
+    super.key,
+  });
+
+  final String label;
+  final double value;
+  final ValueChanged<double> onDrag;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: label,
+    slider: true,
+    value: '${value.round()} pixels',
+    increasedValue: '${(value + 16).round()} pixels',
+    decreasedValue: '${(value - 16).round()} pixels',
+    onIncrease: onIncrease,
+    onDecrease: onDecrease,
+    child: Focus(
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          onIncrease();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          onDecrease();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Builder(
+        builder: (focusContext) => MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          child: Listener(
+            onPointerMove: (event) {
+              if (event.buttons != 0) onDrag(event.delta.dx);
+            },
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Focus.of(focusContext).requestFocus(),
+              child: SizedBox(
+                width: DesktopWorkspaceLayout.splitterWidth,
+                child: Center(
+                  child: Container(
+                    width: 2,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     ),
   );

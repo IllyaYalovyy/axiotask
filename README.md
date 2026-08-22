@@ -73,6 +73,11 @@ accepted related-task due cascade. It can create, edit, delete, promote, demote,
 or reorder a direct subtask, or move a stable task/subtree between Google lists.
 Narrow desktop details provide explicit
 Back/Escape behavior, while the wide layout keeps the detail pane visible.
+At 1024 logical pixels and wider, visible splitter handles resize the
+navigation and selected-detail panes by pointer, keyboard, or accessibility
+actions; widths are profile-local presentation preferences, restore safely on
+restart, and are clamped so the task collection remains usable. An empty detail
+inspector releases its space until a task is selected.
 Every action routes through the shared durable task commands. Structure changes
 commit durably, survive restart, and
 publish through Google MOVE with valid remote `parent`/`previous` anchors.

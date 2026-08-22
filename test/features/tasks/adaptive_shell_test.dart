@@ -12,6 +12,7 @@ import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/policy/smart_views.dart';
+import 'package:axiotask/src/domain/repository/preferences_repository.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
@@ -1659,35 +1660,113 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('desktop panes hold at named widths and high text scaling', (
-    tester,
-  ) async {
-    final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
-    addTearDown(fixture.dispose);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'desktop panes collapse empty details and restore selected details',
+    (tester) async {
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    for (final width in <double>[1024, 1280, 1440]) {
-      tester.view.physicalSize = Size(width, 900);
-      await tester.pumpWidget(
-        MaterialApp(
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: const TextScaler.linear(1.8)),
-            child: child!,
+      for (final width in <double>[1024, 1280, 1440]) {
+        tester.view.physicalSize = Size(width, 900);
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(1.8)),
+              child: child!,
+            ),
+            home: AdaptiveShell(viewModel: fixture.viewModel),
           ),
-          home: AdaptiveShell(viewModel: fixture.viewModel),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const Key('desktop-navigation-pane')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('desktop-task-pane')), findsOneWidget);
+        expect(find.byKey(const Key('desktop-detail-pane')), findsNothing);
+        await tester.tap(find.text('Cached parent'));
+        await tester.pump();
+        expect(find.byKey(const Key('desktop-detail-pane')), findsOneWidget);
+        fixture.viewModel.backFromTaskDetail();
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: 'desktop width $width');
+      }
+    },
+  );
+
+  testWidgets(
+    'desktop splitters resize by pointer and keyboard with semantic alternatives',
+    (tester) async {
+      tester.view.physicalSize = const Size(1355, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final preferences = _WorkspacePreferences();
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        preferencesRepository: preferences,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pump();
+
+      final navigation = find.byKey(const Key('desktop-navigation-pane'));
+      final splitter = find.byKey(const Key('desktop-navigation-splitter'));
+      expect(tester.getSize(navigation).width, 244);
+      expect(
+        tester.widget<MouseRegion>(
+          find.descendant(of: splitter, matching: find.byType(MouseRegion)),
+        ),
+        isA<MouseRegion>().having(
+          (widget) => widget.cursor,
+          'resize cursor',
+          SystemMouseCursors.resizeColumn,
         ),
       );
+      expect(
+        tester.getSize(splitter).width,
+        greaterThanOrEqualTo(12),
+        reason: 'splitter keeps a robust pointer target',
+      );
+
+      final drag = await tester.startGesture(
+        tester.getCenter(splitter),
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveBy(const Offset(48, 0));
+      await drag.up();
       await tester.pump();
-      expect(find.byKey(const Key('desktop-navigation-pane')), findsOneWidget);
-      expect(find.byKey(const Key('desktop-task-pane')), findsOneWidget);
-      expect(find.byKey(const Key('desktop-detail-pane')), findsOneWidget);
-      expect(tester.takeException(), isNull, reason: 'desktop width $width');
-    }
-  });
+      expect(preferences.workspaceWrites, isNotEmpty);
+      expect(tester.getSize(navigation).width, 292);
+      expect(preferences.workspaceWrites.last.navigationWidth, 292);
+
+      await tester.tap(splitter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pump();
+      expect(tester.getSize(navigation).width, 276);
+      expect(find.bySemanticsLabel('Resize navigation pane'), findsOneWidget);
+      final detail = find.byKey(const Key('desktop-detail-pane'));
+      final detailSplitter = find.byKey(const Key('desktop-detail-splitter'));
+      expect(detailSplitter, findsOneWidget);
+      expect(tester.getSize(detail).width, 360);
+      final detailDrag = await tester.startGesture(
+        tester.getCenter(detailSplitter),
+        kind: PointerDeviceKind.mouse,
+      );
+      await detailDrag.moveBy(const Offset(-32, 0));
+      await detailDrag.up();
+      await tester.pump();
+      expect(tester.getSize(detail).width, 392);
+      expect(preferences.workspaceWrites.last.detailWidth, 392);
+    },
+  );
 
   testWidgets(
     'bulk selection, confirmation, exact result, and back share route state',
@@ -1904,6 +1983,7 @@ final class _ShellFixture {
     TaskListsRepository? taskListsRepository,
     CachedTasksSnapshot? snapshot,
     Clock? clock,
+    this.preferencesRepository,
   }) : tasks = _TasksRepository(),
        healthRepository = _HealthRepository() {
     viewModel = TasksViewModel(
@@ -1922,11 +2002,95 @@ final class _ShellFixture {
 
   final _TasksRepository tasks;
   final _HealthRepository healthRepository;
+  final PreferencesRepository? preferencesRepository;
   late final TasksViewModel viewModel;
 
-  Widget get widget => MaterialApp(home: AdaptiveShell(viewModel: viewModel));
+  Widget get widget => MaterialApp(
+    home: AdaptiveShell(
+      viewModel: viewModel,
+      preferencesRepository: preferencesRepository,
+    ),
+  );
 
   void dispose() => viewModel.dispose();
+}
+
+final class _WorkspacePreferences implements PreferencesRepository {
+  final StreamController<DevicePreferences> _changes =
+      StreamController<DevicePreferences>.broadcast();
+  final List<DesktopWorkspacePreferences> workspaceWrites =
+      <DesktopWorkspacePreferences>[];
+  var current = const DevicePreferences.defaults();
+
+  @override
+  Stream<DevicePreferences> watchDevicePreferences() async* {
+    yield current;
+    yield* _changes.stream;
+  }
+
+  @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async {
+    workspaceWrites.add(preferences);
+    current = current.copyWith(workspace: preferences);
+    _changes.add(current);
+    return const Outcome<void>.success(null);
+  }
+
+  @override
+  Future<Outcome<void>> setDensity(DensityPreference density) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setTheme(ThemePreference theme) async =>
+      const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setListPreferences(
+    AccountId accountId,
+    TaskListId taskListId,
+    ListPreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setSidebarOrder(
+    AccountId accountId,
+    List<TaskListId> orderedTaskListIds,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Future<Outcome<void>> setViewPreferences(
+    AccountId accountId,
+    ViewKey viewKey,
+    ViewPreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
+  Stream<Map<TaskListId, ListPreferences>> watchAllListPreferences(
+    AccountId accountId,
+  ) => const Stream<Map<TaskListId, ListPreferences>>.empty();
+
+  @override
+  Stream<Map<ViewKey, ViewPreferences>> watchAllViewPreferences(
+    AccountId accountId,
+  ) => const Stream<Map<ViewKey, ViewPreferences>>.empty();
+
+  @override
+  Stream<ListPreferences> watchListPreferences(
+    AccountId accountId,
+    TaskListId taskListId,
+  ) => const Stream<ListPreferences>.empty();
+
+  @override
+  Stream<ViewPreferences> watchViewPreferences(
+    AccountId accountId,
+    ViewKey viewKey,
+  ) => const Stream<ViewPreferences>.empty();
 }
 
 final class _TaskListsRepository implements TaskListsRepository {

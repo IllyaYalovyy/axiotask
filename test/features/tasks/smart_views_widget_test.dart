@@ -243,6 +243,11 @@ final class _PreferencesRepository implements PreferencesRepository {
       const Outcome<void>.success(null);
 
   @override
+  Future<Outcome<void>> setWorkspacePreferences(
+    DesktopWorkspacePreferences preferences,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async =>
       const Outcome<void>.success(null);
 

@@ -17,6 +17,7 @@ void main() {
       '$namespace.theme',
       '$namespace.density',
       '$namespace.onboarding_dismissed',
+      '$namespace.desktop_workspace',
     ];
     Future<void> cleanUp() async {
       for (final key in keys) {
@@ -39,6 +40,15 @@ void main() {
       isA<Success<void>>(),
     );
     expect(await adapter.setOnboardingDismissed(true), isA<Success<void>>());
+    expect(
+      await adapter.setWorkspacePreferences(
+        const DesktopWorkspacePreferences(
+          navigationWidth: 288,
+          detailWidth: 384,
+        ),
+      ),
+      isA<Success<void>>(),
+    );
     await adapter.close();
 
     adapter = DevicePreferencesAdapter(
@@ -54,6 +64,10 @@ void main() {
         theme: ThemePreference.dark,
         density: DensityPreference.compact,
         onboardingDismissed: true,
+        workspace: DesktopWorkspacePreferences(
+          navigationWidth: 288,
+          detailWidth: 384,
+        ),
       ),
     );
   });

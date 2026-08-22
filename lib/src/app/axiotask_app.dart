@@ -93,6 +93,7 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
                 excluding: presentation?.state.isVisible ?? false,
                 child: AdaptiveShell(
                   viewModel: widget.viewModel,
+                  preferencesRepository: preferencesRepository,
                   diagnosticsBuilder: widget.diagnosticsBuilder,
                   accountBackupBuilder: widget.accountBackupBuilder,
                   localDataRecoveryBuilder: widget.localDataRecoveryBuilder,

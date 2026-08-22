@@ -304,6 +304,12 @@ sanitized diagnostic. Desired state, sync metadata, account identity,
 list references, and any setting that changes task queries never use this
 store.
 
+The desktop navigation and inspector widths are likewise a namespaced,
+device-local presentation preference. They are validated/clamped before use and
+cannot affect task queries, account identity, synchronization, or relational
+preferences; a write failure leaves the current session usable and records only
+a sanitized preference diagnostic.
+
 Writes that acknowledge a user mutation atomically update the visible local
 row and its coalesced durable desired-state record in one transaction. If that
 transaction fails, the UI reports failure and does not pretend the change was

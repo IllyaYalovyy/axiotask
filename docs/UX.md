@@ -75,6 +75,16 @@ Delete for their matching visible actions. F1 and the always-visible keyboard
 button open the complete reference. Unmodified task commands are suppressed
 while an editable text control has focus.
 
+The Fedora workspace uses visible 12px resize splitters between navigation,
+collection, and an open detail inspector. Pointer drag, resize cursor, focus,
+Left/Right keys, and semantic increase/decrease actions are equivalent ways to
+adjust the two side panes. Standard navigation/detail limits are 180–360px and
+240–480px; Compact limits are 160–320px and 224–440px. A selected detail keeps
+at least 320px of collection width (up to 400px at large text); an empty detail
+inspector collapses completely. The device/profile-local presentation preference
+restores requested widths on restart but clamps stale values to those limits;
+it never belongs to task, account, or sync state.
+
 In a Google-list collection using manual order, pointer drag shows an overlay
 row plus a before/after insertion marker without moving the canonical rows until
 the shared structure command commits. Dropping on another Google list uses the
