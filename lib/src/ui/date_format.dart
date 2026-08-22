@@ -108,3 +108,13 @@ String formatRelativeSince(DateTime? instant) {
   if (diff.inHours < 24) return '${diff.inHours}h ago';
   return '${diff.inDays}d ago';
 }
+
+/// The last-synced label the Sync STATS surfaces render — the relative phrase,
+/// and, when there is a stamp behind it, the absolute LOCAL time beside it:
+/// "3m ago · Aug 22 10:48", or plain "never" (#218/#222).
+///
+/// Properties → Sync and the Sync activity screen both read this; the sidebar
+/// footer does not (there the absolute time is a tooltip, never inline).
+String formatLastSynced(DateTime? instant) => instant == null
+    ? formatRelativeSince(null)
+    : '${formatRelativeSince(instant)} · ${formatAbsoluteLocal(instant)}';
