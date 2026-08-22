@@ -5,6 +5,7 @@
 // churn or mis-fire the attention UI.
 
 import 'package:axiotask/src/api/api_error.dart';
+import 'package:axiotask/src/model/sync_run.dart';
 import 'package:axiotask/src/store/store_error.dart';
 import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -37,5 +38,79 @@ void main() {
     expect(const SyncApiError(Unauthorized()).isAuthExpired, isFalse);
     expect(const SyncApiError(ServerError(500)).isAuthExpired, isFalse);
     expect(const SyncInternalError('bug').isAuthExpired, isFalse);
+  });
+
+  group('failureKind — the persisted, user-visible classification (#218)', () {
+    // The Sync activity screen reads this classification straight out of
+    // sync_log, so it is what a failed run tells the user. Collapsing every
+    // failure into one code would make the history useless — a flaky network
+    // and a broken local database would read identically — and mapping any of
+    // them back to the provider's own text would leak it (#131/#187).
+    test('each failure shape maps to its own kind', () {
+      expect(
+        const SyncApiError(Network('https://tasks…?key=SECRET')).failureKind,
+        SyncFailureKind.network,
+      );
+      expect(
+        const SyncApiError(AuthExpired('invalid_grant')).failureKind,
+        SyncFailureKind.auth,
+      );
+      expect(
+        const SyncApiError(Unauthorized()).failureKind,
+        SyncFailureKind.unauthorized,
+      );
+      expect(
+        const SyncApiError(RateLimited()).failureKind,
+        SyncFailureKind.rateLimited,
+      );
+      expect(
+        const SyncApiError(ServerError(503)).failureKind,
+        SyncFailureKind.server,
+      );
+      expect(
+        const SyncApiError(NotFound()).failureKind,
+        SyncFailureKind.notFound,
+      );
+      expect(
+        const SyncApiError(PreconditionFailed()).failureKind,
+        SyncFailureKind.precondition,
+      );
+      expect(
+        const SyncStoreError(StoreSqlError('no such column: foo')).failureKind,
+        SyncFailureKind.store,
+      );
+      expect(
+        const SyncInternalError('invariant broken').failureKind,
+        SyncFailureKind.internal,
+      );
+      // Provider text we refuse to interpret is the catch-all — never its own
+      // pass-through kind.
+      expect(
+        const SyncApiError(OtherApiError('<html>SECRET</html>')).failureKind,
+        SyncFailureKind.unknown,
+      );
+    });
+
+    test('no kind\'s label carries the failure\'s own detail', () {
+      // The label is a function of the enum alone, so this holds for EVERY
+      // failure that could ever reach the screen — including one whose detail
+      // is a captive portal's HTML login page.
+      const leaky =
+          '<!DOCTYPE html><html>sign in at '
+          'http://wifi.local/login?token=SECRET</html>';
+      for (final e in <SyncError>[
+        const SyncApiError(OtherApiError(leaky)),
+        const SyncApiError(Network(leaky)),
+        const SyncApiError(AuthExpired(leaky)),
+        const SyncStoreError(StoreSqlError(leaky)),
+        const SyncInternalError(leaky),
+      ]) {
+        final label = syncFailureLabel(e.failureKind);
+        expect(label, isNot(contains('SECRET')));
+        expect(label, isNot(contains('wifi.local')));
+        expect(label, isNot(contains('<html')));
+        expect(label, isNotEmpty);
+      }
+    });
   });
 }

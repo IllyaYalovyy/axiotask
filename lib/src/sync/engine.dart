@@ -163,7 +163,7 @@ class SyncEngine {
       pushed: out.pushed,
       conflicts: out.conflicts,
       durationMs: started.elapsedMilliseconds,
-      error: error?.toString(),
+      failure: error == null ? null : _asSyncError(error).failureKind,
     );
     if (error != null) throw _asSyncError(error);
     return out;

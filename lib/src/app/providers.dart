@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart' show AuthSnapshot;
+import '../model/sync_run.dart';
 import '../model/task_view.dart';
 import '../store/database.dart';
 import '../store/store.dart';
@@ -299,6 +300,16 @@ final localDataResetProvider = Provider<LocalDataReset>(
 /// The live count of local changes awaiting a push (Properties Sync stats).
 final pendingPushCountProvider = FutureProvider<int>(
   (ref) => ref.watch(storeProvider).pendingPushCount(),
+);
+
+/// The recent sync runs the Sync activity screen renders (#218), newest first
+/// and capped by [Store.recentSyncRuns].
+///
+/// `autoDispose` so each visit to the screen re-reads the log: nothing watches
+/// it while the screen is closed, so the provider is disposed and the next open
+/// starts from a fresh query rather than a snapshot taken sessions ago.
+final syncRunsProvider = FutureProvider.autoDispose<List<SyncRun>>(
+  (ref) => ref.watch(storeProvider).recentSyncRuns(),
 );
 
 /// The live auth snapshot. The composition root (F5) overrides this with the

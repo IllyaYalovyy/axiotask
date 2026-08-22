@@ -18,6 +18,7 @@ import 'package:drift/drift.dart';
 
 import '../model/base_snapshot.dart';
 import '../model/dates.dart' show nowUtcString;
+import '../model/sync_run.dart';
 import '../model/task.dart';
 import '../model/task_list.dart';
 import 'database.dart' show AppDatabase;
@@ -945,12 +946,17 @@ class Store {
   }
 
   /// Record a sync-run outcome, keeping only the most recent 500 entries.
+  ///
+  /// A failure is persisted as its [SyncFailureKind] name and NOTHING else
+  /// (#131/#187, #218). The raw typed detail can embed a request URL with query
+  /// params, a refresh-denial string, raw SQL, or a captive portal's HTML login
+  /// page — it belongs in the log, never in a table the UI reads.
   Future<void> writeSyncLog({
     required int pulled,
     required int pushed,
     required int conflicts,
     required int durationMs,
-    String? error,
+    SyncFailureKind? failure,
   }) async {
     await _db.customInsert(
       'INSERT INTO sync_log (ran_at, duration_ms, pulled, pushed, conflicts, error) '
@@ -961,7 +967,7 @@ class Store {
         Variable<int>(pulled),
         Variable<int>(pushed),
         Variable<int>(conflicts),
-        Variable<String>(error),
+        Variable<String>(failure?.name),
       ],
       updates: {_db.syncLog},
     );
@@ -972,6 +978,36 @@ class Store {
       updates: {_db.syncLog},
       updateKind: UpdateKind.delete,
     );
+  }
+
+  /// The most recent sync runs, NEWEST FIRST, capped at [limit] (#218).
+  ///
+  /// The cap lives in the query, not the caller: the table retains up to 500
+  /// rows, and the Sync activity screen renders a bounded window of them. A row
+  /// whose stored values are malformed still comes back — an unrecognized
+  /// failure code degrades to [SyncFailureKind.unknown] and an unparseable stamp
+  /// to a null [SyncRun.ranAt] — because a run that happened is worth showing.
+  Future<List<SyncRun>> recentSyncRuns({int limit = 50}) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT id, ran_at, duration_ms, pulled, pushed, conflicts, error '
+          'FROM sync_log ORDER BY id DESC LIMIT ?',
+          variables: [Variable<int>(limit)],
+          readsFrom: {_db.syncLog},
+        )
+        .get();
+    return [
+      for (final r in rows)
+        SyncRun(
+          id: r.read<int>('id'),
+          ranAt: DateTime.tryParse(r.read<String>('ran_at'))?.toUtc(),
+          durationMs: r.readNullable<int>('duration_ms') ?? 0,
+          pulled: r.read<int>('pulled'),
+          pushed: r.read<int>('pushed'),
+          conflicts: r.read<int>('conflicts'),
+          failure: SyncFailureKind.parse(r.readNullable<String>('error')),
+        ),
+    ];
   }
 
   // ── create finalize + in-flight markers ───────────────────────────────────
