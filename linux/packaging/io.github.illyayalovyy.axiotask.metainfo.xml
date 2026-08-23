@@ -3,10 +3,14 @@
   AppStream metainfo — what GNOME Software / KDE Discover show for axiotask.
 
   The component id is rDNS over the project's real home
-  (github.com/IllyaYalovyy/axiotask → io.github.illyayalovyy.axiotask) and the
-  FILE NAME must stay equal to it. The shipped desktop entry keeps its short
-  basename (axiotask.desktop, matching the binary, the icon theme name and the
-  RPM paths), so the two are tied together by <launchable> below.
+  (github.com/IllyaYalovyy/axiotask → io.github.illyayalovyy.axiotask). It is
+  the app's ONE identity (#227): this file's name, the desktop entry's
+  basename and APPLICATION_ID in linux/CMakeLists.txt are all that same string.
+  They must never diverge — GNOME on Wayland gives a running window its icon by
+  looking up a desktop file whose basename equals the window's app_id, so a
+  desktop entry under any other name leaves the dash icon blank.
+  The short name `axiotask` stays the BINARY, the icon theme name and the RPM
+  package; those are POSIX names, not ids.
 
   The <release> version is the pubspec version; test/packaging/linux_distribution_test.dart
   fails when the two drift apart. Validate with:
@@ -38,7 +42,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">axiotask.desktop</launchable>
+  <launchable type="desktop-id">io.github.illyayalovyy.axiotask.desktop</launchable>
 
   <developer id="io.github.illyayalovyy">
     <name>Illya Yalovyy</name>

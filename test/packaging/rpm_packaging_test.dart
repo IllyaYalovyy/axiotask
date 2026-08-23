@@ -32,8 +32,12 @@ String _pubspecVersion() {
   return raw.split('+').first;
 }
 
-/// AppStream component id — also the metainfo file name (see #226).
+/// The one canonical application id (#227): the AppStream component id, the
+/// metainfo file name, the desktop-entry basename and the GTK application id
+/// are all THIS string. The RPM package and the binary keep the short name.
 const _appId = 'io.github.illyayalovyy.axiotask';
+const _appName = 'axiotask';
+const _desktopSrc = 'linux/packaging/$_appId.desktop';
 
 ProcessResult _runScript(List<String> args) =>
     Process.runSync('bash', ['tool/build_rpm.sh', ...args]);
@@ -68,7 +72,7 @@ void main() {
     test('%files installs launcher, desktop entry, icon and metainfo '
         '(menu-launchable, listed in software centres)', () {
       expect(spec, contains('/usr/bin/axiotask'));
-      expect(spec, contains('/usr/share/applications/axiotask.desktop'));
+      expect(spec, contains('/usr/share/applications/$_appId.desktop'));
       expect(
         spec,
         contains('/usr/share/icons/hicolor/512x512/apps/axiotask.png'),
@@ -148,9 +152,9 @@ void main() {
   // The desktop launcher must invoke the same name the RPM symlinks into PATH,
   // or the app-menu entry points at nothing.
   test('desktop entry Exec matches the /usr/bin launcher name', () {
-    final desktop = File('linux/packaging/axiotask.desktop').readAsStringSync();
-    expect(desktop, contains('Exec=axiotask'));
-    expect(desktop, contains('Icon=axiotask'));
+    final desktop = File(_desktopSrc).readAsStringSync();
+    expect(desktop, contains('Exec=$_appName'));
+    expect(desktop, contains('Icon=$_appName'));
   });
 
   // The maker config and the desktop entry are two declarations of the same
@@ -158,7 +162,7 @@ void main() {
   // and the .desktop file disagree about where the app appears.
   test('make_config categories agree with the desktop entry', () {
     final cfg = File('linux/packaging/rpm/make_config.yaml').readAsStringSync();
-    final categories = File('linux/packaging/axiotask.desktop')
+    final categories = File(_desktopSrc)
         .readAsLinesSync()
         .firstWhere((l) => l.startsWith('Categories='))
         .substring('Categories='.length)

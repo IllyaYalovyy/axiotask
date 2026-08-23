@@ -87,13 +87,21 @@ Google Cloud project.
   desktop entry, icons and AppStream metainfo system-wide.
 - Android (debug): `flutter build apk --debug`
 
-The desktop entry (`linux/packaging/axiotask.desktop`) and the AppStream
-metainfo (`linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml`) are
-the app's OS-level metadata; both are validated by `desktop-file-validate` /
-`appstreamcli validate` in the packaging tests. `StartupWMClass` must equal the
-`APPLICATION_ID` in `linux/CMakeLists.txt` (the runner sets it as the program
-name, so it is the window's WM_CLASS / Wayland app_id) or the running window
-loses its icon.
+The desktop entry (`linux/packaging/io.github.illyayalovyy.axiotask.desktop`)
+and the AppStream metainfo
+(`linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml`) are the app's
+OS-level metadata; both are validated by `desktop-file-validate` /
+`appstreamcli validate` in the packaging tests.
+
+`io.github.illyayalovyy.axiotask` is the app's **one identity**: the
+`APPLICATION_ID` in `linux/CMakeLists.txt`, the desktop entry's basename, the
+metainfo component id and `StartupWMClass` are all that same string. The runner
+sets it as the program name, so it is the window's WM_CLASS / Wayland app_id,
+and GNOME finds a running window's icon only through a desktop file of that
+exact basename — any divergence and the dash shows a blank tile.
+`test/packaging/linux_distribution_test.dart` pins the three declarations
+equal. The short name `axiotask` stays the binary, the icon theme name and the
+RPM package; it is a POSIX name, not an id.
 
 ### App icon
 

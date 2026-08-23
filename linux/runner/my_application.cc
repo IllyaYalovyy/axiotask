@@ -52,12 +52,14 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, "axiotask");
   }
 
-  // Name the themed icon the desktop entry installs (#225). GNOME matches a
-  // running window to linux/packaging/axiotask.desktop through StartupWMClass,
-  // but the shell/taskbar still asks the window itself for an icon: without
+  // Name the themed icon the desktop entry installs (#225). The shipped desktop
+  // entry is named after APPLICATION_ID (#227), which is what GNOME matches a
+  // running window against — its basename on Wayland, StartupWMClass on X11.
+  // The shell/taskbar still asks the window itself for an icon too: without
   // this call the dash shows a blank tile until the window is matched, and
   // never on window managers that do not do desktop-file matching at all. The
-  // name resolves against the hicolor theme installed by the RPM.
+  // ICON name stays the short "axiotask" — it is a hicolor theme name, not an
+  // application id, and it must equal the desktop entry's Icon= key.
   gtk_window_set_icon_name(window, "axiotask");
 
   // Default size at first launch (before any persisted size is restored, which

@@ -5,7 +5,7 @@
 //     blue Flutter bird. An APK that installs with that icon is indistinguishable
 //     from a scaffold app on the user's home screen. The stock bytes are pinned
 //     here as a blocklist so they can never come back.
-//   - NO ICON AT ALL ON LINUX: `linux/packaging/axiotask.desktop` says
+//   - NO ICON AT ALL ON LINUX: the shipped desktop entry says
 //     `Icon=axiotask`. If no `axiotask.png` exists under a hicolor theme
 //     directory the app-menu entry and the GNOME dash render a generic
 //     "missing image" placeholder. Every size the theme spec expects must exist
@@ -390,7 +390,9 @@ void main() {
   });
 
   test('the desktop entry shows the branded name', () {
-    final desktop = File('linux/packaging/axiotask.desktop').readAsStringSync();
+    final desktop = File(
+      'linux/packaging/io.github.illyayalovyy.axiotask.desktop',
+    ).readAsStringSync();
     expect(
       desktop,
       contains('Name=Axiotask'),
