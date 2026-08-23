@@ -8,4 +8,4 @@ Icon=axiotask
 Terminal=false
 Categories=Office;ProjectManagement;
 Keywords=tasks;todo;google;productivity;
-StartupWMClass=com.axiotask.axiotask
+StartupWMClass=io.github.illyayalovyy.axiotask

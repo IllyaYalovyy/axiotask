@@ -8,6 +8,18 @@
 # AppStream metainfo (linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml)
 # is what software centres display; the RPM installs it to /usr/share/metainfo.
 #
+# APPLICATION ID (#227): the shipped desktop entry is
+# linux/packaging/io.github.illyayalovyy.axiotask.desktop and MUST be installed
+# under that basename — it is the GTK APPLICATION_ID the runner sets, and GNOME
+# on Wayland resolves a running window's icon by matching app_id to a desktop
+# file of the same name. `package_name` below is the RPM package / binary /
+# icon-theme name, which stays the short `axiotask`.
+# tool/build_rpm.sh installs the entry under the application id and its
+# --dry-run fails on any drift. fastforge derives the desktop entry it generates
+# from `package_name`, so an RPM produced through the fastforge path has NOT
+# been shown to carry the correct basename — verify the generated
+# /usr/share/applications entry before releasing through that path.
+#
 # This file is the single source of the RPM's METADATA. tool/build_rpm.sh is a
 # standalone, fastforge-free path that renders an equivalent spec and calls
 # rpmbuild directly; the two are kept in sync and both are covered by
