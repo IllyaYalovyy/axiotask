@@ -12,10 +12,18 @@
 // Kill-safety (MIGRATION-PLAN §2): the reference guarantees atomic individual
 // store mutations, durable in-flight markers, and convergent retry — NOT
 // one-transaction-per-phase. `push_create` records the in-flight marker durably
-// BEFORE the non-idempotent insert and `finish_create` remaps + marks clean in
-// ONE store transaction, so a crash at any point either re-inserts (no orphan)
+// BEFORE the non-idempotent insert and `finish_create` learns the remote id +
+// marks clean in ONE store transaction, so a crash either re-inserts (no orphan)
 // or adopts the orphan (no duplicate). Every private pass is a resume point:
 // re-running `run()` after a kill converges.
+//
+// IDENTITY (#224): every id inside the store — `tasks.id`, `task_lists.id`,
+// `parent_id`, `pending_moves` — is a LOCAL id, minted once and immutable for
+// the row's lifetime. Google's ids live only in `remote_id`. This engine is the
+// ONLY translator: every outbound call resolves the wire ids it needs from
+// `remote_id`, and every response (and every pulled row) is translated back
+// into local-id space before it reaches the store. Nothing below the engine
+// ever sees a Google id.
 
 import '../api/api_error.dart';
 import '../api/tasks_api.dart';
@@ -100,11 +108,15 @@ class SyncConfig {
 
   /// Hold the CREATE push of exactly this one task this run: the id of the row
   /// the UI is actively holding (the inline editor's row, or the open detail
-  /// panel's task). A create remaps a local id to the server id, which would
-  /// invalidate the id the UI holds — so that ONE create waits. Every OTHER
-  /// create still pushes: a subtask created inside an open detail panel (#85)
-  /// has its own id, and remapping it never touches the parent id the panel
-  /// holds. Updates/deletes/moves reuse existing ids and always push.
+  /// panel's task).
+  ///
+  /// This used to exist because a landing create REWROTE the row's id, which
+  /// invalidated every reference the UI held. That rewrite is gone (#224): ids
+  /// are immutable, so a create landing under an open editor is now harmless.
+  /// The hold is kept as a pure quiescence measure — a row under active editing
+  /// does not have its half-typed first version pushed — and its removal is a
+  /// product decision, not an implementation one. Every OTHER create still
+  /// pushes; updates/deletes/moves always push.
   final String? heldCreateId;
 }
 
@@ -192,7 +204,7 @@ class SyncEngine {
     for (final list in await _store.allLists()) {
       final rows = await _store.listTasks(list.list.id);
       final thirdLevel = reconcile.thirdLevelIds(rows);
-      await _repairThirdLevel(list.list.id, thirdLevel, out);
+      await _repairThirdLevel(list, thirdLevel, out);
     }
   }
 
@@ -219,10 +231,10 @@ class SyncEngine {
       await _pushListCreates(out);
     }
 
-    // Creates, in dependency order. A child insert names its parent's id in the
-    // request, so a create is pushable only once its parent is resolved. Each
-    // finishCreate remaps children's parent_id, so looping until no progress
-    // resolves arbitrary nesting depth; anything left stays dirty for next run.
+    // Creates, in dependency order. A child insert names its parent's REMOTE id
+    // in the request, so a create is pushable only once its parent has one. Each
+    // finishCreate teaches the parent its remote id, so looping until no
+    // progress resolves arbitrary nesting depth; the rest stays dirty.
     // Attempt each create at most once per run: a create whose response times
     // out after the server committed would otherwise be double-inserted
     // (in-flight orphan recovery only runs at the start of a run).
@@ -249,15 +261,19 @@ class SyncEngine {
       }
     }
 
-    // Updates and deletes reuse existing ids — except when the row's own create
-    // is still unresolved in flight, in which case there is no server id to
-    // reuse yet and the mutation waits for the run that resolves the marker.
+    // Updates and deletes name the row's REMOTE id — except when the row's own
+    // create is still unresolved in flight, in which case there is no server id
+    // yet and the mutation waits for the run that resolves the marker.
     for (final row in await _store.drainDirty()) {
       if (!reconcile.mutationIsPushable(row.task.id, unresolvedCreates)) {
         continue;
       }
       switch (row.pendingOp) {
         case 'update':
+          // No remote id and no in-flight marker: the server has never seen
+          // this row, so there is nothing to patch. It stays dirty; its own
+          // create pass is what makes it pushable.
+          if (row.remoteId == null) continue;
           await _pushUpdate(row, out);
         case 'delete':
           await _pushDelete(row, out);
@@ -313,19 +329,24 @@ class SyncEngine {
       if (e.isTransient) return;
       rethrow;
     }
-    final localIds = <String>{
-      for (final l in await _store.allLists()) l.list.id,
+    final trackedRemoteIds = <String>{
+      for (final l in await _store.allLists())
+        if (l.remoteId != null) l.remoteId!,
     };
 
     for (final l in creates) {
       // Adopt a remote list with the same title we don't already track.
-      final existing = reconcile.adoptableList(l.list.title, remote, localIds);
+      final existing = reconcile.adoptableList(
+        l.list.title,
+        remote,
+        trackedRemoteIds,
+      );
       if (existing != null) {
         // Record the adoption so a SECOND same-title local create in this batch
-        // doesn't remap onto the same remote id (a primary-key collision that
-        // aborts the run); it inserts a new remote list instead.
-        localIds.add(existing.id);
-        await _store.remapListId(
+        // doesn't claim the same remote id (which the `remote_id` uniqueness
+        // constraint would refuse); it inserts a new remote list instead.
+        trackedRemoteIds.add(existing.id);
+        await _store.finishListCreate(
           l.list.id,
           existing.id,
           existing.etag,
@@ -336,7 +357,7 @@ class SyncEngine {
       }
       try {
         final remoteList = await _client.insertTasklist(l.list.title);
-        await _store.remapListId(
+        await _store.finishListCreate(
           l.list.id,
           remoteList.id,
           remoteList.etag,
@@ -353,11 +374,19 @@ class SyncEngine {
   /// Push list renames (update) and deletions.
   Future<void> _pushListMutations(SyncOutcome out) async {
     for (final l in await _store.drainDirtyLists()) {
+      // Both branches name Google's id for the list. A dirty list without one
+      // has never been acknowledged: its rename folds into its still-pending
+      // create (see `Commands.renameList`), and its delete is purely local.
+      final listRemoteId = l.remoteId;
       switch (l.pendingOp) {
         case 'update':
+          if (listRemoteId == null) continue;
           try {
-            final remote = await _client.patchTasklist(l.list.id, l.list.title);
-            await _store.markListClean(remote.id, remote.etag, remote.updated);
+            final remote = await _client.patchTasklist(
+              listRemoteId,
+              l.list.title,
+            );
+            await _store.markListClean(l.list.id, remote.etag, remote.updated);
             out.pushed += 1;
             out.listsChanged = true;
           } on ApiError catch (e) {
@@ -391,9 +420,16 @@ class SyncEngine {
             }
           }
         case 'delete':
+          if (listRemoteId == null) {
+            // Never pushed — nothing on Google to delete.
+            await _store.deleteListHard(l.list.id);
+            out.deleted += 1;
+            out.listsChanged = true;
+            continue;
+          }
           ApiError? error;
           try {
-            await _client.deleteTasklist(l.list.id);
+            await _client.deleteTasklist(listRemoteId);
           } on ApiError catch (e) {
             error = e;
           }
@@ -432,10 +468,8 @@ class SyncEngine {
   /// creates, so it never merges unrelated tasks.
   Future<void> _recoverInflightCreates(SyncOutcome out) async {
     for (final (localId, listId) in await _store.inflightCreates()) {
-      // Adopting an orphan remaps the local id to the server id — the same
-      // invalidation the create push defers for the row the UI is holding.
-      // Leave that one marker open until the hold clears; the create is held
-      // too, so nothing can duplicate meanwhile.
+      // The create this marker belongs to is held, so its recovery is too:
+      // resolving the marker here would push the row past the hold.
       if (_config.heldCreateId == localId) continue;
       // findTaskAny on purpose: a row the user deleted (or moved to another
       // list) while its insert was in flight is a TOMBSTONE, and that tombstone
@@ -447,10 +481,17 @@ class SyncEngine {
         continue;
       }
 
-      final (remote, complete) = await _fetchAllTasks(listId);
+      final listRemoteId = await _store.listRemoteId(listId);
+      // The list itself has not landed yet, so its tasks cannot have either.
+      if (listRemoteId == null) continue;
+      final (rawRemote, complete) = await _fetchAllTasks(listRemoteId);
       if (!complete) continue; // incomplete view; retry recovery next run
-      // Ids we already track locally — a remote task NOT in this set is a
-      // candidate orphan we created on the server but never linked.
+      // Translate into local-id space so the orphan match compares like with
+      // like: a remote row we already track resolves to ITS local id (and is
+      // therefore excluded below), an unseen one gets a fresh local id.
+      final (remote, remoteIdOf) = await _localizeTasks(rawRemote);
+      // Rows we already track locally — a candidate orphan is one that is NOT
+      // among them: created on the server but never linked.
       final localIdSet = <String>{
         for (final t in await _store.listTasks(listId)) t.task.id,
       };
@@ -479,16 +520,15 @@ class SyncEngine {
             local.localUpdated;
         await _store.finishCreate(
           localId,
-          orphan.id,
+          remoteIdOf[orphan.id]!,
           orphan.etag,
           orphan.updated,
           drained,
           orphan.position,
         );
       } else if (local.syncState == SyncState.deleted) {
-        // The insert never landed AND the user has since deleted the row. A
-        // tombstone carrying a local UUID could never be pushed (Google 400s an
-        // id it never minted), so drop it outright.
+        // The insert never landed AND the user has since deleted the row. There
+        // is no remote id to name in a DELETE, so drop the tombstone outright.
         await _store.clearInflightCreate(localId);
         await _store.deleteTaskHard(localId);
         out.markListChanged(listId);
@@ -575,19 +615,32 @@ class SyncEngine {
         case MoveSend():
           break;
       }
+      // Wire ids. `planMove` only answers MoveSend once every id the intent
+      // names is acknowledged (RefState.synced == it has a remote id), so these
+      // resolve; a list whose own create has not landed still leaves the intent
+      // queued for the next run.
+      final listRemoteId = await _store.listRemoteId(mv.listId);
+      final taskRemoteId = before?.remoteId;
+      final parentRemoteId = mv.parentId == null
+          ? null
+          : (await _store.findTaskAny(mv.parentId!))?.remoteId;
+      if (listRemoteId == null || taskRemoteId == null) continue;
       var previousId = reconcile.movePreviousId(mv, intent);
       // The degradation ladder (P5): at most two calls — the move as asked,
       // then, if the ambiguous 404 came back, the reparent alone. previousId is
       // null on the second pass, so the loop cannot run a third time.
       while (true) {
+        final previousRemoteId = previousId == null
+            ? null
+            : (await _store.findTaskAny(previousId))?.remoteId;
         Task? remote;
         ApiError? error;
         try {
           remote = await _client.moveTask(
-            mv.listId,
-            mv.taskId,
-            parent: mv.parentId,
-            previous: previousId,
+            listRemoteId,
+            taskRemoteId,
+            parent: parentRemoteId,
+            previous: previousRemoteId,
           );
         } on ApiError catch (e) {
           error = e;
@@ -597,11 +650,12 @@ class SyncEngine {
           // (MIGRATION-PLAN §5): clearMove first so applyPushedTask's guard lets
           // the server's parent/position land, both under one txn so a kill in
           // the gap rolls back and the move re-pushes next run.
+          final landed = await _localizeOne(remote!, mv.taskId);
           await _store.finishMove(
             mv.taskId,
-            remote!,
+            landed,
             adoptBody: reconcile.moveAdoption(before) == MoveAdoption.body,
-            expectedLocalUpdated: before?.localUpdated ?? remote.updated,
+            expectedLocalUpdated: before?.localUpdated ?? landed.updated,
           );
           out.pushed += 1;
           break;
@@ -647,6 +701,16 @@ class SyncEngine {
   /// across the insert await (the mid-flight re-edit case); production callers
   /// reach it through [run].
   Future<void> pushCreate(StoredTask row, SyncOutcome out) async {
+    // Wire ids: the list's, and (for a subtask) the parent's. The create pass
+    // only reaches a row whose parent is already acknowledged
+    // ([reconcile.parentIsPushable]), so a missing one means the LIST create
+    // has not landed yet — the row waits for the run that lands it.
+    final listRemoteId = await _store.listRemoteId(row.listId);
+    if (listRemoteId == null) return;
+    final parentRemoteId = row.task.parent == null
+        ? null
+        : (await _store.findTaskAny(row.task.parent!))?.remoteId;
+    if (row.task.parent != null && parentRemoteId == null) return;
     // A subtask insert is anchored after its last already-synced sibling; a
     // top-level create needs no list read at all.
     final previous = row.task.parent == null
@@ -655,7 +719,7 @@ class SyncEngine {
             row,
             await _store.listTasks(row.listId),
           );
-    final payload = reconcile.createPayload(row, previous);
+    final payload = reconcile.createPayload(row, previous, parentRemoteId);
     // Durably mark in-flight BEFORE the non-idempotent insert. The drained
     // local_updated is the base snapshot's drain marker (#124): a mid-flight
     // re-edit changes the row's local_updated, so recovery can tell it apart.
@@ -667,15 +731,16 @@ class SyncEngine {
     Task? remote;
     ApiError? error;
     try {
-      remote = await _client.insertTask(row.listId, payload);
+      remote = await _client.insertTask(listRemoteId, payload);
     } on ApiError catch (e) {
       error = e;
     }
     if (error == null) {
-      // Atomic: remap local→remote id AND mark clean in one txn so a crash
-      // can't leave a remapped row still flagged 'create'. The local_updated
-      // snapshot keeps a mid-flight re-edit dirty (as an update against the new
-      // remote id). The server-assigned position is adopted.
+      // Atomic: LEARN the remote id AND mark clean in one txn so a crash can't
+      // leave a row the server holds still flagged 'create'. The row's own id
+      // never moves (#224). The local_updated snapshot keeps a mid-flight
+      // re-edit dirty (as an update against the learned remote id). The
+      // server-assigned position is adopted.
       await _store.finishCreate(
         row.task.id,
         remote!.id,
@@ -703,13 +768,15 @@ class SyncEngine {
   /// BODY (the server can coerce silently); 412 → resolveConflict; 404 →
   /// hard-delete local subtree (P4, D3 rejected); else classified failure.
   Future<void> _pushUpdate(StoredTask row, SyncOutcome out) async {
+    final listRemoteId = await _store.listRemoteId(row.listId);
+    if (listRemoteId == null) return;
     final patch = reconcile.updatePatch(row);
     Task? remote;
     ApiError? error;
     try {
       remote = await _client.patchTask(
-        row.listId,
-        row.task.id,
+        listRemoteId,
+        row.remoteId!,
         patch,
         etag: row.task.etag,
       );
@@ -719,8 +786,12 @@ class SyncEngine {
     if (error == null) {
       // Adopt the response body, not just the etag: the server can normalize or
       // silently coerce fields, and the matching etag would otherwise block
-      // pull from ever correcting the drift (P6).
-      await _store.applyPushedTask(remote!, row.localUpdated);
+      // pull from ever correcting the drift (P6). Translated back into local-id
+      // space first — the body names Google's ids.
+      await _store.applyPushedTask(
+        await _localizeOne(remote!, row.task.id),
+        row.localUpdated,
+      );
       out.pushed += 1;
       out.markListChanged(row.listId);
       return;
@@ -743,16 +814,18 @@ class SyncEngine {
   /// (#118/D8) → keep dirty with fresh etag; else adopt remote (no divergence)
   /// or fork a "(conflicted copy)".
   Future<void> _resolveConflict(StoredTask local, SyncOutcome out) async {
+    final listRemoteId = await _store.listRemoteId(local.listId);
+    if (listRemoteId == null) return; // stays dirty; nothing to refetch against
     Task remote;
     try {
-      final fetched = await _client.getTask(local.listId, local.task.id);
+      final fetched = await _client.getTask(listRemoteId, local.remoteId!);
       // 412×delete race: a tombstone refetch (deleted: true) is P4 delete-wins,
       // no resurrected copy — same outcome as the refetch-404 below.
       if (fetched.deleted) {
         await _store.deleteTaskHard(local.task.id);
         return;
       }
-      remote = fetched;
+      remote = await _localizeOne(fetched, local.task.id);
     } on ApiError catch (e) {
       switch (reconcile.onConflictRefetchError(e)) {
         case RefetchFailure.deleteLocal:
@@ -823,9 +896,19 @@ class SyncEngine {
   /// Push one delete: unconditional (no If-Match, probe 7); success/404 →
   /// hard-delete local (FK cascade takes the subtree); else classified failure.
   Future<void> _pushDelete(StoredTask row, SyncOutcome out) async {
+    final listRemoteId = await _store.listRemoteId(row.listId);
+    final taskRemoteId = row.remoteId;
+    if (listRemoteId == null || taskRemoteId == null) {
+      // The server never acknowledged this row, so there is nothing to delete
+      // remotely — the tombstone would otherwise linger in the drain forever.
+      await _store.deleteTaskHard(row.task.id);
+      out.deleted += 1;
+      out.markListChanged(row.listId);
+      return;
+    }
     ApiError? error;
     try {
-      await _client.deleteTask(row.listId, row.task.id);
+      await _client.deleteTask(listRemoteId, taskRemoteId);
     } on ApiError catch (e) {
       error = e;
     }
@@ -869,16 +952,23 @@ class SyncEngine {
       rethrow;
     }
 
+    // Resolve every remote list to its LOCAL row first: an existing row that
+    // already carries this `remote_id`, a same-titled local create that adopts
+    // it, or a brand-new row under a fresh local id.
+    final localListIds = <String, String>{}; // remote list id → local list id
     for (final list in lists) {
-      if (await _upsertList(list)) out.listsChanged = true;
+      final (localId, changed) = await _upsertList(list);
+      localListIds[list.id] = localId;
+      if (changed) out.listsChanged = true;
     }
 
-    // List ghost detection: a clean local list absent from the server was
-    // deleted remotely — remove it (FK cascade drops its tasks).
+    // List ghost detection: a clean, server-backed local list whose remote id
+    // is absent from the server was deleted remotely — remove it (FK cascade
+    // drops its tasks).
     final remoteListIds = <String>{for (final l in lists) l.id};
     final ghostLists = [
-      for (final id in await _store.cleanListIds())
-        if (!remoteListIds.contains(id)) id,
+      for (final (localId, remoteId) in await _store.cleanServerBackedLists())
+        if (!remoteListIds.contains(remoteId)) localId,
     ];
     // Only a list that survives THIS pull can take in re-homed rows — otherwise
     // two lists deleted together would just hand the rows to each other and both
@@ -943,29 +1033,35 @@ class SyncEngine {
     }
 
     for (final list in lists) {
-      final inflight = inflightByList[list.id] ?? const <InflightBase>[];
-      await _pullList(list, dirtyIds, inflight, out);
+      final localListId = localListIds[list.id]!;
+      final inflight = inflightByList[localListId] ?? const <InflightBase>[];
+      await _pullList(list, localListId, dirtyIds, inflight, out);
     }
   }
 
   /// Pull a single list's tasks, upsert changes, detect ghost rows.
   Future<void> _pullList(
     TaskList list,
+    String localListId,
     Set<String> dirtyIds,
     List<InflightBase> inflight,
     SyncOutcome out,
   ) async {
-    final (remoteTasks, complete) = await _fetchAllTasks(list.id);
-    final remoteIds = <String>{for (final t in remoteTasks) t.id};
+    final (rawTasks, complete) = await _fetchAllTasks(list.id);
+    // Everything below this line works in LOCAL id space (#224): a remote row
+    // we already hold resolves to its own local id, an unseen one is minted a
+    // fresh local UUID here and keeps it for good.
+    final (remoteTasks, remoteIdOf) = await _localizeTasks(rawTasks);
+    final presentIds = <String>{for (final t in remoteTasks) t.id};
 
     // Skip dirty rows and orphans of in-flight creates, then order parents
     // before children for FK safety.
     final toUpsert = reconcile.pullBatch(remoteTasks, dirtyIds, inflight);
 
     // Idempotency: skip rows where the local etag already matches.
-    final localEtags = await _buildEtagMap(list.id);
+    final localEtags = await _buildEtagMap(localListId);
     final knownLocal = <String>{
-      for (final t in await _store.listTasks(list.id)) t.task.id,
+      for (final t in await _store.listTasks(localListId)) t.task.id,
     };
     final batchIds = <String>{for (final t in toUpsert) t.id};
 
@@ -987,50 +1083,52 @@ class SyncEngine {
       }
       final stored = StoredTask(
         task: task,
-        listId: list.id,
+        listId: localListId,
         localUpdated: task.updated,
         syncState: SyncState.clean,
+        remoteId: remoteIdOf[task.id],
       );
       // Race-safe: won't clobber a row a live UI edit just dirtied.
       await _store.upsertRemoteTask(stored);
       out.pulled += 1;
-      out.markListChanged(list.id);
+      out.markListChanged(localListId);
     }
 
     // Ghost detection: remove clean local rows absent from the server.
-    if (complete) await _removeGhosts(list.id, remoteIds, out);
+    if (complete) await _removeGhosts(localListId, presentIds, out);
   }
 
   /// Flatten any server-side third level in this list (RFC-009 §F/§G, D7). Each
   /// grandchild is promoted to top-level; a synced row also gets the corrective
   /// server move (gated on push, #137). Every repair counts as a conflict.
   Future<void> _repairThirdLevel(
-    String listId,
+    StoredTaskList list,
     List<String> thirdLevel,
     SyncOutcome out,
   ) async {
+    final listId = list.list.id;
     for (final id in thirdLevel) {
       final before = await _store.findTaskAny(id);
       if (before == null) continue; // vanished between detection and repair
-      if (before.task.etag != null && !_config.pushEnabled) {
+      if (before.remoteId != null && !_config.pushEnabled) {
         // Read-only sync: flatten LOCALLY now (invariant #1 is absolute) and
         // DROP the clean etag so the next pull re-examines it; the server keeps
         // the nesting until a push-enabled run sends the corrective move.
         await _promoteAndDetach(id);
         out.conflicts += 1;
         out.markListChanged(listId);
-      } else if (before.task.etag != null) {
+      } else if (before.remoteId != null && list.remoteId != null) {
         // A synced grandchild really sits on the server under a subtask. Push
         // the corrective move so the server converges too.
         Task? remote;
         ApiError? error;
         try {
-          remote = await _client.moveTask(listId, id);
+          remote = await _client.moveTask(list.remoteId!, before.remoteId!);
         } on ApiError catch (e) {
           error = e;
         }
         if (error == null) {
-          await _applyMoveResponse(before, remote!);
+          await _applyMoveResponse(before, await _localizeOne(remote!, id));
           // A clean row adopts the move body (parent → None); a row carrying a
           // pending edit only meta-adopts, so make it top-level locally too.
           await _promoteLocalIfNested(id);
@@ -1046,9 +1144,9 @@ class SyncEngine {
           out.markListChanged(listId);
         }
       } else {
-        // An un-pushed subtask create whose parent was demoted out from under
-        // it (§G, before the create pushes). Promote it locally so it pushes as
-        // a TOP-LEVEL create next.
+        // An un-acknowledged subtask create whose parent was demoted out from
+        // under it (§G, before the create pushes). Promote it locally so it
+        // pushes as a TOP-LEVEL create next.
         await _promoteLocalIfNested(id);
         out.conflicts += 1;
         out.markListChanged(listId);
@@ -1126,12 +1224,12 @@ class SyncEngine {
   /// Remove local clean rows that no longer exist on the server.
   Future<void> _removeGhosts(
     String listId,
-    Set<String> remoteIds,
+    Set<String> presentIds,
     SyncOutcome out,
   ) async {
     final localClean = await _store.cleanTaskIdsForList(listId);
     for (final ghostId in localClean) {
-      if (remoteIds.contains(ghostId)) continue;
+      if (presentIds.contains(ghostId)) continue;
       // Clean-guarded: a live edit that re-dirtied the row cancels the ghost
       // delete. The FK cascade takes the whole subtree (RFC-009 D3 REJECTED).
       if (await _store.removeGhostTask(ghostId)) {
@@ -1141,28 +1239,110 @@ class SyncEngine {
     }
   }
 
-  /// Reconcile one remote list into the local store.
-  Future<bool> _upsertList(TaskList list) async {
+  /// Reconcile one remote list into the local store, returning
+  /// `(localListId, changed)`. The local id is the row that already carries
+  /// this `remote_id`, the same-titled local create that adopts it, or a fresh
+  /// UUID for a list this device has never seen.
+  Future<(String, bool)> _upsertList(TaskList list) async {
     final locals = await _store.allLists();
-    switch (reconcile.planListPull(list, locals)) {
+    final byRemote = await _store.listIdsByRemoteId();
+    final localized = TaskList(
+      id: byRemote[list.id] ?? _newId(),
+      title: list.title,
+      etag: list.etag,
+      updated: list.updated,
+    );
+    switch (reconcile.planListPull(localized, locals)) {
       case ListPullKeepLocal():
-        return false;
+        return (localized.id, false);
       case ListPullAdoptLocalCreate(:final localId):
-        await _store.remapListId(localId, list.id, list.etag, list.updated);
-        return true;
+        await _store.finishListCreate(
+          localId,
+          list.id,
+          list.etag,
+          list.updated,
+        );
+        return (localId, true);
       case ListPullUpsert(:final changed):
         // Race-safe: won't clobber a list a live rename just dirtied.
         await _store.upsertRemoteList(
           StoredTaskList(
-            list: list,
+            list: localized,
             syncState: SyncState.clean,
             localUpdated: list.updated,
+            remoteId: list.id,
           ),
         );
-        return changed;
+        return (localized.id, changed);
     }
   }
+
+  // ─── Id translation (the API boundary, #224) ───────────────────────────────
+
+  /// Translate remote rows into LOCAL id space. Each task's `id` becomes the
+  /// local id of the row already carrying that `remote_id`, or a freshly minted
+  /// UUID when this device has never seen it; `parent` is resolved the same
+  /// way. Returns the translated tasks plus `localId → remoteId`, the reverse
+  /// trip a caller needs to persist the mapping or name the row on the wire.
+  ///
+  /// A parent that is neither in this batch nor known locally is left
+  /// unresolved, which is exactly the "unknown parent" the pull's own
+  /// [PullRowAction.upsertDetached] branch is there to handle.
+  Future<(List<Task>, Map<String, String>)> _localizeTasks(
+    List<Task> remote,
+  ) async {
+    final byRemote = await _store.taskIdsByRemoteId();
+    for (final t in remote) {
+      byRemote[t.id] ??= _newId();
+    }
+    final out = <Task>[];
+    final remoteIdOf = <String, String>{};
+    for (final t in remote) {
+      final localId = byRemote[t.id]!;
+      remoteIdOf[localId] = t.id;
+      final parent = t.parent;
+      out.add(
+        _withIds(
+          t,
+          localId,
+          parent == null ? null : (byRemote[parent] ?? parent),
+        ),
+      );
+    }
+    return (out, remoteIdOf);
+  }
+
+  /// One API response translated back into local-id space: it describes the row
+  /// with local id [localId], and its `parent` is resolved through the store's
+  /// `remote_id` map (an unresolvable parent is left alone — the store's own
+  /// detach guard then handles it, RFC-009 §A).
+  Future<Task> _localizeOne(Task remote, String localId) async {
+    final parent = remote.parent;
+    if (parent == null) return _withIds(remote, localId, null);
+    return _withIds(
+      remote,
+      localId,
+      await _store.taskIdForRemote(parent) ?? parent,
+    );
+  }
 }
+
+/// [t] rebuilt with [id] and [parent] — the id-space translation. Written out
+/// because `copyWith` cannot express a `null` parent.
+Task _withIds(Task t, String id, String? parent) => Task(
+  id: id,
+  parent: parent,
+  position: t.position,
+  title: t.title,
+  notes: t.notes,
+  status: t.status,
+  due: t.due,
+  completed: t.completed,
+  etag: t.etag,
+  updated: t.updated,
+  webViewLink: t.webViewLink,
+  deleted: t.deleted,
+);
 
 // ─── Field-clearing helpers ────────────────────────────────────────────────────
 // Neither [Task.copyWith] nor [TaskList] can express clearing `etag`/`parent` to

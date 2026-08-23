@@ -22,6 +22,8 @@ import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'sync_fixture.dart';
+
 const _t0 = '2026-06-01T00:00:00Z';
 
 /// A fresh engine over an in-memory store and fake API, torn down with the test.
@@ -64,14 +66,14 @@ StoredTask dirtyTask(
 
 /// Where the row lives now, as the user would see it: `(listId, parent)`.
 Future<(String, String?)?> placement(Store store, String id) async {
-  final r = await store.findTaskAny(id);
+  final r = await findByAnyId(store, id);
   return r == null ? null : (r.listId, r.task.parent);
 }
 
 /// Stage a pending content edit on an existing row (the reference's
 /// `stage_edit`, non-stale variant).
 Future<void> stageEdit(Store store, String id, Task Function(Task) edit) async {
-  final row = (await store.findTaskAny(id))!;
+  final row = (await findByAnyId(store, id))!;
   await store.upsertTask(
     StoredTask(
       task: edit(row.task),
@@ -98,7 +100,7 @@ void main() {
 
   test('push disabled does not push', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
 
@@ -107,22 +109,30 @@ void main() {
     expect(client.callCount(Method.insertTask), 0);
   });
 
-  test('push create remaps id', () async {
+  test('push create learns the server id and keeps its own', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
 
     final out = await eng.run();
     expect(out.pushed, 1);
     final tasks = await eng.store.listTasks('L1');
-    expect(tasks.any((t) => t.task.id.startsWith('remote-')), isTrue);
-    expect(tasks.any((t) => t.task.id == 'local-1'), isFalse);
+    expect(
+      tasks.any((t) => t.remoteId?.startsWith('remote-') ?? false),
+      isTrue,
+      reason: 'the server id is learned into remote_id',
+    );
+    expect(
+      tasks.map((t) => t.task.id),
+      ['local-1'],
+      reason: 'and the row keeps the id every caller already holds (#224)',
+    );
   });
 
   test('push create parent before child', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(dirtyTask('local-parent', 'L1', 'create'));
@@ -134,12 +144,15 @@ void main() {
     expect(out.pushed, 2);
     final tasks = await eng.store.listTasks('L1');
     expect(tasks.length, 2);
-    expect(tasks.every((t) => t.task.id.startsWith('remote-')), isTrue);
+    expect(
+      tasks.every((t) => t.remoteId?.startsWith('remote-') ?? false),
+      isTrue,
+    );
   });
 
   test('push create transient leaves dirty (attempted exactly once)', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
 
@@ -167,7 +180,7 @@ void main() {
       // remap the id AND keep the row dirty as an UPDATE (not clean, not a second
       // create), so the newer edit pushes against the remote id.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       await eng.run();
 
       // The dirty create as the push drains it (old content, old timestamp).
@@ -199,7 +212,12 @@ void main() {
       final tasks = await eng.store.listTasks('L1');
       expect(tasks.length, 1);
       final row = tasks.single;
-      expect(row.task.id.startsWith('remote-'), isTrue, reason: 'id remapped');
+      expect(
+        row.remoteId?.startsWith('remote-') ?? false,
+        isTrue,
+        reason: 'the server id is learned',
+      );
+      expect(row.task.id, 'local-1', reason: 'the local id never moves');
       expect(
         row.syncState,
         SyncState.dirty,
@@ -227,7 +245,7 @@ void main() {
     // finishCreate — a dirty create + an in-flight marker. Recovery must adopt
     // the orphan, not re-insert.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -245,7 +263,8 @@ void main() {
       'L1',
     )).where((t) => t.task.title == 'buy milk').toList();
     expect(milk.length, 1, reason: 'no duplicate');
-    expect(milk.single.task.id, 'remote-orphan');
+    expect(milk.single.task.id, 'local-1');
+    expect(milk.single.remoteId, 'remote-orphan');
     expect(milk.single.syncState, SyncState.clean);
     expect(await eng.store.inflightCreates(), isEmpty);
   });
@@ -254,7 +273,7 @@ void main() {
     // In-flight marker exists but the server never got the task. Recovery clears
     // the marker; normal push inserts.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -267,13 +286,13 @@ void main() {
     expect(client.callCount(Method.insertTask), 1);
     final tasks = await eng.store.listTasks('L1');
     expect(tasks.length, 1);
-    expect(tasks.single.task.id.startsWith('remote-'), isTrue);
+    expect(tasks.single.remoteId?.startsWith('remote-') ?? false, isTrue);
     expect(await eng.store.inflightCreates(), isEmpty);
   });
 
   test('clean create clears in-flight marker', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
     await eng.run();
@@ -284,7 +303,7 @@ void main() {
     // The server commits the insert but the response times out. The create must
     // NOT be re-attempted in the same run, and the next run adopts the orphan.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -308,7 +327,7 @@ void main() {
       'L1',
     )).where((t) => t.task.title == 'buy milk').toList();
     expect(milk.length, 1, reason: 'no duplicate after recovery');
-    expect(milk.single.task.id.startsWith('remote-'), isTrue);
+    expect(milk.single.remoteId?.startsWith('remote-') ?? false, isTrue);
     expect(await eng.store.inflightCreates(), isEmpty);
   });
 
@@ -319,7 +338,7 @@ void main() {
     // marker must hold its create back until a complete remote view lets
     // recovery decide.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -350,7 +369,7 @@ void main() {
       'L1',
     )).where((t) => t.task.title == 'buy milk').toList();
     expect(milk.length, 1, reason: 'no duplicate after recovery');
-    expect(milk.single.task.id.startsWith('remote-'), isTrue);
+    expect(milk.single.remoteId?.startsWith('remote-') ?? false, isTrue);
     expect(await eng.store.inflightCreates(), isEmpty);
   });
 
@@ -359,7 +378,7 @@ void main() {
     // is on the server. Adopting it remaps the local id to the server id —
     // precisely what heldCreateId exists to prevent. Recovery must wait.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -395,7 +414,7 @@ void main() {
       'L1',
     )).where((t) => t.task.title == 'buy milk').toList();
     expect(milk.length, 1);
-    expect(milk.single.task.id.startsWith('remote-'), isTrue);
+    expect(milk.single.remoteId?.startsWith('remote-') ?? false, isTrue);
     expect(await eng.store.inflightCreates(), isEmpty);
   });
 
@@ -404,7 +423,7 @@ void main() {
     // due form while the local row has the short form. They must still match, or
     // the create re-inserts a dup.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -436,7 +455,8 @@ void main() {
       'L1',
     )).where((t) => t.task.title == 'buy milk').toList();
     expect(milk.length, 1, reason: 'no duplicate');
-    expect(milk.single.task.id, 'remote-orphan');
+    expect(milk.single.task.id, 'local-1');
+    expect(milk.single.remoteId, 'remote-orphan');
   });
 
   // ─── Create-pass real-API semantics ────────────────────────────────────────
@@ -445,7 +465,7 @@ void main() {
     // The parent's own create failed transiently this run — the child must NOT
     // be pushed with a still-local parent id (permanent 400 on the real API).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(dirtyTask('local-p', 'L1', 'create'));
@@ -465,7 +485,9 @@ void main() {
     expect(tasks.every((t) => t.syncState == SyncState.clean), isTrue);
     final child = tasks.firstWhere((t) => t.task.title == 'task local-c');
     expect(
-      child.task.parent!.startsWith('remote-'),
+      (await eng.store.findTaskAny(
+        child.task.parent!,
+      ))!.remoteId!.startsWith('remote-'),
       isTrue,
       reason: 'parent id remapped',
     );
@@ -473,7 +495,7 @@ void main() {
 
   test('three-level creates resolve in one run', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(dirtyTask('l-root', 'L1', 'create'));
@@ -500,7 +522,7 @@ void main() {
     // left the local placeholder in place forever (the adopted etag makes every
     // later pull skip the row).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -519,7 +541,7 @@ void main() {
     // Google in reverse creation order. The previous-anchor keeps creation
     // order.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     await eng.run();
 
@@ -530,7 +552,7 @@ void main() {
           ids[i],
           'L1',
           'create',
-          parent: 'P',
+          parent: await localIdOf(eng.store, 'P'),
           title: 'sub $i',
           localUpdated: '2026-06-01T00:00:0${i}Z',
         ),
@@ -555,7 +577,7 @@ void main() {
     // The calendar picker used to store a bare "YYYY-MM-DD"; Google 400s that
     // form. The push path must canonicalize so a legacy/imported row heals.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -573,6 +595,7 @@ void main() {
     // Both used to adopt the SAME remote list → primary-key collision on the
     // second remap → the whole run aborted with a store error.
     final (client, eng) = await engine(push: true);
+    // Deliberately NOT locally tracked: adoption is the thing under test.
     client.seedList('L-remote', 'Work');
 
     for (final id in ['local-l1', 'local-l2']) {
@@ -606,8 +629,8 @@ void main() {
       // the server never saw must NOT go with it (P2): it re-homes to the default
       // list, still queued, and lands next run.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
-      client.seedList('L2', 'Work');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L2', 'Work');
       await eng.run();
 
       await eng.store.upsertTask(
@@ -627,7 +650,7 @@ void main() {
         ('L1', null),
         reason: 'the unpushed create re-homed to the default list',
       );
-      final row = (await eng.store.findTaskAny('local-1'))!;
+      final row = (await findByAnyId(eng.store, 'local-1'))!;
       expect(row.syncState, SyncState.dirty);
       expect(row.pendingOp, 'create', reason: 'still queued');
       expect(row.task.title, 'buy milk', reason: 'content untouched');
@@ -652,8 +675,8 @@ void main() {
       // orphan dies WITH its parent in the list cascade rather than being promoted
       // (D3 rejected).
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
-      client.seedList('L2', 'Work');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L2', 'Work');
       client.seedTask('L2', 'SYNCED', 'server parent', '1');
       await eng.run();
 
@@ -675,7 +698,7 @@ void main() {
           'L2',
           'create',
           title: 'call hotel',
-          parent: 'SYNCED',
+          parent: await localIdOf(eng.store, 'SYNCED'),
         ),
       );
 
@@ -689,12 +712,12 @@ void main() {
         reason: 'the unpushed subtree re-homes intact',
       );
       expect(
-        await eng.store.findTaskAny('local-orphan'),
+        await findByAnyId(eng.store, 'local-orphan'),
         isNull,
         reason: 'a subtask whose synced parent died dies with it (D3 rejected)',
       );
       expect(
-        await eng.store.findTaskAny('SYNCED'),
+        await findByAnyId(eng.store, 'SYNCED'),
         isNull,
         reason: 'the row the server knew dies with its list (P1)',
       );
@@ -725,7 +748,7 @@ void main() {
       // unpushed create. There is nowhere to re-home to, so the list is kept as a
       // local list create instead of being dropped — P2 holds even then.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Work');
+      await seedSyncedList(client, eng.store, 'L1', 'Work');
       await eng.run();
 
       await eng.store.upsertTask(
@@ -763,25 +786,31 @@ void main() {
       // cascade takes the unpushed subtask with it. D3 rejected: the child dies
       // with the parent — never promoted.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
 
       await stageEdit(eng.store, 'P', (t) => t.copyWith(title: 'renamed here'));
       await eng.store.upsertTask(
-        dirtyTask('local-kid', 'L1', 'create', title: 'kept', parent: 'P'),
+        dirtyTask(
+          'local-kid',
+          'L1',
+          'create',
+          title: 'kept',
+          parent: await localIdOf(eng.store, 'P'),
+        ),
       );
       client.deleteTaskFromState('L1', 'P');
 
       await eng.run();
 
       expect(
-        await eng.store.findTaskAny('P'),
+        await findByAnyId(eng.store, 'P'),
         isNull,
         reason: 'delete wins over our edit (P4)',
       );
       expect(
-        await eng.store.findTaskAny('local-kid'),
+        await findByAnyId(eng.store, 'local-kid'),
         isNull,
         reason: 'the unpushed subtask dies with its parent (D3 rejected)',
       );
@@ -797,8 +826,8 @@ void main() {
     // D2's boundary (P1/P4): a row the server HAS seen dies with its list even
     // with a local edit pending. P2 only shields work the server never saw.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'My Tasks');
-    client.seedList('L2', 'Work');
+    await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+    await seedSyncedList(client, eng.store, 'L2', 'Work');
     client.seedTask('L2', 'T2', 'server row', '1');
     await eng.run();
 
@@ -808,7 +837,7 @@ void main() {
     await eng.run();
 
     expect(
-      await eng.store.findTaskAny('T2'),
+      await findByAnyId(eng.store, 'T2'),
       isNull,
       reason: 'the synced row dies with its list, edit discarded',
     );
@@ -826,7 +855,7 @@ void main() {
       // parent before the create lands. The parent's local removal FK-cascades the
       // unpushed child away — no auto-promotion.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
 
@@ -836,16 +865,16 @@ void main() {
           'L1',
           'create',
           title: 'orphaned subtask',
-          parent: 'P',
+          parent: await localIdOf(eng.store, 'P'),
         ),
       );
 
       client.deleteTaskFromState('L1', 'P');
       await eng.run();
 
-      expect(await eng.store.findTaskAny('P'), isNull);
+      expect(await findByAnyId(eng.store, 'P'), isNull);
       expect(
-        await eng.store.findTaskAny('local-kid'),
+        await findByAnyId(eng.store, 'local-kid'),
         isNull,
         reason: 'the unpushed child dies with its parent (D3 rejected)',
       );
@@ -865,7 +894,7 @@ void main() {
       // child is created already completed — the cascade is Google's, not ours.
       // The row must converge to `completed` locally in the same run (P6).
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
 
@@ -881,7 +910,7 @@ void main() {
           'L1',
           'create',
           title: 'late subtask',
-          parent: 'P',
+          parent: await localIdOf(eng.store, 'P'),
         ),
       );
 
@@ -890,7 +919,11 @@ void main() {
       final row = (await eng.store.listTasks(
         'L1',
       )).firstWhere((r) => r.task.title == 'late subtask');
-      expect(row.task.parent, 'P', reason: 'still a subtask');
+      expect(
+        await parentServerId(eng.store, row),
+        'P',
+        reason: 'still a subtask',
+      );
       expect(
         row.task.status,
         TaskStatus.completed,
@@ -911,7 +944,7 @@ void main() {
       // that merely LOOKS like a remote task (same title, no marker) must not be
       // swallowed — duplicate titles are legal.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       await eng.run();
 
       client.seedTask('L1', 'remote-theirs', 'buy milk', '1');
@@ -938,8 +971,8 @@ void main() {
       // delete in the same window must not destroy it either (P2). It re-homes,
       // waits for the hold to clear, then pushes.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'My Tasks');
-      client.seedList('L2', 'Work');
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L2', 'Work');
       await eng.run();
 
       await eng.store.upsertTask(
@@ -960,7 +993,7 @@ void main() {
         reason: 'but it survives the list delete, re-homed',
       );
       expect(
-        (await eng.store.findTaskAny('local-held'))!.task.id,
+        (await findByAnyId(eng.store, 'local-held'))!.task.id,
         'local-held',
         reason: 'id not remapped while held',
       );
@@ -977,8 +1010,8 @@ void main() {
     // and the response is lost. The in-flight marker must survive the re-home,
     // so the next run adopts the orphan instead of inserting a second copy.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'My Tasks');
-    client.seedList('L2', 'Work');
+    await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+    await seedSyncedList(client, eng.store, 'L2', 'Work');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -1017,7 +1050,7 @@ void main() {
     // never runs. The create ahead of the abort must have committed; the delete
     // that took the error must still be pending; a single healthy run converges.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'goner', 'delete me', '1');
     await eng.run();
 
@@ -1027,7 +1060,7 @@ void main() {
     await eng.store.upsertTask(
       dirtyTask('local-keeper', 'L1', 'create', title: 'keep me'),
     );
-    final goner = (await eng.store.findTaskAny('goner'))!;
+    final goner = (await findByAnyId(eng.store, 'goner'))!;
     await eng.store.upsertTask(
       StoredTask(
         task: goner.task,
@@ -1070,7 +1103,7 @@ void main() {
     );
 
     // The delete did NOT apply — still pending on its row, still on the server.
-    final gonerLocal = await eng.store.findTaskAny('goner');
+    final gonerLocal = await findByAnyId(eng.store, 'goner');
     expect(gonerLocal?.pendingOp, 'delete');
     expect(
       (await client.listTasks('L1')).items.any((t) => t.id == 'goner'),

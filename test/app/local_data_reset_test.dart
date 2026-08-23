@@ -239,7 +239,9 @@ void main() {
       ).run();
       await runtime.signIn();
 
-      final lists = (await store.allLists()).map((l) => l.list.id).toList();
+      // Local ids are minted per device (#224); the account's list is the one
+      // whose remote_id is Google's 'NEW'.
+      final lists = (await store.allLists()).map((l) => l.remoteId).toList();
       expect(lists, ['NEW'], reason: 'only the new account is cached');
       expect((await store.allTasks()).map((t) => t.task.title), [
         'new account task',

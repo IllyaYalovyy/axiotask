@@ -28,9 +28,10 @@ import 'stored.dart';
 // Column lists kept as constants so the one-shot read and its `watch*` twin run
 // byte-identical SQL (drift dedupes identical streamed queries).
 const String _listCols =
-    'id, title, etag, updated, local_updated, sync_state, pending_op, local_only';
+    'id, remote_id, title, etag, updated, local_updated, sync_state, '
+    'pending_op, local_only';
 const String _taskCols =
-    'id, list_id, parent_id, position, title, notes, status, due, '
+    'id, remote_id, list_id, parent_id, position, title, notes, status, due, '
     'completed_at, etag, updated, local_updated, sync_state, pending_op, '
     'web_view_link';
 
@@ -59,9 +60,9 @@ const String _selectVisibleTaskSql =
 // then oldest edit first. The `t.` alias prefixes _taskCols since the join
 // brings a second `id`/`list_id` into scope.
 const String _drainTasksSql =
-    'SELECT t.id, t.list_id, t.parent_id, t.position, t.title, t.notes, '
-    't.status, t.due, t.completed_at, t.etag, t.updated, t.local_updated, '
-    't.sync_state, t.pending_op, t.web_view_link '
+    'SELECT t.id, t.remote_id, t.list_id, t.parent_id, t.position, t.title, '
+    't.notes, t.status, t.due, t.completed_at, t.etag, t.updated, '
+    't.local_updated, t.sync_state, t.pending_op, t.web_view_link '
     'FROM tasks t JOIN task_lists l ON l.id = t.list_id '
     "WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') AND l.local_only = 0 "
     'ORDER BY CASE t.pending_op '
@@ -91,8 +92,9 @@ class Store {
   /// Replace (or insert) a task-list row.
   Future<void> upsertList(StoredTaskList list) async {
     await _db.customInsert(
-      'INSERT INTO task_lists ($_listCols) VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
+      'INSERT INTO task_lists ($_listCols) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
+      'remote_id = COALESCE(excluded.remote_id, task_lists.remote_id), '
       'title = excluded.title, etag = excluded.etag, updated = excluded.updated, '
       'local_updated = excluded.local_updated, sync_state = excluded.sync_state, '
       'pending_op = excluded.pending_op, local_only = excluded.local_only',
@@ -107,8 +109,9 @@ class Store {
   /// survives (mirrors [upsertRemoteTask]).
   Future<void> upsertRemoteList(StoredTaskList list) async {
     await _db.customInsert(
-      'INSERT INTO task_lists ($_listCols) VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
+      'INSERT INTO task_lists ($_listCols) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
+      'remote_id = COALESCE(excluded.remote_id, task_lists.remote_id), '
       'title = excluded.title, etag = excluded.etag, updated = excluded.updated, '
       'local_updated = excluded.local_updated, sync_state = excluded.sync_state, '
       'pending_op = excluded.pending_op '
@@ -145,17 +148,77 @@ class Store {
     return rows.map(_listFromRow).toList();
   }
 
-  /// Ids of clean, server-backed lists — the ghost-detection set. Local-only
-  /// lists are excluded: they never exist on the server, so they must never be
-  /// treated as a ghost the moment they are absent from a pull (which is
-  /// always).
-  Future<Set<String>> cleanListIds() async {
+  /// Clean, server-backed lists as `(localId, remoteId)` — the ghost-detection
+  /// set. Local-only lists are excluded: they never exist on the server, so
+  /// they must never be treated as a ghost the moment they are absent from a
+  /// pull (which is always). So is a list with no `remote_id`: the server has
+  /// never acknowledged it, so its absence from a pull proves nothing.
+  Future<List<(String, String)>> cleanServerBackedLists() async {
     final rows = await _db
         .customSelect(
-          'SELECT id FROM task_lists WHERE sync_state = \'clean\' AND local_only = 0',
+          "SELECT id, remote_id FROM task_lists WHERE sync_state = 'clean' "
+          'AND local_only = 0 AND remote_id IS NOT NULL',
         )
         .get();
-    return {for (final r in rows) r.read<String>('id')};
+    return [
+      for (final r in rows) (r.read<String>('id'), r.read<String>('remote_id')),
+    ];
+  }
+
+  /// Every list's `remote_id → local id`, tombstoned lists INCLUDED. The pull
+  /// resolves each remote list through this map; missing the tombstone of a
+  /// list the server still has would mint a second local row for the same
+  /// remote id and trip the `remote_id` uniqueness constraint.
+  Future<Map<String, String>> listIdsByRemoteId() async {
+    final rows = await _db
+        .customSelect(
+          'SELECT id, remote_id FROM task_lists WHERE remote_id IS NOT NULL',
+        )
+        .get();
+    return {
+      for (final r in rows) r.read<String>('remote_id'): r.read<String>('id'),
+    };
+  }
+
+  /// Every task's `remote_id → local id`, tombstones INCLUDED (a tombstone is
+  /// exactly the row a pull must recognize rather than re-adopt as new). Global
+  /// rather than per-list: a remote id is unique across the account, and a task
+  /// the server moved between lists must still resolve to its own local row.
+  Future<Map<String, String>> taskIdsByRemoteId() async {
+    final rows = await _db
+        .customSelect(
+          'SELECT id, remote_id FROM tasks WHERE remote_id IS NOT NULL',
+        )
+        .get();
+    return {
+      for (final r in rows) r.read<String>('remote_id'): r.read<String>('id'),
+    };
+  }
+
+  /// The LOCAL id of the task whose `remote_id` is [remoteId]; `null` when no
+  /// row carries it. The single-row form of [taskIdsByRemoteId], for the API
+  /// responses that name exactly one id (a pushed row's parent) — a phone
+  /// syncing a few hundred tasks should not build the whole map for that.
+  Future<String?> taskIdForRemote(String remoteId) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT id FROM tasks WHERE remote_id = ?',
+          variables: [Variable<String>(remoteId)],
+        )
+        .get();
+    return rows.isEmpty ? null : rows.first.read<String>('id');
+  }
+
+  /// Google's id for the list with local id [localId]; `null` when the server
+  /// has never seen it (or there is no such list).
+  Future<String?> listRemoteId(String localId) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT remote_id FROM task_lists WHERE id = ?',
+          variables: [Variable<String>(localId)],
+        )
+        .get();
+    return rows.isEmpty ? null : rows.first.readNullable<String>('remote_id');
   }
 
   /// Live stream of [allLists], re-emitting on every task-list write.
@@ -182,8 +245,9 @@ class Store {
   Future<void> upsertTask(StoredTask t) async {
     await _db.customInsert(
       'INSERT INTO tasks ($_taskCols) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
+      'remote_id = COALESCE(excluded.remote_id, tasks.remote_id), '
       'list_id = excluded.list_id, parent_id = excluded.parent_id, '
       'position = excluded.position, '
       "base_title  = CASE WHEN excluded.sync_state = 'clean' THEN NULL "
@@ -216,8 +280,9 @@ class Store {
   Future<void> upsertRemoteTask(StoredTask t) async {
     await _db.customInsert(
       'INSERT INTO tasks ($_taskCols) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
+      'remote_id = COALESCE(excluded.remote_id, tasks.remote_id), '
       'list_id = excluded.list_id, parent_id = excluded.parent_id, '
       'position = excluded.position, title = excluded.title, notes = excluded.notes, '
       'status = excluded.status, due = excluded.due, '
@@ -506,12 +571,15 @@ class Store {
     return {for (final r in rows) r.read<String>('id')};
   }
 
-  /// Ids of all clean tasks in [listId] — the per-list ghost-detection set
-  /// (a clean row absent from the server's pull is a ghost to remove).
+  /// Ids of the clean, server-backed tasks in [listId] — the per-list
+  /// ghost-detection set (a clean row absent from the server's pull is a ghost
+  /// to remove). A row with no `remote_id` is excluded: the server never
+  /// acknowledged it, so it cannot be missing from a pull.
   Future<Set<String>> cleanTaskIdsForList(String listId) async {
     final rows = await _db
         .customSelect(
-          "SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean'",
+          "SELECT id FROM tasks WHERE list_id = ? AND sync_state = 'clean' "
+          'AND remote_id IS NOT NULL',
           variables: [Variable<String>(listId)],
         )
         .get();
@@ -542,10 +610,10 @@ class Store {
         'UPDATE tasks SET list_id = ?2 '
         'WHERE id IN ('
         '  SELECT id FROM tasks '
-        "  WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted' "
+        "  WHERE list_id = ?1 AND remote_id IS NULL AND sync_state != 'deleted' "
         '    AND (parent_id IS NULL OR parent_id IN ('
         '        SELECT id FROM tasks '
-        "        WHERE list_id = ?1 AND etag IS NULL AND sync_state != 'deleted')))",
+        "        WHERE list_id = ?1 AND remote_id IS NULL AND sync_state != 'deleted')))",
         variables: [Variable<String>(fromList), Variable<String>(toList)],
         updates: {_db.tasks},
       );
@@ -565,7 +633,7 @@ class Store {
   Future<bool> hasUnpushedTasks(String listId) async {
     final rows = await _db
         .customSelect(
-          'SELECT 1 FROM tasks WHERE list_id = ? AND etag IS NULL '
+          'SELECT 1 FROM tasks WHERE list_id = ? AND remote_id IS NULL '
           "AND sync_state != 'deleted' LIMIT 1",
           variables: [Variable<String>(listId)],
         )
@@ -690,48 +758,29 @@ class Store {
     );
   }
 
-  /// Remap a local list UUID to its server id, rewriting the list row and every
-  /// task's `list_id` (plus pending_moves and inflight_creates) in one
-  /// transaction, then landing the list clean. `defer_foreign_keys` lets the PK
-  /// rewrite precede the child `list_id` updates within the transaction; the FK
-  /// is consistent again at commit.
-  Future<void> remapListId(
+  /// Finalize a pushed (or adopted) list create: LEARN the server id into
+  /// `remote_id` and land the list clean, in one write. The list's primary key
+  /// is IMMUTABLE (#224), so nothing that references it — its tasks' `list_id`,
+  /// queued moves, in-flight markers, the sidebar selection, the router URL —
+  /// has to be rewritten.
+  Future<void> finishListCreate(
     String localId,
     String remoteId,
     String? etag,
     String serverUpdated,
   ) async {
-    await _db.transaction(() async {
-      await _db.customStatement('PRAGMA defer_foreign_keys = ON');
-      final l = Variable<String>(localId);
-      final r = Variable<String>(remoteId);
-      await _db.customUpdate(
-        'UPDATE task_lists SET id = ? WHERE id = ?',
-        variables: [r, l],
-        updates: {_db.taskLists},
-      );
-      await _db.customUpdate(
-        'UPDATE tasks SET list_id = ? WHERE list_id = ?',
-        variables: [r, l],
-        updates: {_db.tasks},
-      );
-      await _db.customUpdate(
-        'UPDATE pending_moves SET list_id = ? WHERE list_id = ?',
-        variables: [r, l],
-        updates: {_db.pendingMoves},
-      );
-      await _db.customUpdate(
-        'UPDATE inflight_creates SET list_id = ? WHERE list_id = ?',
-        variables: [r, l],
-        updates: {_db.inflightCreates},
-      );
-      await _db.customUpdate(
-        "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL, "
-        'etag = COALESCE(?, etag), updated = ? WHERE id = ?',
-        variables: [Variable<String>(etag), Variable<String>(serverUpdated), r],
-        updates: {_db.taskLists},
-      );
-    });
+    await _db.customUpdate(
+      "UPDATE task_lists SET remote_id = ?1, sync_state = 'clean', "
+      'pending_op = NULL, etag = COALESCE(?2, etag), updated = ?3 '
+      'WHERE id = ?4',
+      variables: [
+        Variable<String>(remoteId),
+        Variable<String>(etag),
+        Variable<String>(serverUpdated),
+        Variable<String>(localId),
+      ],
+      updates: {_db.taskLists},
+    );
   }
 
   // ── pending moves (structural reorder/reparent axis) ──────────────────────
@@ -1012,14 +1061,19 @@ class Store {
 
   // ── create finalize + in-flight markers ───────────────────────────────────
 
-  /// Atomically finalize a pushed create: rewrite the local id to the server id
-  /// (self + children + move intents), adopt the server metadata, and clear the
-  /// in-flight marker — all in ONE transaction. This removes the half-applied
-  /// window where a crash between remap and mark-clean would leave a remapped
-  /// row still flagged `pending_op = 'create'` (which would re-insert →
-  /// duplicate).
+  /// Atomically finalize a pushed create: LEARN the server id into `remote_id`,
+  /// adopt the server metadata, and clear the in-flight marker — all in ONE
+  /// transaction. This removes the half-applied window where a crash between
+  /// the two would leave a row that the server holds still flagged
+  /// `pending_op = 'create'` (which would re-insert → duplicate).
   ///
-  /// The final mark-clean is guarded like [markTaskClean]:
+  /// [localId] is and stays the row's primary key: the id is IMMUTABLE for the
+  /// row's lifetime (#224), so every reference held outside the store — the
+  /// router's open-detail id, an undo token, the pending-edits registry — keeps
+  /// resolving across a landing create push. `remote_id` is write-once; nothing
+  /// unlearns it.
+  ///
+  /// The mark-clean is guarded like [markTaskClean]:
   ///  * A re-edited row (its `local_updated` moved past [expectedLocalUpdated])
   ///    keeps its dirty flag but flips `create` → `update`: the task now exists
   ///    remotely under [remoteId], so re-running it as a create would duplicate.
@@ -1041,36 +1095,9 @@ class Store {
     String? serverPosition,
   ) async {
     await _db.transaction(() async {
-      await _db.customStatement('PRAGMA defer_foreign_keys = ON');
-      final l = Variable<String>(localId);
-      final r = Variable<String>(remoteId);
-      await _db.customUpdate(
-        'UPDATE tasks SET id = ? WHERE id = ?',
-        variables: [r, l],
-        updates: {_db.tasks},
-      );
-      await _db.customUpdate(
-        'UPDATE tasks SET parent_id = ? WHERE parent_id = ?',
-        variables: [r, l],
-        updates: {_db.tasks},
-      );
-      await _db.customUpdate(
-        'UPDATE pending_moves SET task_id = ? WHERE task_id = ?',
-        variables: [r, l],
-        updates: {_db.pendingMoves},
-      );
-      await _db.customUpdate(
-        'UPDATE pending_moves SET parent_id = ? WHERE parent_id = ?',
-        variables: [r, l],
-        updates: {_db.pendingMoves},
-      );
-      await _db.customUpdate(
-        'UPDATE pending_moves SET previous_id = ? WHERE previous_id = ?',
-        variables: [r, l],
-        updates: {_db.pendingMoves},
-      );
       await _db.customUpdate(
         'UPDATE tasks SET '
+        'remote_id = ?6, '
         'etag = COALESCE(?1, etag), '
         'updated = ?2, '
         'position = CASE WHEN local_updated = ?3 AND ?4 IS NOT NULL AND NOT EXISTS '
@@ -1094,13 +1121,14 @@ class Store {
           Variable<String>(serverUpdated),
           Variable<String>(expectedLocalUpdated),
           Variable<String>(serverPosition),
-          r,
+          Variable<String>(localId),
+          Variable<String>(remoteId),
         ],
         updates: {_db.tasks},
       );
       await _db.customUpdate(
         'DELETE FROM inflight_creates WHERE local_id = ?',
-        variables: [l],
+        variables: [Variable<String>(localId)],
         updates: {_db.inflightCreates},
         updateKind: UpdateKind.delete,
       );
@@ -1181,17 +1209,18 @@ class Store {
   /// Whether the server may already hold this row — the predicate every delete
   /// path needs before choosing between a hard delete and a tombstone.
   ///
-  /// An etag is the obvious yes. The subtle one is an open in-flight create
-  /// marker: an insert was issued and its answer never arrived, so the task MAY
-  /// exist on Google under an id we never recorded. Hard-deleting such a row
-  /// throws that marker away with it (FK-cascaded), stranding the committed
-  /// insert — the next pull then resurrects the deleted task, or leaves a
-  /// second copy behind a cross-list move. Tombstoning keeps the marker alive
-  /// so crash recovery adopts the orphan and the delete reaches it.
+  /// A learned `remote_id` is the obvious yes. The subtle one is an open
+  /// in-flight create marker: an insert was issued and its answer never
+  /// arrived, so the task MAY exist on Google under an id we never recorded.
+  /// Hard-deleting such a row throws that marker away with it (FK-cascaded),
+  /// stranding the committed insert — the next pull then resurrects the deleted
+  /// task, or leaves a second copy behind a cross-list move. Tombstoning keeps
+  /// the marker alive so crash recovery adopts the orphan and the delete
+  /// reaches it.
   Future<bool> serverMayHold(String id) async {
     final rows = await _db
         .customSelect(
-          'SELECT 1 FROM tasks WHERE id = ?1 AND (etag IS NOT NULL '
+          'SELECT 1 FROM tasks WHERE id = ?1 AND (remote_id IS NOT NULL '
           'OR EXISTS (SELECT 1 FROM inflight_creates WHERE local_id = ?1))',
           variables: [Variable<String>(id)],
         )
@@ -1203,6 +1232,7 @@ class Store {
 
   static List<Variable> _listVars(StoredTaskList l) => [
     Variable<String>(l.list.id),
+    Variable<String>(l.remoteId),
     Variable<String>(l.list.title),
     Variable<String>(l.list.etag),
     Variable<String>(l.list.updated),
@@ -1214,6 +1244,7 @@ class Store {
 
   static List<Variable> _taskVars(StoredTask t) => [
     Variable<String>(t.task.id),
+    Variable<String>(t.remoteId),
     Variable<String>(t.listId),
     Variable<String>(t.task.parent),
     Variable<String>(t.task.position),
@@ -1245,6 +1276,7 @@ class Store {
       localUpdated: row.read<String>('local_updated'),
       pendingOp: row.readNullable<String>('pending_op'),
       localOnly: row.read<bool>('local_only'),
+      remoteId: row.readNullable<String>('remote_id'),
     );
   }
 
@@ -1274,6 +1306,7 @@ class Store {
       syncState: sync,
       localUpdated: row.read<String>('local_updated'),
       pendingOp: row.readNullable<String>('pending_op'),
+      remoteId: row.readNullable<String>('remote_id'),
     );
   }
 }

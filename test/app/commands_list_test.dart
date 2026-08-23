@@ -27,6 +27,9 @@ Future<void> seedSyncedList(Store store, String id) => store.upsertList(
     list: TaskList(id: id, title: 'Inbox', etag: 'e1', updated: _t0),
     syncState: SyncState.clean,
     localUpdated: _t0,
+    // Acknowledged by Google ⇒ it carries a remote id, which is what makes a
+    // delete a tombstone rather than a local drop (#224).
+    remoteId: id,
   ),
 );
 
@@ -116,6 +119,7 @@ void main() {
           listId: 'L1',
           syncState: SyncState.clean,
           localUpdated: _t0,
+          remoteId: 't1',
         ),
       );
 

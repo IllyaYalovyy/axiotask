@@ -27,6 +27,8 @@ import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'sync_fixture.dart';
+
 const _t0 = '2026-06-01T00:00:00Z';
 const _tMove = '2026-06-02T00:00:00Z';
 
@@ -65,12 +67,19 @@ Future<void> localMove(
   String? parent,
   String? previous,
 }) async {
-  final row = (await eng.store.findTaskAny(id))!;
-  final position = previous != null ? 'after-$previous' : '00000000000001';
+  final row = (await findByAnyId(eng.store, id))!;
+  // The store's own fields are LOCAL ids (#224); the test names server ids.
+  final localParent = parent == null
+      ? null
+      : await localIdOf(eng.store, parent);
+  final localPrevious = previous == null
+      ? null
+      : await localIdOf(eng.store, previous);
+  final position = previous != null ? 'after-\$previous' : '00000000000001';
   // Rebuild the Task explicitly: copyWith cannot clear `parent` to null.
   final task = Task(
     id: row.task.id,
-    parent: parent,
+    parent: localParent,
     position: position,
     title: row.task.title,
     notes: row.task.notes,
@@ -89,17 +98,24 @@ Future<void> localMove(
       syncState: row.syncState,
       localUpdated: _tMove,
       pendingOp: row.pendingOp,
+      remoteId: row.remoteId,
     ),
   );
-  await eng.store.recordMove(id, row.listId, parent, previous);
+  await eng.store.recordMove(
+    row.task.id,
+    row.listId,
+    localParent,
+    localPrevious,
+  );
 }
 
-/// Top-level task ids in the order the list view renders them (invariant #1).
+/// Top-level tasks in the order the list view renders them (invariant #1),
+/// named the way the server names them (`remote_id`, else the local id).
 Future<List<String>> localOrder(SyncEngine eng, String list) async {
   final rows = await eng.store.listTasks(list);
   return [
     for (final r in rows)
-      if (r.task.parent == null) r.task.id,
+      if (r.task.parent == null) serverId(r),
   ];
 }
 
@@ -110,12 +126,13 @@ Future<String?> remoteParent(
   String id,
 ) async => (await client.getTask(list, id)).parent;
 
-/// The local row for [id] within [list], or throw with a helpful message.
+/// The local row the server calls [id], within [list], or throw with a helpful
+/// message. An un-pushed row has no remote id and answers to its local one.
 Future<StoredTask> localRow(SyncEngine eng, String list, String id) async {
   for (final r in await eng.store.listTasks(list)) {
-    if (r.task.id == id) return r;
+    if (serverId(r) == id) return r;
   }
-  fail('no local row $id in $list');
+  fail('no local row \$id in \$list');
 }
 
 /// Invariant #1, asserted over the whole store: no row may have a grandparent.
@@ -162,7 +179,7 @@ void main() {
 
   test('pull seeds store', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'first', '1');
     client.seedTask('L1', 'T2', 'second', '2');
 
@@ -175,12 +192,12 @@ void main() {
     // A task stored before web_view_link existed (NULL) must be re-pulled and
     // backfilled on the next sync, even though its etag is unchanged.
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task', '1');
     await eng.run();
 
     // Simulate the pre-migration state: clear the stored link, keep etag.
-    final row = (await eng.store.findTaskAny('T1'))!;
+    final row = (await findByAnyId(eng.store, 'T1'))!;
     expect(row.task.webViewLink, isNotNull, reason: 'first pull stored a link');
     final etagBefore = row.task.etag;
     await eng.store.upsertTask(
@@ -206,15 +223,15 @@ void main() {
 
     // A normal sync (no server change) must re-populate the link.
     await eng.run();
-    final healed = (await eng.store.findTaskAny('T1'))!;
+    final healed = (await findByAnyId(eng.store, 'T1'))!;
     expect(healed.task.webViewLink, isNotNull, reason: 'link backfilled');
     expect(healed.task.etag, etagBefore, reason: 'etag unchanged');
   });
 
   test('pull upserts lists', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
-    client.seedList('L2', 'Work');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L2', 'Work');
 
     await eng.run();
     expect((await eng.store.allLists()).length, 2);
@@ -222,8 +239,8 @@ void main() {
 
   test('pull multiple lists land in their own lists', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Work');
-    client.seedList('L2', 'Personal');
+    await seedSyncedList(client, eng.store, 'L1', 'Work');
+    await seedSyncedList(client, eng.store, 'L2', 'Personal');
     client.seedTask('L1', 'T1', 'work', '1');
     client.seedTask('L2', 'T2', 'personal', '1');
 
@@ -234,19 +251,19 @@ void main() {
 
   test('pull orders parents before children (FK-safe)', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P1', 'parent', '1');
     client.seedTaskWithParent('L1', 'C1', 'child', '2', 'P1');
 
     final out = await eng.run();
     expect(out.pulled, 2);
     final child = await localRow(eng, 'L1', 'C1');
-    expect(child.task.parent, 'P1');
+    expect(await parentServerId(eng.store, child), 'P1');
   });
 
   test('pull skips dirty rows', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'remote', '1');
     client.seedTask('L1', 'T2', 'clean', '2');
     await eng.run();
@@ -271,7 +288,7 @@ void main() {
 
   test('pull updates when remote etag differs', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'v1', '1');
     await eng.run();
 
@@ -284,7 +301,7 @@ void main() {
 
   test('pull handles pagination', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     for (var i = 0; i < 10; i++) {
       client.seedTask('L1', 'T$i', 'task $i', i.toString().padLeft(14, '0'));
     }
@@ -302,7 +319,7 @@ void main() {
 
   test('pull incomplete pagination never ghosts real rows', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     for (var i = 0; i < 6; i++) {
       client.seedTask('L1', 'T$i', 'task $i', i.toString().padLeft(14, '0'));
     }
@@ -334,7 +351,7 @@ void main() {
     // what a total wipe looks like — the `complete` guard must read
     // empty-but-incomplete as "learned nothing", never "everything is gone".
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     for (var i = 0; i < 6; i++) {
       client.seedTask('L1', 'T$i', 'task $i', i.toString().padLeft(14, '0'));
     }
@@ -371,7 +388,7 @@ void main() {
     // order. Seed the hostile order (grandchild first, root last). engine() has
     // push DISABLED — a read-only sync.
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTaskWithParent('L1', 'leaf', 'leaf', '1', 'mid');
     client.seedTaskWithParent('L1', 'mid', 'mid', '2', 'root');
     client.seedTask('L1', 'root', 'root', '3');
@@ -385,7 +402,10 @@ void main() {
           'order (FK-safe)',
     );
     // `mid` is a legal one-level subtask (parent `root` is top-level).
-    expect((await localRow(eng, 'L1', 'mid')).task.parent, 'root');
+    expect(
+      await parentServerId(eng.store, await localRow(eng, 'L1', 'mid')),
+      'root',
+    );
     // `leaf` would be a third level (root > mid > leaf). D7 flattens it to
     // top-level LOCALLY even though push is off (#137).
     expect(
@@ -406,7 +426,7 @@ void main() {
     // nor the store. In READ-ONLY mode crash recovery never runs, so without the
     // detach guard every pull FK-fails — forever.
     final (client, eng) = await engine(); // push DISABLED
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     // Crashed create: local row under a local UUID + in-flight marker…
@@ -449,14 +469,18 @@ void main() {
     final engPush = SyncEngine.withPush(client, eng.store, true);
     await engPush.run();
     final relinked = await localRow(eng, 'L1', 'C');
-    expect(relinked.task.parent, 'remote-orphan', reason: 're-linked');
+    expect(
+      await parentServerId(eng.store, relinked),
+      'remote-orphan',
+      reason: 're-linked',
+    );
   });
 
   // ─── Ghost detection ───────────────────────────────────────────────────────
 
   test('ghost rows deleted', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'stays', '1');
     client.seedTask('L1', 'T2', 'vanishes', '2');
     await eng.run();
@@ -467,12 +491,12 @@ void main() {
     expect(out.deleted, 1);
     final tasks = await eng.store.listTasks('L1');
     expect(tasks.length, 1);
-    expect(tasks[0].task.id, 'T1');
+    expect(serverId(tasks[0]), 'T1');
   });
 
   test('ghost detection preserves dirty rows', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'remote', '1');
     await eng.run();
 
@@ -481,14 +505,14 @@ void main() {
 
     await eng.run();
     expect(
-      (await eng.store.listTasks('L1')).any((t) => t.task.id == 'local-only'),
+      (await eng.store.listTasks('L1')).any((t) => serverId(t) == 'local-only'),
       isTrue,
     );
   });
 
   test('ghost detection skipped on transient', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task1', '1');
     client.seedTask('L1', 'T2', 'task2', '2');
     await eng.run();
@@ -502,8 +526,8 @@ void main() {
 
   test('ghost detection per list', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Work');
-    client.seedList('L2', 'Personal');
+    await seedSyncedList(client, eng.store, 'L1', 'Work');
+    await seedSyncedList(client, eng.store, 'L2', 'Personal');
     client.seedTask('L1', 'T1', 'work', '1');
     client.seedTask('L2', 'T2', 'personal', '1');
     await eng.run();
@@ -522,8 +546,8 @@ void main() {
     // are really gone server-side, but only the list we scanned to the end may
     // act on that: A's row is kept (absence unconfirmed), B's ghost is removed.
     final (client, eng) = await engine();
-    client.seedList('L-A', 'Work');
-    client.seedList('L-B', 'Personal');
+    await seedSyncedList(client, eng.store, 'L-A', 'Work');
+    await seedSyncedList(client, eng.store, 'L-B', 'Personal');
     client.seedTask('L-A', 'A1', 'work', '1');
     client.seedTask('L-B', 'B1', 'personal', '1');
     await eng.run();
@@ -565,7 +589,7 @@ void main() {
 
   test('second sync is a no-op', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task', '1');
 
     await eng.run();
@@ -577,7 +601,7 @@ void main() {
 
   test('transient list_tasklists error is not fatal', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.failNext(Method.listTasklists, () => const ServerError(503));
 
     final out = await eng.run();
@@ -588,7 +612,7 @@ void main() {
 
   test('sync log written on success', () async {
     final (client, eng) = await engine();
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task', '1');
     await eng.run();
 
@@ -629,7 +653,7 @@ void main() {
     // is the one place with the full picture: D7 promotes C to top-level AND
     // pushes the corrective move so the server converges too, as a conflict.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -670,11 +694,11 @@ void main() {
       movesBefore + 1,
       reason: 'exactly one corrective move — C promoted to top-level',
     );
-    final c = (await eng.store.findTaskAny('C'))!;
+    final c = (await findByAnyId(eng.store, 'C'))!;
     expect(c.task.parent, isNull, reason: 'C is promoted to top-level locally');
     expect(c.syncState, SyncState.clean);
     expect(
-      (await eng.store.findTaskAny('T'))!.task.parent,
+      await parentServerId(eng.store, (await findByAnyId(eng.store, 'T'))!),
       'P',
       reason: "the user's demote of T survives — nothing is discarded",
     );
@@ -720,7 +744,7 @@ void main() {
     final store = Store(db);
 
     final pusher = SyncEngine.withPush(client, store, true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await pusher.run();
@@ -771,7 +795,7 @@ void main() {
           'conflict',
     );
     expect(out.errors, 0, reason: 'flattening locally is not an error');
-    final c = (await store.findTaskAny('C'))!;
+    final c = (await findByAnyId(store, 'C'))!;
     expect(
       c.task.parent,
       isNull,
@@ -787,7 +811,7 @@ void main() {
           're-examines it (P6)',
     );
     expect(
-      (await store.findTaskAny('T'))!.task.parent,
+      await parentServerId(store, (await findByAnyId(store, 'T'))!),
       'P',
       reason:
           'the '
@@ -822,7 +846,7 @@ void main() {
     // WE create the third level. The following pull's D7 repair catches it
     // within one round-trip.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'target parent', '00000000000002');
     await eng.run();
@@ -835,7 +859,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'local-c',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'queued grandchild',
           status: TaskStatus.needsAction,
@@ -865,7 +889,7 @@ void main() {
     expect(c.syncState, SyncState.clean);
     await assertAtMostOneLevel(eng, 'L1');
     expect(
-      await remoteParent(client, 'L1', c.task.id),
+      await remoteParent(client, 'L1', c.remoteId!),
       isNull,
       reason:
           'the '
@@ -884,7 +908,7 @@ void main() {
     // no server id to move — D7 must promote the create LOCALLY so the tree is
     // one level immediately; it then pushes as a top-level create.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'target parent', '00000000000002');
     await eng.run();
@@ -895,7 +919,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'held-c',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'held grandchild',
           status: TaskStatus.needsAction,
@@ -923,7 +947,7 @@ void main() {
           'no corrective move: an un-pushed create has no server id to move',
     );
     expect(out.conflicts, 1, reason: 'promoting the queued third level counts');
-    final c = (await eng.store.findTaskAny('held-c'))!;
+    final c = (await findByAnyId(eng.store, 'held-c'))!;
     expect(
       c.task.parent,
       isNull,
@@ -945,7 +969,7 @@ void main() {
           'server too',
     );
     expect(landed.syncState, SyncState.clean);
-    expect(await remoteParent(client, 'L1', landed.task.id), isNull);
+    expect(await remoteParent(client, 'L1', landed.remoteId!), isNull);
     await assertAtMostOneLevel(eng, 'L1');
   });
 
@@ -956,7 +980,7 @@ void main() {
     // top-level C before D7 even inspects the row — D7 then finds no grandchild
     // and issues no redundant move.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'subtask', '00000000000002');
     await eng.run();
@@ -975,7 +999,7 @@ void main() {
       movesBefore,
       reason: 'no redundant corrective move — the pull already adopted it',
     );
-    final c = (await eng.store.findTaskAny('C'))!;
+    final c = (await findByAnyId(eng.store, 'C'))!;
     expect(c.task.parent, isNull, reason: 'C is top-level, exactly once');
     await assertAtMostOneLevel(eng, 'L1');
     expect(await remoteParent(client, 'L1', 'C'), isNull);
@@ -1015,7 +1039,7 @@ void main() {
     // is promoted locally now and its etag dropped; the server, still nesting it,
     // is caught by the next pull's re-detect + retry (P7).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -1027,7 +1051,7 @@ void main() {
     final out = await eng.run();
 
     expect(out.conflicts, 1, reason: 'resolving the third level counts');
-    final c = (await eng.store.findTaskAny('C'))!;
+    final c = (await findByAnyId(eng.store, 'C'))!;
     expect(c.task.parent, isNull, reason: 'C is promoted to top-level locally');
     expect(
       c.task.etag,
@@ -1057,7 +1081,7 @@ void main() {
           'server '
           'converged',
     );
-    expect((await eng.store.findTaskAny('C'))!.task.parent, isNull);
+    expect((await findByAnyId(eng.store, 'C'))!.task.parent, isNull);
     await assertAtMostOneLevel(eng, 'L1');
 
     // Fixpoint afterwards.
@@ -1075,7 +1099,7 @@ void main() {
     // after the pull. D7 must promote it locally regardless; the next COMPLETE
     // pull ghost-removes the vanished row.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -1088,7 +1112,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'C',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'vanished grandchild',
           status: TaskStatus.needsAction,
@@ -1099,6 +1123,10 @@ void main() {
         listId: 'L1',
         syncState: SyncState.clean,
         localUpdated: _t0,
+        // The server DID acknowledge it once (it has an etag), so it carries a
+        // remote id — that is what makes the corrective move and, later, ghost
+        // removal address it at all (#224).
+        remoteId: 'C',
       ),
     );
 
@@ -1110,7 +1138,7 @@ void main() {
 
     expect(out.conflicts, 1, reason: 'the third level is resolved locally');
     expect(
-      (await eng.store.findTaskAny('C'))!.task.parent,
+      (await findByAnyId(eng.store, 'C'))!.task.parent,
       isNull,
       reason: 'C is flat locally despite the rejection',
     );
@@ -1121,7 +1149,7 @@ void main() {
     client.setPageSize(100);
     await eng.run();
     expect(
-      await eng.store.findTaskAny('C'),
+      await findByAnyId(eng.store, 'C'),
       isNull,
       reason:
           'the vanished grandchild is ghost-removed on the next '
@@ -1139,7 +1167,7 @@ void main() {
     // immediately after a partial pull. The flatten is a LOCAL structural repair
     // and must run after EVERY sync regardless of what the pull did.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -1159,7 +1187,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'C',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'grandchild',
           status: TaskStatus.needsAction,
@@ -1180,7 +1208,7 @@ void main() {
     // The local third level is flattened anyway (invariant #1 is absolute).
     expect(out.conflicts, 1, reason: 'resolving the third level counts');
     expect(
-      (await eng.store.findTaskAny('C'))!.task.parent,
+      (await findByAnyId(eng.store, 'C'))!.task.parent,
       isNull,
       reason: 'C is promoted to top-level even though the pull never ran',
     );
@@ -1190,7 +1218,7 @@ void main() {
     client.clearFaults();
     await eng.run();
     expect(
-      (await eng.store.findTaskAny('C'))!.task.parent,
+      (await findByAnyId(eng.store, 'C'))!.task.parent,
       isNull,
       reason:
           'C '
@@ -1207,7 +1235,7 @@ void main() {
     // content push governs the etag. Dropping it (as a clean row does) would turn
     // the retry patch's guarded If-Match into an unconditional overwrite.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -1227,7 +1255,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'C',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'my local edit',
           status: TaskStatus.needsAction,
@@ -1239,6 +1267,8 @@ void main() {
         syncState: SyncState.dirty,
         localUpdated: _t0,
         pendingOp: 'update',
+        // Seeded as a row the server already holds under this id (#224).
+        remoteId: 'C',
       ),
     );
 
@@ -1248,7 +1278,7 @@ void main() {
     final out = await eng.run();
     expect(out.conflicts, 1, reason: 'resolving the third level counts');
 
-    final c = (await eng.store.findTaskAny('C'))!;
+    final c = (await findByAnyId(eng.store, 'C'))!;
     expect(
       c.task.parent,
       isNull,
@@ -1311,7 +1341,7 @@ void main() {
     // would be DELETED — silently eating completed history rather than showing it
     // ticked.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Work');
+    await seedSyncedList(client, eng.store, 'L1', 'Work');
     client.seedTask('L1', 'T1', 'file taxes', '1');
     await eng.run();
 
@@ -1348,7 +1378,7 @@ void main() {
     // and detaching it would promote a subtask into a list row (invariant #1). It
     // must stay exactly where it was, done.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Work');
+    await seedSyncedList(client, eng.store, 'L1', 'Work');
     client.seedTask('L1', 'P', 'trip', '1');
     client.seedTaskWithParent('L1', 'C', 'pack', '2', 'P');
     await eng.run();
@@ -1362,15 +1392,15 @@ void main() {
     final out = await eng.run();
     expect(out.deleted, 0);
     final rows = await eng.store.listTasks('L1');
-    final child = rows.firstWhere((r) => r.task.id == 'C');
+    final child = rows.firstWhere((r) => serverId(r) == 'C');
     expect(child.task.status, TaskStatus.completed);
     expect(
-      child.task.parent,
+      await parentServerId(eng.store, child),
       'P',
       reason: 'still a subtask — never promoted to a list row (invariant #1)',
     );
     expect(
-      rows.firstWhere((r) => r.task.id == 'P').task.status,
+      rows.firstWhere((r) => serverId(r) == 'P').task.status,
       TaskStatus.needsAction,
       reason: 'completing a child does not touch the parent',
     );
@@ -1389,8 +1419,8 @@ void main() {
     // was already snapshotted. This run cannot see it, so S1 must still be
     // present; the NEXT healthy run ghost-detects and removes it.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'One');
-    client.seedList('L2', 'Two');
+    await seedSyncedList(client, eng.store, 'L1', 'One');
+    await seedSyncedList(client, eng.store, 'L2', 'Two');
     client.seedTask('L1', 'S1', 'alpha', '1');
     client.seedTask('L2', 'S2', 'beta', '1');
     await eng.run();
@@ -1409,7 +1439,7 @@ void main() {
     client.clearOnCall();
     expect(out.deleted, 0, reason: 'the mid-run delete is invisible this run');
     expect(
-      (await eng.store.listTasks('L1')).any((t) => t.task.id == 'S1'),
+      (await eng.store.listTasks('L1')).any((t) => serverId(t) == 'S1'),
       isTrue,
       reason: 'S1 still present locally this run — the race window is real',
     );
@@ -1422,12 +1452,12 @@ void main() {
       reason: 'S1 is ghost-detected and removed next run',
     );
     expect(
-      (await eng.store.listTasks('L1')).any((t) => t.task.id == 'S1'),
+      (await eng.store.listTasks('L1')).any((t) => serverId(t) == 'S1'),
       isFalse,
       reason: 'S1 removed locally after convergence',
     );
     expect(
-      (await eng.store.listTasks('L2')).any((t) => t.task.id == 'S2'),
+      (await eng.store.listTasks('L2')).any((t) => serverId(t) == 'S2'),
       isTrue,
       reason: 'the untouched other list is unaffected',
     );
@@ -1440,8 +1470,8 @@ void main() {
     // before L2 is itself listed. Because it exists by the time L2's list_tasks
     // reads, the SAME run pulls it.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'One');
-    client.seedList('L2', 'Two');
+    await seedSyncedList(client, eng.store, 'L1', 'One');
+    await seedSyncedList(client, eng.store, 'L2', 'Two');
     client.seedTask('L1', 'S1', 'alpha', '1');
     await eng.run();
     expect(
@@ -1466,7 +1496,7 @@ void main() {
     client.clearOnCall();
     final l2 = await eng.store.listTasks('L2');
     final created = l2.firstWhere(
-      (t) => t.task.id == 'NEW',
+      (t) => serverId(t) == 'NEW',
       orElse: () => fail('the mid-run remote create is pulled in the same run'),
     );
     expect(created.task.title, 'gamma');
@@ -1492,7 +1522,7 @@ void main() {
     // first call of the PULL phase, a fatal error aborts the run. Re-running must
     // NOT re-insert the row — the push phase's work is durable across the crash.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
@@ -1553,7 +1583,7 @@ void main() {
     // level is still nested right after the crashed run. The resume run flattens
     // it and converges (invariant #1 holds once a run completes).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'to be demoted', '00000000000002');
     await eng.run();
@@ -1572,7 +1602,7 @@ void main() {
       StoredTask(
         task: Task(
           id: 'C',
-          parent: 'T',
+          parent: await localIdOf(eng.store, 'T'),
           position: '1',
           title: 'grandchild',
           status: TaskStatus.needsAction,
@@ -1583,6 +1613,8 @@ void main() {
         listId: 'L1',
         syncState: SyncState.clean,
         localUpdated: _t0,
+        // Seeded as a row the server already holds under this id (#224).
+        remoteId: 'C',
       ),
     );
 
@@ -1592,7 +1624,7 @@ void main() {
 
     // The crash left the third level in the store (the flatten was deferred).
     expect(
-      (await eng.store.findTaskAny('C'))!.task.parent,
+      await parentServerId(eng.store, (await findByAnyId(eng.store, 'C'))!),
       'T',
       reason: 'the fatal abort could not run the post-sync flatten this run',
     );
@@ -1606,7 +1638,7 @@ void main() {
           'the resume run repairs the residual '
           'third level',
     );
-    expect((await eng.store.findTaskAny('C'))!.task.parent, isNull);
+    expect((await findByAnyId(eng.store, 'C'))!.task.parent, isNull);
     expect(
       await remoteParent(client, 'L1', 'C'),
       isNull,

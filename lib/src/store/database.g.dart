@@ -17,6 +17,17 @@ class TaskLists extends Table with TableInfo<TaskLists, TaskList> {
     requiredDuringInsert: false,
     $customConstraints: 'PRIMARY KEY',
   );
+  static const VerificationMeta _remoteIdMeta = const VerificationMeta(
+    'remoteId',
+  );
+  late final GeneratedColumn<String> remoteId = GeneratedColumn<String>(
+    'remote_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'UNIQUE',
+  );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   late final GeneratedColumn<String> title = GeneratedColumn<String>(
     'title',
@@ -96,6 +107,7 @@ class TaskLists extends Table with TableInfo<TaskLists, TaskList> {
   @override
   List<GeneratedColumn> get $columns => [
     id,
+    remoteId,
     title,
     etag,
     updated,
@@ -118,6 +130,12 @@ class TaskLists extends Table with TableInfo<TaskLists, TaskList> {
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('remote_id')) {
+      context.handle(
+        _remoteIdMeta,
+        remoteId.isAcceptableOrUnknown(data['remote_id']!, _remoteIdMeta),
+      );
     }
     if (data.containsKey('title')) {
       context.handle(
@@ -185,6 +203,10 @@ class TaskLists extends Table with TableInfo<TaskLists, TaskList> {
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       ),
+      remoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}remote_id'],
+      ),
       title: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}title'],
@@ -227,6 +249,7 @@ class TaskLists extends Table with TableInfo<TaskLists, TaskList> {
 
 class TaskList extends DataClass implements Insertable<TaskList> {
   final String? id;
+  final String? remoteId;
   final String title;
   final String? etag;
   final String updated;
@@ -236,6 +259,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
   final int localOnly;
   const TaskList({
     this.id,
+    this.remoteId,
     required this.title,
     this.etag,
     required this.updated,
@@ -249,6 +273,9 @@ class TaskList extends DataClass implements Insertable<TaskList> {
     final map = <String, Expression>{};
     if (!nullToAbsent || id != null) {
       map['id'] = Variable<String>(id);
+    }
+    if (!nullToAbsent || remoteId != null) {
+      map['remote_id'] = Variable<String>(remoteId);
     }
     map['title'] = Variable<String>(title);
     if (!nullToAbsent || etag != null) {
@@ -267,6 +294,9 @@ class TaskList extends DataClass implements Insertable<TaskList> {
   TaskListsCompanion toCompanion(bool nullToAbsent) {
     return TaskListsCompanion(
       id: id == null && nullToAbsent ? const Value.absent() : Value(id),
+      remoteId: remoteId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteId),
       title: Value(title),
       etag: etag == null && nullToAbsent ? const Value.absent() : Value(etag),
       updated: Value(updated),
@@ -286,6 +316,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return TaskList(
       id: serializer.fromJson<String?>(json['id']),
+      remoteId: serializer.fromJson<String?>(json['remote_id']),
       title: serializer.fromJson<String>(json['title']),
       etag: serializer.fromJson<String?>(json['etag']),
       updated: serializer.fromJson<String>(json['updated']),
@@ -300,6 +331,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'id': serializer.toJson<String?>(id),
+      'remote_id': serializer.toJson<String?>(remoteId),
       'title': serializer.toJson<String>(title),
       'etag': serializer.toJson<String?>(etag),
       'updated': serializer.toJson<String>(updated),
@@ -312,6 +344,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
 
   TaskList copyWith({
     Value<String?> id = const Value.absent(),
+    Value<String?> remoteId = const Value.absent(),
     String? title,
     Value<String?> etag = const Value.absent(),
     String? updated,
@@ -321,6 +354,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
     int? localOnly,
   }) => TaskList(
     id: id.present ? id.value : this.id,
+    remoteId: remoteId.present ? remoteId.value : this.remoteId,
     title: title ?? this.title,
     etag: etag.present ? etag.value : this.etag,
     updated: updated ?? this.updated,
@@ -332,6 +366,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
   TaskList copyWithCompanion(TaskListsCompanion data) {
     return TaskList(
       id: data.id.present ? data.id.value : this.id,
+      remoteId: data.remoteId.present ? data.remoteId.value : this.remoteId,
       title: data.title.present ? data.title.value : this.title,
       etag: data.etag.present ? data.etag.value : this.etag,
       updated: data.updated.present ? data.updated.value : this.updated,
@@ -348,6 +383,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
   String toString() {
     return (StringBuffer('TaskList(')
           ..write('id: $id, ')
+          ..write('remoteId: $remoteId, ')
           ..write('title: $title, ')
           ..write('etag: $etag, ')
           ..write('updated: $updated, ')
@@ -362,6 +398,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
   @override
   int get hashCode => Object.hash(
     id,
+    remoteId,
     title,
     etag,
     updated,
@@ -375,6 +412,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
       identical(this, other) ||
       (other is TaskList &&
           other.id == this.id &&
+          other.remoteId == this.remoteId &&
           other.title == this.title &&
           other.etag == this.etag &&
           other.updated == this.updated &&
@@ -386,6 +424,7 @@ class TaskList extends DataClass implements Insertable<TaskList> {
 
 class TaskListsCompanion extends UpdateCompanion<TaskList> {
   final Value<String?> id;
+  final Value<String?> remoteId;
   final Value<String> title;
   final Value<String?> etag;
   final Value<String> updated;
@@ -396,6 +435,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
   final Value<int> rowid;
   const TaskListsCompanion({
     this.id = const Value.absent(),
+    this.remoteId = const Value.absent(),
     this.title = const Value.absent(),
     this.etag = const Value.absent(),
     this.updated = const Value.absent(),
@@ -407,6 +447,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
   });
   TaskListsCompanion.insert({
     this.id = const Value.absent(),
+    this.remoteId = const Value.absent(),
     required String title,
     this.etag = const Value.absent(),
     required String updated,
@@ -421,6 +462,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
        syncState = Value(syncState);
   static Insertable<TaskList> custom({
     Expression<String>? id,
+    Expression<String>? remoteId,
     Expression<String>? title,
     Expression<String>? etag,
     Expression<String>? updated,
@@ -432,6 +474,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
+      if (remoteId != null) 'remote_id': remoteId,
       if (title != null) 'title': title,
       if (etag != null) 'etag': etag,
       if (updated != null) 'updated': updated,
@@ -445,6 +488,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
 
   TaskListsCompanion copyWith({
     Value<String?>? id,
+    Value<String?>? remoteId,
     Value<String>? title,
     Value<String?>? etag,
     Value<String>? updated,
@@ -456,6 +500,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
   }) {
     return TaskListsCompanion(
       id: id ?? this.id,
+      remoteId: remoteId ?? this.remoteId,
       title: title ?? this.title,
       etag: etag ?? this.etag,
       updated: updated ?? this.updated,
@@ -472,6 +517,9 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
     final map = <String, Expression>{};
     if (id.present) {
       map['id'] = Variable<String>(id.value);
+    }
+    if (remoteId.present) {
+      map['remote_id'] = Variable<String>(remoteId.value);
     }
     if (title.present) {
       map['title'] = Variable<String>(title.value);
@@ -504,6 +552,7 @@ class TaskListsCompanion extends UpdateCompanion<TaskList> {
   String toString() {
     return (StringBuffer('TaskListsCompanion(')
           ..write('id: $id, ')
+          ..write('remoteId: $remoteId, ')
           ..write('title: $title, ')
           ..write('etag: $etag, ')
           ..write('updated: $updated, ')
@@ -530,6 +579,17 @@ class Tasks extends Table with TableInfo<Tasks, Task> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
     $customConstraints: 'PRIMARY KEY',
+  );
+  static const VerificationMeta _remoteIdMeta = const VerificationMeta(
+    'remoteId',
+  );
+  late final GeneratedColumn<String> remoteId = GeneratedColumn<String>(
+    'remote_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'UNIQUE',
   );
   static const VerificationMeta _listIdMeta = const VerificationMeta('listId');
   late final GeneratedColumn<String> listId = GeneratedColumn<String>(
@@ -724,6 +784,7 @@ class Tasks extends Table with TableInfo<Tasks, Task> {
   @override
   List<GeneratedColumn> get $columns => [
     id,
+    remoteId,
     listId,
     parentId,
     position,
@@ -757,6 +818,12 @@ class Tasks extends Table with TableInfo<Tasks, Task> {
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('remote_id')) {
+      context.handle(
+        _remoteIdMeta,
+        remoteId.isAcceptableOrUnknown(data['remote_id']!, _remoteIdMeta),
+      );
     }
     if (data.containsKey('list_id')) {
       context.handle(
@@ -902,6 +969,10 @@ class Tasks extends Table with TableInfo<Tasks, Task> {
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       ),
+      remoteId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}remote_id'],
+      ),
       listId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}list_id'],
@@ -988,6 +1059,7 @@ class Tasks extends Table with TableInfo<Tasks, Task> {
 
 class Task extends DataClass implements Insertable<Task> {
   final String? id;
+  final String? remoteId;
   final String listId;
   final String? parentId;
   final String position;
@@ -1008,6 +1080,7 @@ class Task extends DataClass implements Insertable<Task> {
   final String? webViewLink;
   const Task({
     this.id,
+    this.remoteId,
     required this.listId,
     this.parentId,
     required this.position,
@@ -1032,6 +1105,9 @@ class Task extends DataClass implements Insertable<Task> {
     final map = <String, Expression>{};
     if (!nullToAbsent || id != null) {
       map['id'] = Variable<String>(id);
+    }
+    if (!nullToAbsent || remoteId != null) {
+      map['remote_id'] = Variable<String>(remoteId);
     }
     map['list_id'] = Variable<String>(listId);
     if (!nullToAbsent || parentId != null) {
@@ -1079,6 +1155,9 @@ class Task extends DataClass implements Insertable<Task> {
   TasksCompanion toCompanion(bool nullToAbsent) {
     return TasksCompanion(
       id: id == null && nullToAbsent ? const Value.absent() : Value(id),
+      remoteId: remoteId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteId),
       listId: Value(listId),
       parentId: parentId == null && nullToAbsent
           ? const Value.absent()
@@ -1125,6 +1204,7 @@ class Task extends DataClass implements Insertable<Task> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return Task(
       id: serializer.fromJson<String?>(json['id']),
+      remoteId: serializer.fromJson<String?>(json['remote_id']),
       listId: serializer.fromJson<String>(json['list_id']),
       parentId: serializer.fromJson<String?>(json['parent_id']),
       position: serializer.fromJson<String>(json['position']),
@@ -1150,6 +1230,7 @@ class Task extends DataClass implements Insertable<Task> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'id': serializer.toJson<String?>(id),
+      'remote_id': serializer.toJson<String?>(remoteId),
       'list_id': serializer.toJson<String>(listId),
       'parent_id': serializer.toJson<String?>(parentId),
       'position': serializer.toJson<String>(position),
@@ -1173,6 +1254,7 @@ class Task extends DataClass implements Insertable<Task> {
 
   Task copyWith({
     Value<String?> id = const Value.absent(),
+    Value<String?> remoteId = const Value.absent(),
     String? listId,
     Value<String?> parentId = const Value.absent(),
     String? position,
@@ -1193,6 +1275,7 @@ class Task extends DataClass implements Insertable<Task> {
     Value<String?> webViewLink = const Value.absent(),
   }) => Task(
     id: id.present ? id.value : this.id,
+    remoteId: remoteId.present ? remoteId.value : this.remoteId,
     listId: listId ?? this.listId,
     parentId: parentId.present ? parentId.value : this.parentId,
     position: position ?? this.position,
@@ -1215,6 +1298,7 @@ class Task extends DataClass implements Insertable<Task> {
   Task copyWithCompanion(TasksCompanion data) {
     return Task(
       id: data.id.present ? data.id.value : this.id,
+      remoteId: data.remoteId.present ? data.remoteId.value : this.remoteId,
       listId: data.listId.present ? data.listId.value : this.listId,
       parentId: data.parentId.present ? data.parentId.value : this.parentId,
       position: data.position.present ? data.position.value : this.position,
@@ -1248,6 +1332,7 @@ class Task extends DataClass implements Insertable<Task> {
   String toString() {
     return (StringBuffer('Task(')
           ..write('id: $id, ')
+          ..write('remoteId: $remoteId, ')
           ..write('listId: $listId, ')
           ..write('parentId: $parentId, ')
           ..write('position: $position, ')
@@ -1273,6 +1358,7 @@ class Task extends DataClass implements Insertable<Task> {
   @override
   int get hashCode => Object.hash(
     id,
+    remoteId,
     listId,
     parentId,
     position,
@@ -1297,6 +1383,7 @@ class Task extends DataClass implements Insertable<Task> {
       identical(this, other) ||
       (other is Task &&
           other.id == this.id &&
+          other.remoteId == this.remoteId &&
           other.listId == this.listId &&
           other.parentId == this.parentId &&
           other.position == this.position &&
@@ -1319,6 +1406,7 @@ class Task extends DataClass implements Insertable<Task> {
 
 class TasksCompanion extends UpdateCompanion<Task> {
   final Value<String?> id;
+  final Value<String?> remoteId;
   final Value<String> listId;
   final Value<String?> parentId;
   final Value<String> position;
@@ -1340,6 +1428,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   final Value<int> rowid;
   const TasksCompanion({
     this.id = const Value.absent(),
+    this.remoteId = const Value.absent(),
     this.listId = const Value.absent(),
     this.parentId = const Value.absent(),
     this.position = const Value.absent(),
@@ -1362,6 +1451,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   });
   TasksCompanion.insert({
     this.id = const Value.absent(),
+    this.remoteId = const Value.absent(),
     required String listId,
     this.parentId = const Value.absent(),
     required String position,
@@ -1390,6 +1480,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
        syncState = Value(syncState);
   static Insertable<Task> custom({
     Expression<String>? id,
+    Expression<String>? remoteId,
     Expression<String>? listId,
     Expression<String>? parentId,
     Expression<String>? position,
@@ -1412,6 +1503,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
+      if (remoteId != null) 'remote_id': remoteId,
       if (listId != null) 'list_id': listId,
       if (parentId != null) 'parent_id': parentId,
       if (position != null) 'position': position,
@@ -1436,6 +1528,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
 
   TasksCompanion copyWith({
     Value<String?>? id,
+    Value<String?>? remoteId,
     Value<String>? listId,
     Value<String?>? parentId,
     Value<String>? position,
@@ -1458,6 +1551,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   }) {
     return TasksCompanion(
       id: id ?? this.id,
+      remoteId: remoteId ?? this.remoteId,
       listId: listId ?? this.listId,
       parentId: parentId ?? this.parentId,
       position: position ?? this.position,
@@ -1485,6 +1579,9 @@ class TasksCompanion extends UpdateCompanion<Task> {
     final map = <String, Expression>{};
     if (id.present) {
       map['id'] = Variable<String>(id.value);
+    }
+    if (remoteId.present) {
+      map['remote_id'] = Variable<String>(remoteId.value);
     }
     if (listId.present) {
       map['list_id'] = Variable<String>(listId.value);
@@ -1550,6 +1647,7 @@ class TasksCompanion extends UpdateCompanion<Task> {
   String toString() {
     return (StringBuffer('TasksCompanion(')
           ..write('id: $id, ')
+          ..write('remoteId: $remoteId, ')
           ..write('listId: $listId, ')
           ..write('parentId: $parentId, ')
           ..write('position: $position, ')
@@ -2686,6 +2784,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 typedef $TaskListsCreateCompanionBuilder =
     TaskListsCompanion Function({
       Value<String?> id,
+      Value<String?> remoteId,
       required String title,
       Value<String?> etag,
       required String updated,
@@ -2698,6 +2797,7 @@ typedef $TaskListsCreateCompanionBuilder =
 typedef $TaskListsUpdateCompanionBuilder =
     TaskListsCompanion Function({
       Value<String?> id,
+      Value<String?> remoteId,
       Value<String> title,
       Value<String?> etag,
       Value<String> updated,
@@ -2780,6 +2880,11 @@ class $TaskListsFilterComposer extends Composer<_$AppDatabase, TaskLists> {
   });
   ColumnFilters<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2907,6 +3012,11 @@ class $TaskListsOrderingComposer extends Composer<_$AppDatabase, TaskLists> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get title => $composableBuilder(
     column: $table.title,
     builder: (column) => ColumnOrderings(column),
@@ -2953,6 +3063,9 @@ class $TaskListsAnnotationComposer extends Composer<_$AppDatabase, TaskLists> {
   });
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get remoteId =>
+      $composableBuilder(column: $table.remoteId, builder: (column) => column);
 
   GeneratedColumn<String> get title =>
       $composableBuilder(column: $table.title, builder: (column) => column);
@@ -3086,6 +3199,7 @@ class $TaskListsTableManager
           updateCompanionCallback:
               ({
                 Value<String?> id = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
                 Value<String> title = const Value.absent(),
                 Value<String?> etag = const Value.absent(),
                 Value<String> updated = const Value.absent(),
@@ -3096,6 +3210,7 @@ class $TaskListsTableManager
                 Value<int> rowid = const Value.absent(),
               }) => TaskListsCompanion(
                 id: id,
+                remoteId: remoteId,
                 title: title,
                 etag: etag,
                 updated: updated,
@@ -3108,6 +3223,7 @@ class $TaskListsTableManager
           createCompanionCallback:
               ({
                 Value<String?> id = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
                 required String title,
                 Value<String?> etag = const Value.absent(),
                 required String updated,
@@ -3118,6 +3234,7 @@ class $TaskListsTableManager
                 Value<int> rowid = const Value.absent(),
               }) => TaskListsCompanion.insert(
                 id: id,
+                remoteId: remoteId,
                 title: title,
                 etag: etag,
                 updated: updated,
@@ -3231,6 +3348,7 @@ typedef $TaskListsProcessedTableManager =
 typedef $TasksCreateCompanionBuilder =
     TasksCompanion Function({
       Value<String?> id,
+      Value<String?> remoteId,
       required String listId,
       Value<String?> parentId,
       required String position,
@@ -3254,6 +3372,7 @@ typedef $TasksCreateCompanionBuilder =
 typedef $TasksUpdateCompanionBuilder =
     TasksCompanion Function({
       Value<String?> id,
+      Value<String?> remoteId,
       Value<String> listId,
       Value<String?> parentId,
       Value<String> position,
@@ -3345,6 +3464,11 @@ class $TasksFilterComposer extends Composer<_$AppDatabase, Tasks> {
   });
   ColumnFilters<String> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3520,6 +3644,11 @@ class $TasksOrderingComposer extends Composer<_$AppDatabase, Tasks> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get remoteId => $composableBuilder(
+    column: $table.remoteId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get parentId => $composableBuilder(
     column: $table.parentId,
     builder: (column) => ColumnOrderings(column),
@@ -3639,6 +3768,9 @@ class $TasksAnnotationComposer extends Composer<_$AppDatabase, Tasks> {
   });
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get remoteId =>
+      $composableBuilder(column: $table.remoteId, builder: (column) => column);
 
   GeneratedColumn<String> get parentId =>
       $composableBuilder(column: $table.parentId, builder: (column) => column);
@@ -3806,6 +3938,7 @@ class $TasksTableManager
           updateCompanionCallback:
               ({
                 Value<String?> id = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
                 Value<String> listId = const Value.absent(),
                 Value<String?> parentId = const Value.absent(),
                 Value<String> position = const Value.absent(),
@@ -3827,6 +3960,7 @@ class $TasksTableManager
                 Value<int> rowid = const Value.absent(),
               }) => TasksCompanion(
                 id: id,
+                remoteId: remoteId,
                 listId: listId,
                 parentId: parentId,
                 position: position,
@@ -3850,6 +3984,7 @@ class $TasksTableManager
           createCompanionCallback:
               ({
                 Value<String?> id = const Value.absent(),
+                Value<String?> remoteId = const Value.absent(),
                 required String listId,
                 Value<String?> parentId = const Value.absent(),
                 required String position,
@@ -3871,6 +4006,7 @@ class $TasksTableManager
                 Value<int> rowid = const Value.absent(),
               }) => TasksCompanion.insert(
                 id: id,
+                remoteId: remoteId,
                 listId: listId,
                 parentId: parentId,
                 position: position,

@@ -24,6 +24,8 @@ import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'sync_fixture.dart';
+
 const _t0 = '2026-06-01T00:00:00Z';
 const _tEdit = '2026-06-02T00:00:00Z';
 
@@ -73,7 +75,7 @@ Future<void> stageEdit(
   bool stale = false,
   required Task Function(Task) edit,
 }) async {
-  final row = (await store.findTaskAny(id))!;
+  final row = (await findByAnyId(store, id))!;
   var task = edit(row.task);
   if (stale) task = task.copyWith(etag: 'stale');
   await store.upsertTask(
@@ -94,7 +96,7 @@ Task complete(Task t) =>
 /// A tombstone as delete writes it: the row stays in the store, marked deleted
 /// with a pending `delete`, until the push confirms.
 Future<void> tombstone(Store store, String id) async {
-  final row = (await store.findTaskAny(id))!;
+  final row = (await findByAnyId(store, id))!;
   await store.upsertTask(
     StoredTask(
       task: row.task,
@@ -123,13 +125,13 @@ void main() {
 
   test('push update clears dirty', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     final remote = client.seedTask('L1', 'T1', 'old', '1');
     await eng.run();
 
     await stageEdit(eng.store, 'T1', edit: (t) => t.copyWith(title: 'new'));
     // Current etag → the patch succeeds.
-    final staged = (await eng.store.findTaskAny('T1'))!;
+    final staged = (await findByAnyId(eng.store, 'T1'))!;
     await eng.store.upsertTask(
       StoredTask(
         task: staged.task.copyWith(etag: remote.etag),
@@ -149,7 +151,7 @@ void main() {
 
   test('push update 412 real conflict preserves both', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'server-version', '1');
     await eng.run();
 
@@ -194,7 +196,7 @@ void main() {
     // now-pulled parent — the point this pins is that the run never aborts and
     // nothing is lost.)
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'server-version', '1');
     await eng.run();
 
@@ -215,7 +217,7 @@ void main() {
     expect(out.conflicts, 1);
 
     final tasks = await eng.store.listTasks('L1');
-    final canonical = tasks.firstWhere((t) => t.task.id == 'T1');
+    final canonical = tasks.firstWhere((t) => serverId(t) == 'T1');
     expect(canonical.task.title, 'their-version');
     expect(canonical.syncState, SyncState.clean);
     expect(
@@ -237,7 +239,7 @@ void main() {
     // The server already has the same content we tried to write — adopt the
     // remote etag, create no copy.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'same-title', '1');
     await eng.run();
 
@@ -257,7 +259,7 @@ void main() {
     // whose remote already carries OUR OWN edit — it converges by adopting the
     // etag, no conflicted copy (#118/#132).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'old', '1');
     await eng.run();
 
@@ -272,10 +274,13 @@ void main() {
       'renamed',
       reason: 'the server applied the lost patch',
     );
-    final mid = (await eng.store.findTaskAny('T1'))!;
+    final mid = (await findByAnyId(eng.store, 'T1'))!;
     expect(out1.pushed, 0, reason: 'a lost response is not a successful push');
     expect(mid.syncState, SyncState.dirty, reason: 'row stays dirty to retry');
-    expect(await eng.store.baseSnapshot('T1'), isNotNull);
+    expect(
+      await eng.store.baseSnapshot(await localIdOf(eng.store, 'T1')),
+      isNotNull,
+    );
 
     final getsBefore = client.callCount(Method.getTask);
     final out2 = await eng.run();
@@ -290,7 +295,10 @@ void main() {
     expect(row.task.title, 'renamed', reason: 'the edit survived');
     expect(row.syncState, SyncState.clean);
     expect(row.task.etag, server.etag, reason: 'adopted the remote etag (P6)');
-    expect(await eng.store.baseSnapshot('T1'), isNull);
+    expect(
+      await eng.store.baseSnapshot(await localIdOf(eng.store, 'T1')),
+      isNull,
+    );
   });
 
   test('push update 412 transient get stays dirty then resolves', () async {
@@ -298,7 +306,7 @@ void main() {
     // transiently. We must NOT lose the edit, NOT fork a copy, NOT count a
     // conflict — the row stays dirty and the next run resolves it.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'server-version', '1');
     await eng.run();
 
@@ -343,7 +351,7 @@ void main() {
       // caller can't decide the conflict without the remote copy. The local edit
       // must survive untouched: no clean, no copy, no lost data.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'server-version', '1');
       await eng.run();
 
@@ -382,7 +390,7 @@ void main() {
 
   test('conflicted copy pushes then converges', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'server', '1');
     await eng.run();
 
@@ -414,7 +422,7 @@ void main() {
     // The one way a task PATCH still 404s now the fake soft-deletes tasks: the
     // row's whole LIST vanished. A real permanent NotFound → delete wins (P4).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'doomed', '1');
     await eng.run();
 
@@ -425,7 +433,7 @@ void main() {
     expect(out.errors, 0, reason: 'a remote delete is not a sync error');
     expect(out.conflicts, 0);
     expect(
-      (await eng.store.listTasks('L1')).any((t) => t.task.id == 'T1'),
+      (await eng.store.listTasks('L1')).any((t) => serverId(t) == 'T1'),
       isFalse,
     );
   });
@@ -438,7 +446,7 @@ void main() {
     // from manufacturing a duplicate. Here the same rename landed remotely,
     // which then reordered the task — content matches, only position moved.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'old', '1');
     client.seedTask('L1', 'T2', 'anchor', '2');
     await eng.run();
@@ -463,7 +471,7 @@ void main() {
       tasks.any((t) => t.task.title.endsWith('(conflicted copy)')),
       isFalse,
     );
-    final t1 = tasks.firstWhere((t) => t.task.id == 'T1');
+    final t1 = tasks.firstWhere((t) => serverId(t) == 'T1');
     expect(t1.syncState, SyncState.clean);
     expect(t1.task.title, 'renamed');
     expect(t1.task.position, remote.position, reason: 'remote order adopted');
@@ -477,7 +485,7 @@ void main() {
       // PATCH lands 200-but-ignored and ghost detection on the pull removes it —
       // exactly the live path.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'exists', '1');
       await eng.run();
 
@@ -503,7 +511,7 @@ void main() {
       // (200, deleted:true) — carried through, it is P4 delete-wins, not a
       // resurrected/forked copy.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'exists', '1');
       await eng.run();
 
@@ -531,7 +539,7 @@ void main() {
     // we were editing. Same outcome as a direct delete — the edit dies with the
     // row (P4), nothing stranded behind a dead parent.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     client.seedTaskWithParent('L1', 'C', 'child', '2', 'P');
     await eng.run();
@@ -551,7 +559,7 @@ void main() {
       // Local stores "…T00:00:00Z", the server echoes "…T00:00:00.000Z". Same
       // date — a raw string compare manufactured a phantom copy.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'same', '1');
       await eng.run();
 
@@ -585,7 +593,7 @@ void main() {
     // Title AND status diverge, so P3 applies — remote canonical, local state
     // survives as a copy. Guards that D1 stayed narrow.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'buy milk', '1');
     await eng.run();
 
@@ -597,7 +605,7 @@ void main() {
 
     final tasks = await eng.store.listTasks('L1');
     expect(tasks.length, 2);
-    final canonical = tasks.firstWhere((t) => t.task.id == 'T1');
+    final canonical = tasks.firstWhere((t) => serverId(t) == 'T1');
     expect(canonical.task.title, 'buy oat milk');
     expect(canonical.task.status, TaskStatus.needsAction);
     expect(canonical.syncState, SyncState.clean);
@@ -612,7 +620,7 @@ void main() {
     // outright. Another device completed the task while the user ended back at
     // open; our push 412s on the stale etag.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'buy milk', '1');
     await eng.run();
 
@@ -649,7 +657,7 @@ void main() {
     // moved the status, so the local completion WINS: the row stays dirty and
     // re-pushes instead of being reverted (the pre-D8 bug, #132).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'buy milk', '1');
     client.seedTask('L1', 'T2', 'anchor', '2');
     await eng.run();
@@ -672,7 +680,7 @@ void main() {
       tasks.any((t) => t.task.title.endsWith('(conflicted copy)')),
       isFalse,
     );
-    final t1 = tasks.firstWhere((t) => t.task.id == 'T1');
+    final t1 = tasks.firstWhere((t) => serverId(t) == 'T1');
     expect(
       t1.task.status,
       TaskStatus.completed,
@@ -685,7 +693,7 @@ void main() {
     expect(out2.conflicts, 0);
     final remote2 = await client.getTask('L1', 'T1');
     expect(remote2.status, TaskStatus.completed);
-    final t1b = (await eng.store.findTaskAny('T1'))!;
+    final t1b = (await findByAnyId(eng.store, 'T1'))!;
     expect(t1b.syncState, SyncState.clean, reason: 'converged');
   });
 
@@ -696,7 +704,7 @@ void main() {
       // The base proves the remote changed neither, so BOTH local edits win — the
       // rename (as #118 always did) and the completion (D8).
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'buy milk', '1');
       client.seedTask('L1', 'T2', 'anchor', '2');
       await eng.run();
@@ -719,7 +727,7 @@ void main() {
         tasks.any((t) => t.task.title.endsWith('(conflicted copy)')),
         isFalse,
       );
-      final t1 = tasks.firstWhere((t) => t.task.id == 'T1');
+      final t1 = tasks.firstWhere((t) => serverId(t) == 'T1');
       expect(t1.task.title, 'buy oat milk', reason: 'local rename wins (#118)');
       expect(
         t1.task.status,
@@ -734,14 +742,14 @@ void main() {
       final remote2 = await client.getTask('L1', 'T1');
       expect(remote2.title, 'buy oat milk');
       expect(remote2.status, TaskStatus.completed);
-      final t1b = (await eng.store.findTaskAny('T1'))!;
+      final t1b = (await findByAnyId(eng.store, 'T1'))!;
       expect(t1b.syncState, SyncState.clean);
     },
   );
 
   test('§C complete vs remote delete: the row is gone', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'buy milk', '1');
     await eng.run();
 
@@ -761,7 +769,7 @@ void main() {
       // (never a 404); the pull's ghost detection removes it. No error, no copy,
       // edit discarded (P4).
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       final remote = client.seedTask('L1', 'T1', 'exists', '1');
       await eng.run();
 
@@ -783,7 +791,7 @@ void main() {
 
   test('§D delete vs remote edit: delete wins', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'doomed', '1');
     await eng.run();
 
@@ -810,7 +818,7 @@ void main() {
     '§D delete vs remote status change: delete wins both directions',
     () async {
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'T1', 'will be completed remotely', '1');
       client.seedTask('L1', 'T2', 'will be reopened remotely', '2');
       await client.patchTask(
@@ -845,7 +853,7 @@ void main() {
 
   test('§D delete vs remote move and reparent: delete wins', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'keeper', '1');
     client.seedTask('L1', 'T1', 'doomed', '2');
     client.seedTask('L1', 'T2', 'reordered', '3');
@@ -862,7 +870,7 @@ void main() {
 
     final tasks = await eng.store.listTasks('L1');
     expect(tasks.length, 1);
-    expect(tasks.single.task.id, 'P');
+    expect(serverId(tasks.single), 'P');
     expect(tasks.single.task.title, 'keeper');
     expect(tasks.single.syncState, SyncState.clean);
     expect(await remoteGone(client, 'L1', 'T1'), isTrue);
@@ -874,7 +882,7 @@ void main() {
     // can't reach it, but Google's DELETE cascade does. P4 + cascade means the
     // remote-born child dies too and never surfaces locally as an orphan.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     await eng.run();
 
@@ -892,12 +900,12 @@ void main() {
   test('§D delete subtask vs remote edit leaves the parent intact', () async {
     // Deleting a subtask must never cascade upward or dirty the parent.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     client.seedTaskWithParent('L1', 'C1', 'kid', '2', 'P');
     client.seedTaskWithParent('L1', 'C2', 'sibling', '3', 'P');
     await eng.run();
-    final parentEtag = (await eng.store.findTaskAny('P'))!.task.etag;
+    final parentEtag = (await findByAnyId(eng.store, 'P'))!.task.etag;
 
     await client.patchTask(
       'L1',
@@ -912,13 +920,13 @@ void main() {
     expect(out.conflicts, 0);
 
     final tasks = await eng.store.listTasks('L1');
-    expect(tasks.map((t) => t.task.id).toList(), ['P', 'C2']);
-    final parent = tasks.firstWhere((t) => t.task.id == 'P');
+    expect(tasks.map(serverId).toList(), ['P', 'C2']);
+    final parent = tasks.firstWhere((t) => serverId(t) == 'P');
     expect(parent.task.title, 'parent');
     expect(parent.syncState, SyncState.clean, reason: 'parent not dirtied');
     expect(parent.task.etag, parentEtag, reason: 'parent untouched (P6)');
-    final sibling = tasks.firstWhere((t) => t.task.id == 'C2');
-    expect(sibling.task.parent, 'P');
+    final sibling = tasks.firstWhere((t) => serverId(t) == 'C2');
+    expect(await parentServerId(eng.store, sibling), 'P');
     expect(await remoteGone(client, 'L1', 'C1'), isTrue);
   });
 
@@ -929,11 +937,13 @@ void main() {
     // stranded under a dead parent id (invariant #3; P2 doesn't shield against
     // the user's own delete).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     await eng.run();
 
-    await eng.store.upsertTask(dirtyCreate('local-kid', 'L1', parent: 'P'));
+    await eng.store.upsertTask(
+      dirtyCreate('local-kid', 'L1', parent: await localIdOf(eng.store, 'P')),
+    );
     await tombstone(eng.store, 'P');
 
     final out = await eng.run();
@@ -951,7 +961,7 @@ void main() {
 
   test('push delete removes local', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'doomed', '1');
     await eng.run();
 
@@ -963,7 +973,7 @@ void main() {
 
   test('push delete transient leaves the tombstone', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'doomed', '1');
     await eng.run();
 
@@ -979,7 +989,7 @@ void main() {
     // Row already gone on the server: a 404 on delete is a SUCCESS — the local
     // tombstone is hard-deleted, counted, zero errors, and no pull resurrects.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'already gone on server', '1');
     await eng.run();
 
@@ -1003,7 +1013,7 @@ void main() {
     // instead of grinding row-by-row and mis-counting each as a rejection.
     // Nothing lost: rows stay dirty and push after re-auth.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertTask(
@@ -1038,7 +1048,7 @@ void main() {
     // A permanently-rejected row must not abort the run — it stays dirty (and
     // keeps being reported) while everything else keeps syncing.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     await eng.store.upsertList(
@@ -1050,6 +1060,10 @@ void main() {
         ),
         syncState: SyncState.dirty,
         localUpdated: '2026-01-01T00:00:00Z',
+        // The server acknowledged this list once and no longer has it, so the
+        // insert really goes out and really 404s (#224: without a remote id
+        // there would be nothing to name, and the row would simply wait).
+        remoteId: 'ghost-list',
       ),
     );
     await eng.store.upsertTask(dirtyCreate('local-1', 'ghost-list'));
@@ -1059,7 +1073,7 @@ void main() {
     expect(out.errors, 1, reason: 'rejected row is counted');
     expect(out.pushed >= 1, isTrue, reason: 'healthy row still pushed');
     expect(
-      (await eng.store.drainDirty()).any((t) => t.task.id == 'local-1'),
+      (await eng.store.drainDirty()).any((t) => serverId(t) == 'local-1'),
       isTrue,
     );
     expect(
@@ -1075,7 +1089,7 @@ void main() {
     // is a 400 → reject: counted, row stays dirty, run continues, re-attempted
     // once per run forever — no give-up state, never a wedge of healthy rows.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
     final big = dirtyCreate(
@@ -1113,11 +1127,11 @@ void main() {
     );
 
     final tasks = await eng.store.listTasks('L1');
-    final bigRow = tasks.firstWhere((t) => t.task.id == 'local-big');
+    final bigRow = tasks.firstWhere((t) => serverId(t) == 'local-big');
     expect(bigRow.syncState, SyncState.dirty);
     expect(
       tasks
-          .where((t) => t.task.id != 'local-big')
+          .where((t) => serverId(t) != 'local-big')
           .every((t) => t.syncState == SyncState.clean),
       isTrue,
     );
@@ -1127,7 +1141,7 @@ void main() {
     // One permanently-rejected row: everything else must still push, and the
     // pull must still run.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     // Another device already has a task waiting to be pulled.
     client.seedTask('L1', 'remote-1', 'from server', '9');
     await eng.run();
@@ -1141,6 +1155,9 @@ void main() {
         ),
         syncState: SyncState.dirty,
         localUpdated: '2026-01-01T00:00:00Z',
+        // Acknowledged once, gone from the server now — so the insert really
+        // goes out and really 404s (#224).
+        remoteId: 'ghost-list',
       ),
     );
     await eng.store.upsertTask(
@@ -1154,12 +1171,12 @@ void main() {
     expect(out.errors, 1, reason: 'the poisoned row is counted');
     expect(out.pushed >= 1, isTrue, reason: 'the healthy row still pushed');
     // The pull still ran: the remote task landed locally.
-    expect((await eng.store.findTaskAny('remote-1')), isNotNull);
+    expect((await findByAnyId(eng.store, 'remote-1')), isNotNull);
   });
 
   test('push multiple edits coalesce into the last', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     final remote = client.seedTask('L1', 'T1', 'original', '1');
     await eng.run();
 
@@ -1176,7 +1193,7 @@ void main() {
 
   test('a bare due date on update is normalized, not rejected', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     final remote = client.seedTask('L1', 'T1', 'task', '1');
     await eng.run();
 
@@ -1197,7 +1214,7 @@ void main() {
 
   test('clearing a due date pushes successfully', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'dated', '1');
     await eng.run();
 

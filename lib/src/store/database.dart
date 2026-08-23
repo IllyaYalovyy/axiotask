@@ -39,6 +39,7 @@ const List<String> schemaStatements = [
   '''
 CREATE TABLE task_lists (
   id              TEXT PRIMARY KEY,
+  remote_id       TEXT UNIQUE,
   title           TEXT NOT NULL,
   etag            TEXT,
   updated         TEXT NOT NULL,
@@ -50,6 +51,7 @@ CREATE TABLE task_lists (
   '''
 CREATE TABLE tasks (
   id              TEXT PRIMARY KEY,
+  remote_id       TEXT UNIQUE,
   list_id         TEXT NOT NULL REFERENCES task_lists(id) ON DELETE CASCADE,
   parent_id       TEXT REFERENCES tasks(id) ON DELETE CASCADE,
   position        TEXT NOT NULL,

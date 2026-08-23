@@ -114,27 +114,29 @@ void main() {
       final d = await DualHarness.create();
       try {
         // A creates one task in the shared Inbox and pushes it; B pulls it, so
-        // both devices hold the same server row under the same id.
-        final title = await d.a.createTopIn(kList); // "at001"
+        // both devices hold the same SERVER row — each under its own local id
+        // (#224: local ids are per-device and never leave the device).
+        final title = await d.a.createTopIn(await d.a.inbox()); // "at001"
         await d.a.runSync(); // A push
         await d.b.runSync(); // B pull
         final shared = (await d.a.live()).firstWhere(
           (t) => t.task.title == title,
         );
-        final sharedId = shared.task.id;
+        final remoteId = shared.remoteId!;
+        final onB = (await d.b.allRows()).where(
+          (r) => r.remoteId == remoteId && r.task.title == title,
+        );
         expect(
-          (await d.b.allRows()).any(
-            (r) => r.task.id == sharedId && r.task.title == title,
-          ),
-          isTrue,
+          onB,
+          isNotEmpty,
           reason:
               'B must have pulled the shared task before editing it\n'
               '${await d.b.dump()}',
         );
 
         // Both edit it OFFLINE (no sync): A sets a due date, B renames it.
-        await d.a.commands.setDue(sharedId, DateMove.today);
-        await d.b.commands.renameTask(sharedId, 'renamed');
+        await d.a.commands.setDue(shared.task.id, DateMove.today);
+        await d.b.commands.renameTask(onB.first.task.id, 'renamed');
 
         // Reconnect both and drive to the shared fixpoint.
         await d.heal();
@@ -142,7 +144,7 @@ void main() {
         await assertDualConverged(d, 'after both devices edited offline');
         await assertDualCanonicalAgree(d, 'after both devices edited offline');
         final survivors = (await d.a.serverRows())
-            .where((r) => r.id == sharedId)
+            .where((r) => r.id == remoteId)
             .length;
         expect(
           survivors,
@@ -167,22 +169,25 @@ void main() {
     await withClock(advancingClock(), () async {
       final d = await DualHarness.create();
       try {
-        final title = await d.a.createTopIn(kList); // "at001"
+        final title = await d.a.createTopIn(await d.a.inbox()); // "at001"
         await d.a.runSync(); // A push
         await d.b.runSync(); // B pull
-        final sharedId = (await d.a.live())
-            .firstWhere((t) => t.task.title == title)
-            .task
-            .id;
+        final shared = (await d.a.live()).firstWhere(
+          (t) => t.task.title == title,
+        );
+        final onB = (await d.b.allRows()).where(
+          (r) => r.remoteId == shared.remoteId,
+        );
         expect(
-          (await d.b.allRows()).any((r) => r.task.id == sharedId),
-          isTrue,
+          onB,
+          isNotEmpty,
           reason: 'B must have pulled the shared task before editing it',
         );
 
-        // Both rename it OFFLINE to DISTINCT titles.
-        await d.a.commands.renameTask(sharedId, 'shared-A');
-        await d.b.commands.renameTask(sharedId, 'shared-B');
+        // Both rename it OFFLINE to DISTINCT titles, each through ITS OWN local
+        // id for the shared server row (#224).
+        await d.a.commands.renameTask(shared.task.id, 'shared-A');
+        await d.b.commands.renameTask(onB.first.task.id, 'shared-B');
 
         await d.heal();
         await assertDualConverged(d, 'after a two-sided offline title edit');

@@ -26,23 +26,26 @@ import '../store/stored.dart';
 
 // ─── Shared vocabulary ───────────────────────────────────────────────────────
 
-/// How far along the push pipeline a task id referenced by a pending intent is.
-/// Local ids are UUIDs the server has never seen; naming one in a request draws
-/// a permanent 400 ("Invalid task ID", verified live).
+/// How far along the push pipeline a task referenced by a pending intent is.
+/// Every row's own id is a local UUID the server has never seen (#224); only a
+/// row that has LEARNED a `remote_id` can be named in a request at all —
+/// naming anything else draws a permanent 400 ("Invalid task ID", verified
+/// live).
 enum RefState {
   /// No such row locally (deleted, or never existed).
   missing,
 
-  /// Present locally but never pushed — it still carries a local UUID.
+  /// Present locally but never acknowledged by the server — there is no remote
+  /// id to send.
   local,
 
-  /// Present and pushed: it carries a server etag, so its id is real.
+  /// Present and acknowledged: it carries a `remote_id`, so it is nameable.
   synced;
 
   /// Classify a referenced row as the store returned it.
   static RefState of(StoredTask? row) {
     if (row == null) return RefState.missing;
-    return row.task.etag != null ? RefState.synced : RefState.local;
+    return row.remoteId != null ? RefState.synced : RefState.local;
   }
 }
 
@@ -288,9 +291,11 @@ bool mutationIsPushable(String id, Set<String> unresolvedInflight) =>
 bool parentIsPushable(RefState? parent) =>
     parent == null || parent == RefState.synced;
 
-/// For a SUBTASK, the already-synced sibling to anchor the insert after. Without
-/// a `previous` the API inserts at the top, so a batch of subtasks would land on
-/// Google in reverse creation order. `null` for a top-level create.
+/// For a SUBTASK, the REMOTE id of the already-synced sibling to anchor the
+/// insert after. Without a `previous` the API inserts at the top, so a batch of
+/// subtasks would land on Google in reverse creation order. `null` for a
+/// top-level create (or when no sibling has a remote id yet). The value is a
+/// wire parameter, so it is the sibling's `remote_id`, never its local id.
 String? createPreviousAnchor(StoredTask row, List<StoredTask> listRows) {
   final parent = row.task.parent;
   if (parent == null) return null;
@@ -298,26 +303,32 @@ String? createPreviousAnchor(StoredTask row, List<StoredTask> listRows) {
   for (final t in listRows) {
     if (t.task.parent == parent &&
         t.task.id != row.task.id &&
-        t.task.etag != null) {
+        t.remoteId != null) {
       if (best == null || t.task.position.compareTo(best.task.position) > 0) {
         best = t;
       }
     }
   }
-  return best?.task.id;
+  return best?.remoteId;
 }
 
 /// The insert payload for a create. [due] is canonicalized on the way out:
 /// Google 400s a bare date, and this heals any legacy/imported row that stored a
 /// non-canonical form.
-NewTask createPayload(StoredTask row, String? previous) => NewTask(
-  title: row.task.title,
-  notes: row.task.notes,
-  due: row.task.due == null ? null : normalizeDue(row.task.due!),
-  status: row.task.status,
-  parent: row.task.parent,
-  previous: previous,
-);
+///
+/// [parent] and [previous] are WIRE ids (the referenced rows' `remote_id`), not
+/// the local ids the row itself carries — the caller translates them at the API
+/// boundary (#224). A subtask create is only ever attempted once its parent has
+/// a remote id ([parentIsPushable]).
+NewTask createPayload(StoredTask row, String? previous, String? parent) =>
+    NewTask(
+      title: row.task.title,
+      notes: row.task.notes,
+      due: row.task.due == null ? null : normalizeDue(row.task.due!),
+      status: row.task.status,
+      parent: parent,
+      previous: previous,
+    );
 
 /// What a failed create push does to the in-flight marker (§G).
 sealed class CreateFailure {
@@ -615,15 +626,17 @@ MoveFailure onMoveError(ApiError e, bool sentPrevious) {
 // ─── §I — list operations ────────────────────────────────────────────────────
 
 /// A remote list a local list-create should adopt instead of inserting a
-/// duplicate — same title, and not already tracked locally (§I). Covers the
-/// default "My Tasks" bootstrap and any create that already landed.
+/// duplicate — same title, and whose id we do not already map to a local row
+/// (§I). Covers the default "My Tasks" bootstrap and any create that already
+/// landed. [trackedRemoteIds] is the set of `remote_id`s the store already
+/// holds.
 TaskList? adoptableList(
   String title,
   List<TaskList> remote,
-  Set<String> trackedLocalIds,
+  Set<String> trackedRemoteIds,
 ) {
   for (final r in remote) {
-    if (r.title == title && !trackedLocalIds.contains(r.id)) return r;
+    if (r.title == title && !trackedRemoteIds.contains(r.id)) return r;
   }
   return null;
 }
@@ -755,8 +768,9 @@ class InflightBase {
   /// The create's base snapshot (payload as sent).
   final BaseSnapshot base;
 
-  /// The parent id the row currently names (remote id once the parent has been
-  /// adopted), used to detect the completed-parent cascade.
+  /// The LOCAL parent id the row names, used to detect the completed-parent
+  /// cascade. Remote rows are translated into local-id space before they are
+  /// matched against it (#224).
   final String? parent;
 }
 
@@ -940,13 +954,13 @@ final class ListPullKeepLocal extends ListPullAction {
   int get hashCode => (ListPullKeepLocal).hashCode;
 }
 
-/// Adopt a local-only create (no etag) with the same title by remapping its id
-/// — covers the offline "My Tasks" bootstrap and any create that already
-/// landed.
+/// Adopt an un-acknowledged local create (no `remote_id`) with the same title
+/// by teaching it the remote id — covers the offline "My Tasks" bootstrap and
+/// any create that already landed. The local row keeps its own id (#224).
 final class ListPullAdoptLocalCreate extends ListPullAction {
   const ListPullAdoptLocalCreate(this.localId);
 
-  /// The local id to remap onto the remote list.
+  /// The local id of the row that adopts the remote list.
   final String localId;
 
   @override
@@ -983,7 +997,7 @@ ListPullAction planListPull(TaskList remote, List<StoredTaskList> locals) {
 
   for (final l in locals) {
     if (l.pendingOp == 'create' &&
-        l.list.etag == null &&
+        l.remoteId == null &&
         l.list.title == remote.title) {
       return ListPullAdoptLocalCreate(l.list.id);
     }

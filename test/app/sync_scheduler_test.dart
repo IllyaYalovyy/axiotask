@@ -79,6 +79,12 @@ Future<void> seedLocalList(Store store, String id, String title) =>
       ),
     );
 
+/// The LOCAL id of the pulled list Google calls [remoteId]. A pulled list is
+/// stored under a locally minted, immutable id (#224), so a test that seeded
+/// the SERVER has to resolve its own side through `remote_id`.
+Future<String> pulledList(Store store, String remoteId) async =>
+    (await store.allLists()).firstWhere((l) => l.remoteId == remoteId).list.id;
+
 Future<bool> taskStillDirty(Store store, String listId, String title) async {
   final rows = await store.listTasks(listId);
   return rows.any(
@@ -417,7 +423,10 @@ void main() {
       h.client.seedList('L1', 'Inbox');
       await h.scheduler.runSync(); // pull the list locally
 
-      await h.commands.createTask(listId: 'L1', title: 'buy milk');
+      await h.commands.createTask(
+        listId: await pulledList(h.store, 'L1'),
+        title: 'buy milk',
+      );
       expect(
         await h.scheduler.pendingPushCount(),
         1,
@@ -444,7 +453,7 @@ void main() {
       await h.scheduler.runSync();
 
       final created = await h.commands.createTask(
-        listId: 'L1',
+        listId: await pulledList(h.store, 'L1'),
         title: 'call dad',
       );
       // The detail panel follows the new task → it is the held create.
@@ -489,12 +498,19 @@ void main() {
       // already off; a plain sync pulls the seeded list.
       await h.scheduler.runSync();
 
-      await h.commands.createTask(listId: 'L1', title: 'read only');
+      await h.commands.createTask(
+        listId: await pulledList(h.store, 'L1'),
+        title: 'read only',
+      );
 
       await h.scheduler.flushOnExit();
 
       expect(
-        await taskStillDirty(h.store, 'L1', 'read only'),
+        await taskStillDirty(
+          h.store,
+          await pulledList(h.store, 'L1'),
+          'read only',
+        ),
         isTrue,
         reason: 'read-only mode keeps the change local on exit',
       );
@@ -514,12 +530,19 @@ void main() {
       await expectLater(h.scheduler.runSync(), throwsA(isA<Object>()));
       expect(h.auth.needsReauth, isTrue, reason: 'precondition: session dead');
 
-      await h.commands.createTask(listId: 'L1', title: 'after reauth');
+      await h.commands.createTask(
+        listId: await pulledList(h.store, 'L1'),
+        title: 'after reauth',
+      );
 
       await h.scheduler.flushOnExit();
 
       expect(
-        await taskStillDirty(h.store, 'L1', 'after reauth'),
+        await taskStillDirty(
+          h.store,
+          await pulledList(h.store, 'L1'),
+          'after reauth',
+        ),
         isTrue,
         reason:
             'a dead session keeps the change local on exit (no doomed push)',

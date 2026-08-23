@@ -21,11 +21,11 @@ import '../store/store.dart';
 import '../store/stored.dart';
 import 'ids.dart' show newLocalId;
 
-/// Pending-op for a field edit. A row that was never pushed (no etag) must stay
-/// a `create` — flipping it to `update` would make the push patch a
-/// non-existent remote id, 404, and delete the task (data loss). Otherwise the
-/// edit is an `update`. Port of `commands.rs::dirty_op`.
-String dirtyOp(String? etag) => etag == null ? 'create' : 'update';
+/// Pending-op for a field edit. A row the server has never acknowledged (no
+/// `remote_id`) must stay a `create` — flipping it to `update` would make the
+/// push patch an id Google never minted, 404, and delete the task (data loss).
+/// Otherwise the edit is an `update`. Port of `commands.rs::dirty_op`.
+String dirtyOp(String? remoteId) => remoteId == null ? 'create' : 'update';
 
 // A strictly monotonic tick, mirroring the reference's atomic `LAST_TICK`, so
 // two creates in the same microsecond still get distinct, ordered positions.
@@ -150,8 +150,9 @@ class DeleteToken {
   /// Lex-sortable position at delete time.
   final String position;
 
-  /// Whether the task had ever been pushed (drives revive-vs-recreate only as a
-  /// diagnostic; undo re-checks the live row instead of trusting this flag).
+  /// Whether the server had ever acknowledged the task (it carried a
+  /// `remote_id`). Drives revive-vs-recreate only as a diagnostic; undo
+  /// re-checks the live row instead of trusting this flag.
   final bool hadEtag;
 
   /// Descendants captured at delete time, parents before children.
@@ -330,7 +331,8 @@ class Commands {
         listId: t.listId,
         syncState: SyncState.dirty,
         localUpdated: now,
-        pendingOp: dirtyOp(t.task.etag),
+        pendingOp: dirtyOp(t.remoteId),
+        remoteId: t.remoteId,
       ),
     );
     _notifyMutation();
@@ -357,7 +359,8 @@ class Commands {
         listId: t.listId,
         syncState: SyncState.dirty,
         localUpdated: now,
-        pendingOp: dirtyOp(t.task.etag),
+        pendingOp: dirtyOp(t.remoteId),
+        remoteId: t.remoteId,
       ),
     );
     _notifyMutation();
@@ -388,7 +391,8 @@ class Commands {
             listId: child.listId,
             syncState: SyncState.dirty,
             localUpdated: cnow,
-            pendingOp: dirtyOp(child.task.etag),
+            pendingOp: dirtyOp(child.remoteId),
+            remoteId: child.remoteId,
           ),
         );
       }
@@ -421,7 +425,8 @@ class Commands {
             listId: t.listId,
             syncState: SyncState.dirty,
             localUpdated: now,
-            pendingOp: dirtyOp(t.task.etag),
+            pendingOp: dirtyOp(t.remoteId),
+            remoteId: t.remoteId,
           ),
         );
       }
@@ -436,7 +441,8 @@ class Commands {
         listId: t.listId,
         syncState: SyncState.dirty,
         localUpdated: now,
-        pendingOp: dirtyOp(t.task.etag),
+        pendingOp: dirtyOp(t.remoteId),
+        remoteId: t.remoteId,
       ),
     );
     _notifyMutation();
@@ -455,7 +461,8 @@ class Commands {
         listId: t.listId,
         syncState: SyncState.dirty,
         localUpdated: now,
-        pendingOp: dirtyOp(t.task.etag),
+        pendingOp: dirtyOp(t.remoteId),
+        remoteId: t.remoteId,
       ),
     );
     _notifyMutation();
@@ -586,7 +593,8 @@ class Commands {
         listId: t.listId,
         syncState: SyncState.dirty,
         localUpdated: now,
-        pendingOp: dirtyOp(t.task.etag),
+        pendingOp: dirtyOp(t.remoteId),
+        remoteId: t.remoteId,
       ),
     );
   }
@@ -634,8 +642,8 @@ class Commands {
   /// Delete a task and return an undo [DeleteToken] capturing its whole subtree.
   /// Port of `commands.rs::delete_task_inner`.
   ///
-  /// A row the server may already hold ([Store.serverMayHold] — it has an etag,
-  /// or an in-flight create marker says its insert may have committed) is
+  /// A row the server may already hold ([Store.serverMayHold] — it has a remote
+  /// id, or an in-flight create marker says its insert may have committed) is
   /// TOMBSTONED so the delete reaches Google; the whole subtree is tombstoned in
   /// one transaction (#138) with only the root carrying a pushable delete —
   /// Google's own DELETE cascade takes the children remotely (invariant #3). A
@@ -689,7 +697,7 @@ class Commands {
       status: root.task.status,
       due: root.task.due,
       position: root.task.position,
-      hadEtag: root.task.etag != null,
+      hadEtag: root.remoteId != null,
       subtree: subtree,
     );
   }
@@ -698,7 +706,8 @@ class Commands {
   /// `commands.rs::undo_delete_inner`.
   ///
   /// If the tombstone is still present (the delete has not pushed), the row is
-  /// revived IN PLACE — preserving its etag — so the un-pushed delete simply
+  /// revived IN PLACE — keeping its id, remote id and etag — so the un-pushed
+  /// delete simply
   /// never fires; reviving as a fresh create would leave the original remote
   /// task un-deleted AND make a duplicate. A row already synced comes back a
   /// dirty `update` (not clean): the tombstone may sit on an edit that never
@@ -712,7 +721,7 @@ class Commands {
 
     final existing = await _store.findTaskAny(token.id);
     if (existing != null) {
-      final synced = existing.task.etag != null;
+      final synced = existing.remoteId != null;
       await _store.upsertTask(
         StoredTask(
           task: existing.task.copyWith(status: token.status, completed: null),
@@ -720,6 +729,7 @@ class Commands {
           syncState: SyncState.dirty,
           localUpdated: now,
           pendingOp: synced ? 'update' : 'create',
+          remoteId: existing.remoteId,
         ),
       );
       await _restoreSubtree(token, now);
@@ -769,7 +779,8 @@ class Commands {
             listId: existing.listId,
             syncState: SyncState.dirty,
             localUpdated: now,
-            pendingOp: dirtyOp(existing.task.etag),
+            pendingOp: dirtyOp(existing.remoteId),
+            remoteId: existing.remoteId,
           ),
         );
         continue;
@@ -837,12 +848,14 @@ class Commands {
         localUpdated: now,
         pendingOp: l.pendingOp == 'create' ? 'create' : 'update',
         localOnly: l.localOnly,
+        remoteId: l.remoteId,
       ),
     );
     _notifyMutation();
   }
 
-  /// Delete list [id]. A list the server has seen (has an etag) is TOMBSTONED so
+  /// Delete list [id]. A list the server has seen (has a remote id) is
+  /// TOMBSTONED so
   /// the deletion reaches Google — which cascades to its tasks server-side — and
   /// its local task rows are hard-deleted immediately (nothing stranded). A
   /// never-synced list is hard-deleted outright (its tasks go with the FK
@@ -857,7 +870,7 @@ class Commands {
     for (final t in await _store.listTasks(id)) {
       await _store.deleteTaskHard(t.task.id);
     }
-    if (l.list.etag != null) {
+    if (l.remoteId != null) {
       await _store.upsertList(
         StoredTaskList(
           list: l.list,
@@ -865,6 +878,7 @@ class Commands {
           localUpdated: nowUtcString(),
           pendingOp: 'delete',
           localOnly: l.localOnly,
+          remoteId: l.remoteId,
         ),
       );
     } else {
@@ -936,6 +950,7 @@ class Commands {
         syncState: t.syncState,
         localUpdated: now,
         pendingOp: t.pendingOp,
+        remoteId: t.remoteId,
       ),
     );
     await _store.recordMove(id, t.listId, parentId, previousId);
@@ -1009,6 +1024,7 @@ class Commands {
           syncState: row.syncState,
           localUpdated: now,
           pendingOp: row.pendingOp,
+          remoteId: row.remoteId,
         ),
       );
     }
@@ -1076,7 +1092,9 @@ class Commands {
             status: node.task.status,
             due: node.task.due,
             completed: node.task.completed,
-            etag: null, // brand-new remote row (invariant #4)
+            // Brand-new remote row (invariant #4): no etag, and `remote_id`
+            // stays null — the clone is an unpushed create.
+            etag: null,
             updated: node.task.updated,
             webViewLink: null,
           ),
@@ -1136,7 +1154,7 @@ class Commands {
   /// Decide how one original row is removed after its subtree was recreated in
   /// another list, appending to [tombstones] or [hardDeletes] for the caller's
   /// single move transaction. A row the server MAY hold ([Store.serverMayHold]:
-  /// it has an etag, or an in-flight-create marker says its insert may have
+  /// it has a remote id, or an in-flight-create marker says its insert may have
   /// committed) is TOMBSTONED, not hard-deleted: the server only cascades the
   /// moved subtree away once the ROOT's delete lands, and if a pull happens first
   /// a hard-deleted row is RESURRECTED from the server, duplicating the moved
@@ -1157,6 +1175,7 @@ class Commands {
           syncState: SyncState.deleted,
           localUpdated: now,
           pendingOp: 'delete',
+          remoteId: row.remoteId,
         ),
       );
     } else {
@@ -1179,9 +1198,9 @@ class Commands {
   String? get heldCreateId => _editingTaskId;
 
   /// Record which task the UI is holding. Only that one task's CREATE push is
-  /// held by the sync engine (prevents its local id remapping mid-edit); every
-  /// other create — including subtasks born inside the open panel (#85) — keeps
-  /// syncing. Pure process memory: it never touches the store, so a relaunch
+  /// held by the sync engine (row ids are immutable since #224, so this is
+  /// quiescence, not id safety); every other create — including subtasks born
+  /// inside the open panel (#85) — keeps syncing. Pure process memory: it never touches the store, so a relaunch
   /// starts with nothing held and the once-held create pushes on the next sync.
   /// Port of `commands.rs::set_editing` / `AppState::set_editing_task`.
   void setEditing(String? id) => _editingTaskId = id;

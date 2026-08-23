@@ -320,15 +320,37 @@ class Harness {
 
   /// Live tasks the server has actually seen — the only ones a "another device
   /// did X" op can touch.
-  Future<List<StoredTask>> pushed() async => [
-    for (final t in await live())
-      if (t.task.etag != null && t.syncState != SyncState.deleted) t,
-  ];
+  Future<List<StoredTask>> pushed() async {
+    // A row is only addressable on the wire when BOTH it and the list holding
+    // it carry a remote id — a cross-list move can park an acknowledged row in
+    // a local-only list, which the server has never heard of (#224).
+    final listRemote = {
+      for (final l in await store.allLists()) l.list.id: l.remoteId,
+    };
+    return [
+      for (final t in await live())
+        if (t.remoteId != null &&
+            listRemote[t.listId] != null &&
+            t.syncState != SyncState.deleted)
+          t,
+    ];
+  }
+
+  /// The LOCAL id of the shared Inbox — [kList] is the id GOOGLE gives it, and
+  /// the store mints its own (#224).
+  Future<String> inbox() async =>
+      (await store.allLists()).firstWhere((l) => l.remoteId == kList).list.id;
+
+  /// The WIRE ids of a row the server has seen: `(remote list id, remote task
+  /// id)`. Local ids are immutable and Google has never heard of them (#224),
+  /// so every "another device did X" op addresses the server through this.
+  Future<(String, String)> wire(StoredTask t) async =>
+      ((await store.listRemoteId(t.listId))!, t.remoteId!);
 
   /// Lists the server has actually seen.
   Future<List<StoredTaskList>> pushedLists() async => [
     for (final l in await lists())
-      if (l.list.etag != null) l,
+      if (l.remoteId != null) l,
   ];
 
   /// Create a top-level task in a named list; returns its title, the handle
@@ -489,9 +511,10 @@ class Harness {
         // No If-Match: another device's edit always lands, and OUR next push is
         // the one that meets the 412 (§B).
         try {
+          final (listId, taskId) = await wire(t);
           await client.patchTask(
-            t.listId,
-            t.task.id,
+            listId,
+            taskId,
             TaskPatch(notes: _freshName()),
           );
         } on ApiError {
@@ -504,11 +527,8 @@ class Harness {
             ? TaskStatus.needsAction
             : TaskStatus.completed;
         try {
-          await client.patchTask(
-            t.listId,
-            t.task.id,
-            TaskPatch(status: status),
-          );
+          final (listId, taskId) = await wire(t);
+          await client.patchTask(listId, taskId, TaskPatch(status: status));
         } on ApiError {
           // ignore: the row may have gone locally.
         }
@@ -517,7 +537,8 @@ class Harness {
         if (t == null) return;
         // Google cascades to subtasks on its side (#106 probe 5).
         try {
-          await client.deleteTask(t.listId, t.task.id);
+          final (listId, taskId) = await wire(t);
+          await client.deleteTask(listId, taskId);
         } on ApiError {
           // already gone.
         }
@@ -526,7 +547,7 @@ class Harness {
         if (l == null) return;
         final title = _freshName();
         try {
-          await client.insertTask(l.list.id, NewTask(title: title));
+          await client.insertTask(l.remoteId!, NewTask(title: title));
           // A row we never created locally is still a row the pull must land.
           names.add(title);
         } on ApiError {
@@ -543,8 +564,13 @@ class Harness {
         ];
         final t = _pick(subs, op.a);
         if (t == null) return;
+        // The look-alike is inserted into the list the subtask lives in; the
+        // subtask itself may still be unpushed, so only the LIST needs a
+        // remote id here.
+        final listRemote = await store.listRemoteId(t.listId);
+        if (listRemote == null) return;
         try {
-          await client.insertTask(t.listId, NewTask(title: t.task.title));
+          await client.insertTask(listRemote, NewTask(title: t.task.title));
         } on ApiError {
           // list vanished; ignore.
         }
@@ -565,7 +591,8 @@ class Harness {
         final parent = _pick(siblings, op.a);
         if (parent == null) return;
         try {
-          await client.moveTask(t.listId, t.task.id, parent: parent.task.id);
+          final (listId, taskId) = await wire(t);
+          await client.moveTask(listId, taskId, parent: parent.remoteId!);
         } on ApiError {
           // ignore.
         }
@@ -573,7 +600,7 @@ class Harness {
         final l = _pick(await pushedLists(), op.a);
         if (l == null) return;
         try {
-          await client.patchTasklist(l.list.id, _freshListName());
+          await client.patchTasklist(l.remoteId!, _freshListName());
         } on ApiError {
           // ignore.
         }
@@ -582,7 +609,7 @@ class Harness {
         final l = _pick(await pushedLists(), op.a);
         if (l == null) return;
         try {
-          await client.deleteTasklist(l.list.id);
+          await client.deleteTasklist(l.remoteId!);
         } on ApiError {
           // ignore.
         }
@@ -708,9 +735,36 @@ class Harness {
     return all;
   }
 
-  /// Every local task row across every list, as comparable records.
+  /// Every local task row across every list, as comparable records — the
+  /// ORACLE EXPORT PROJECTION.
+  ///
+  /// The store keys on immutable LOCAL ids and holds Google's in `remote_id`
+  /// (#224), while the server obviously keys on Google's. So the export
+  /// projects `id := remote_id ?? id` for the row, its list and its parent:
+  /// a row the server has acknowledged compares under Google's id (the state
+  /// comparison the oracle exists to make), and one it has never seen keeps its
+  /// local id — which the server side simply does not have, exactly as before.
   Future<List<Row>> localRows() async {
-    final out = [for (final t in await allRows()) Row.ofTask(t.listId, t.task)];
+    final rows = await allRows();
+    final remoteTaskId = <String, String>{
+      for (final r in rows)
+        if (r.remoteId != null) r.task.id: r.remoteId!,
+    };
+    final remoteListId = <String, String>{
+      for (final l in await store.allLists())
+        if (l.remoteId != null) l.list.id: l.remoteId!,
+    };
+    String? exported(String? localId) =>
+        localId == null ? null : (remoteTaskId[localId] ?? localId);
+    final out = [
+      for (final t in rows)
+        Row.ofTask(
+          remoteListId[t.listId] ?? t.listId,
+          t.task,
+          id: exported(t.task.id)!,
+          parent: exported(t.task.parent),
+        ),
+    ];
     out.sort();
     return out;
   }
@@ -777,17 +831,21 @@ class Row implements Comparable<Row> {
     required this.completed,
   });
 
-  factory Row.ofTask(String listId, Task t) => Row(
-    listId: listId,
-    id: t.id,
-    parent: t.parent,
-    title: t.title,
-    // Google returns cleared notes as absent; "" and null are the same
-    // user-visible state.
-    notes: (t.notes == null || t.notes!.isEmpty) ? null : t.notes,
-    due: t.due == null ? null : normalizeDue(t.due!),
-    completed: t.status == TaskStatus.completed,
-  );
+  /// Project one task into a comparable row. [id] and [parent] default to the
+  /// task's own (the server side, where they ARE Google's ids); the local side
+  /// overrides them with the exported `remote_id ?? id` projection (#224).
+  factory Row.ofTask(String listId, Task t, {String? id, String? parent}) =>
+      Row(
+        listId: listId,
+        id: id ?? t.id,
+        parent: parent ?? t.parent,
+        title: t.title,
+        // Google returns cleared notes as absent; "" and null are the same
+        // user-visible state.
+        notes: (t.notes == null || t.notes!.isEmpty) ? null : t.notes,
+        due: t.due == null ? null : normalizeDue(t.due!),
+        completed: t.status == TaskStatus.completed,
+      );
 
   final String listId;
   final String id;
@@ -1224,10 +1282,10 @@ void main() {
         await h.apply(const Op(OpKind.createTop, a: 0)); // t001 = P1
         await h.apply(const Op(OpKind.createTop, a: 0)); // t002 = P2
         await h.apply(const Op(OpKind.sync));
-        final p1Id = (await h.live())
+        // The server names P1 by ITS id; the store names it by the local one.
+        final p1Remote = (await h.live())
             .firstWhere((t) => t.task.title == 't001')
-            .task
-            .id;
+            .remoteId!;
 
         // A subtask under P1 whose insert is lost pre-commit → in-flight,
         // nothing committed server-side.
@@ -1242,7 +1300,7 @@ void main() {
 
         final server = await h.serverRows();
         final ours = server
-            .where((r) => r.title == 't003' && r.parent == p1Id)
+            .where((r) => r.title == 't003' && r.parent == p1Remote)
             .length;
         final foreign = server
             .where((r) => r.title == 't003' && r.parent == null)
@@ -1340,12 +1398,13 @@ void main() {
             (t) => t.task.title == 't001',
           );
           final id = t.task.id;
+          final remoteId = t.remoteId!;
 
           // Delete it: the command tombstones the row and returns an undo token.
           // The delete has NOT pushed — the server still holds t001.
           final token = await h.commands.deleteTask(id);
           expect(
-            (await h.serverRows()).any((r) => r.id == id),
+            (await h.serverRows()).any((r) => r.id == remoteId),
             isTrue,
             reason: 'the server must still hold t001 before the delete pushes',
           );
@@ -1367,7 +1426,7 @@ void main() {
                 '${await h.dump()}',
           );
           expect(
-            (await h.serverRows()).any((r) => r.id == id),
+            (await h.serverRows()).any((r) => r.id == remoteId),
             isFalse,
             reason:
                 't001 must be deleted on the server after the restart\n'
