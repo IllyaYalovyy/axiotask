@@ -258,11 +258,11 @@ void main() {
       2,
       reason: "the other device's drag, then ours — one call each, no retry",
     );
-    expect(
-      await remoteOrder(client, 'L1'),
-      ['C', 'B', 'A'],
-      reason: 'both reorders landed: theirs first, ours after it',
-    );
+    expect(await remoteOrder(client, 'L1'), [
+      'C',
+      'B',
+      'A',
+    ], reason: 'both reorders landed: theirs first, ours after it');
     expect(
       await localOrder(eng, 'L1'),
       await remoteOrder(client, 'L1'),
@@ -424,11 +424,9 @@ void main() {
       isEmpty,
       reason: 'the intent is dropped, not retried forever',
     );
-    expect(
-      await localOrder(eng, 'L1'),
-      ['B'],
-      reason: 'the deleted row is gone from the list view',
-    );
+    expect(await localOrder(eng, 'L1'), [
+      'B',
+    ], reason: 'the deleted row is gone from the list view');
 
     final out2 = await eng.run();
     expect(out2.errors, 0, reason: 'and the failure does not repeat');
@@ -467,11 +465,9 @@ void main() {
         isEmpty,
         reason: 'no wedge: the intent is dropped either way',
       );
-      expect(
-        await localOrder(eng, 'L1'),
-        ['T'],
-        reason: 'the task survives, top-level, and P is gone from the view',
-      );
+      expect(await localOrder(eng, 'L1'), [
+        'T',
+      ], reason: 'the task survives, top-level, and P is gone from the view');
       expect(await remoteParent(client, 'L1', 'T'), isNull);
       await assertAtMostOneLevel(eng, 'L1');
 

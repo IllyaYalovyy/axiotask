@@ -23,6 +23,14 @@ analyzer:
     invalid_annotation_target: error
     missing_return: error
     dead_code: error
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   rules:

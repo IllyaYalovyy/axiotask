@@ -299,11 +299,9 @@ void main() {
 
       expect(result.needsInteraction, isFalse);
       expect(result.accessToken, 'silent-token');
-      expect(
-        platform.authorizationPrompts,
-        [false],
-        reason: 'silent authorization only — never escalates to a prompt',
-      );
+      expect(platform.authorizationPrompts, [
+        false,
+      ], reason: 'silent authorization only — never escalates to a prompt');
       // The authentication surfaces are Credential Manager, which refuses
       // without a serverClientId — the gateway must never reach them.
       expect(platform.authenticateCalls, 0);
@@ -332,11 +330,9 @@ void main() {
         );
 
         expect(result.needsInteraction, isTrue);
-        expect(
-          platform.authorizationPrompts,
-          [false],
-          reason: 'asked silently, got null, did NOT escalate to a prompt',
-        );
+        expect(platform.authorizationPrompts, [
+          false,
+        ], reason: 'asked silently, got null, did NOT escalate to a prompt');
         expect(platform.authenticateCalls, 0);
       },
     );
@@ -353,11 +349,9 @@ void main() {
         );
 
         expect(result.accessToken, 'gesture-token');
-        expect(
-          platform.authorizationPrompts,
-          [true],
-          reason: 'the gesture path is the one allowed to prompt',
-        );
+        expect(platform.authorizationPrompts, [
+          true,
+        ], reason: 'the gesture path is the one allowed to prompt');
         // authenticate() is Credential Manager — it refuses without a
         // serverClientId, which is exactly how sign-in died on device; the
         // gesture must stay authorization-only.

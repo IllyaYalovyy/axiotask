@@ -411,11 +411,9 @@ void main() {
       );
       expect(err, isA<Network>());
       final items = (await c.listTasks('L1')).items;
-      expect(
-        items.map((t) => t.title),
-        ['ghost-create'],
-        reason: 'the insert committed before its response was dropped',
-      );
+      expect(items.map((t) => t.title), [
+        'ghost-create',
+      ], reason: 'the insert committed before its response was dropped');
     });
 
     test('commit_then_fail_next_insert is the insert-only shorthand', () async {
