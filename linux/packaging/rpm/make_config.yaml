@@ -10,7 +10,7 @@
 # rpmbuild directly; the two are kept in sync and both are covered by
 # test/packaging/rpm_packaging_test.dart. When you change metadata here, change
 # the render block in tool/build_rpm.sh to match (the test enforces it).
-display_name: axiotask
+display_name: Axiotask
 package_name: axiotask
 generic_name: Task Manager
 license: GPLv3+

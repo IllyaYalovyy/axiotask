@@ -9,9 +9,10 @@
          system back gesture/button is a first-class citizen on modern Android
          instead of the legacy onBackPressed path. -->
     <application
-        android:label="axiotask"
+        android:label="Axiotask"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"

@@ -10,7 +10,7 @@
 #   /usr/lib/axiotask/                 the whole release bundle (binary, data, lib)
 #   /usr/bin/axiotask                  symlink -> /usr/lib/axiotask/axiotask
 #   /usr/share/applications/axiotask.desktop
-#   /usr/share/icons/hicolor/512x512/apps/axiotask.png
+#   /usr/share/icons/hicolor/<size>/apps/axiotask.png   (16..512 + scalable SVG)
 #
 # Usage:
 #   tool/build_rpm.sh                build the RPM (needs flutter + rpmbuild)
@@ -30,8 +30,12 @@ SUMMARY="Fast, offline-first Google Tasks client"
 LICENSE="GPLv3+"
 URL="https://github.com/axiotask/axiotask"
 DESKTOP_SRC="linux/packaging/axiotask.desktop"
-# Icon: reuse the highest-res Android launcher (no separate desktop asset).
-ICON_SRC="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+# Icons: the hicolor theme tree rendered from the SVG master by tool/gen_icons.py.
+# The desktop entry says `Icon=axiotask`, which only resolves if every themed
+# size is installed under /usr/share/icons/hicolor (a lone 512px bitmap makes
+# GNOME scale one icon down for the 16px list, badly).
+ICON_DIR="linux/packaging/icons/hicolor"
+ICON_SIZES="16 24 32 48 64 128 256 512"
 BUNDLE_DIR="build/linux/x64/release/bundle"
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
@@ -79,7 +83,8 @@ seconds, fully usable offline, and every frequent action is one gesture.
 /usr/lib/${PKG_NAME}
 /usr/bin/${PKG_NAME}
 /usr/share/applications/${PKG_NAME}.desktop
-/usr/share/icons/hicolor/512x512/apps/${PKG_NAME}.png
+$(for s in ${ICON_SIZES}; do echo "/usr/share/icons/hicolor/${s}x${s}/apps/${PKG_NAME}.png"; done)
+/usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg
 
 %post
 /usr/bin/gtk-update-icon-cache -f /usr/share/icons/hicolor &>/dev/null || :
@@ -102,16 +107,18 @@ stage_buildroot() {
   [ -x "$BUNDLE_DIR/${PKG_NAME}" ] || die "release binary missing at $BUNDLE_DIR/${PKG_NAME}"
 
   install -d "$root/usr/lib/${PKG_NAME}" "$root/usr/bin" \
-             "$root/usr/share/applications" \
-             "$root/usr/share/icons/hicolor/512x512/apps"
+             "$root/usr/share/applications"
   cp -a "$BUNDLE_DIR/." "$root/usr/lib/${PKG_NAME}/"
   ln -sf "/usr/lib/${PKG_NAME}/${PKG_NAME}" "$root/usr/bin/${PKG_NAME}"
   install -Dm644 "$DESKTOP_SRC" "$root/usr/share/applications/${PKG_NAME}.desktop"
-  if [ -f "$ICON_SRC" ]; then
-    install -Dm644 "$ICON_SRC" "$root/usr/share/icons/hicolor/512x512/apps/${PKG_NAME}.png"
-  else
-    warn "icon source $ICON_SRC missing — RPM will list an icon path with no file"
-  fi
+  for s in ${ICON_SIZES}; do
+    src="${ICON_DIR}/${s}x${s}/apps/${PKG_NAME}.png"
+    [ -f "$src" ] || die "icon $src missing — run tool/gen_icons.py"
+    install -Dm644 "$src" \
+      "$root/usr/share/icons/hicolor/${s}x${s}/apps/${PKG_NAME}.png"
+  done
+  install -Dm644 "${ICON_DIR}/scalable/apps/${PKG_NAME}.svg" \
+    "$root/usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg"
 }
 
 # ── Static validation shared by --dry-run: fail loud on a broken config.
@@ -120,6 +127,12 @@ validate_config() {
   [ -f "$DESKTOP_SRC" ] || die "desktop entry missing at $DESKTOP_SRC"
   [ -f linux/packaging/rpm/make_config.yaml ] || die "fastforge make_config.yaml missing"
   grep -q '^Exec=axiotask$' "$DESKTOP_SRC" || die "desktop Exec= must be 'axiotask' (matches /usr/bin/axiotask)"
+  # Icon=axiotask only resolves if the themed bitmaps are actually there.
+  for s in ${ICON_SIZES}; do
+    [ -f "${ICON_DIR}/${s}x${s}/apps/${PKG_NAME}.png" ] \
+      || die "hicolor icon ${s}x${s} missing — run tool/gen_icons.py"
+  done
+  [ -f "${ICON_DIR}/scalable/apps/${PKG_NAME}.svg" ] || die "scalable icon missing — run tool/gen_icons.py"
   read_version
 }
 
