@@ -11,6 +11,7 @@
 #   /usr/bin/axiotask                  symlink -> /usr/lib/axiotask/axiotask
 #   /usr/share/applications/axiotask.desktop
 #   /usr/share/icons/hicolor/<size>/apps/axiotask.png   (16..512 + scalable SVG)
+#   /usr/share/metainfo/io.github.illyayalovyy.axiotask.metainfo.xml (AppStream)
 #
 # Usage:
 #   tool/build_rpm.sh                build the RPM (needs flutter + rpmbuild)
@@ -19,6 +20,12 @@
 #                                    (never invokes rpmbuild; always exits 0 on
 #                                    a valid config — this is the gate check)
 #   tool/build_rpm.sh --print-spec   render the spec to stdout and exit
+#   tool/build_rpm.sh --stage DIR    stage the buildroot %files describes into
+#                                    DIR and exit (no rpmbuild). Combined with
+#                                    --bundle it needs neither flutter nor rpm,
+#                                    which is how the packaging test proves the
+#                                    spec and the staged tree agree.
+#   tool/build_rpm.sh --bundle DIR   use an already-built release bundle
 #
 set -uo pipefail
 
@@ -28,8 +35,13 @@ cd "$ROOT"
 PKG_NAME="axiotask"
 SUMMARY="Fast, offline-first Google Tasks client"
 LICENSE="GPLv3+"
-URL="https://github.com/axiotask/axiotask"
+URL="https://github.com/IllyaYalovyy/axiotask"
 DESKTOP_SRC="linux/packaging/axiotask.desktop"
+# AppStream component id — also the metainfo file name. Software centres key on
+# it; the desktop entry keeps its short basename and is tied to the component
+# by <launchable> inside the metainfo.
+APP_ID="io.github.illyayalovyy.axiotask"
+METAINFO_SRC="linux/packaging/${APP_ID}.metainfo.xml"
 # Icons: the hicolor theme tree rendered from the SVG master by tool/gen_icons.py.
 # The desktop entry says `Icon=axiotask`, which only resolves if every themed
 # size is installed under /usr/share/icons/hicolor (a lone 512px bitmap makes
@@ -85,6 +97,7 @@ seconds, fully usable offline, and every frequent action is one gesture.
 /usr/share/applications/${PKG_NAME}.desktop
 $(for s in ${ICON_SIZES}; do echo "/usr/share/icons/hicolor/${s}x${s}/apps/${PKG_NAME}.png"; done)
 /usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg
+/usr/share/metainfo/${APP_ID}.metainfo.xml
 
 %post
 /usr/bin/gtk-update-icon-cache -f /usr/share/icons/hicolor &>/dev/null || :
@@ -119,6 +132,8 @@ stage_buildroot() {
   done
   install -Dm644 "${ICON_DIR}/scalable/apps/${PKG_NAME}.svg" \
     "$root/usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg"
+  install -Dm644 "$METAINFO_SRC" \
+    "$root/usr/share/metainfo/${APP_ID}.metainfo.xml"
 }
 
 # ── Static validation shared by --dry-run: fail loud on a broken config.
@@ -133,15 +148,53 @@ validate_config() {
       || die "hicolor icon ${s}x${s} missing — run tool/gen_icons.py"
   done
   [ -f "${ICON_DIR}/scalable/apps/${PKG_NAME}.svg" ] || die "scalable icon missing — run tool/gen_icons.py"
+  [ -f "$METAINFO_SRC" ] || die "AppStream metainfo missing at $METAINFO_SRC"
+  # Validate the two metadata files when the freedesktop validators are here.
+  # A package that ships invalid AppStream data is listed nowhere; catching it
+  # at config-validation time is cheaper than after the rpmbuild.
+  if command -v appstreamcli >/dev/null; then
+    appstreamcli validate --no-net "$METAINFO_SRC" >/dev/null \
+      || die "appstreamcli validate failed for $METAINFO_SRC (run it for details)"
+  else
+    warn "appstreamcli not installed — metainfo left unvalidated (dnf install appstream)"
+  fi
+  if command -v desktop-file-validate >/dev/null; then
+    desktop-file-validate "$DESKTOP_SRC" \
+      || die "desktop-file-validate failed for $DESKTOP_SRC"
+  else
+    warn "desktop-file-validate not installed — desktop entry left unvalidated"
+  fi
   read_version
 }
 
-case "${1:-}" in
-  --print-spec)
+MODE="build"
+STAGE_ROOT=""
+BUNDLE_GIVEN=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --print-spec) MODE="print-spec"; shift ;;
+    --dry-run)    MODE="dry-run"; shift ;;
+    --stage)      MODE="stage"; STAGE_ROOT="${2:-}"
+                  [ -n "$STAGE_ROOT" ] || die "--stage needs a directory"; shift 2 ;;
+    --bundle)     BUNDLE_DIR="${2:-}"; BUNDLE_GIVEN=1
+                  [ -n "$BUNDLE_DIR" ] || die "--bundle needs a directory"; shift 2 ;;
+    *) die "unknown argument: $1 (use: --dry-run | --print-spec | --stage DIR | --bundle DIR)" ;;
+  esac
+done
+
+case "$MODE" in
+  print-spec)
     render_spec
     exit 0
     ;;
-  --dry-run)
+  stage)
+    validate_config
+    mkdir -p "$STAGE_ROOT" || die "could not create $STAGE_ROOT"
+    stage_buildroot "$STAGE_ROOT"
+    info "staged buildroot -> $STAGE_ROOT"
+    exit 0
+    ;;
+  dry-run)
     validate_config
     info "config OK — package ${PKG_NAME} ${VERSION}-${RELEASE}"
     spec_tmp="$(mktemp)"
@@ -162,21 +215,19 @@ case "${1:-}" in
     rm -f "$spec_tmp"
     exit 0
     ;;
-  "")
-    : # fall through to real build
-    ;;
-  *)
-    die "unknown argument: ${1} (use: --dry-run | --print-spec | no args)"
-    ;;
 esac
 
 # ── Real build ──────────────────────────────────────────────────────────────
 validate_config
-command -v flutter  >/dev/null || die "flutter not on PATH"
 command -v rpmbuild >/dev/null || die "rpmbuild not found — sudo dnf install rpm-build"
 
-info "Building release bundle (flutter build linux --release)..."
-flutter build linux --release || die "flutter build linux --release failed"
+if [ "$BUNDLE_GIVEN" = "1" ]; then
+  info "Using the bundle passed with --bundle: $BUNDLE_DIR (skipping flutter build)"
+else
+  command -v flutter >/dev/null || die "flutter not on PATH (or pass --bundle DIR)"
+  info "Building release bundle (flutter build linux --release)..."
+  flutter build linux --release || die "flutter build linux --release failed"
+fi
 
 TOPDIR="$(mktemp -d)"
 BUILDROOT="$(mktemp -d)"
