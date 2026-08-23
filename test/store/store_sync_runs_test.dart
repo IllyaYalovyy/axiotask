@@ -51,11 +51,9 @@ void main() {
 
       final runs = await s.recentSyncRuns(limit: 50);
       expect(runs, hasLength(50), reason: 'the cap is enforced by the query');
-      expect(
-        runs.map((r) => r.pulled).toList(),
-        [for (var i = 59; i >= 10; i--) i],
-        reason: 'newest run first, oldest 10 dropped by the cap',
-      );
+      expect(runs.map((r) => r.pulled).toList(), [
+        for (var i = 59; i >= 10; i--) i,
+      ], reason: 'newest run first, oldest 10 dropped by the cap');
     });
 
     test('the default cap is 50 runs', () async {

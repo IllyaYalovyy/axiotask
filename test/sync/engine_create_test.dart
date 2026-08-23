@@ -123,11 +123,9 @@ void main() {
       isTrue,
       reason: 'the server id is learned into remote_id',
     );
-    expect(
-      tasks.map((t) => t.task.id),
-      ['local-1'],
-      reason: 'and the row keeps the id every caller already holds (#224)',
-    );
+    expect(tasks.map((t) => t.task.id), [
+      'local-1',
+    ], reason: 'and the row keeps the id every caller already holds (#224)');
   });
 
   test('push create parent before child', () async {
@@ -566,11 +564,11 @@ void main() {
             'L1',
           )).items.where((t) => t.parent == 'P').toList()
           ..sort((a, b) => a.position.compareTo(b.position));
-    expect(
-      remote.map((t) => t.title).toList(),
-      ['sub 0', 'sub 1', 'sub 2'],
-      reason: 'creation order preserved on the server',
-    );
+    expect(remote.map((t) => t.title).toList(), [
+      'sub 0',
+      'sub 1',
+      'sub 2',
+    ], reason: 'creation order preserved on the server');
   });
 
   test('bare due date is normalized on push, not rejected', () async {
@@ -645,11 +643,10 @@ void main() {
         isTrue,
         reason: 'the remotely-deleted list is gone locally',
       );
-      expect(
-        await placement(eng.store, 'local-1'),
-        ('L1', null),
-        reason: 'the unpushed create re-homed to the default list',
-      );
+      expect(await placement(eng.store, 'local-1'), (
+        'L1',
+        null,
+      ), reason: 'the unpushed create re-homed to the default list');
       final row = (await findByAnyId(eng.store, 'local-1'))!;
       expect(row.syncState, SyncState.dirty);
       expect(row.pendingOp, 'create', reason: 'still queued');
@@ -706,11 +703,10 @@ void main() {
       await eng.run();
 
       expect(await placement(eng.store, 'local-parent'), ('L1', null));
-      expect(
-        await placement(eng.store, 'local-child'),
-        ('L1', 'local-parent'),
-        reason: 'the unpushed subtree re-homes intact',
-      );
+      expect(await placement(eng.store, 'local-child'), (
+        'L1',
+        'local-parent',
+      ), reason: 'the unpushed subtree re-homes intact');
       expect(
         await findByAnyId(eng.store, 'local-orphan'),
         isNull,
@@ -987,11 +983,10 @@ void main() {
       ).holdCreateId('local-held');
       final out = await engHold.run();
       expect(out.pushed, 0, reason: 'the held create does not push');
-      expect(
-        await placement(eng.store, 'local-held'),
-        ('L1', null),
-        reason: 'but it survives the list delete, re-homed',
-      );
+      expect(await placement(eng.store, 'local-held'), (
+        'L1',
+        null,
+      ), reason: 'but it survives the list delete, re-homed');
       expect(
         (await findByAnyId(eng.store, 'local-held'))!.task.id,
         'local-held',

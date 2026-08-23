@@ -99,11 +99,9 @@ void main() {
       await s.upsertTask(dirtyTask('LT', 'LOCAL', 'create'));
       await s.upsertTask(dirtyTask('ST', 'SYNCED', 'create'));
       final drained = await s.drainDirty();
-      expect(
-        drained.map((t) => t.task.id),
-        ['ST'],
-        reason: 'only the synced list\'s task is pushed',
-      );
+      expect(drained.map((t) => t.task.id), [
+        'ST',
+      ], reason: 'only the synced list\'s task is pushed');
     });
 
     test('drain_dirty orders create before update before delete', () async {

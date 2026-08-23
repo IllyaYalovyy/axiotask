@@ -342,11 +342,9 @@ void main() {
         )).map((t) => t.task.title).toList(),
         ['task local-1'],
       );
-      expect(
-        (await client.listTasklists()).map((l) => l.title).toList(),
-        ['Work stuff'],
-        reason: 'and it was re-created on the server so the row can push',
-      );
+      expect((await client.listTasklists()).map((l) => l.title).toList(), [
+        'Work stuff',
+      ], reason: 'and it was re-created on the server so the row can push');
     },
   );
 
@@ -717,11 +715,9 @@ void main() {
 
     var out = await eng.run();
     expect(out.errors, 0, reason: 'a transient is not an error');
-    expect(
-      await sidebar(eng),
-      ['My Tasks'],
-      reason: 'the deleted list stays hidden while its delete retries',
-    );
+    expect(await sidebar(eng), [
+      'My Tasks',
+    ], reason: 'the deleted list stays hidden while its delete retries');
     // Every task the UI can reach = the tasks of the lists it renders.
     final visible = <String>[];
     for (final l in await eng.store.allLists()) {

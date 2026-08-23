@@ -125,16 +125,17 @@ void main() {
 
       // The move landed A after C in the VISIBLE order, and rewrote the stored
       // order to match — the hidden completed B kept its slot, never crossed.
-      expect(
-        await _visible(store, 'all', sort),
-        ['C', 'A', 'D'],
-        reason: 'A lands after C, where it was dropped',
-      );
-      expect(
-        await _stored(store),
-        ['B', 'C', 'A', 'D'],
-        reason: 'stored order matches the visible drop, B untouched',
-      );
+      expect(await _visible(store, 'all', sort), [
+        'C',
+        'A',
+        'D',
+      ], reason: 'A lands after C, where it was dropped');
+      expect(await _stored(store), [
+        'B',
+        'C',
+        'A',
+        'D',
+      ], reason: 'stored order matches the visible drop, B untouched');
     }),
   );
 
@@ -184,16 +185,18 @@ void main() {
 
       // Z now renders between X and Y, and the stored order agrees — no silent
       // divergence where the drag looks like a no-op but the order shifts.
-      expect(
-        await _visible(store, 'focus', sort),
-        ['over', 'X', 'Z', 'Y'],
-        reason: 'Z lands between X and Y in the dated bucket',
-      );
-      expect(
-        await _stored(store),
-        ['X', 'Z', 'Y', 'over'],
-        reason: 'stored order tracks the drop, not a mis-indexed slot',
-      );
+      expect(await _visible(store, 'focus', sort), [
+        'over',
+        'X',
+        'Z',
+        'Y',
+      ], reason: 'Z lands between X and Y in the dated bucket');
+      expect(await _stored(store), [
+        'X',
+        'Z',
+        'Y',
+        'over',
+      ], reason: 'stored order tracks the drop, not a mis-indexed slot');
     }),
   );
 }
