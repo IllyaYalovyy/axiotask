@@ -9,9 +9,14 @@
 # What is installed (and why there):
 #   ~/.local/lib/axiotask/                    the whole release bundle
 #   ~/.local/bin/axiotask                     symlink -> the bundle's binary
-#   ~/.local/share/applications/axiotask.desktop
+#   ~/.local/share/applications/io.github.illyayalovyy.axiotask.desktop
 #   ~/.local/share/icons/hicolor/<size>/apps/axiotask.png  (+ scalable SVG)
 #   ~/.local/share/metainfo/io.github.illyayalovyy.axiotask.metainfo.xml
+#
+# The desktop entry is named after the application id, NOT after the binary:
+# GNOME on Wayland gives a running window its icon by looking up a desktop file
+# whose basename equals the window's app_id (the APPLICATION_ID the runner sets
+# with g_set_prgname). Under any other name the dash shows a blank icon (#227).
 #
 # The bundle deliberately goes to ~/.local/lib/axiotask and NOT to
 # ~/.local/share/axiotask: that path is the app's own XDG DATA directory (the
@@ -40,7 +45,7 @@ APP_NAME="axiotask"
 APP_ID="io.github.illyayalovyy.axiotask"
 ICON_SIZES="16 24 32 48 64 128 256 512"
 
-SRC_DESKTOP="linux/packaging/${APP_NAME}.desktop"
+SRC_DESKTOP="linux/packaging/${APP_ID}.desktop"
 SRC_ICONS="linux/packaging/icons/hicolor"
 SRC_METAINFO="linux/packaging/${APP_ID}.metainfo.xml"
 BUILD_BUNDLE="build/linux/x64/release/bundle"
@@ -93,6 +98,9 @@ uninstall() {
   info "Removing installed files (user data is NOT touched)..."
   rm -rf "$LIB_DIR"
   rm -f "$BIN_DIR/$APP_NAME"
+  rm -f "$DESKTOP_DIR/${APP_ID}.desktop"
+  # An install made before #227 renamed the entry left ${APP_NAME}.desktop
+  # behind; without this it survives as a duplicate app-menu entry forever.
   rm -f "$DESKTOP_DIR/${APP_NAME}.desktop"
   rm -f "$METAINFO_DIR/${APP_ID}.metainfo.xml"
   # Icons are removed file by file — never a recursive delete inside a shared
@@ -161,9 +169,12 @@ info "Installed launcher -> $BIN_DIR/$APP_NAME"
 # PATH, and the desktop environment does not read shell profiles.
 mkdir -p "$DESKTOP_DIR"
 sed "s|^Exec=.*|Exec=$BIN_DIR/$APP_NAME|" "$SRC_DESKTOP" \
-  > "$DESKTOP_DIR/${APP_NAME}.desktop" || die "could not write the desktop entry"
-chmod 644 "$DESKTOP_DIR/${APP_NAME}.desktop"
-info "Installed launcher entry -> $DESKTOP_DIR/${APP_NAME}.desktop"
+  > "$DESKTOP_DIR/${APP_ID}.desktop" || die "could not write the desktop entry"
+chmod 644 "$DESKTOP_DIR/${APP_ID}.desktop"
+# Drop the pre-#227 entry so upgrading an old install does not leave the app
+# listed twice in the menu.
+rm -f "$DESKTOP_DIR/${APP_NAME}.desktop"
+info "Installed launcher entry -> $DESKTOP_DIR/${APP_ID}.desktop"
 
 for s in $ICON_SIZES; do
   install -Dm644 "$SRC_ICONS/${s}x${s}/apps/${APP_NAME}.png" \

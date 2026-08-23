@@ -30,12 +30,41 @@ import 'dart:io';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The AppStream component id. rDNS over the project's real home,
-/// github.com/IllyaYalovyy/axiotask → io.github.illyayalovyy.axiotask.
+/// The one canonical application id, ratified by the user on 2026-08-23 (#227).
+/// rDNS over the project's real home, github.com/IllyaYalovyy/axiotask.
 const _appId = 'io.github.illyayalovyy.axiotask';
+
+/// The short name of the binary, the icon theme name and the RPM package —
+/// deliberately NOT the application id (those are POSIX names, not ids).
+const _appName = 'axiotask';
+
 const _metainfoPath = 'linux/packaging/$_appId.metainfo.xml';
-const _desktopPath = 'linux/packaging/axiotask.desktop';
+const _desktopPath = 'linux/packaging/$_appId.desktop';
 const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
+
+/// The GTK application id the runner actually applies: my_application.cc calls
+/// `g_set_prgname(APPLICATION_ID)` and passes it as GtkApplication's
+/// `application-id`, so this string IS the running window's Wayland app_id.
+String _cmakeApplicationId() {
+  final cmake = File('linux/CMakeLists.txt').readAsStringSync();
+  final m = RegExp(r'set\(APPLICATION_ID "([^"]+)"\)').firstMatch(cmake);
+  if (m == null) fail('APPLICATION_ID not found in linux/CMakeLists.txt');
+  return m.group(1)!;
+}
+
+/// Files with [suffix] shipped in linux/packaging — DISCOVERED, not assumed:
+/// the whole point of the identity test is that the file NAME carries the id,
+/// so reading a hard-coded path would test nothing.
+List<String> _packagedNames(String suffix) =>
+    (Directory('linux/packaging').listSync().whereType<File>().toList()
+          ..sort((a, b) => a.path.compareTo(b.path)))
+        .map((f) => f.uri.pathSegments.last)
+        .where((n) => n.endsWith(suffix))
+        .toList();
+
+/// Value of a single-line XML element, e.g. `<id>…</id>`.
+String? _xmlValue(String xml, String tag) =>
+    RegExp('<$tag>([^<]+)</$tag>').firstMatch(xml)?.group(1);
 
 String _pubspecVersion() {
   final line = File(
@@ -53,6 +82,48 @@ String? _desktopValue(String key) {
 }
 
 void main() {
+  // #227: the app shipped with its identity split three ways — GTK app id
+  // `com.axiotask.axiotask`, desktop entry `axiotask.desktop`, metainfo id
+  // `io.github.illyayalovyy.axiotask`. GNOME on Wayland resolves a window's
+  // icon by looking up a desktop file whose BASENAME equals the window's
+  // app_id; three different strings meant no match and a blank icon in the
+  // dash. These tests pin the three declarations to ONE value so they cannot
+  // drift apart again.
+  group('application identity (one id, three declarations)', () {
+    test('APPLICATION_ID, desktop basename and metainfo id are the same id', () {
+      final desktopNames = _packagedNames('.desktop');
+      expect(
+        desktopNames,
+        hasLength(1),
+        reason: 'exactly one desktop entry may ship (found: $desktopNames)',
+      );
+      final metainfoNames = _packagedNames('.metainfo.xml');
+      expect(metainfoNames, hasLength(1), reason: 'found: $metainfoNames');
+
+      final fromCmake = _cmakeApplicationId();
+      final fromDesktop = desktopNames.single.replaceAll('.desktop', '');
+      final fromMetainfo = _xmlValue(
+        File('linux/packaging/${metainfoNames.single}').readAsStringSync(),
+        'id',
+      );
+
+      expect(
+        {fromCmake, fromDesktop, fromMetainfo},
+        {_appId},
+        reason:
+            'GNOME/Wayland matches a window to its desktop file by app_id == '
+            'desktop basename. APPLICATION_ID=$fromCmake, '
+            'desktop=$fromDesktop.desktop, metainfo id=$fromMetainfo must all '
+            'be the ratified id $_appId or the running window has no icon.',
+      );
+      expect(
+        metainfoNames.single,
+        '$_appId.metainfo.xml',
+        reason: 'the metainfo FILE NAME must equal the component id',
+      );
+    });
+  });
+
   group('AppStream metainfo', () {
     late String xml;
 
@@ -92,7 +163,7 @@ void main() {
     test('launchable points at the shipped desktop entry', () {
       expect(
         xml,
-        contains('<launchable type="desktop-id">axiotask.desktop</launchable>'),
+        contains('<launchable type="desktop-id">$_appId.desktop</launchable>'),
       );
       expect(File(_desktopPath).existsSync(), isTrue);
     });
@@ -135,10 +206,7 @@ void main() {
     });
 
     test('StartupWMClass equals the GTK application id the runner sets', () {
-      final cmake = File('linux/CMakeLists.txt').readAsStringSync();
-      final appId = RegExp(
-        r'set\(APPLICATION_ID "([^"]+)"\)',
-      ).firstMatch(cmake)!.group(1);
+      final appId = _cmakeApplicationId();
       expect(
         _desktopValue('StartupWMClass'),
         appId,
@@ -151,7 +219,7 @@ void main() {
 
     test('Icon name resolves to a shipped hicolor icon', () {
       final icon = _desktopValue('Icon');
-      expect(icon, 'axiotask');
+      expect(icon, _appName);
       expect(
         File(
           'linux/packaging/icons/hicolor/128x128/apps/$icon.png',
@@ -227,7 +295,7 @@ void main() {
       expect(File(link.resolveSymbolicLinksSync()).path, exe.path);
 
       final desktop = File(
-        '${home.path}/.local/share/applications/axiotask.desktop',
+        '${home.path}/.local/share/applications/$_appId.desktop',
       );
       expect(desktop.existsSync(), isTrue);
       final lines = desktop.readAsLinesSync();
@@ -242,7 +310,7 @@ void main() {
         reason: 'Exec=$exec does not resolve to an installed file',
       );
       expect(
-        lines.any((l) => l == 'Icon=axiotask'),
+        lines.any((l) => l == 'Icon=$_appName'),
         isTrue,
         reason:
             'Icon= must stay a theme name so the installed hicolor tree wins',
@@ -337,7 +405,7 @@ void main() {
       expect(Link('${home.path}/.local/bin/axiotask').existsSync(), isFalse);
       expect(
         File(
-          '${home.path}/.local/share/applications/axiotask.desktop',
+          '${home.path}/.local/share/applications/$_appId.desktop',
         ).existsSync(),
         isFalse,
       );
@@ -388,6 +456,38 @@ void main() {
         data.existsSync() && devData.existsSync() && config.existsSync(),
         isTrue,
       );
+    });
+
+    // Non-happy path: a home that was installed to BEFORE #227 renamed the
+    // desktop entry. Leaving `axiotask.desktop` behind gives the user a second,
+    // duplicate app-menu entry that still launches the app — uninstall must
+    // clear the stale name too, and install must not resurrect it.
+    test('--uninstall also clears a pre-#227 axiotask.desktop', () {
+      final apps = Directory('${home.path}/.local/share/applications')
+        ..createSync(recursive: true);
+      final stale = File('${apps.path}/$_appName.desktop')
+        ..writeAsStringSync(
+          '[Desktop Entry]\nType=Application\nName=Axiotask\n'
+          'Exec=${home.path}/.local/bin/$_appName\nIcon=$_appName\n',
+        );
+
+      expect(run(['--bundle', bundle.path]).exitCode, 0);
+      expect(
+        File('${apps.path}/$_appId.desktop').existsSync(),
+        isTrue,
+        reason: 'the install must write the entry under the app id',
+      );
+
+      final r = run(['--uninstall']);
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        stale.existsSync(),
+        isFalse,
+        reason:
+            'a pre-#227 install left $_appName.desktop behind; uninstall '
+            'must remove the old name as well as the new one',
+      );
+      expect(File('${apps.path}/$_appId.desktop').existsSync(), isFalse);
     });
 
     test('--uninstall on a clean home succeeds (idempotent)', () {

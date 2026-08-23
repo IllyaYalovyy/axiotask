@@ -9,7 +9,7 @@
 # Layout the RPM installs:
 #   /usr/lib/axiotask/                 the whole release bundle (binary, data, lib)
 #   /usr/bin/axiotask                  symlink -> /usr/lib/axiotask/axiotask
-#   /usr/share/applications/axiotask.desktop
+#   /usr/share/applications/io.github.illyayalovyy.axiotask.desktop
 #   /usr/share/icons/hicolor/<size>/apps/axiotask.png   (16..512 + scalable SVG)
 #   /usr/share/metainfo/io.github.illyayalovyy.axiotask.metainfo.xml (AppStream)
 #
@@ -36,11 +36,14 @@ PKG_NAME="axiotask"
 SUMMARY="Fast, offline-first Google Tasks client"
 LICENSE="GPLv3+"
 URL="https://github.com/IllyaYalovyy/axiotask"
-DESKTOP_SRC="linux/packaging/axiotask.desktop"
-# AppStream component id — also the metainfo file name. Software centres key on
-# it; the desktop entry keeps its short basename and is tied to the component
-# by <launchable> inside the metainfo.
+# The ONE application id (#227): the AppStream component id, the metainfo file
+# name, the desktop-entry basename and the GTK APPLICATION_ID the runner sets
+# are all this string. The desktop entry MUST be installed under it — GNOME on
+# Wayland resolves a running window's icon by matching the window's app_id to a
+# desktop file of the same basename, so any other name means a blank dash icon.
+# ${PKG_NAME} stays the RPM package, the binary and the icon theme name.
 APP_ID="io.github.illyayalovyy.axiotask"
+DESKTOP_SRC="linux/packaging/${APP_ID}.desktop"
 METAINFO_SRC="linux/packaging/${APP_ID}.metainfo.xml"
 # Icons: the hicolor theme tree rendered from the SVG master by tool/gen_icons.py.
 # The desktop entry says `Icon=axiotask`, which only resolves if every themed
@@ -94,7 +97,7 @@ seconds, fully usable offline, and every frequent action is one gesture.
 %files
 /usr/lib/${PKG_NAME}
 /usr/bin/${PKG_NAME}
-/usr/share/applications/${PKG_NAME}.desktop
+/usr/share/applications/${APP_ID}.desktop
 $(for s in ${ICON_SIZES}; do echo "/usr/share/icons/hicolor/${s}x${s}/apps/${PKG_NAME}.png"; done)
 /usr/share/icons/hicolor/scalable/apps/${PKG_NAME}.svg
 /usr/share/metainfo/${APP_ID}.metainfo.xml
@@ -123,7 +126,7 @@ stage_buildroot() {
              "$root/usr/share/applications"
   cp -a "$BUNDLE_DIR/." "$root/usr/lib/${PKG_NAME}/"
   ln -sf "/usr/lib/${PKG_NAME}/${PKG_NAME}" "$root/usr/bin/${PKG_NAME}"
-  install -Dm644 "$DESKTOP_SRC" "$root/usr/share/applications/${PKG_NAME}.desktop"
+  install -Dm644 "$DESKTOP_SRC" "$root/usr/share/applications/${APP_ID}.desktop"
   for s in ${ICON_SIZES}; do
     src="${ICON_DIR}/${s}x${s}/apps/${PKG_NAME}.png"
     [ -f "$src" ] || die "icon $src missing — run tool/gen_icons.py"
@@ -142,6 +145,14 @@ validate_config() {
   [ -f "$DESKTOP_SRC" ] || die "desktop entry missing at $DESKTOP_SRC"
   [ -f linux/packaging/rpm/make_config.yaml ] || die "fastforge make_config.yaml missing"
   grep -q '^Exec=axiotask$' "$DESKTOP_SRC" || die "desktop Exec= must be 'axiotask' (matches /usr/bin/axiotask)"
+  # #227 identity guard: the running window's Wayland app_id IS APPLICATION_ID,
+  # and GNOME only finds the window's icon through a desktop file of that exact
+  # basename. Packaging a desktop entry named anything else ships a blank icon.
+  cmake_app_id=$(sed -nE 's/^set\(APPLICATION_ID "([^"]+)"\).*/\1/p' linux/CMakeLists.txt)
+  [ "$cmake_app_id" = "$APP_ID" ] || die \
+    "app-id drift: linux/CMakeLists.txt says '$cmake_app_id' but packaging uses '$APP_ID' — the installed window would have no icon"
+  grep -q "^StartupWMClass=${APP_ID}\$" "$DESKTOP_SRC" \
+    || die "desktop StartupWMClass= must be '$APP_ID' (the X11 half of the same match)"
   # Icon=axiotask only resolves if the themed bitmaps are actually there.
   for s in ${ICON_SIZES}; do
     [ -f "${ICON_DIR}/${s}x${s}/apps/${PKG_NAME}.png" ] \
