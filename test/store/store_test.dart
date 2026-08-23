@@ -33,6 +33,9 @@ StoredTaskList listOf(String id) => StoredTaskList(
   list: TaskList(id: id, title: 'Inbox', etag: 'e1', updated: _t0),
   syncState: SyncState.clean,
   localUpdated: _t0,
+  // Clean and server-backed ⇒ Google acknowledged it, so it carries a remote
+  // id; pinned equal to the (opaque) local id in these suites (#224).
+  remoteId: id,
 );
 
 /// A local-only list (never pushed/pulled). Mirrors `local_list()`.
@@ -78,7 +81,9 @@ void main() {
       expect(all.firstWhere((l) => l.list.id == 'SYNCED').localOnly, isFalse);
       // Ghost detection must never see a local-only list, or it would delete it
       // the moment it's absent from the server (which is always).
-      final ids = await s.cleanListIds();
+      final ids = {
+        for (final (localId, _) in await s.cleanServerBackedLists()) localId,
+      };
       expect(ids, contains('SYNCED'));
       expect(ids, isNot(contains('LOCAL')));
     });

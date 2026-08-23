@@ -23,12 +23,15 @@ Future<Store> freshStore() async {
   return Store(db);
 }
 
-/// A synced (server-backed) list to create tasks in.
+/// A synced (server-backed) list to create tasks in. Google acknowledged it,
+/// so it carries a `remote_id`; these tests pin it equal to the opaque local
+/// id (#224).
 Future<void> seedList(Store store, String id) => store.upsertList(
   StoredTaskList(
     list: TaskList(id: id, title: 'Inbox', etag: 'e1', updated: _t0),
     syncState: SyncState.clean,
     localUpdated: _t0,
+    remoteId: id,
   ),
 );
 
@@ -43,8 +46,10 @@ Future<void> seedLocalList(Store store, String id) => store.upsertList(
   ),
 );
 
-/// Seed an already-pushed task (has an etag) — the "synced" starting point for
-/// rename/toggle, so their pending_op should become `update`, not `create`.
+/// Seed an already-pushed task (etag + `remote_id`) — the "synced" starting
+/// point for rename/toggle, so their pending_op should become `update`, not
+/// `create`. It is the `remote_id`, not the etag, that says "Google has this
+/// row" (#224).
 Future<void> seedTask(
   Store store,
   String id,
@@ -71,6 +76,7 @@ Future<void> seedTask(
     listId: listId,
     syncState: SyncState.clean,
     localUpdated: _t0,
+    remoteId: id,
   ),
 );
 

@@ -32,6 +32,9 @@ StoredTaskList listOf(String id) => StoredTaskList(
   list: TaskList(id: id, title: 'Inbox', etag: 'e1', updated: _t0),
   syncState: SyncState.clean,
   localUpdated: _t0,
+  // A clean, server-backed list has been acknowledged, so it carries Google's
+  // id; these suites pin it equal to the (opaque) local id (#224).
+  remoteId: id,
 );
 
 StoredTaskList localListOf(String id) => StoredTaskList(
@@ -56,6 +59,8 @@ StoredTask taskOf(String id, String listId, String? parent, String position) =>
       listId: listId,
       syncState: SyncState.clean,
       localUpdated: _t0,
+      // Server-backed: acknowledged, so it carries Google's id (#224).
+      remoteId: id,
     );
 
 /// An unpushed create: no etag, dirty, `pending_op = 'create'`.
@@ -85,11 +90,11 @@ StoredTask newTask(
 
 void main() {
   group('finish_create', () {
-    test('rewrites self and children and marks clean', () async {
+    test('learns the server id, keeps every local id, marks clean', () async {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1'));
-      // A subtask parented on the local id; it must follow the remap.
+      // A subtask parented on the local id. Nothing about it may change.
       await s.upsertTask(newTask('local-2', 'L1', parent: 'local-1'));
       await s.finishCreate(
         'local-1',
@@ -100,13 +105,27 @@ void main() {
         null,
       );
       final rows = await s.listTasks('L1');
-      final parent = rows.firstWhere((r) => r.task.id == 'remote-1');
+      final parent = rows.firstWhere((r) => r.task.id == 'local-1');
       final child = rows.firstWhere((r) => r.task.id == 'local-2');
-      expect(child.task.parent, 'remote-1', reason: 'child re-parented');
+      expect(
+        parent.remoteId,
+        'remote-1',
+        reason: 'Google\'s id is learned into remote_id, never into the key',
+      );
+      expect(
+        child.task.parent,
+        'local-1',
+        reason: 'the child\'s parent link is untouched — nothing to rewrite',
+      );
       expect(parent.task.parent, isNull);
       expect(parent.syncState, SyncState.clean, reason: 'clean atomically');
       expect(parent.pendingOp, isNull);
       expect(parent.task.etag, 'e9');
+      expect(
+        await s.findTaskAny('remote-1'),
+        isNull,
+        reason: 'the server id is never addressable as a primary key',
+      );
     });
 
     test('re-edited row stays dirty as update', () async {
@@ -134,7 +153,7 @@ void main() {
       );
       final row = (await s.listTasks(
         'L1',
-      )).firstWhere((r) => r.task.id == 'remote-1');
+      )).firstWhere((r) => r.task.id == 'local-1');
       expect(row.syncState, SyncState.dirty, reason: 'mid-flight edit queued');
       expect(row.pendingOp, 'update', reason: 'create would duplicate');
       expect(row.task.etag, 'e9');
@@ -163,10 +182,10 @@ void main() {
       );
       final row = (await s.listTasks(
         'L1',
-      )).firstWhere((r) => r.task.id == 'remote-1');
+      )).firstWhere((r) => r.task.id == 'local-1');
       expect(row.syncState, SyncState.clean);
       expect(
-        await s.baseSnapshot('remote-1'),
+        await s.baseSnapshot('local-1'),
         isNull,
         reason: 'a clean create landing clears base_* (NULL while clean)',
       );
@@ -200,9 +219,9 @@ void main() {
       );
       final row = (await s.listTasks(
         'L1',
-      )).firstWhere((r) => r.task.id == 'remote-1');
+      )).firstWhere((r) => r.task.id == 'local-1');
       expect(row.syncState, SyncState.dirty, reason: 'mid-flight edit queued');
-      final base = await s.baseSnapshot('remote-1');
+      final base = await s.baseSnapshot('local-1');
       expect(base, isNotNull, reason: 're-edited row keeps its base');
       expect(
         base!.title,
@@ -235,9 +254,14 @@ void main() {
         _t0,
         null,
       );
-      final row = await s.findTaskAny('remote-1');
-      expect(row, isNotNull, reason: 'the tombstone was remapped to server id');
-      expect(row!.syncState, SyncState.deleted, reason: 'still a tombstone');
+      final row = await s.findTaskAny('local-1');
+      expect(row, isNotNull, reason: 'the tombstone is still there');
+      expect(
+        row!.remoteId,
+        'remote-1',
+        reason: 'and it LEARNED the server id its delete push was missing',
+      );
+      expect(row.syncState, SyncState.deleted, reason: 'still a tombstone');
       expect(row.pendingOp, 'delete');
       expect(row.task.etag, 'e9', reason: 'and now deletable');
       expect(
@@ -246,6 +270,55 @@ void main() {
         reason: 'still invisible to every view',
       );
     });
+
+    test(
+      'remote_id is unique, and a collision rolls the WHOLE finish back',
+      () async {
+        // Kill-window for the remote_id write (#224). finishCreate does two
+        // things — learn the server id and clear the in-flight marker — and they
+        // must be ONE transaction. Split, a crash in the gap would leave a row
+        // the server holds with no marker to recover it, or a cleared marker with
+        // no mapping: either way the next run re-inserts and duplicates.
+        //
+        // Forcing the FIRST write to fail proves the pair is atomic. The
+        // uniqueness of `remote_id` is what forces it: another row already
+        // carries 'remote-1', so the UPDATE violates the constraint.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('remote-1', 'L1', null, '1')); // holds it
+        await s.upsertTask(newTask('local-1', 'L1'));
+        await s.recordInflightCreate('local-1', 'L1', _t0);
+
+        await expectLater(
+          s.finishCreate(
+            'local-1',
+            'remote-1',
+            'e9',
+            '2026-02-01T00:00:00Z',
+            _t0,
+            null,
+          ),
+          throwsA(anything),
+          reason: 'two rows may never claim the same Google id',
+        );
+
+        final row = (await s.findTaskAny('local-1'))!;
+        expect(row.remoteId, isNull, reason: 'nothing half-learned');
+        expect(
+          row.syncState,
+          SyncState.dirty,
+          reason: 'still a pending create',
+        );
+        expect(row.pendingOp, 'create');
+        expect(
+          await s.inflightCreates(),
+          [('local-1', 'L1')],
+          reason:
+              'the marker survives the rollback, so recovery can still adopt '
+              'the orphan instead of duplicating it',
+        );
+      },
+    );
 
     test('clears the in-flight marker', () async {
       final s = await freshStore();
@@ -263,23 +336,30 @@ void main() {
       expect(await s.inflightCreates(), isEmpty);
     });
 
-    test('rewrites a pending move task_id to the server id', () async {
-      final s = await freshStore();
-      await s.upsertList(listOf('L1'));
-      await s.upsertTask(newTask('local-1', 'L1'));
-      await s.recordMove('local-1', 'L1', null, 'other');
-      await s.finishCreate(
-        'local-1',
-        'remote-1',
-        null,
-        '2026-02-01T00:00:00Z',
-        _t0,
-        null,
-      );
-      final moves = await s.pendingMoves();
-      expect(moves, hasLength(1));
-      expect(moves.single.taskId, 'remote-1');
-    });
+    test(
+      'leaves a queued move alone — it already names the right id',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(newTask('local-1', 'L1'));
+        await s.recordMove('local-1', 'L1', null, 'other');
+        await s.finishCreate(
+          'local-1',
+          'remote-1',
+          null,
+          '2026-02-01T00:00:00Z',
+          _t0,
+          null,
+        );
+        final moves = await s.pendingMoves();
+        expect(moves, hasLength(1));
+        expect(
+          moves.single.taskId,
+          'local-1',
+          reason: 'pending_moves keys on local ids, so nothing cascades (#224)',
+        );
+      },
+    );
   });
 
   group('in-flight create markers', () {
@@ -481,22 +561,62 @@ void main() {
       await s.recordMove('T1', 'local-L', null, null);
       await s.recordInflightCreate('T1', 'local-L', _t0);
 
-      await s.remapListId('local-L', 'remote-L', 'eL', '2026-02-01T00:00:00Z');
+      await s.finishListCreate(
+        'local-L',
+        'remote-L',
+        'eL',
+        '2026-02-01T00:00:00Z',
+      );
 
-      // The old id is gone; the new one is clean and carries the server meta.
+      // The list KEEPS its id (#224) and merely learns Google's, landing clean
+      // with the server meta.
       final lists = await s.allLists();
-      expect(lists.map((l) => l.list.id), ['remote-L']);
+      expect(lists.map((l) => l.list.id), ['local-L']);
+      expect(lists.single.remoteId, 'remote-L');
       expect(lists.single.syncState, SyncState.clean);
       expect(lists.single.pendingOp, isNull);
       expect(lists.single.list.etag, 'eL');
       expect(lists.single.list.updated, '2026-02-01T00:00:00Z');
-      // Task, move and marker all follow the list to the server id.
-      expect((await s.findTaskAny('T1'))!.listId, 'remote-L');
-      expect(await s.listTasks('remote-L'), hasLength(1));
+      // Nothing that referenced the list had to be rewritten.
+      expect((await s.findTaskAny('T1'))!.listId, 'local-L');
+      expect(await s.listTasks('local-L'), hasLength(1));
       expect(await s.pendingMoves(), [
-        const PendingMove(taskId: 'T1', listId: 'remote-L'),
+        const PendingMove(taskId: 'T1', listId: 'local-L'),
       ]);
-      expect(await s.inflightCreates(), [('T1', 'remote-L')]);
+      expect(await s.inflightCreates(), [('T1', 'local-L')]);
+    });
+
+    test('two lists may never claim the same Google id', () async {
+      // The list half of the same guarantee: `task_lists.remote_id` is unique,
+      // so a second local list cannot adopt an id another row already holds —
+      // the collision the old id-remap used to hit as a primary-key abort.
+      final s = await freshStore();
+      await s.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'other', title: 'Other', updated: _t0),
+          syncState: SyncState.clean,
+          localUpdated: _t0,
+          remoteId: 'remote-L',
+        ),
+      );
+      await s.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'local-L', title: 'New List', updated: _t0),
+          syncState: SyncState.dirty,
+          localUpdated: _t0,
+          pendingOp: 'create',
+        ),
+      );
+
+      await expectLater(
+        s.finishListCreate('local-L', 'remote-L', 'eL', _t0),
+        throwsA(anything),
+      );
+      final still = (await s.allLists()).firstWhere(
+        (l) => l.list.id == 'local-L',
+      );
+      expect(still.remoteId, isNull);
+      expect(still.syncState, SyncState.dirty, reason: 'still queued to push');
     });
   });
 

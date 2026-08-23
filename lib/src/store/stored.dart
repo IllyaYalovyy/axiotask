@@ -44,9 +44,13 @@ class StoredTask {
     required this.syncState,
     required this.localUpdated,
     this.pendingOp,
+    this.remoteId,
   });
 
-  /// The domain task.
+  /// The domain task. Its `id` is the row's LOCAL id — a UUID minted when the
+  /// row was first stored (by a local create, or by the pull that first saw the
+  /// remote row) and IMMUTABLE for the row's lifetime. `parent` is a local id
+  /// too. Google's id lives in [remoteId], never here.
   final Task task;
 
   /// Which list this task belongs to.
@@ -61,6 +65,12 @@ class StoredTask {
   /// Pending push operation when dirty: `create` | `update` | `delete`.
   final String? pendingOp;
 
+  /// Google's id for this row, learned when its create push was acknowledged;
+  /// `null` while the server has never seen the row. Write-once: the store
+  /// never unlearns it, and the sync engine translates local ⇄ remote ids at
+  /// the API boundary using it.
+  final String? remoteId;
+
   @override
   bool operator ==(Object other) =>
       other is StoredTask &&
@@ -68,11 +78,12 @@ class StoredTask {
       other.listId == listId &&
       other.syncState == syncState &&
       other.localUpdated == localUpdated &&
-      other.pendingOp == pendingOp;
+      other.pendingOp == pendingOp &&
+      other.remoteId == remoteId;
 
   @override
   int get hashCode =>
-      Object.hash(task, listId, syncState, localUpdated, pendingOp);
+      Object.hash(task, listId, syncState, localUpdated, pendingOp, remoteId);
 }
 
 /// A pending position/parent move to be pushed via the Tasks move API.
@@ -120,9 +131,11 @@ class StoredTaskList {
     required this.localUpdated,
     this.pendingOp,
     this.localOnly = false,
+    this.remoteId,
   });
 
-  /// The domain list.
+  /// The domain list. Its `id` is the row's LOCAL id, IMMUTABLE for the row's
+  /// lifetime; Google's id lives in [remoteId].
   final TaskList list;
 
   /// Local sync state.
@@ -138,6 +151,11 @@ class StoredTaskList {
   /// Google. Excluded from ghost detection and from all push paths.
   final bool localOnly;
 
+  /// Google's id for this list, learned when its create push was acknowledged
+  /// (or when a pull first saw it); `null` for a list the server has never
+  /// seen — a local-only list keeps it `null` forever.
+  final String? remoteId;
+
   @override
   bool operator ==(Object other) =>
       other is StoredTaskList &&
@@ -145,9 +163,16 @@ class StoredTaskList {
       other.syncState == syncState &&
       other.localUpdated == localUpdated &&
       other.pendingOp == pendingOp &&
-      other.localOnly == localOnly;
+      other.localOnly == localOnly &&
+      other.remoteId == remoteId;
 
   @override
-  int get hashCode =>
-      Object.hash(list, syncState, localUpdated, pendingOp, localOnly);
+  int get hashCode => Object.hash(
+    list,
+    syncState,
+    localUpdated,
+    pendingOp,
+    localOnly,
+    remoteId,
+  );
 }

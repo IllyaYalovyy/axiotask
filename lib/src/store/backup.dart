@@ -64,6 +64,7 @@ class Backup {
         for (final (list, tasks) in lists)
           BackupList(
             id: list.list.id,
+            remoteId: list.remoteId,
             title: list.list.title,
             etag: list.list.etag,
             updated: list.list.updated,
@@ -138,6 +139,7 @@ class Backup {
 class BackupList {
   const BackupList({
     required this.id,
+    this.remoteId,
     required this.title,
     this.etag,
     required this.updated,
@@ -148,8 +150,11 @@ class BackupList {
     required this.tasks,
   });
 
-  /// Google's identifier (or a local UUID before first push).
+  /// The list's LOCAL id — immutable for the row's lifetime (#224).
   final String id;
+
+  /// Google's id for the list; `null` if the server has never seen it.
+  final String? remoteId;
 
   /// Display title.
   final String title;
@@ -179,6 +184,7 @@ class BackupList {
     final rawTasks = json['tasks'];
     return BackupList(
       id: json['id'] as String? ?? '',
+      remoteId: json['remote_id'] as String?,
       title: json['title'] as String? ?? '',
       etag: json['etag'] as String?,
       updated: json['updated'] as String? ?? '',
@@ -196,6 +202,7 @@ class BackupList {
 
   Map<String, Object?> _toJson() => {
     'id': id,
+    if (remoteId != null) 'remote_id': remoteId,
     'title': title,
     if (etag != null) 'etag': etag,
     'updated': updated,
@@ -214,6 +221,7 @@ class BackupList {
       localUpdated: localUpdated,
       pendingOp: pendingOp,
       localOnly: localOnly,
+      remoteId: remoteId,
     );
     return (stored, storedTasks);
   }
@@ -222,6 +230,7 @@ class BackupList {
   bool operator ==(Object other) =>
       other is BackupList &&
       other.id == id &&
+      other.remoteId == remoteId &&
       other.title == title &&
       other.etag == etag &&
       other.updated == updated &&
@@ -234,6 +243,7 @@ class BackupList {
   @override
   int get hashCode => Object.hash(
     id,
+    remoteId,
     title,
     etag,
     updated,
@@ -249,6 +259,7 @@ class BackupList {
 class BackupTask {
   const BackupTask({
     required this.id,
+    this.remoteId,
     this.parent,
     required this.position,
     required this.title,
@@ -263,10 +274,13 @@ class BackupTask {
     this.pendingOp,
   });
 
-  /// Google's identifier (or a local UUID before first push).
+  /// The task's LOCAL id — immutable for the row's lifetime (#224).
   final String id;
 
-  /// Parent task id; `null` means a top-level task.
+  /// Google's id for the task; `null` if the server has never seen it.
+  final String? remoteId;
+
+  /// Parent task id (a LOCAL id); `null` means a top-level task.
   final String? parent;
 
   /// Google's lex-sortable position string (preserves ordering on restore).
@@ -307,6 +321,7 @@ class BackupTask {
   /// fresh, un-tombstoned row that a later pull re-populates).
   factory BackupTask.fromStored(StoredTask st) => BackupTask(
     id: st.task.id,
+    remoteId: st.remoteId,
     parent: st.task.parent,
     position: st.task.position,
     title: st.task.title,
@@ -323,6 +338,7 @@ class BackupTask {
 
   factory BackupTask._fromJson(Map<String, Object?> json) => BackupTask(
     id: json['id'] as String? ?? '',
+    remoteId: json['remote_id'] as String?,
     parent: json['parent'] as String?,
     position: json['position'] as String? ?? '',
     title: json['title'] as String? ?? '',
@@ -339,6 +355,7 @@ class BackupTask {
 
   Map<String, Object?> _toJson() => {
     'id': id,
+    if (remoteId != null) 'remote_id': remoteId,
     if (parent != null) 'parent': parent,
     'position': position,
     'title': title,
@@ -354,6 +371,7 @@ class BackupTask {
   };
 
   StoredTask _intoStored(String listId) => StoredTask(
+    remoteId: remoteId,
     task: Task(
       id: id,
       parent: parent,
@@ -377,6 +395,7 @@ class BackupTask {
   bool operator ==(Object other) =>
       other is BackupTask &&
       other.id == id &&
+      other.remoteId == remoteId &&
       other.parent == parent &&
       other.position == position &&
       other.title == title &&
@@ -393,6 +412,7 @@ class BackupTask {
   @override
   int get hashCode => Object.hash(
     id,
+    remoteId,
     parent,
     position,
     title,

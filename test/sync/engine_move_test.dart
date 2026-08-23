@@ -23,6 +23,8 @@ import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'sync_fixture.dart';
+
 const _t0 = '2026-06-01T00:00:00Z';
 const _tMove = '2026-06-02T00:00:00Z';
 
@@ -64,13 +66,20 @@ Future<void> localMove(
   String? parent,
   String? previous,
 }) async {
-  final row = (await eng.store.findTaskAny(id))!;
+  final row = (await findByAnyId(eng.store, id))!;
+  // The store's own links are LOCAL ids (#224); the tests name server ids.
+  final localParent = parent == null
+      ? null
+      : await localIdOf(eng.store, parent);
+  final localPrevious = previous == null
+      ? null
+      : await localIdOf(eng.store, previous);
   final position = previous != null ? 'after-$previous' : '00000000000001';
   // Rebuild the Task explicitly: copyWith cannot clear `parent` to null, which
   // the promote/detach cases need.
   final task = Task(
     id: row.task.id,
-    parent: parent,
+    parent: localParent,
     position: position,
     title: row.task.title,
     notes: row.task.notes,
@@ -89,9 +98,15 @@ Future<void> localMove(
       syncState: row.syncState,
       localUpdated: _tMove,
       pendingOp: row.pendingOp,
+      remoteId: row.remoteId,
     ),
   );
-  await eng.store.recordMove(id, row.listId, parent, previous);
+  await eng.store.recordMove(
+    row.task.id,
+    row.listId,
+    localParent,
+    localPrevious,
+  );
 }
 
 /// Top-level task ids in the order the server would render them.
@@ -109,7 +124,7 @@ Future<List<String>> localOrder(SyncEngine eng, String list) async {
   final rows = await eng.store.listTasks(list);
   return [
     for (final r in rows)
-      if (r.task.parent == null) r.task.id,
+      if (r.task.parent == null) serverId(r),
   ];
 }
 
@@ -148,13 +163,13 @@ void main() {
 
   test('push move calls move api and clears', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'first', '1');
     client.seedTask('L1', 'T2', 'second', '2');
     await eng.run();
 
     // Record a move: T1 should follow T2.
-    await eng.store.recordMove('T1', 'L1', null, 'T2');
+    await recordServerMove(eng.store, 'T1', 'L1', null, 'T2');
 
     final out = await eng.run();
     expect(out.pushed >= 1, isTrue);
@@ -165,11 +180,11 @@ void main() {
 
   test('push move disabled when push off', () async {
     final (client, eng) = await engine(); // push disabled
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task', '1');
     await eng.run();
 
-    await eng.store.recordMove('T1', 'L1', null, 'X');
+    await recordServerMove(eng.store, 'T1', 'L1', null, 'X');
     await eng.run();
 
     expect(client.callCount(Method.moveTask), 0);
@@ -179,7 +194,7 @@ void main() {
 
   test('push move not found drops intent', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run(); // list now exists locally
 
     // A clean task that exists locally but the server doesn't know.
@@ -190,9 +205,12 @@ void main() {
         listId: 'L1',
         syncState: SyncState.clean,
         localUpdated: local.localUpdated,
+        // The server acknowledged it once and no longer has it — that is what
+        // makes the move go out and 404 (#224).
+        remoteId: 'ghost',
       ),
     );
-    await eng.store.recordMove('ghost', 'L1', null, null);
+    await recordServerMove(eng.store, 'ghost', 'L1', null, null);
 
     final out = await eng.run();
     expect(out.pushed, 0);
@@ -202,12 +220,12 @@ void main() {
 
   test('push move transient retries', () async {
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T1', 'task', '1');
     client.seedTask('L1', 'T2', 'other', '2');
     await eng.run();
 
-    await eng.store.recordMove('T1', 'L1', null, 'T2');
+    await recordServerMove(eng.store, 'T1', 'L1', null, 'T2');
     client.failNext(Method.moveTask, () => const ServerError(503));
 
     await eng.run();
@@ -222,7 +240,7 @@ void main() {
     // so there is nothing to 412 on: whoever writes last wins the position, and
     // the pull leaves both sides showing the same order.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'A', 'a', '00000000000001');
     client.seedTask('L1', 'B', 'b', '00000000000002');
     client.seedTask('L1', 'C', 'c', '00000000000003');
@@ -263,7 +281,7 @@ void main() {
     // content: the rename arrives (via the move response body, adopted because
     // the row is clean — P6) and our ordering still lands. No conflict, no copy.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'A', 'a', '00000000000001');
     client.seedTask('L1', 'B', 'b', '00000000000002');
     await eng.run();
@@ -281,7 +299,7 @@ void main() {
 
     final rows = await eng.store.listTasks('L1');
     expect(rows.length, 2, reason: 'no conflicted copy was created');
-    final a = rows.firstWhere((t) => t.task.id == 'A');
+    final a = rows.firstWhere((t) => serverId(t) == 'A');
     expect(
       a.task.title,
       'renamed elsewhere',
@@ -308,7 +326,7 @@ void main() {
     // (or, worse, never notices). Degrade instead: drop the ordering half and
     // send the reparent alone (P5's ladder).
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTaskWithParent('L1', 'B', 'sibling', '00000000000002', 'P');
     client.seedTask('L1', 'T', 'dragged under P after B', '00000000000003');
@@ -329,14 +347,14 @@ void main() {
       'P',
       reason: 'the reparent the user asked for reached the server',
     );
-    final t = (await eng.store.findTaskAny('T'))!;
+    final t = (await findByAnyId(eng.store, 'T'))!;
     expect(
-      t.task.parent,
+      await parentServerId(eng.store, t),
       'P',
       reason: 'and the local view still agrees with it',
     );
     expect(
-      await eng.store.findTaskAny('B'),
+      await findByAnyId(eng.store, 'B'),
       isNull,
       reason: 'the deleted sibling is gone locally too',
     );
@@ -355,7 +373,7 @@ void main() {
     // gone: drop the intent, do NOT retry, and let the rest of the queue
     // through.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'T', 'vanishing', '00000000000001');
     client.seedTask('L1', 'A', 'a', '00000000000002');
     client.seedTask('L1', 'B', 'b', '00000000000003');
@@ -392,7 +410,7 @@ void main() {
     // is counted and dropped, never retried, and the pull removes the row the
     // user can no longer act on.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'A', 'a', '00000000000001');
     client.seedTask('L1', 'B', 'b', '00000000000002');
     await eng.run();
@@ -432,7 +450,7 @@ void main() {
       () => const NotFound(),
     ]) {
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'P', 'parent', '00000000000001');
       client.seedTask('L1', 'T', 'dragged under P', '00000000000002');
       await eng.run();
@@ -465,7 +483,7 @@ void main() {
     // (b) The move landed first, and P's delete cascaded T away on the server
     // afterwards. Ghost detection converges the local view.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'dragged under P', '00000000000002');
     await eng.run();
@@ -491,7 +509,7 @@ void main() {
     // become done rather than the row freezing with a fresh etag and stale
     // content.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'still open', '00000000000002');
     await eng.run();
@@ -505,8 +523,12 @@ void main() {
 
     final out = await eng.run();
     expect(out.errors, 0);
-    final t = (await eng.store.findTaskAny('T'))!;
-    expect(t.task.parent, 'P', reason: 'the demote landed');
+    final t = (await findByAnyId(eng.store, 'T'))!;
+    expect(
+      await parentServerId(eng.store, t),
+      'P',
+      reason: 'the demote landed',
+    );
     expect(
       t.task.status,
       TaskStatus.completed,
@@ -530,7 +552,7 @@ void main() {
     // the server cannot save us here, so the move must be refused client-side.
     // Invariant #1 is ours to keep.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'about to be demoted', '00000000000002');
     await eng.run();
@@ -544,7 +566,10 @@ void main() {
       'T',
     );
     await eng.run();
-    expect((await eng.store.findTaskAny('C'))!.task.parent, 'T');
+    expect(
+      await parentServerId(eng.store, (await findByAnyId(eng.store, 'C'))!),
+      'T',
+    );
 
     await localMove(eng, 'T', parent: 'P');
     final out = await eng.run();
@@ -569,7 +594,7 @@ void main() {
     ], reason: 'T renders as a top-level row again');
     await assertAtMostOneLevel(eng, 'L1');
     expect(
-      (await eng.store.findTaskAny('C'))!.task.parent,
+      await parentServerId(eng.store, (await findByAnyId(eng.store, 'C'))!),
       'T',
       reason: 'and its subtask is still its subtask',
     );
@@ -587,7 +612,7 @@ void main() {
     // unconditional one. The edit must land, and the row must still converge to
     // the server's parent afterwards.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
     client.seedTask('L1', 'T', 'about to be demoted', '00000000000002');
     await eng.run();
@@ -601,7 +626,7 @@ void main() {
     await eng.run();
 
     await localMove(eng, 'T', parent: 'P');
-    final t0 = (await eng.store.findTaskAny('T'))!;
+    final t0 = (await findByAnyId(eng.store, 'T'))!;
     await eng.store.upsertTask(
       StoredTask(
         task: t0.task.copyWith(title: 'renamed locally'),
@@ -617,7 +642,7 @@ void main() {
     client.failNext(Method.patchTask, () => const ServerError(503));
     await eng.run();
     expect(client.callCount(Method.moveTask), 0, reason: 'the move is refused');
-    final t1 = (await eng.store.findTaskAny('T'))!;
+    final t1 = (await findByAnyId(eng.store, 'T'))!;
     expect(t1.syncState, SyncState.dirty, reason: 'the edit is still pending');
     expect(t1.task.etag, isNotNull, reason: 'and it kept its etag guard');
 
@@ -632,7 +657,7 @@ void main() {
     final out = await eng.run();
     expect(out.conflicts, 1, reason: '412 → the remote edit was not clobbered');
     final rows = await eng.store.listTasks('L1');
-    final t = rows.firstWhere((r) => r.task.id == 'T');
+    final t = rows.firstWhere((r) => serverId(r) == 'T');
     expect(
       t.task.title,
       'renamed remotely',
@@ -653,7 +678,7 @@ void main() {
       // §F gap, mirror case: the target parent P was itself demoted under Q by
       // another device. Same third level, same refusal.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'Q', 'grandparent-to-be', '00000000000001');
       client.seedTask('L1', 'P', 'target parent', '00000000000002');
       client.seedTask('L1', 'T', 'dragged under P', '00000000000003');
@@ -689,7 +714,7 @@ void main() {
       // intent is dropped and ghost detection removes the row. The parent it was
       // detaching from is untouched.
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'P', 'parent', '00000000000001');
       client.seedTaskWithParent('L1', 'S', 'subtask', '00000000000002', 'P');
       await eng.run();
@@ -700,11 +725,11 @@ void main() {
       await eng.run();
       expect(await eng.store.pendingMoves(), isEmpty);
       expect(
-        await eng.store.findTaskAny('S'),
+        await findByAnyId(eng.store, 'S'),
         isNull,
         reason: 'the promoted row is gone, not resurrected top-level',
       );
-      final p = (await eng.store.findTaskAny('P'))!;
+      final p = (await findByAnyId(eng.store, 'P'))!;
       expect(p.syncState, SyncState.clean, reason: 'the parent is untouched');
 
       final out2 = await eng.run();
@@ -717,7 +742,7 @@ void main() {
     // the move endpoint, so the last write wins and the pull converges both
     // sides on it. Ours is written last: the task ends up top-level.
     final (client, eng) = await engine(push: true);
-    client.seedList('L1', 'Inbox');
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'old parent', '00000000000001');
     client.seedTask('L1', 'Q', 'other parent', '00000000000002');
     client.seedTaskWithParent('L1', 'S', 'subtask', '00000000000003', 'P');
@@ -751,12 +776,12 @@ void main() {
       // new content at the new position. The move response must NOT clobber the
       // pending edit (meta-only adoption for a dirty row).
       final (client, eng) = await engine(push: true);
-      client.seedList('L1', 'Inbox');
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'A', 'a', '00000000000001');
       client.seedTask('L1', 'B', 'b', '00000000000002');
       await eng.run();
 
-      final a0 = (await eng.store.findTaskAny('A'))!;
+      final a0 = (await findByAnyId(eng.store, 'A'))!;
       await eng.store.upsertTask(
         StoredTask(
           task: a0.task.copyWith(title: 'renamed by me'),
@@ -771,7 +796,7 @@ void main() {
       final out = await eng.run();
       expect(out.conflicts, 0);
       expect(out.errors, 0);
-      final a = (await eng.store.findTaskAny('A'))!;
+      final a = (await findByAnyId(eng.store, 'A'))!;
       expect(a.task.title, 'renamed by me');
       expect(a.syncState, SyncState.clean, reason: 'nothing left pending');
       expect((await client.getTask('L1', 'A')).title, 'renamed by me');

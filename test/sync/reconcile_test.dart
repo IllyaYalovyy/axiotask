@@ -27,11 +27,15 @@ Task task(String id) => Task(
 );
 
 /// A clean stored row wrapping [t].
+/// A clean, server-backed stored row. Clean means Google acknowledged it, so
+/// it carries a `remote_id` — the id the wire actually names (#224). These
+/// helpers pin it equal to the (opaque) local id.
 StoredTask stored(Task t) => StoredTask(
   task: t,
   listId: 'L',
   syncState: SyncState.clean,
   localUpdated: t.updated,
+  remoteId: t.id,
 );
 
 Set<String> idSet(List<String> v) => v.toSet();
@@ -72,11 +76,10 @@ void main() {
       );
     });
 
-    test('ref_state reads etag presence', () {
+    test('ref_state reads whether the server acknowledged the row', () {
       expect(RefState.of(null), RefState.missing);
       expect(RefState.of(stored(task('a'))), RefState.synced);
-      // An unpushed row carries no etag — build it directly, since copyWith
-      // cannot clear etag back to null.
+      // An unpushed row has no remote id, so there is nothing to name it by.
       final local = StoredTask(
         task: const Task(
           id: 'a',
@@ -408,7 +411,7 @@ void main() {
       final sibB = stored(
         task('b').copyWith(parent: 'p', position: '00000000000000000002'),
       );
-      // Unsynced sibling: naming its local UUID would draw a 400.
+      // Unsynced sibling: it has no remote id, so it cannot be named at all.
       final sibC = StoredTask(
         task: Task(
           id: 'c',
@@ -428,7 +431,11 @@ void main() {
       );
 
       final rows = [child, sibA, sibB, sibC, other];
-      expect(createPreviousAnchor(child, rows), 'b');
+      expect(
+        createPreviousAnchor(child, rows),
+        'b',
+        reason: 'the anchor is the sibling\'s WIRE id',
+      );
 
       final top = stored(task('top'));
       expect(createPreviousAnchor(top, rows), isNull);
@@ -436,9 +443,13 @@ void main() {
 
     test('create_payload canonicalizes due and carries the anchor', () {
       final row = stored(task('t1').copyWith(due: '2026-03-04', parent: 'p'));
-      final payload = createPayload(row, 'b');
+      final payload = createPayload(row, 'b', 'remote-p');
       expect(payload.due, '2026-03-04T00:00:00.000Z');
-      expect(payload.parent, 'p');
+      expect(
+        payload.parent,
+        'remote-p',
+        reason: 'the wire payload names Google\'s parent id, not the local one',
+      );
       expect(payload.previous, 'b');
       expect(payload.status, TaskStatus.needsAction);
       expect(payload.title, 'task t1');
