@@ -80,6 +80,16 @@ Google Cloud project.
   desktop entry, and icon.
 - Android (debug): `flutter build apk --debug`
 
+### App icon
+
+`assets/branding/axiotask.svg` is the only hand-authored icon. The Linux hicolor
+theme set and every Android launcher bitmap (legacy, round, and the adaptive
+foreground/background/monochrome layers) are rendered from it by
+`tool/gen_icons.py` — needs python3 `cairosvg`. Edit the master, run the script,
+and commit the master, the rasters, and `assets/branding/icons.sha256` together;
+`tool/gen_icons.py --check` (also enforced by the test suite) fails if a raster
+was hand-edited or left stale.
+
 ## Test
 
 - `flutter analyze` and `dart analyze` — must be clean; every diagnostic is

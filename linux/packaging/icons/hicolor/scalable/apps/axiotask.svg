@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  axiotask — the ONE master icon (#225).
+
+  Everything the platforms show is rendered from this file by tool/gen_icons.py:
+  the Linux hicolor set, the legacy Android launcher bitmaps and the three
+  adaptive-icon layers. Never hand-export a raster; edit here, re-run the
+  generator (it rewrites assets/branding/icons.sha256) and commit both.
+
+  Design notes — why it looks like this:
+    * The tile gradient is the app's own brand seed (Material deepPurple, the
+      same seed lib/src/ui/theme.dart builds both themes from), so the launcher
+      icon and the app are visibly one family.
+    * The mark is ONE bold shape: a completion check with a sharp elbow and a
+      long arm that tapers as it rises — "done, and moving". A single shape is
+      what survives 16px; a list-plus-checkbox composition mushes at that size
+      and reads as a generic to-do clone.
+    * The glyph is a filled outline, not a stroke: the taper (28.6px half-width
+      at the tail, 18.7px at the tip) and the mitred elbow are the design, and a
+      uniform round stroke cannot express either.
+    * Every point of the glyph lies within radius 155 of the canvas centre, so
+      the mark is 60% of the tile — the proportion the desktop icon shows. The
+      generator rescales it by 72/108 for the Android adaptive layers (that is
+      the only part of the 108dp canvas a launcher ever shows), which keeps the
+      icon the same visual size there AND parks the glyph well inside the 66dp
+      safe zone, where no mask (circle, squircle, teardrop, rounded square) can
+      clip it.
+
+  Geometry, for editing: the glyph outline is offset from the centre-line
+  (139.4,256) → (223.0,339.6) → (379.2,170.2) by the half-widths above, with a
+  round cap at each end and a mitre at the elbow.
+
+  Structure the generator depends on (these ids are load-bearing):
+    #bg-tile    the rounded background tile — rx is dropped for the full-bleed
+                adaptive background layer and raised to 256 for the round icon
+    #mark       both passes of the glyph; dropped entirely for the background
+    #mark-glyph the glyph alone, recoloured for the Android 13+ themed icon
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Axiotask</title>
+  <defs>
+    <linearGradient id="tile-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B6BF0"/>
+      <stop offset="0.55" stop-color="#6242CE"/>
+      <stop offset="1" stop-color="#42239E"/>
+    </linearGradient>
+  </defs>
+  <g id="bg">
+    <rect id="bg-tile" x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#tile-gradient)"/>
+  </g>
+  <g id="mark">
+    <path id="mark-shade" d="M 159.6 235.8 A 28.6 28.6 0 0 0 119.2 276.2 L 216.8 373.9 L 392.9 182.9 A 18.7 18.7 0 0 0 365.5 157.5 L 229.2 305.3 Z" fill="#1E0B4B" fill-opacity="0.22" transform="translate(0 10)"/>
+    <path id="mark-glyph" d="M 159.6 235.8 A 28.6 28.6 0 0 0 119.2 276.2 L 216.8 373.9 L 392.9 182.9 A 18.7 18.7 0 0 0 365.5 157.5 L 229.2 305.3 Z" fill="#FFFFFF"/>
+  </g>
+</svg>
