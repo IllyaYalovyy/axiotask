@@ -32,6 +32,9 @@ String _pubspecVersion() {
   return raw.split('+').first;
 }
 
+/// AppStream component id — also the metainfo file name (see #226).
+const _appId = 'io.github.illyayalovyy.axiotask';
+
 ProcessResult _runScript(List<String> args) =>
     Process.runSync('bash', ['tool/build_rpm.sh', ...args]);
 
@@ -62,18 +65,30 @@ void main() {
       expect(spec, contains('Name:           axiotask'));
     });
 
-    test(
-      '%files installs launcher, desktop entry and icon (menu-launchable)',
-      () {
-        expect(spec, contains('/usr/bin/axiotask'));
-        expect(spec, contains('/usr/share/applications/axiotask.desktop'));
-        expect(
-          spec,
-          contains('/usr/share/icons/hicolor/512x512/apps/axiotask.png'),
-        );
-        expect(spec, contains('/usr/lib/axiotask'));
-      },
-    );
+    test('%files installs launcher, desktop entry, icon and metainfo '
+        '(menu-launchable, listed in software centres)', () {
+      expect(spec, contains('/usr/bin/axiotask'));
+      expect(spec, contains('/usr/share/applications/axiotask.desktop'));
+      expect(
+        spec,
+        contains('/usr/share/icons/hicolor/512x512/apps/axiotask.png'),
+      );
+      expect(spec, contains('/usr/lib/axiotask'));
+      expect(
+        spec,
+        contains('/usr/share/metainfo/$_appId.metainfo.xml'),
+        reason:
+            'without the AppStream metainfo GNOME Software shows the RPM as '
+            'an unnamed binary',
+      );
+    });
+
+    test('URL points at the real project home', () {
+      expect(
+        spec,
+        contains('URL:            https://github.com/IllyaYalovyy/axiotask'),
+      );
+    });
 
     test('declares the GTK3/GLib runtime dependency (ldd-verified)', () {
       expect(spec, contains('Requires:       gtk3'));
@@ -136,5 +151,99 @@ void main() {
     final desktop = File('linux/packaging/axiotask.desktop').readAsStringSync();
     expect(desktop, contains('Exec=axiotask'));
     expect(desktop, contains('Icon=axiotask'));
+  });
+
+  // The maker config and the desktop entry are two declarations of the same
+  // menu placement; a category listed in one and not the other means the RPM
+  // and the .desktop file disagree about where the app appears.
+  test('make_config categories agree with the desktop entry', () {
+    final cfg = File('linux/packaging/rpm/make_config.yaml').readAsStringSync();
+    final categories = File('linux/packaging/axiotask.desktop')
+        .readAsLinesSync()
+        .firstWhere((l) => l.startsWith('Categories='))
+        .substring('Categories='.length)
+        .split(';')
+        .where((c) => c.isNotEmpty);
+    final block = cfg.split('categories:').last.split('keywords:').first;
+    for (final c in categories) {
+      expect(block, contains('- $c'), reason: 'make_config must list $c');
+    }
+    expect(
+      RegExp(r'^\s+- ', multiLine: true).allMatches(block).length,
+      categories.length,
+      reason: 'make_config lists categories the desktop entry does not',
+    );
+  });
+
+  // Spec/staging skew: a path listed in %files that nothing stages makes
+  // rpmbuild fail at package time (found only by a full RPM build, which the
+  // gate cannot run), and a staged file missing from %files is silently
+  // dropped from the package. --stage renders the buildroot from a bundle
+  // without flutter or rpmbuild, so both directions are checkable here.
+  group('buildroot staging (tool/build_rpm.sh --stage)', () {
+    late Directory root;
+    late Directory bundle;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('axiotask_rpmroot_');
+      bundle = Directory.systemTemp.createTempSync('axiotask_rpmbundle_');
+      File('${bundle.path}/axiotask').writeAsStringSync('#!/bin/sh\ntrue\n');
+      Process.runSync('chmod', ['+x', '${bundle.path}/axiotask']);
+      Directory('${bundle.path}/lib').createSync();
+      File('${bundle.path}/lib/libapp.so').writeAsStringSync('so');
+    });
+
+    tearDown(() {
+      root.deleteSync(recursive: true);
+      bundle.deleteSync(recursive: true);
+    });
+
+    test('every %files path is actually staged', () {
+      final r = Process.runSync('bash', [
+        'tool/build_rpm.sh',
+        '--stage',
+        root.path,
+        '--bundle',
+        bundle.path,
+      ]);
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+
+      final spec = _runScript(['--print-spec']).stdout as String;
+      final files = spec
+          .split('%files')
+          .last
+          .split('%post')
+          .first
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.startsWith('/'));
+      expect(files, isNotEmpty);
+      for (final f in files) {
+        final staged = '${root.path}$f';
+        expect(
+          File(staged).existsSync() ||
+              Directory(staged).existsSync() ||
+              Link(staged).existsSync(),
+          isTrue,
+          reason: '%files lists $f but nothing stages it',
+        );
+      }
+    });
+
+    // Non-happy path: staging from a directory that holds no release binary
+    // must fail loudly rather than produce an RPM full of nothing.
+    test('staging refuses a bundle without the release binary', () {
+      final empty = Directory.systemTemp.createTempSync('axiotask_empty_');
+      final r = Process.runSync('bash', [
+        'tool/build_rpm.sh',
+        '--stage',
+        root.path,
+        '--bundle',
+        empty.path,
+      ]);
+      expect(r.exitCode, isNot(0));
+      expect(r.stderr as String, contains('binary'));
+      empty.deleteSync(recursive: true);
+    });
   });
 }

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream metainfo — what GNOME Software / KDE Discover show for axiotask.
+
+  The component id is rDNS over the project's real home
+  (github.com/IllyaYalovyy/axiotask → io.github.illyayalovyy.axiotask) and the
+  FILE NAME must stay equal to it. The shipped desktop entry keeps its short
+  basename (axiotask.desktop, matching the binary, the icon theme name and the
+  RPM paths), so the two are tied together by <launchable> below.
+
+  The <release> version is the pubspec version; test/packaging/linux_distribution_test.dart
+  fails when the two drift apart. Validate with:
+      appstreamcli validate linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml
+  (the test passes the offline flag as well)
+-->
+<component type="desktop-application">
+  <id>io.github.illyayalovyy.axiotask</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Axiotask</name>
+  <summary>Fast, offline-first Google Tasks client</summary>
+
+  <description>
+    <p>
+      Axiotask is a fast, local-first frontend for Google Tasks. It keeps your
+      lists in a local database, so it launches in under two seconds and stays
+      fully usable offline; changes sync back to Google as soon as you are
+      connected again.
+    </p>
+    <p>Built for people who live in their task list:</p>
+    <ul>
+      <li>Smart views — Focus, Upcoming, Missed, Unscheduled — across every list</li>
+      <li>Complete, schedule and reorder in one gesture: a click or drag on the
+          desktop, a swipe on Android</li>
+      <li>Subtasks, notes and due dates in a task detail panel</li>
+      <li>The same app on Linux desktop and Android</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">axiotask.desktop</launchable>
+
+  <developer id="io.github.illyayalovyy">
+    <name>Illya Yalovyy</name>
+  </developer>
+
+  <url type="homepage">https://github.com/IllyaYalovyy/axiotask</url>
+  <url type="bugtracker">https://github.com/IllyaYalovyy/axiotask/issues</url>
+  <url type="vcs-browser">https://github.com/IllyaYalovyy/axiotask</url>
+
+  <categories>
+    <category>Office</category>
+    <category>ProjectManagement</category>
+  </categories>
+
+  <keywords>
+    <keyword>tasks</keyword>
+    <keyword>todo</keyword>
+    <keyword>google</keyword>
+    <keyword>productivity</keyword>
+  </keywords>
+
+  <provides>
+    <binary>axiotask</binary>
+  </provides>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-08-23">
+      <description>
+        <p>First packaged Linux release of the Flutter application.</p>
+      </description>
+    </release>
+  </releases>
+</component>

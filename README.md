@@ -75,10 +75,25 @@ Google Cloud project.
 - Linux (debug): `flutter build linux --debug`
 - Linux (release): `flutter build linux --release`
   → `build/linux/x64/release/bundle/`
+- User-local install (no sudo): `tool/install.sh` — builds the release bundle
+  and installs it under your home: bundle → `~/.local/lib/axiotask`, launcher →
+  `~/.local/bin/axiotask`, plus the desktop entry, hicolor icons and AppStream
+  metainfo under `~/.local/share`. `tool/install.sh --uninstall` reverses it;
+  re-running upgrades in place. It never touches your data
+  (`~/.local/share/axiotask*`, `~/.config/axiotask*`) — which is why the program
+  directory is `~/.local/lib`, not `~/.local/share`.
 - RPM package: `tool/build_rpm.sh` (see `tool/build_rpm.sh --dry-run`), then
   install with `dnf install` of the produced rpm. This installs the launcher,
-  desktop entry, and icon.
+  desktop entry, icons and AppStream metainfo system-wide.
 - Android (debug): `flutter build apk --debug`
+
+The desktop entry (`linux/packaging/axiotask.desktop`) and the AppStream
+metainfo (`linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml`) are
+the app's OS-level metadata; both are validated by `desktop-file-validate` /
+`appstreamcli validate` in the packaging tests. `StartupWMClass` must equal the
+`APPLICATION_ID` in `linux/CMakeLists.txt` (the runner sets it as the program
+name, so it is the window's WM_CLASS / Wayland app_id) or the running window
+loses its icon.
 
 ### App icon
 
@@ -115,7 +130,7 @@ was hand-edited or left stale.
 
 - `lib/` — application code (deep modules, simple interfaces)
 - `test/`, `integration_test/` — unit/widget tests and real-engine smoke
-- `tool/` — build/run scripts (`dev.sh`, `build_rpm.sh`)
+- `tool/` — build/run scripts (`dev.sh`, `install.sh`, `build_rpm.sh`)
 - `designs/` — RFCs; see `designs/RFC-000-template.md`. Architecture and the
   migration plan are specified by RFC before implementation.
 
