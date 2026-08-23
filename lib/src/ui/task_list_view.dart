@@ -1344,6 +1344,13 @@ class _ListToolbar extends StatelessWidget {
   }
 }
 
+/// The width the composer's input keeps for itself before the date preview may
+/// claim any of the row (#223). The field spends ~32dp of it on its own border
+/// and padding, so ~128dp of caret line survives — a readable draft while the
+/// title is still being typed, rather than the four characters a full-width
+/// chip used to leave on a 400dp phone.
+const double _kDraftFloor = 160;
+
 /// The always-visible quick-add input, its live date preview chip, and submit.
 ///
 /// A keystroke rebuilds ONLY this bar (to update the natural-language date
@@ -1527,8 +1534,8 @@ class _QuickAddBarState extends State<_QuickAddBar> {
             targetListId: widget.targetListId!,
             onChanged: widget.onTargetChanged,
             // A coarse pointer with the date chip up spends the row on the
-            // chip (147dp), the 48dp × and the send button, leaving the input
-            // ~125dp: a labelled picker would not fit inside it. The composer
+            // chip and the send button, leaving the input its floor and little
+            // else: a labelled picker would not fit inside it. The composer
             // sheds the destination LABEL there — never the control, whose menu
             // still shows which list is checked.
             compact: touch && (hasPreview || offer != null),
@@ -1537,133 +1544,171 @@ class _QuickAddBarState extends State<_QuickAddBar> {
     return Padding(
       key: const Key('quick-add-bar'),
       padding: const EdgeInsets.all(8),
-      child: Row(
-        children: [
-          Expanded(
-            // Both clipboard routes are rerouted through [_handlePaste] (#219):
-            // the keyboard's paste intent here (EditableText's own paste action
-            // is overridable from an ancestor), and the selection toolbar's
-            // Paste below. Nothing else about the field's editing changes.
-            child: Actions(
-              actions: <Type, Action<Intent>>{
-                PasteTextIntent: CallbackAction<PasteTextIntent>(
-                  onInvoke: (_) {
-                    _handlePaste();
-                    return null;
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // The draft outranks the preview (#223): what is left of the row
+          // once the input keeps its readable floor is ALL the date chip may
+          // spend. A long label or an accessibility text scale ellipsises the
+          // chip instead of squeezing the title being typed down to four
+          // characters. The upper bound is #217's 120dp label cap plus the
+          // chrome and × the chip now carries itself — a wide screen does not
+          // make a date preview worth more of the row than that.
+          final chipMax =
+              (constraints.maxWidth -
+                      _kDraftFloor -
+                      8 - // the gap before the chip
+                      // Whatever sits in the destination's slot: the picker
+                      // (with its gap), or the decorative "+" the field falls
+                      // back to — both cost the caret line the same 48dp.
+                      (picker != null ? 52 : 48) -
+                      56 // gap + the send button
+                      )
+                  .clamp(64.0, 168.0);
+          return Row(
+            children: [
+              Expanded(
+                // Both clipboard routes are rerouted through [_handlePaste] (#219):
+                // the keyboard's paste intent here (EditableText's own paste action
+                // is overridable from an ancestor), and the selection toolbar's
+                // Paste below. Nothing else about the field's editing changes.
+                child: Actions(
+                  actions: <Type, Action<Intent>>{
+                    PasteTextIntent: CallbackAction<PasteTextIntent>(
+                      onInvoke: (_) {
+                        _handlePaste();
+                        return null;
+                      },
+                    ),
                   },
-                ),
-              },
-              child: TextField(
-                controller: widget.controller,
-                focusNode: widget.focusNode,
-                decoration: InputDecoration(
-                  hintText: 'Add a task',
-                  // The decorative "+" yields its 48dp to the destination
-                  // picker (#217) when there is one: the picker carries its own
-                  // icon and sits on the same line, so the composer says "add"
-                  // once and the input keeps exactly the room it had. With a
-                  // single list there is nothing to pick and the "+" stays.
-                  prefixIcon: picker == null ? const Icon(Icons.add) : null,
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.done,
-                contextMenuBuilder: _pasteAwareContextMenu,
-                // Rebuild THIS bar only, to refresh the date preview — the task
-                // list is untouched by a keystroke (F20 #199).
-                onChanged: (_) => setState(() {}),
-                onSubmitted: (_) => widget.onSubmit(),
-              ),
-            ),
-          ),
-          if (offer != null) ...[
-            const SizedBox(width: 8),
-            // The offer itself (#219). Same idiom — and same footprint — as the
-            // date chip it stands in for: an action plus a dismiss, so the
-            // composer never grows a second line. The label is width-capped so
-            // an accessibility text scale ellipsises it instead of overflowing
-            // the phone row.
-            if (touch) ...[
-              // ELEVATED, unlike the flat date chip in the same slot: this one
-              // is pressable, and a filled, raised surface is what says so at a
-              // glance (an outlined chip beside an outlined field reads as a
-              // label). No width is spent on a leading icon — the phone row has
-              // none to spare.
-              ActionChip.elevated(
-                key: const Key('quick-add-paste-split'),
-                label: _pasteOfferLabel(offerCount),
-                onPressed: () => widget.onAddPastedLines(offer),
-              ),
-              IconButton(
-                key: const Key('quick-add-paste-split-dismiss'),
-                icon: const Icon(Icons.close, size: 18),
-                tooltip: 'Keep as one task',
-                onPressed: _dismissOffer,
-              ),
-            ] else
-              // The mouse keeps the compact inline form: a hover highlight and
-              // a pointer cursor already say "pressable", so no elevation is
-              // needed to earn the row's width back.
-              InputChip(
-                key: const Key('quick-add-paste-split'),
-                label: _pasteOfferLabel(offerCount),
-                onPressed: () => widget.onAddPastedLines(offer),
-                deleteIcon: const Icon(
-                  Icons.close,
-                  size: 18,
-                  key: Key('quick-add-paste-split-dismiss'),
-                ),
-                deleteButtonTooltipMessage: 'Keep as one task',
-                onDeleted: _dismissOffer,
-              ),
-          ],
-          if (hasPreview) ...[
-            const SizedBox(width: 8),
-            // The chip renders a FRIENDLY relative date, never the raw ISO
-            // (#78b); its × keeps the phrase as literal title text. On a touch
-            // pointer the InputChip's built-in delete glyph is a sub-48dp target,
-            // so the × becomes a standalone 48dp IconButton beside a plain chip
-            // (F19 #198); the mouse keeps the compact inline InputChip.
-            if (touch) ...[
-              // The label is width-capped so the chip cannot grow without
-              // bound at an accessibility text scale: at 2.0 an uncapped
-              // "Aug 15, 2027" pushed the chip past 230dp and overflowed the
-              // row once the destination picker joined it. Every label
-              // [formatDue] produces fits inside the cap at normal scale, so
-              // nothing truncates until the font is enlarged.
-              Chip(
-                label: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 120),
-                  child: Text(
-                    formatDue(preview),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: TextField(
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    decoration: InputDecoration(
+                      hintText: 'Add a task',
+                      // The decorative "+" yields its 48dp to the destination
+                      // picker (#217) when there is one: the picker carries its own
+                      // icon and sits on the same line, so the composer says "add"
+                      // once and the input keeps exactly the room it had. With a
+                      // single list there is nothing to pick and the "+" stays.
+                      prefixIcon: picker == null ? const Icon(Icons.add) : null,
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                    textInputAction: TextInputAction.done,
+                    contextMenuBuilder: _pasteAwareContextMenu,
+                    // Rebuild THIS bar only, to refresh the date preview — the task
+                    // list is untouched by a keystroke (F20 #199).
+                    onChanged: (_) => setState(() {}),
+                    onSubmitted: (_) => widget.onSubmit(),
                   ),
                 ),
               ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18),
-                tooltip: 'Keep as text',
-                onPressed: widget.onDismissPreview,
+              if (offer != null) ...[
+                const SizedBox(width: 8),
+                // The offer itself (#219). Same idiom — and same footprint — as the
+                // date chip it stands in for: an action plus a dismiss, so the
+                // composer never grows a second line. The label is width-capped so
+                // an accessibility text scale ellipsises it instead of overflowing
+                // the phone row.
+                if (touch) ...[
+                  // ELEVATED, unlike the date chip in the same slot: this one
+                  // carries no glyph of its own, and a filled, raised surface is
+                  // what says "pressable" without one (an outlined chip beside
+                  // an outlined field reads as a label; the date chip earns its
+                  // press from the × it draws). No width is spent on a leading
+                  // icon — the phone row has none to spare.
+                  ActionChip.elevated(
+                    key: const Key('quick-add-paste-split'),
+                    label: _pasteOfferLabel(offerCount),
+                    onPressed: () => widget.onAddPastedLines(offer),
+                  ),
+                  IconButton(
+                    key: const Key('quick-add-paste-split-dismiss'),
+                    icon: const Icon(Icons.close, size: 18),
+                    tooltip: 'Keep as one task',
+                    onPressed: _dismissOffer,
+                  ),
+                ] else
+                  // The mouse keeps the compact inline form: a hover highlight and
+                  // a pointer cursor already say "pressable", so no elevation is
+                  // needed to earn the row's width back.
+                  InputChip(
+                    key: const Key('quick-add-paste-split'),
+                    label: _pasteOfferLabel(offerCount),
+                    onPressed: () => widget.onAddPastedLines(offer),
+                    deleteIcon: const Icon(
+                      Icons.close,
+                      size: 18,
+                      key: Key('quick-add-paste-split-dismiss'),
+                    ),
+                    deleteButtonTooltipMessage: 'Keep as one task',
+                    onDeleted: _dismissOffer,
+                  ),
+              ],
+              if (hasPreview) ...[
+                const SizedBox(width: 8),
+                // The chip renders a FRIENDLY relative date, never the raw ISO
+                // (#78b); its × keeps the phrase as literal title text. On a
+                // touch pointer the InputChip's built-in delete glyph is a
+                // sub-48dp target, so the WHOLE chip carries the dismiss and is
+                // finger-sized (F19 #198, #223); the mouse, with its precise
+                // pointer and hover highlight, keeps the compact inline
+                // InputChip whose small × it can hit.
+                if (touch) ...[
+                  // ONE child, not two (#223): the chip IS the "keep as text"
+                  // button, so the finger-sized chip itself drops the date and
+                  // the row is spared a standalone 48dp × beside it. The × is
+                  // still drawn inside the chip — it is what says the chip is a
+                  // way out rather than a label. [chipMax] is the row's
+                  // leftover once the draft has its floor, so a long label (or
+                  // an accessibility text scale) ellipsises the chip instead of
+                  // squeezing the input.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: chipMax),
+                    child: ActionChip(
+                      key: const Key('quick-add-date-dismiss'),
+                      tooltip: 'Keep as text',
+                      // The chip's own 8dp padding is the only breathing room
+                      // it needs; doubling it up with a label inset would cost
+                      // the label glyphs the room instead.
+                      labelPadding: EdgeInsets.zero,
+                      onPressed: widget.onDismissPreview,
+                      label: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              formatDue(preview),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.close, size: 18),
+                        ],
+                      ),
+                    ),
+                  ),
+                ] else
+                  InputChip(
+                    label: Text(formatDue(preview)),
+                    deleteIcon: const Icon(Icons.close, size: 18),
+                    deleteButtonTooltipMessage: 'Keep as text',
+                    onDeleted: widget.onDismissPreview,
+                  ),
+              ],
+              // The destination sits between the draft and the send button, so the
+              // row reads "<title> → <list> ↑" (#217).
+              if (picker != null) ...[const SizedBox(width: 4), picker],
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: 'Add task',
+                icon: const Icon(Icons.arrow_upward),
+                onPressed: widget.onSubmit,
               ),
-            ] else
-              InputChip(
-                label: Text(formatDue(preview)),
-                deleteIcon: const Icon(Icons.close, size: 18),
-                deleteButtonTooltipMessage: 'Keep as text',
-                onDeleted: widget.onDismissPreview,
-              ),
-          ],
-          // The destination sits between the draft and the send button, so the
-          // row reads "<title> → <list> ↑" (#217).
-          if (picker != null) ...[const SizedBox(width: 4), picker],
-          const SizedBox(width: 8),
-          IconButton.filled(
-            tooltip: 'Add task',
-            icon: const Icon(Icons.arrow_upward),
-            onPressed: widget.onSubmit,
-          ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }

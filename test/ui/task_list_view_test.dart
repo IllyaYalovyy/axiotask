@@ -387,9 +387,11 @@ void main() {
   ) async {
     // The failure this prevents: the InputChip's built-in delete glyph is a
     // sub-48dp target, so on a phone a finger struggles to keep the parsed
-    // phrase as literal text. On a touch pointer the × is a standalone 48dp
-    // IconButton. Touch creates through the bottom-sheet composer (#216), so
-    // this drives the sheet: bump the FAB's request seam, then type there.
+    // phrase as literal text. On a touch pointer the whole date chip is the
+    // "keep as text" button (#223 folded the standalone × back in to win the
+    // composer's width back), and it stays finger-sized. Touch creates through
+    // the bottom-sheet composer (#216), so this drives the sheet: bump the
+    // FAB's request seam, then type there.
     await pumpView(tester, platform: TargetPlatform.android);
     final container = ProviderScope.containerOf(
       tester.element(find.byType(TaskListView)),
@@ -401,7 +403,9 @@ void main() {
       await tester.enterText(find.byType(TextField), 'call bank tomorrow');
       await tester.pump();
     });
-    final size = tester.getSize(find.widgetWithIcon(IconButton, Icons.close));
+    final size = tester.getSize(
+      find.byKey(const Key('quick-add-date-dismiss')),
+    );
     expect(size.width, greaterThanOrEqualTo(48));
     expect(size.height, greaterThanOrEqualTo(48));
   });

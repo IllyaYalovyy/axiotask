@@ -42,6 +42,10 @@ final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 const _pickerKey = Key('quick-add-list-picker');
 const _barKey = Key('quick-add-bar');
 
+/// The date preview's "keep as text" affordance — whatever widget currently
+/// carries the gesture (#223 folded the touch × into the chip itself).
+const _dismissKey = Key('quick-add-date-dismiss');
+
 /// The two lists every test picks between; a picker only earns its space when
 /// there is a real choice.
 final _twoLists = [list('L1', 'My Tasks'), list('L2', 'Work')];
@@ -409,7 +413,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    for (final scale in [1.0, 2.0]) {
+    for (final scale in [1.0, 1.3, 2.0]) {
       testWidgets('a long date chip and the picker share the row at text '
           'scale $scale — no overflow, a usable input', (tester) async {
         // The failure this prevents: the destination picker plus an uncapped
@@ -442,6 +446,93 @@ void main() {
         );
       });
     }
+
+    // Both shapes of the row: with a destination picker, and with the single
+    // list that leaves the field its decorative "+" prefix instead. The prefix
+    // costs the caret line exactly what the picker costs the row, so a floor
+    // that only counted the picker would leave the one-list phone cramped.
+    for (final (label, lists) in [
+      ('a destination picker', _twoLists),
+      ('the "+" prefix', [list('L1', 'My Tasks')]),
+    ]) {
+      testWidgets('a date chip leaves a READABLE draft on the composer\'s '
+          'single line, beside $label (#223)', (tester) async {
+        // The failure this prevents: on a 400dp phone the touch date affordance
+        // — a ~147dp chip plus a standalone 48dp × — ate the row, collapsing
+        // the editable box to ~34dp (about four characters) at the exact moment
+        // the title is being composed, so the draft scrolled out from under the
+        // caret while it was still being typed.
+        await pumpQuickAdd(
+          tester,
+          lists: lists,
+          platform: TargetPlatform.android,
+          size: phone,
+        );
+        await openComposer(tester);
+        final bareLine = tester.getSize(find.byKey(_barKey)).height;
+        await withClock(_clock, () async {
+          await tester.enterText(find.byType(TextField), 'buy milk tomorrow');
+          await tester.pump();
+        });
+
+        expect(
+          find.widgetWithText(RawChip, 'tomorrow'),
+          findsOneWidget,
+          reason: 'the parsed date is still previewed',
+        );
+        expect(
+          tester.getSize(find.byType(EditableText)).width,
+          greaterThanOrEqualTo(120),
+          reason:
+              'the draft being typed must stay readable while the date chip is '
+              'up — not four characters wide',
+        );
+        expect(
+          tester.getSize(find.byKey(_barKey)).height,
+          bareLine,
+          reason: 'the composer stays ONE line (ratified, #217)',
+        );
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('the "keep as text" affordance stays a ≥48dp target and still '
+        'drops the date (#223, F19 #198)', (tester) async {
+      // Non-happy path: the user did NOT mean a date. Whatever shape the
+      // affordance takes while the row is being made room in, a finger must
+      // still be able to hit it — and hitting it must keep the phrase as
+      // literal title text with NO due date on the created task.
+      final fake = await pumpQuickAdd(
+        tester,
+        lists: _twoLists,
+        platform: TargetPlatform.android,
+        size: phone,
+        newId: () => 'NEW',
+      );
+      await openComposer(tester);
+      await withClock(_clock, () async {
+        await tester.enterText(find.byType(TextField), 'call bank tomorrow');
+        await tester.pump();
+      });
+
+      // Measured on the affordance ITSELF (the keyed widget that carries the
+      // gesture), not on a wrapper that happens to sit around its glyph.
+      final target = tester.getSize(find.byKey(_dismissKey));
+      expect(target.width, greaterThanOrEqualTo(48));
+      expect(target.height, greaterThanOrEqualTo(48));
+
+      await withClock(_clock, () async {
+        await tester.tap(find.byTooltip('Keep as text'));
+        await tester.pump();
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settle(tester);
+      });
+
+      expect(find.widgetWithText(RawChip, 'tomorrow'), findsNothing);
+      final stored = fake.tasks.single.task;
+      expect(stored.title, 'call bank tomorrow');
+      expect(stored.due, anyOf(isNull, isEmpty));
+    });
 
     testWidgets('with the date chip up the composer sheds the picker LABEL, '
         'never the control', (tester) async {
