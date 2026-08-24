@@ -42,31 +42,70 @@ The same isolation works for any launch: `AXIOTASK_PREFIX=foo axiotask` uses
 
 ## Google sign-in setup
 
-Sync needs an OAuth "Desktop app" client (Google Cloud console → APIs &
-Services → Credentials) with the Google Tasks API enabled. Put the credentials
-in the instance's config file, e.g. for the default `flt` instance
-`${XDG_CONFIG_HOME:-~/.config}/axiotask-flt/config.json`:
+Sync needs an OAuth **"Desktop app"** client (Google Cloud console → APIs &
+Services → Credentials) with the Google Tasks API enabled. There are two ways
+the app can get it, and a build tries them in this order:
 
-```json
-{
-  "google": {
-    "client_id": "…apps.googleusercontent.com",
-    "client_secret": "…",
-    "scopes": ["https://www.googleapis.com/auth/tasks"]
-  },
-  "sync": {
-    "push_enabled": false,
-    "auto_sync_on_start": true
-  }
-}
-```
+1. **The instance's `config.json`**, e.g. for the default `flt` dev instance
+   `${XDG_CONFIG_HOME:-~/.config}/axiotask-flt/config.json`:
 
-The app writes a default config (empty credentials) on first launch; fill in
-the `google` section and restart. `push_enabled` defaults to **false**: the
-app pulls from Google but never writes back until you enable push — useful for
-testing against a real account without touching it.
+   ```json
+   {
+     "google": {
+       "client_id": "…apps.googleusercontent.com",
+       "client_secret": "…",
+       "scopes": ["https://www.googleapis.com/auth/tasks"]
+     },
+     "sync": {
+       "push_enabled": false,
+       "auto_sync_on_start": true
+     }
+   }
+   ```
 
-On Android there are no client credentials in config: the app is identified by
+   The app writes this file with an EMPTY `google` section on first launch. Fill
+   it in to point an instance at your own Google Cloud project; it always wins
+   over whatever the build carries. Fill in **both** fields — a client id
+   without its secret is not a usable client, so a half-filled section is
+   treated as unconfigured (and says so) rather than silently completed from the
+   build.
+
+2. **Credentials compiled into the build**, so a packaged install signs in with
+   no file to edit. Create the credentials file once, in the checkout:
+
+   `tool/oauth_credentials.json` — **gitignored, never commit it**:
+
+   ```json
+   {
+     "AXIOTASK_GOOGLE_CLIENT_ID": "…apps.googleusercontent.com",
+     "AXIOTASK_GOOGLE_CLIENT_SECRET": "…"
+   }
+   ```
+
+   `tool/install.sh`, `tool/build_rpm.sh` and `tool/dev.sh` pick it up
+   automatically (`tool/oauth_defines.sh` turns it into
+   `--dart-define-from-file`) and each print whether the build is carrying
+   credentials. A checkout without the file builds exactly as before: nothing is
+   compiled in and `config.json` is the only source. `$AXIOTASK_OAUTH_DEFINES`
+   points a build at a different credentials file.
+
+Bundling the id and secret is Google's own installed-app pattern, not a leak:
+the credentials of a "Desktop app" client are explicitly **not** confidential —
+they ship inside every installed copy of every such app, and the flow is
+protected by PKCE plus the loopback redirect. They are compiled in, never
+committed; the file above is gitignored, and a test fails the build if a
+Google-shaped credential ever appears in a tracked file.
+
+If neither source yields a **complete** id + secret pair, the app says so
+instead of failing at Google's login page: the sidebar shows a persistent
+"Setup required" state and the Account tab names the exact `config.json` to
+edit.
+
+`push_enabled` defaults to **false**: the app pulls from Google but never writes
+back until you enable push — useful for testing against a real account without
+touching it.
+
+On Android there are no client credentials at all: the app is identified by
 package name + signing-certificate SHA-1, which must be registered on the same
 Google Cloud project.
 

@@ -45,6 +45,12 @@ APP_NAME="axiotask"
 APP_ID="io.github.illyayalovyy.axiotask"
 ICON_SIZES="16 24 32 48 64 128 256 512"
 
+# Whether this build compiles the OAuth client credentials in, so the install
+# can sign in out of the box (#229). Nothing is bundled unless the operator
+# created the gitignored credentials file; see tool/oauth_defines.sh.
+# shellcheck source=tool/oauth_defines.sh
+. "$ROOT/tool/oauth_defines.sh"
+
 SRC_DESKTOP="linux/packaging/${APP_ID}.desktop"
 SRC_ICONS="linux/packaging/icons/hicolor"
 SRC_METAINFO="linux/packaging/${APP_ID}.metainfo.xml"
@@ -145,8 +151,11 @@ done
 
 if [ -z "$BUNDLE" ]; then
   command -v flutter >/dev/null || die "flutter not on PATH (or pass --bundle DIR)"
+  oauth_define_args
+  info "$(oauth_defines_report)"
   info "Building release bundle (flutter build linux --release)..."
-  flutter build linux --release || die "flutter build linux --release failed"
+  flutter build linux --release ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"} \
+    || die "flutter build linux --release failed"
   BUNDLE="$BUILD_BUNDLE"
 fi
 [ -d "$BUNDLE" ] || die "release bundle directory not found: $BUNDLE"

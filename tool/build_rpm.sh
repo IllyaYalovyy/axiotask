@@ -53,6 +53,11 @@ ICON_DIR="linux/packaging/icons/hicolor"
 ICON_SIZES="16 24 32 48 64 128 256 512"
 BUNDLE_DIR="build/linux/x64/release/bundle"
 
+# Whether the packaged app carries the OAuth client credentials, so an RPM
+# install can sign in out of the box (#229). See tool/oauth_defines.sh.
+# shellcheck source=tool/oauth_defines.sh
+. "$ROOT/tool/oauth_defines.sh"
+
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn()  { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -236,8 +241,11 @@ if [ "$BUNDLE_GIVEN" = "1" ]; then
   info "Using the bundle passed with --bundle: $BUNDLE_DIR (skipping flutter build)"
 else
   command -v flutter >/dev/null || die "flutter not on PATH (or pass --bundle DIR)"
+  oauth_define_args
+  info "$(oauth_defines_report)"
   info "Building release bundle (flutter build linux --release)..."
-  flutter build linux --release || die "flutter build linux --release failed"
+  flutter build linux --release ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"} \
+    || die "flutter build linux --release failed"
 fi
 
 TOPDIR="$(mktemp -d)"
