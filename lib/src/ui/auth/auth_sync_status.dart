@@ -41,7 +41,13 @@ enum FooterAction {
 /// The status-line phrase, in priority order. The footer maps each to its
 /// user-visible sentence; the dot color follows too.
 enum FooterStatus {
-  /// Dead session — `needsReauth`. Highest priority.
+  /// No Google credentials in `config.json` — nothing can sync and no gesture
+  /// can fix it without editing a file (#228). Outranks everything below: a
+  /// dead session or a stuck sync is beside the point when the app cannot
+  /// authenticate at all.
+  notConfigured,
+
+  /// Dead session — `needsReauth`. Highest priority among session states.
   sessionExpired,
 
   /// A stuck permanent failure — `needsAttention`.
@@ -69,6 +75,7 @@ class AuthSyncStatus {
     this.hasError = false,
     this.activity = SyncActivity.idle,
     this.lastSynced,
+    this.missingConfigPath,
   });
 
   /// Bridge the live controller state into the UI view (the T7.1 seam).
@@ -76,10 +83,14 @@ class AuthSyncStatus {
   /// `needsReauth` is OR-ed from both sources: the auth snapshot is the source
   /// of truth, but a fresh scheduler failure lands in the sync status first, so
   /// honoring either keeps the footer correct in the window before they agree.
+  /// [syncIntended] gates the missing-credentials attention: an install that
+  /// never syncs by choice (auto-sync off, push off, no session) is legitimately
+  /// quiet, so it keeps the plain signed-out idle (#228).
   factory AuthSyncStatus.from({
     required AuthSnapshot auth,
     required SyncStatusView sync,
     SyncActivity activity = SyncActivity.idle,
+    bool syncIntended = true,
   }) => AuthSyncStatus(
     isAuthenticated: auth.isAuthenticated,
     needsReauth: auth.needsReauth || sync.needsReauth,
@@ -87,6 +98,9 @@ class AuthSyncStatus {
     hasError: sync.lastError != null,
     activity: activity,
     lastSynced: sync.lastSynced,
+    missingConfigPath: (syncIntended || auth.isAuthenticated)
+        ? auth.missingConfigPath
+        : null,
   );
 
   /// A live session exists (tokens on desktop / grant on mobile). Stays true
@@ -109,6 +123,14 @@ class AuthSyncStatus {
   /// RFC-3339 timestamp of the last successful sync, if any.
   final String? lastSynced;
 
+  /// The config file whose Google credentials are missing, or null when the app
+  /// can authenticate (#228). Non-null puts the footer in the persistent
+  /// setup-required state and names the file the user has to edit.
+  final String? missingConfigPath;
+
+  /// Whether the app has no Google credentials at all.
+  bool get notConfigured => missingConfigPath != null;
+
   /// Whether a run is in flight.
   bool get isSyncing => activity == SyncActivity.syncing;
 
@@ -120,6 +142,7 @@ class AuthSyncStatus {
 
   /// The status phrase, resolved by the priority ladder.
   FooterStatus get status {
+    if (notConfigured) return FooterStatus.notConfigured;
     if (needsReauth) return FooterStatus.sessionExpired;
     if (needsAttention) return FooterStatus.needsAttention;
     if (hasError) return FooterStatus.error;

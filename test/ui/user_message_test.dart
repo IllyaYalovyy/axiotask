@@ -180,6 +180,26 @@ void main() {
       expect(msg, isNot(contains('mismatch')));
     });
 
+    test('missing credentials name the file to edit (#228)', () {
+      // The one sign-in failure the user CAN fix, and only if told where. The
+      // path is a value the app resolved itself, so it is shown verbatim; no
+      // OAuth wire text exists on this path to leak.
+      final msg = signInUserMessage(
+        const TokenProviderNotConfigured(
+          '/home/u/.config/axiotask/config.json',
+        ),
+      );
+      expect(msg, isNotNull);
+      expect(msg, contains('not configured'));
+      expect(msg, contains('/home/u/.config/axiotask/config.json'));
+      expect(msg, contains('README'));
+      expect(
+        msg!.toLowerCase(),
+        isNot(contains('client_id')),
+        reason: 'Google\'s 400 wording is not the user\'s problem statement',
+      );
+    });
+
     test('an unexpected error still reaches the user, redacted', () {
       // Anything the gesture can throw that we never classified — the user must
       // not be left staring at an inert button (#212).

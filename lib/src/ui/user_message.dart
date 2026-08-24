@@ -105,12 +105,24 @@ String commandUserMessage(String family, Object error) {
 /// [TokenProviderInteractionRequired], and they need no toast to tell them what
 /// they just did.
 ///
+/// A configuration fault gets the one message the user can actually act on: it
+/// names the config file to edit (#228).
+///
 /// Classification is by error TYPE, never by matching the error's text: a
 /// provider message can carry the signed-in account, a request URL, or raw
 /// Play-Services detail, and none of it may reach a toast (#131/#187). The full
 /// typed error is written to the log at the call site.
 String? signInUserMessage(Object error) {
   if (error is TokenProviderInteractionRequired) return null;
+  if (error is TokenProviderNotConfigured) {
+    // The gesture never left the app — there were no credentials to send, so
+    // no browser was opened and nothing dead-ended in Google's 400 (#228). Name
+    // the file to edit: the path is a value the app resolved itself, not wire
+    // text, so it is safe to show verbatim.
+    return 'Google API credentials are not configured — add a client id and '
+        'secret to ${error.configPath}, then restart axiotask. '
+        'See the README, "Google sign-in setup".';
+  }
   if (error is TokenProviderUnavailable) {
     // Transient and actionable — say which half is down and what to try, so the
     // user does not read it as "this app is broken".

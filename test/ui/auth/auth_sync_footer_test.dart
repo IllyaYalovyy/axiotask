@@ -240,4 +240,84 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
   });
+
+  group('#228 missing credentials outrank every other footer state', () {
+    const configPath = '/home/u/.config/axiotask/config.json';
+
+    testWidgets('the footer says setup is required and offers the way in', (
+      tester,
+    ) async {
+      final h = await pumpFooter(
+        tester,
+        const AuthSyncStatus(
+          isAuthenticated: false,
+          needsReauth: false,
+          missingConfigPath: configPath,
+        ),
+      );
+
+      // Not the quiet "Offline" idle: a persistent, named attention state.
+      expect(find.text('Setup required'), findsOneWidget);
+      expect(find.text('Offline'), findsNothing);
+      expect(find.text('Google setup needed'), findsOneWidget);
+
+      // And it goes somewhere — Properties, where the config path is named.
+      await tester.tap(find.byKey(const Key('auth-footer-not-configured')));
+      await tester.pump();
+      expect(h.fired, ['properties']);
+    });
+
+    testWidgets('the sign-in affordance stays, so the message is reachable', (
+      tester,
+    ) async {
+      // The gesture is where the actionable sentence comes from (#228): the
+      // button must remain tappable rather than be disabled into silence.
+      final h = await pumpFooter(
+        tester,
+        const AuthSyncStatus(
+          isAuthenticated: false,
+          needsReauth: false,
+          missingConfigPath: configPath,
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('auth-footer-signin')));
+      await tester.pump();
+      expect(h.fired, ['signIn']);
+      // No session, so nothing may offer to sign out or sync.
+      expect(find.byKey(const Key('auth-footer-signout')), findsNothing);
+      expect(find.byKey(const Key('auth-footer-sync')), findsNothing);
+    });
+
+    testWidgets('it displaces the stuck-sync attention button', (tester) async {
+      // Both faults at once: "Sync needs attention" would send the user
+      // chasing a sync that cannot run at all without credentials.
+      await pumpFooter(
+        tester,
+        const AuthSyncStatus(
+          isAuthenticated: false,
+          needsReauth: false,
+          needsAttention: true,
+          hasError: true,
+          missingConfigPath: configPath,
+        ),
+      );
+
+      expect(find.text('Google setup needed'), findsOneWidget);
+      expect(find.text('Sync needs attention'), findsNothing);
+      expect(find.text('Setup required'), findsOneWidget);
+      expect(find.text('Sync error'), findsNothing);
+    });
+
+    testWidgets('a configured install is untouched', (tester) async {
+      await pumpFooter(
+        tester,
+        const AuthSyncStatus(isAuthenticated: false, needsReauth: false),
+      );
+
+      expect(find.text('Offline'), findsOneWidget);
+      expect(find.text('Sign in with Google'), findsOneWidget);
+      expect(find.byKey(const Key('auth-footer-not-configured')), findsNothing);
+    });
+  });
 }

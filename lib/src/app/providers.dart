@@ -346,6 +346,21 @@ final authenticatedProvider = Provider<bool>(
   (ref) => ref.watch(authSnapshotProvider).value?.isAuthenticated ?? false,
 );
 
+/// Whether this install is meant to reach Google at all: auto-sync on start,
+/// read-write sync, or a session already on disk. It is the difference between
+/// a missing-credentials config being a LOUD startup fault and a deliberately
+/// local-only app staying quiet (#228). The composition root (F5) overrides it
+/// from the live config; the default is `true` because the shipped config
+/// auto-syncs on start.
+final syncIntendedProvider = Provider<bool>((ref) => true);
+
+/// The config file whose Google credentials are missing, or null when the app
+/// can authenticate (#228). Derived from [authSnapshotProvider], so it appears
+/// as soon as the detached startup restore reports the fault.
+final missingAuthConfigProvider = Provider<String?>(
+  (ref) => ref.watch(authSnapshotProvider).value?.missingConfigPath,
+);
+
 /// Whether the stored session is dead (needs re-auth), derived from
 /// [authSnapshotProvider].
 final needsReauthProvider = Provider<bool>(
@@ -378,7 +393,12 @@ final appSettingsProvider = Provider<AppSettingsView>((ref) {
     autoSyncOnStart: config.autoSyncOnStart,
     authenticated: ref.watch(authenticatedProvider),
     needsReauth: ref.watch(needsReauthProvider),
-    scopes: config.scopes,
+    // GRANTED scopes, not requested ones: with no live session Google has
+    // granted nothing, and listing the scope anyway made a signed-out Account
+    // tab read as signed in (#228). AccountSection already documents "empty
+    // when signed out"; this is the wiring catching up.
+    scopes: ref.watch(authenticatedProvider) ? config.scopes : const [],
+    credentialsMissing: ref.watch(missingAuthConfigProvider) != null,
     dbPath: ref.watch(dbPathProvider),
     configPath: ref.watch(configPathProvider),
     pendingPushes: ref.watch(pendingPushCountProvider).asData?.value ?? 0,

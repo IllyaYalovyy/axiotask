@@ -34,6 +34,7 @@ class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
   Widget build(BuildContext context) {
     final snapshot = ref.watch(authSnapshotProvider).value;
     final sync = ref.watch(syncStatusViewProvider);
+    final syncIntended = ref.watch(syncIntendedProvider);
     final status = AuthSyncStatus(
       isAuthenticated: snapshot?.isAuthenticated ?? false,
       needsReauth: (snapshot?.needsReauth ?? false) || sync.needsReauth,
@@ -41,6 +42,12 @@ class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
       hasError: sync.lastError != null,
       activity: _syncing ? SyncActivity.syncing : SyncActivity.idle,
       lastSynced: sync.lastSynced,
+      // Missing credentials are shouted about only when this install is meant
+      // to reach Google at all; a deliberately local-only one keeps the quiet
+      // signed-out idle (#228).
+      missingConfigPath: (syncIntended || (snapshot?.isAuthenticated ?? false))
+          ? snapshot?.missingConfigPath
+          : null,
     );
 
     return AuthSyncFooter(

@@ -32,6 +32,7 @@ AppSettingsView settingsView({
   bool needsReauth = false,
   List<String> scopes = const ['https://www.googleapis.com/auth/tasks'],
   String instance = '',
+  bool credentialsMissing = false,
   SyncStatusView sync = const SyncStatusView.initial(),
 }) => AppSettingsView(
   version: '0.1.0',
@@ -41,6 +42,7 @@ AppSettingsView settingsView({
   authenticated: authenticated,
   needsReauth: needsReauth,
   scopes: scopes,
+  credentialsMissing: credentialsMissing,
   dbPath: '/tmp/axiotask/axiotask.sqlite',
   configPath: '/tmp/axiotask/config.json',
   pendingPushes: 0,
@@ -422,6 +424,33 @@ void main() {
       expect(find.text('Not signed in'), findsOneWidget);
       expect(find.byKey(const Key('account-signin')), findsOneWidget);
     });
+
+    testWidgets('a configured install still opens on the Sync tab', (
+      tester,
+    ) async {
+      await pumpProps(tester);
+      expect(find.byKey(const Key('account-signin')), findsNothing);
+    });
+
+    testWidgets(
+      'with no Google credentials it opens straight on Account (#228)',
+      (tester) async {
+        // The footer's "Google setup needed" sends the user here; landing on
+        // Sync would leave them hunting for the one tab that explains it.
+        await pumpProps(
+          tester,
+          settings: settingsView(credentialsMissing: true),
+        );
+
+        expect(find.byKey(const Key('account-not-configured')), findsOneWidget);
+        expect(find.text('Not signed in — setup required'), findsOneWidget);
+        expect(
+          find.textContaining('/tmp/axiotask/config.json'),
+          findsOneWidget,
+          reason: 'the file to edit is named without another tap',
+        );
+      },
+    );
   });
 
   // ── #215: the account-switch reset, end to end through the dialog ─────────

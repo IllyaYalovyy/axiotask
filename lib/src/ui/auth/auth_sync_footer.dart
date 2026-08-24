@@ -55,10 +55,26 @@ class AuthSyncFooter extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // No credentials at all: the loudest, most persistent affordance,
+          // because no gesture in the app can fix it — the user has to edit a
+          // file, and Properties is where the path is named (#228). It outranks
+          // the sync-attention button, which would only mislead.
+          if (status.notConfigured) ...[
+            _AttentionButton(
+              key: const Key('auth-footer-not-configured'),
+              label: 'Google setup needed',
+              onPressed: onOpenProperties,
+            ),
+            const SizedBox(height: 8),
+          ]
           // A stuck permanent failure gets its own persistent, always-visible
           // affordance — above the primary action, so it is never hidden by it.
-          if (status.needsAttention && !status.needsReauth) ...[
-            _AttentionButton(onPressed: onOpenProperties),
+          else if (status.needsAttention && !status.needsReauth) ...[
+            _AttentionButton(
+              key: const Key('auth-footer-attention'),
+              label: 'Sync needs attention',
+              onPressed: onOpenProperties,
+            ),
             const SizedBox(height: 8),
           ],
           _primaryButton(context),
@@ -102,24 +118,32 @@ class AuthSyncFooter extends StatelessWidget {
   }
 }
 
-/// The persistent "Sync needs attention" button (opens Properties).
+/// The persistent attention button (opens Properties) — used for a stuck sync
+/// and, at higher priority, for missing Google credentials (#228).
 class _AttentionButton extends StatelessWidget {
-  const _AttentionButton({required this.onPressed});
+  const _AttentionButton({
+    required this.label,
+    required this.onPressed,
+    super.key,
+  });
 
+  final String label;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return OutlinedButton.icon(
-      key: const Key('auth-footer-attention'),
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         foregroundColor: colors.error,
         side: BorderSide(color: colors.error.withValues(alpha: 0.5)),
       ),
       icon: const Icon(Icons.warning_amber_rounded, size: 16),
-      label: const Text('Sync needs attention'),
+      // No overflow handling: the label WRAPS, exactly as the sync-attention
+      // button always has. A sidebar at its narrowest gets two lines, never a
+      // truncated sentence.
+      label: Text(label),
     );
   }
 }
@@ -200,6 +224,7 @@ class _StatusRow extends StatelessWidget {
 
   Color _dotColor() {
     switch (status.status) {
+      case FooterStatus.notConfigured:
       case FooterStatus.sessionExpired:
       case FooterStatus.needsAttention:
       case FooterStatus.error:
@@ -214,6 +239,8 @@ class _StatusRow extends StatelessWidget {
 
   String _statusText() {
     switch (status.status) {
+      case FooterStatus.notConfigured:
+        return 'Setup required';
       case FooterStatus.sessionExpired:
         return 'Session expired';
       case FooterStatus.needsAttention:

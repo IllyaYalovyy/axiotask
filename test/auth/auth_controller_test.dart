@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 const _config = OAuthConfig(clientId: 'id', clientSecret: 'secret');
+const _configPath = '/home/u/.config/axiotask/config.json';
 
 /// A provider whose authorize never completes — models Play Services / a token
 /// endpoint that hangs. Used to prove restore is detached from first frame.
@@ -340,6 +341,7 @@ void main() {
         final provider = DesktopTokenProvider(
           config: _config,
           store: FileTokenStore(file),
+          configPath: _configPath,
           login: (_) async => throw StateError('restore must not log in'),
         );
         final controller = AuthController(provider);
@@ -372,6 +374,7 @@ void main() {
           DesktopTokenProvider(
             config: _config,
             store: FileTokenStore(file),
+            configPath: _configPath,
             login: (_) async => throw StateError('restore must not log in'),
           ),
         );
@@ -402,6 +405,7 @@ void main() {
         final provider = DesktopTokenProvider(
           config: _config,
           store: FileTokenStore(file, chmod: (_) => 1),
+          configPath: _configPath,
           login: (_) async =>
               const StoredTokens(accessToken: 'a', refreshToken: 'r'),
         );
@@ -459,5 +463,149 @@ void main() {
       expect(controller.needsReauth, isTrue, reason: 'banner preserved');
       expect(controller.isAuthenticated, isFalse);
     });
+  });
+
+  group('#228 an install with no Google credentials', () {
+    late Directory tmp;
+    setUp(() => tmp = Directory.systemTemp.createTempSync('axiotask_228'));
+    tearDown(() => tmp.deleteSync(recursive: true));
+
+    /// The shipped first-run desktop wiring: config.json written with its empty
+    /// defaults, no tokens.json anywhere.
+    DesktopTokenProvider unconfigured({
+      StoredTokens? stored,
+      void Function()? onLogin,
+    }) {
+      final store = InMemoryTokenStore();
+      if (stored != null) store.save(stored);
+      return DesktopTokenProvider(
+        config: const OAuthConfig(clientId: '', clientSecret: ''),
+        store: store,
+        configPath: _configPath,
+        login: (_) async {
+          onLogin?.call();
+          throw StateError('the browser must never open');
+        },
+      );
+    }
+
+    test(
+      'startup restore ends signed OUT and reports the missing config',
+      () async {
+        final controller = AuthController(unconfigured());
+        addTearDown(controller.dispose);
+        final events = StreamQueue<AuthSnapshot>(controller.changes);
+
+        final restored = await controller.restore();
+
+        expect(restored, isFalse);
+        final emitted = await events.next;
+        expect(
+          emitted.phase,
+          AuthPhase.signedOut,
+          reason: 'no credentials, no session — never a signed-in state',
+        );
+        expect(
+          emitted.needsReauth,
+          isFalse,
+          reason: 'nothing expired; the app was never configured',
+        );
+        expect(
+          emitted.missingConfigPath,
+          _configPath,
+          reason:
+              'the quiet signed-out idle would hide a fatal misconfiguration',
+        );
+        expect(controller.snapshot.notConfigured, isTrue);
+        await events.cancel();
+      },
+    );
+
+    test(
+      'the sign-in gesture reports the config path and opens no browser',
+      () async {
+        var loginRan = false;
+        final controller = AuthController(
+          unconfigured(onLogin: () => loginRan = true),
+        );
+        addTearDown(controller.dispose);
+        final events = StreamQueue<AuthSnapshot>(controller.changes);
+
+        await expectLater(
+          controller.signIn(),
+          throwsA(
+            isA<TokenProviderNotConfigured>().having(
+              (e) => e.configPath,
+              'configPath',
+              _configPath,
+            ),
+          ),
+        );
+
+        expect(loginRan, isFalse, reason: 'no browser, no Google 400');
+        expect(controller.isAuthenticated, isFalse);
+        expect((await events.next).missingConfigPath, _configPath);
+        await events.cancel();
+      },
+    );
+
+    test(
+      'a leftover session on disk still cannot restore, and says why',
+      () async {
+        // The takeover shape in reverse: tokens present, credentials gone. A
+        // stale access token is not a live session when nothing can refresh it.
+        final controller = AuthController(
+          unconfigured(
+            stored: const StoredTokens(
+              accessToken: 'stale',
+              refreshToken: 'rt',
+            ),
+          ),
+        );
+        addTearDown(controller.dispose);
+
+        expect(await controller.restore(), isFalse);
+        expect(controller.isAuthenticated, isFalse);
+        expect(controller.missingConfigPath, _configPath);
+      },
+    );
+
+    test(
+      'the fault survives a sign-out — it lives in the config file, not the session',
+      () async {
+        final controller = AuthController(unconfigured());
+        addTearDown(controller.dispose);
+        await controller.restore();
+
+        await controller.logout();
+
+        expect(
+          controller.snapshot.missingConfigPath,
+          _configPath,
+          reason: 'signing out does not fill in config.json',
+        );
+      },
+    );
+
+    test(
+      'credentials that appear clear the fault on the next restore',
+      () async {
+        // The recovery the message asks for: edit config.json, restart. Modelled
+        // by a provider that starts unconfigured and then works.
+        final controller = AuthController(
+          FakeTokenProvider.notConfigured(_configPath),
+        );
+        addTearDown(controller.dispose);
+        await controller.restore();
+        expect(controller.snapshot.notConfigured, isTrue);
+
+        final fixed = AuthController(FakeTokenProvider.withToken('access-1'));
+        addTearDown(fixed.dispose);
+
+        expect(await fixed.restore(), isTrue);
+        expect(fixed.snapshot.notConfigured, isFalse);
+        expect(fixed.snapshot.phase, AuthPhase.signedIn);
+      },
+    );
   });
 }

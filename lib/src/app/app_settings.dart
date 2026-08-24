@@ -15,6 +15,7 @@ class AppSettingsView {
     required this.authenticated,
     required this.needsReauth,
     required this.scopes,
+    required this.credentialsMissing,
     required this.dbPath,
     required this.configPath,
     required this.pendingPushes,
@@ -39,8 +40,12 @@ class AppSettingsView {
   /// The stored session is dead; only a fresh sign-in recovers it.
   final bool needsReauth;
 
-  /// The granted OAuth scopes.
+  /// The granted OAuth scopes. Empty when signed out — nothing is granted.
   final List<String> scopes;
+
+  /// The app has no Google API credentials at all: the `google` section of
+  /// [configPath] is empty, so sign-in cannot even start (#228). Desktop only.
+  final bool credentialsMissing;
 
   /// Absolute path to the local database (About tab).
   final String dbPath;

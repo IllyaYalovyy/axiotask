@@ -43,6 +43,7 @@ class AuthSnapshot {
   const AuthSnapshot({
     required this.isAuthenticated,
     required this.needsReauth,
+    this.missingConfigPath,
   });
 
   /// Whether a session exists (tokens/grant present). Stays true across a
@@ -51,6 +52,20 @@ class AuthSnapshot {
 
   /// Whether the stored session is dead and only a fresh sign-in recovers it.
   final bool needsReauth;
+
+  /// The config file whose Google credentials are missing, or null when the
+  /// platform CAN authenticate (#228). Set the moment the token provider
+  /// reports [TokenProviderNotConfigured] — on desktop, an empty `google`
+  /// section in `config.json`; never set on Android, where Play Services
+  /// identifies the app.
+  ///
+  /// Orthogonal to [phase]: an install with no credentials is signed OUT, but
+  /// its signed-out-ness is a configuration fault the UI must say out loud, not
+  /// the quiet idle of someone who simply has not signed in yet.
+  final String? missingConfigPath;
+
+  /// Whether the app has no credentials to authenticate with at all.
+  bool get notConfigured => missingConfigPath != null;
 
   /// The single derived state the UI switches on.
   AuthPhase get phase => needsReauth
@@ -61,13 +76,17 @@ class AuthSnapshot {
   bool operator ==(Object other) =>
       other is AuthSnapshot &&
       other.isAuthenticated == isAuthenticated &&
-      other.needsReauth == needsReauth;
+      other.needsReauth == needsReauth &&
+      other.missingConfigPath == missingConfigPath;
 
   @override
-  int get hashCode => Object.hash(isAuthenticated, needsReauth);
+  int get hashCode =>
+      Object.hash(isAuthenticated, needsReauth, missingConfigPath);
 
   @override
-  String toString() => 'AuthSnapshot(${phase.name})';
+  String toString() => notConfigured
+      ? 'AuthSnapshot(${phase.name}, not configured)'
+      : 'AuthSnapshot(${phase.name})';
 }
 
 /// Owns the auth state machine over a [TokenProvider].
@@ -81,6 +100,7 @@ class AuthController implements AuthState {
   bool _isAuthenticated = false;
   bool _needsReauth = false;
   String? _accessToken;
+  String? _missingConfigPath;
 
   @override
   bool get isAuthenticated => _isAuthenticated;
@@ -92,10 +112,15 @@ class AuthController implements AuthState {
   /// after sign-in/restore), or null when signed out.
   String? get accessToken => _accessToken;
 
+  /// The config file whose Google credentials are missing, or null when the
+  /// platform can authenticate (#228).
+  String? get missingConfigPath => _missingConfigPath;
+
   /// The current state as a snapshot.
   AuthSnapshot get snapshot => AuthSnapshot(
     isAuthenticated: _isAuthenticated,
     needsReauth: _needsReauth,
+    missingConfigPath: _missingConfigPath,
   );
 
   /// The derived state the UI switches on.
@@ -128,7 +153,21 @@ class AuthController implements AuthState {
       _accessToken = token;
       _isAuthenticated = true;
       _needsReauth = false;
+      _missingConfigPath = null;
       _emit();
+    } on TokenProviderNotConfigured catch (e) {
+      // There are no credentials to sign in WITH, so the flow never started —
+      // no browser was opened and nothing dead-ended in Google's 400 (#228).
+      // Record the fault and EMIT it so the persistent attention state appears
+      // even if the caller only shows a transient toast, then rethrow so the
+      // gesture reports it. Must precede the TokenProviderException clause
+      // below, which would otherwise swallow this subtype into a bare rethrow.
+      Log.warn(
+        'sign-in: Google credentials are not configured (${e.configPath})',
+      );
+      _missingConfigPath = e.configPath;
+      _emit();
+      rethrow;
     } on TokenStoreException catch (e) {
       // The gesture reached the endpoint but the session could not be PERSISTED
       // (a tokens.json write / chmod IO failure). We cannot claim a live
@@ -170,8 +209,21 @@ class AuthController implements AuthState {
       _accessToken = token;
       _isAuthenticated = true;
       _needsReauth = false;
+      _missingConfigPath = null;
       _emit();
       return true;
+    } on TokenProviderNotConfigured catch (e) {
+      // A startup with no credentials is NOT the quiet "never signed in" idle:
+      // the install cannot sync at all and the user has to edit a file to fix
+      // it. Stay signed out, but record the fault and emit it so the UI can
+      // raise a persistent attention state naming the config (#228).
+      Log.warn(
+        'startup: Google credentials are not configured (${e.configPath}); '
+        'starting signed out',
+      );
+      _missingConfigPath = e.configPath;
+      _resetToSignedOut();
+      return false;
     } on TokenProviderInteractionRequired {
       Log.info('no live session to restore; starting signed out');
       return false;
@@ -231,6 +283,10 @@ class AuthController implements AuthState {
   /// Fall to a clean signed-out state (no session, no banner) and EMIT it, so a
   /// failure on the detached startup / sign-in path is observable to the UI
   /// stream instead of dying unobserved (F9 / #189).
+  ///
+  /// [_missingConfigPath] is NOT cleared here: missing credentials are a
+  /// property of the config file, not of the session, so they survive every
+  /// sign-out and failure (#228). Only a successful authorize clears it.
   void _resetToSignedOut() {
     _accessToken = null;
     _isAuthenticated = false;
