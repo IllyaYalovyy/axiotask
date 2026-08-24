@@ -29,7 +29,8 @@ in below. Toolchain baseline: Flutter 3.44.8 stable / Dart 3.12 (pinned).
   **go_router**; no adaptive-scaffold package
 - Windowing: **window_manager** for size persistence (min-size set in the GTK
   runner, position-restore dropped on Wayland by design)
-- Packaging: **fastforge → RPM** for this Fedora box; flatpak deferred
+- Packaging: **RPM** for this Fedora box, built by a repo script; flatpak
+  deferred
 
 ---
 
@@ -248,7 +249,7 @@ a mitigation the design doc must carry:
   look decision needed in the runner.
 - Startup: renderer is still Skia/OpenGL (Impeller-Vulkan not landed);
   measure release-build cold start against the 2s budget as an early gate.
-- Packaging: fastforge 0.6.12 → local RPM for this box; flatpak deferred
+- Packaging: local RPM for this box, built by a repo script; flatpak deferred
   (AppFlowy shows it works, at 162 MiB scale); AppImage only with the
   documented graphics-lib exclusions. System tray SKIPPED — needs a GNOME
   shell extension (fails "meaningful defaults"); autostart optional/cheap.
