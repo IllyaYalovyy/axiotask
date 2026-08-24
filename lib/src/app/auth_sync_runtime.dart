@@ -46,6 +46,8 @@ import 'providers.dart';
 import 'sync_scheduler.dart';
 import 'sync_status.dart';
 
+bool _noStoredSession() => false;
+
 /// Assembles the auth controller, sync scheduler, and production client seam,
 /// and exposes the provider [overrides] + lifecycle the entry point mounts.
 class AuthSyncRuntime {
@@ -57,9 +59,11 @@ class AuthSyncRuntime {
     // external name) while the private fields are seeded directly.
     required this._config,
     required this._buildClient,
+    bool Function()? hasStoredSession,
     Duration debounce = kSyncDebounce,
     Duration period = kSyncPeriod,
-  }) : auth = AuthController(tokenProvider) {
+  }) : _hasStoredSession = hasStoredSession ?? _noStoredSession,
+       auth = AuthController(tokenProvider) {
     scheduler = SyncScheduler(
       store: store,
       client: _currentClient,
@@ -78,6 +82,12 @@ class AuthSyncRuntime {
 
   final ConfigController _config;
   final TasksApi? Function(String accessToken) _buildClient;
+
+  /// Whether a session is already persisted on this device (desktop
+  /// `tokens.json`). Only used to decide whether a missing-credentials config
+  /// is a LOUD fault: someone who has signed in before is not local-only by
+  /// choice (#228). Android stores no tokens, so it keeps the default.
+  final bool Function() _hasStoredSession;
   late final Commands _commands;
 
   /// The auth state machine (signed out / signed in / needs-reauth). Public so
@@ -124,6 +134,12 @@ class AuthSyncRuntime {
   /// and the real sidebar footer.
   List<Override> get overrides => [
     authSnapshotProvider.overrideWith((ref) => _authSnapshots()),
+    // Whether this install means to reach Google at all — the gate between a
+    // loud missing-credentials state and a legitimately quiet local-only one
+    // (#228). A startup condition, read once as the scope is built.
+    syncIntendedProvider.overrideWithValue(
+      _config.autoSyncOnStart || _config.pushEnabled || _hasStoredSession(),
+    ),
     syncStatusStreamProvider.overrideWith((ref) => _syncStatuses()),
     refreshActionProvider.overrideWithValue(refresh),
     freshSyncActionProvider.overrideWithValue(freshSync),

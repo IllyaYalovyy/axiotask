@@ -50,6 +50,7 @@ AppSettingsView settingsView({
   authenticated: true,
   needsReauth: false,
   scopes: const ['https://www.googleapis.com/auth/tasks'],
+  credentialsMissing: false,
   dbPath: '/tmp/axiotask/axiotask.sqlite',
   configPath: '/tmp/axiotask/config.json',
   pendingPushes: pendingPushes,

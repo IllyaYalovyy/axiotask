@@ -46,12 +46,19 @@ bool get _isDesktop =>
 /// Play Services authorization — no tokens are stored, the app is identified by
 /// package + SHA-1, and a 401 re-authorizes silently through the same provider
 /// (ratified auth decision / RFC-010).
-AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
+///
+/// Public so a test can reproduce a real first launch — bootstrap over a data
+/// directory, then THIS wiring — rather than restate it and miss a defect that
+/// lives here (#228).
+AuthSyncRuntime buildRuntime(BootstrapReady ready) {
   final store = Store(ready.database);
   final config = ready.configController;
 
   final TokenProvider tokenProvider;
   final TasksApi? Function(String accessToken) buildClient;
+  // Android persists no tokens (Play Services owns the grant), so only desktop
+  // can have a session on disk.
+  bool Function()? hasStoredSession;
 
   if (_isDesktop) {
     final oauthConfig = OAuthConfig(
@@ -63,7 +70,19 @@ AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
     tokenProvider = DesktopTokenProvider(
       config: oauthConfig,
       store: tokenStore,
+      // Named in the "credentials are not configured" message so the user is
+      // told WHICH file to edit — never a bare "sign-in failed" (#228).
+      configPath: config.path.path,
     );
+    // A tokens.json too broken to read still counts as a session: the user
+    // signed in at some point, so a quiet local-only start would be wrong.
+    hasStoredSession = () {
+      try {
+        return tokenStore.load() != null;
+      } catch (_) {
+        return true;
+      }
+    };
     // The access token is refreshed from the stored refresh token by the client
     // itself, so the desktop builder reads the persisted bundle rather than the
     // bare token string. A tokens.json deleted or corrupted between restore and
@@ -82,6 +101,9 @@ AuthSyncRuntime _buildRuntime(BootstrapReady ready) {
     config: config,
     tokenProvider: tokenProvider,
     buildClient: buildClient,
+    // Someone with a session on disk is not local-only by choice, so missing
+    // credentials stay loud for them even with both sync toggles off (#228).
+    hasStoredSession: hasStoredSession,
   );
 }
 
@@ -118,7 +140,7 @@ Future<void> main() async {
     case BootstrapReady():
       // The composition root: assemble auth + sync over the platform token
       // provider and the production Tasks client seam.
-      final runtime = _buildRuntime(result);
+      final runtime = buildRuntime(result);
       runApp(
         ProviderScope(
           overrides: [

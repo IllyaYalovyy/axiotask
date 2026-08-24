@@ -71,6 +71,12 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
         constraints: const BoxConstraints(maxWidth: 640, maxHeight: 620),
         child: DefaultTabController(
           length: 4,
+          // An install with no Google credentials opens straight on Account:
+          // that is the only tab that says what is wrong and names the file to
+          // edit, and the footer's "Google setup needed" is what sent the user
+          // here (#228). Read at controller-creation time, so a later change
+          // never yanks the tab out from under the user.
+          initialIndex: settings.credentialsMissing ? 2 : 0,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -408,6 +414,9 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       isAuthenticated: settings.authenticated,
       needsReauth: settings.needsReauth,
       scopes: settings.scopes,
+      missingConfigPath: settings.credentialsMissing
+          ? settings.configPath
+          : null,
       pendingPushes: settings.pendingPushes,
       resetNotice: _resetNotice,
       resetNoticeIsError: _resetNoticeIsError,

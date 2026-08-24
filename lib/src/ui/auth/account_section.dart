@@ -35,6 +35,7 @@ class AccountSection extends StatelessWidget {
     required this.onSignIn,
     required this.onSignOut,
     required this.onResetLocalData,
+    this.missingConfigPath,
     this.pendingPushes = 0,
     this.resetNotice,
     this.resetNoticeIsError = false,
@@ -62,6 +63,12 @@ class AccountSection extends StatelessWidget {
   /// confirm inside this widget — never straight off the button.
   final VoidCallback onResetLocalData;
 
+  /// The config file whose `google` credentials are missing, or null when the
+  /// app can authenticate (#228). Non-null replaces the quiet "Not signed in"
+  /// idle with the setup instructions, naming the file to edit — the sign-in
+  /// gesture cannot work until it is filled in.
+  final String? missingConfigPath;
+
   /// Local changes that have not reached Google. Named in the confirm so the
   /// user is told, before erasing, what is about to be lost for good.
   final int pendingPushes;
@@ -86,6 +93,10 @@ class AccountSection extends StatelessWidget {
         _heading(context, 'Google account'),
         const SizedBox(height: 8),
         _statusLine(context, colors),
+        if (missingConfigPath != null) ...[
+          const SizedBox(height: 12),
+          _setupRequired(context, theme, colors),
+        ],
         if (needsReauth) ...[
           const SizedBox(height: 8),
           Text(
@@ -240,10 +251,52 @@ class AccountSection extends StatelessWidget {
     ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
   );
 
+  /// The setup-required block: what is wrong, WHICH file to fix, and where the
+  /// instructions are. The path is a value the app itself resolved, so it is
+  /// shown verbatim; no OAuth wire text ever reaches here (#131/#187, #228).
+  Widget _setupRequired(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme colors,
+  ) => Container(
+    key: const Key('account-not-configured'),
+    width: double.infinity,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: colors.errorContainer,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Google API credentials are not configured',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: colors.onErrorContainer,
+          ),
+        ),
+        const SizedBox(height: 6),
+        SelectableText(
+          'Sign-in cannot start until an OAuth client id and secret are added '
+          'to $missingConfigPath, and axiotask is restarted. The README '
+          '("Google sign-in setup") explains how to create the client.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onErrorContainer,
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _statusLine(BuildContext context, ColorScheme colors) {
     final (color, label) = switch ((isAuthenticated, needsReauth)) {
       (_, true) => (colors.error, 'Session expired — sign in again'),
       (true, false) => (colors.primary, 'Signed in'),
+      (false, false) when missingConfigPath != null => (
+        colors.error,
+        'Not signed in — setup required',
+      ),
       (false, false) => (colors.onSurfaceVariant, 'Not signed in'),
     };
     return Row(

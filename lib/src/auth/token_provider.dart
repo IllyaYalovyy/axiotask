@@ -26,6 +26,26 @@ class TokenProviderInteractionRequired extends TokenProviderException {
   String toString() => 'TokenProviderInteractionRequired';
 }
 
+/// The platform has no credentials to authenticate WITH — on desktop, the
+/// `google` section of `config.json` is empty, so there is no OAuth client id
+/// or secret to send (#228).
+///
+/// Distinct from [TokenProviderInteractionRequired] (the user simply has not
+/// signed in yet, and a gesture would fix it): this one cannot be fixed by any
+/// gesture. Starting the flow anyway only dead-ends the browser in Google's
+/// `Error 400: invalid_request — Missing required parameter: client_id`, so the
+/// flow must never start. [configPath] is the file the user has to edit — a
+/// value WE own, safe to show verbatim (#131/#187).
+class TokenProviderNotConfigured extends TokenProviderException {
+  const TokenProviderNotConfigured(this.configPath);
+
+  /// Absolute path of the config file whose `google` credentials are missing.
+  final String configPath;
+
+  @override
+  String toString() => 'TokenProviderNotConfigured($configPath)';
+}
+
 /// A transient failure: no network, a 5xx, Play Services updating. Worth
 /// retrying later without bothering the user.
 class TokenProviderUnavailable extends TokenProviderException {
@@ -71,6 +91,11 @@ class FakeTokenProvider implements TokenProvider {
   factory FakeTokenProvider.unavailable(String message) =>
       FakeTokenProvider._(_Unavailable(message));
 
+  /// No credentials to authenticate with — the desktop `config.json` has an
+  /// empty `google` section (#228).
+  factory FakeTokenProvider.notConfigured(String configPath) =>
+      FakeTokenProvider._(_NotConfigured(configPath));
+
   _Outcome _outcome;
   final List<bool> _calls = <bool>[];
   bool _signedOut = false;
@@ -92,6 +117,9 @@ class FakeTokenProvider implements TokenProvider {
       _Token(:final token) => token,
       _NeedsInteraction() => throw const TokenProviderInteractionRequired(),
       _Unavailable(:final message) => throw TokenProviderUnavailable(message),
+      _NotConfigured(:final configPath) => throw TokenProviderNotConfigured(
+        configPath,
+      ),
     };
   }
 
@@ -115,4 +143,9 @@ class _NeedsInteraction extends _Outcome {
 class _Unavailable extends _Outcome {
   const _Unavailable(this.message);
   final String message;
+}
+
+class _NotConfigured extends _Outcome {
+  const _NotConfigured(this.configPath);
+  final String configPath;
 }

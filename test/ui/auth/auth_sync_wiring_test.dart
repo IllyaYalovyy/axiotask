@@ -16,13 +16,17 @@ import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/auth/auth_error.dart';
+import 'package:axiotask/src/auth/desktop_auth.dart' show OAuthConfig;
+import 'package:axiotask/src/auth/desktop_token_provider.dart';
 import 'package:axiotask/src/auth/token_provider.dart';
+import 'package:axiotask/src/auth/token_store.dart' show InMemoryTokenStore;
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/toast.dart';
+import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -42,19 +46,27 @@ void main() {
   Future<AuthSyncRuntime> makeRuntime({
     required TokenProvider tokenProvider,
     bool autoSyncOnStart = false,
+    bool pushEnabled = false,
+    bool hasStoredSession = false,
     FakeTasksApi? client,
   }) async {
     final db = await AppDatabase.openMemory();
     addTearDown(db.close);
     final config = ConfigController(
       path: File(p.join(tmp.path, 'config.json')),
-      initial: AppConfig(sync: SyncConfig(autoSyncOnStart: autoSyncOnStart)),
+      initial: AppConfig(
+        sync: SyncConfig(
+          autoSyncOnStart: autoSyncOnStart,
+          pushEnabled: pushEnabled,
+        ),
+      ),
     );
     final runtime = AuthSyncRuntime(
       store: Store(db),
       config: config,
       tokenProvider: tokenProvider,
       buildClient: (_) => client ?? FakeTasksApi(),
+      hasStoredSession: () => hasStoredSession,
       debounce: Duration.zero,
     );
     addTearDown(runtime.dispose);
@@ -96,6 +108,9 @@ void main() {
     // No session → no Sign out affordance and no Sync button.
     expect(find.byKey(const Key('auth-footer-signout')), findsNothing);
     expect(find.byKey(const Key('auth-footer-sync')), findsNothing);
+    // A CONFIGURED install that simply has not signed in stays quiet (#228).
+    expect(find.byKey(const Key('auth-footer-not-configured')), findsNothing);
+    expect(find.text('Setup required'), findsNothing);
   });
 
   testWidgets('signing in transitions the footer and livens the status', (
@@ -302,6 +317,150 @@ void main() {
       reason: 'the pull ran a real sync against the live session',
     );
     expect(client.callCount(Method.listTasklists), greaterThan(0));
+  });
+
+  group('#228 an install whose config.json has no Google credentials', () {
+    const configPath = '/home/u/.config/axiotask/config.json';
+
+    /// The real desktop provider over the shipped empty defaults, with the
+    /// loopback login replaced by a recorder: if the browser were ever going to
+    /// open, [browserOpens] would count it.
+    ({DesktopTokenProvider provider, List<String> browserOpens})
+    unconfigured() {
+      final opens = <String>[];
+      return (
+        provider: DesktopTokenProvider(
+          config: const OAuthConfig(clientId: '', clientSecret: ''),
+          store: InMemoryTokenStore(),
+          configPath: configPath,
+          login: (cfg) async {
+            opens.add(cfg.clientId);
+            throw StateError('the browser must never open');
+          },
+        ),
+        browserOpens: opens,
+      );
+    }
+
+    testWidgets(
+      'tapping Sign in opens NO browser and says what to fix, in-app',
+      (tester) async {
+        final desktop = unconfigured();
+        final urlsOpened = <String>[];
+        final runtime = await makeRuntime(tokenProvider: desktop.provider);
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              ...runtime.overrides,
+              // The app's external-URL seam, recording instead of launching.
+              urlOpenerProvider.overrideWithValue((url) async {
+                urlsOpened.add(url);
+              }),
+            ],
+            child: MaterialApp(
+              builder: wrapWithToast,
+              home: const Scaffold(body: SidebarAuthSyncFooter()),
+            ),
+          ),
+        );
+        await settle(tester);
+
+        await tester.tap(find.byKey(const Key('auth-footer-signin')));
+        await settle(tester);
+
+        // NOTHING left the app: no loopback flow, no browser, no Google 400.
+        expect(desktop.browserOpens, isEmpty);
+        expect(urlsOpened, isEmpty);
+
+        // The user is told what is wrong and which file to edit.
+        expect(find.byType(ToastCard), findsOneWidget);
+        expect(
+          find.textContaining('credentials are not configured'),
+          findsOneWidget,
+        );
+        expect(find.textContaining(configPath), findsOneWidget);
+
+        // And the state is honest: still signed out, never signed in.
+        expect(find.byKey(const Key('auth-footer-signout')), findsNothing);
+
+        await tester.pump(kErrorToastDuration);
+      },
+    );
+
+    testWidgets('startup raises the persistent attention state', (
+      tester,
+    ) async {
+      final desktop = unconfigured();
+      final runtime = await makeRuntime(
+        tokenProvider: desktop.provider,
+        autoSyncOnStart: true,
+      );
+
+      // Exactly the detached startup task, awaited so the test is deterministic.
+      await runtime.restoreAndAutoSync();
+      await pumpFooter(tester, runtime);
+
+      expect(find.text('Setup required'), findsOneWidget);
+      expect(find.text('Google setup needed'), findsOneWidget);
+      expect(
+        find.text('Offline'),
+        findsNothing,
+        reason: 'the quiet idle hid a fatal misconfiguration',
+      );
+      expect(desktop.browserOpens, isEmpty);
+    });
+
+    testWidgets('read-write sync on, auto-sync off still raises it', (
+      tester,
+    ) async {
+      final desktop = unconfigured();
+      final runtime = await makeRuntime(
+        tokenProvider: desktop.provider,
+        autoSyncOnStart: false,
+        pushEnabled: true,
+      );
+
+      await runtime.restoreAndAutoSync();
+      await pumpFooter(tester, runtime);
+
+      expect(find.text('Setup required'), findsOneWidget);
+    });
+
+    testWidgets('a session on disk raises it even with sync fully off', (
+      tester,
+    ) async {
+      final desktop = unconfigured();
+      final runtime = await makeRuntime(
+        tokenProvider: desktop.provider,
+        autoSyncOnStart: false,
+        hasStoredSession: true,
+      );
+
+      await runtime.restoreAndAutoSync();
+      await pumpFooter(tester, runtime);
+
+      expect(find.text('Setup required'), findsOneWidget);
+    });
+
+    testWidgets('a deliberately local-only install keeps the quiet idle', (
+      tester,
+    ) async {
+      // Auto-sync off, push off, no session: nothing about this launch was
+      // meant to reach Google, so nagging about credentials would be noise.
+      final desktop = unconfigured();
+      final runtime = await makeRuntime(
+        tokenProvider: desktop.provider,
+        autoSyncOnStart: false,
+      );
+
+      await runtime.restoreAndAutoSync();
+      await pumpFooter(tester, runtime);
+
+      expect(find.text('Offline'), findsOneWidget);
+      expect(find.text('Setup required'), findsNothing);
+      expect(find.byKey(const Key('auth-footer-not-configured')), findsNothing);
+    });
   });
 }
 

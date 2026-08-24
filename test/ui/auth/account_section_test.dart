@@ -26,6 +26,7 @@ void main() {
     int pendingPushes = 0,
     String? resetNotice,
     bool resetNoticeIsError = false,
+    String? missingConfigPath,
   }) async {
     final fired = <String>[];
     await tester.pumpWidget(
@@ -41,6 +42,7 @@ void main() {
               pendingPushes: pendingPushes,
               resetNotice: resetNotice,
               resetNoticeIsError: resetNoticeIsError,
+              missingConfigPath: missingConfigPath,
               onSignIn: () => fired.add('signIn'),
               onSignOut: () => fired.add('signOut'),
               onResetLocalData: () => fired.add('reset'),
@@ -362,6 +364,65 @@ void main() {
       await type(tester, 'RESET');
       expect(confirmArmed(tester), isTrue);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('#228 an unconfigured install says so on the Account tab', () {
+    const configPath = '/home/u/.config/axiotask/config.json';
+
+    testWidgets('the setup block names the file and the way to fix it', (
+      tester,
+    ) async {
+      final h = await pumpAccount(
+        tester,
+        isAuthenticated: false,
+        needsReauth: false,
+        scopes: const [],
+        missingConfigPath: configPath,
+      );
+
+      expect(find.byKey(const Key('account-not-configured')), findsOneWidget);
+      expect(find.textContaining(configPath), findsOneWidget);
+      expect(find.textContaining('README'), findsOneWidget);
+      // Not the quiet idle — the status line itself says setup is pending.
+      expect(find.text('Not signed in — setup required'), findsOneWidget);
+
+      // The gesture stays reachable: it is what produces the toast (#228).
+      await tester.tap(find.byKey(const Key('account-signin')));
+      await tester.pump();
+      expect(h.fired, ['signIn']);
+    });
+
+    testWidgets('a configured signed-out install shows no setup block', (
+      tester,
+    ) async {
+      await pumpAccount(
+        tester,
+        isAuthenticated: false,
+        needsReauth: false,
+        scopes: const [],
+      );
+
+      expect(find.byKey(const Key('account-not-configured')), findsNothing);
+      expect(find.text('Not signed in'), findsOneWidget);
+    });
+
+    testWidgets('signed out grants nothing, so no Access is listed', (
+      tester,
+    ) async {
+      // The Access list is what Google HAS granted; showing the requested scope
+      // to someone with no session made the tab read as signed in (#228).
+      await pumpAccount(
+        tester,
+        isAuthenticated: false,
+        needsReauth: false,
+        scopes: const [],
+      );
+
+      expect(find.text('Access'), findsNothing);
+      expect(find.text('Google Tasks — read & write'), findsNothing);
+      expect(find.byKey(const Key('account-signout')), findsNothing);
+      expect(find.text('Sign in with Google'), findsOneWidget);
     });
   });
 }
