@@ -10,8 +10,10 @@
 //   - UNDECLARED RUNTIME DEP: the release bundle dynamically links GTK3/GLib
 //     (verified with ldd). Omitting the Requires ships an RPM that installs but
 //     segfaults on a minimal host.
-//   - METADATA SKEW: the fastforge maker config and the standalone build script
-//     are two renderers of ONE package; they must agree on name and deps.
+//   - MENU-PLACEMENT SKEW: the RPM ships two declarations of where the app
+//     belongs — the desktop entry (read by the app menu) and the AppStream
+//     metainfo (read by software centres). Disagreement files the app under
+//     different headings depending on where the user looks for it.
 //
 // The build script's `--print-spec` / `--dry-run` modes are pure (no flutter
 // build, no rpmbuild, no clock, no network), so this is deterministic.
@@ -38,6 +40,8 @@ String _pubspecVersion() {
 const _appId = 'io.github.illyayalovyy.axiotask';
 const _appName = 'axiotask';
 const _desktopSrc = 'linux/packaging/$_appId.desktop';
+const _metainfoSrc = 'linux/packaging/$_appId.metainfo.xml';
+const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
 
 ProcessResult _runScript(List<String> args) =>
     Process.runSync('bash', ['tool/build_rpm.sh', ...args]);
@@ -73,9 +77,18 @@ void main() {
         '(menu-launchable, listed in software centres)', () {
       expect(spec, contains('/usr/bin/axiotask'));
       expect(spec, contains('/usr/share/applications/$_appId.desktop'));
+      // Every themed size, not just the big one: GNOME picks the 16px bitmap
+      // for menu lists, and a lone 512px icon is scaled down to mush.
+      for (final size in _hicolorSizes) {
+        expect(
+          spec,
+          contains('/usr/share/icons/hicolor/${size}x$size/apps/axiotask.png'),
+          reason: 'hicolor ${size}px icon is not packaged',
+        );
+      }
       expect(
         spec,
-        contains('/usr/share/icons/hicolor/512x512/apps/axiotask.png'),
+        contains('/usr/share/icons/hicolor/scalable/apps/axiotask.svg'),
       );
       expect(spec, contains('/usr/lib/axiotask'));
       expect(
@@ -104,29 +117,6 @@ void main() {
     });
   });
 
-  test('spec metadata agrees with the fastforge make_config.yaml', () {
-    final spec = _runScript(['--print-spec']).stdout as String;
-    final cfg = File('linux/packaging/rpm/make_config.yaml').readAsStringSync();
-
-    expect(cfg, contains('package_name: axiotask'));
-    expect(spec, contains('Name:           axiotask'));
-
-    // Every dependency the maker config declares must appear as a spec Requires.
-    final depsBlock = cfg.split('dependencies:').last;
-    for (final dep in ['gtk3', 'glib2']) {
-      expect(
-        depsBlock,
-        contains('- $dep'),
-        reason: 'make_config.yaml must list "$dep" as a dependency',
-      );
-      expect(
-        spec,
-        contains('Requires:       $dep'),
-        reason: 'make_config dependency "$dep" must appear as a spec Requires',
-      );
-    }
-  });
-
   // Non-happy path: the dry-run gate must degrade gracefully when the packaging
   // toolchain (rpmbuild) and the release bundle are absent — it validates and
   // reports, but never fails or invokes rpmbuild. This is what makes it usable
@@ -143,6 +133,28 @@ void main() {
     expect(err, contains('rpmbuild'));
   });
 
+  // ONE RPM ROUTE (#231). tool/build_rpm.sh is the only path that produces an
+  // axiotask RPM. A config-driven packager generates its own desktop entry,
+  // named after the PACKAGE rather than the application id, and a window whose
+  // Wayland app_id has no desktop file of that basename shows a blank icon in
+  // the dash (#227) — a second route would ship that regression while every
+  // assertion above, which only reads build_rpm.sh, stayed green.
+  //
+  // The bracketed letters keep the banned names out of this file's own text:
+  // the regexes still match them, but a repo-wide grep for them stays clean.
+  test('no second RPM packaging route exists in the tracked tree', () {
+    const banned = r'fast[f]orge|flutter_[d]istributor|distribute_[o]ptions';
+    final r = Process.runSync('git', ['grep', '-InIE', banned]);
+    expect(
+      r.exitCode,
+      1, // git grep: 1 = no match, 0 = matched, >1 = the command itself failed
+      reason:
+          'tool/build_rpm.sh must be the single RPM route (#231), but the '
+          'tracked tree still references a removed one:\n'
+          '${r.stdout}${r.stderr}',
+    );
+  });
+
   test('unknown argument is rejected', () {
     final r = _runScript(['--bogus']);
     expect(r.exitCode, isNot(0));
@@ -157,26 +169,21 @@ void main() {
     expect(desktop, contains('Icon=$_appName'));
   });
 
-  // The maker config and the desktop entry are two declarations of the same
-  // menu placement; a category listed in one and not the other means the RPM
-  // and the .desktop file disagree about where the app appears.
-  test('make_config categories agree with the desktop entry', () {
-    final cfg = File('linux/packaging/rpm/make_config.yaml').readAsStringSync();
-    final categories = File(_desktopSrc)
+  // The RPM installs both the desktop entry and the AppStream metainfo; they
+  // are two declarations of the same menu placement, and a category present in
+  // one but not the other means the app menu and GNOME Software file the app
+  // under different headings.
+  test('AppStream categories agree with the desktop entry', () {
+    final desktopCategories = File(_desktopSrc)
         .readAsLinesSync()
         .firstWhere((l) => l.startsWith('Categories='))
         .substring('Categories='.length)
         .split(';')
         .where((c) => c.isNotEmpty);
-    final block = cfg.split('categories:').last.split('keywords:').first;
-    for (final c in categories) {
-      expect(block, contains('- $c'), reason: 'make_config must list $c');
-    }
-    expect(
-      RegExp(r'^\s+- ', multiLine: true).allMatches(block).length,
-      categories.length,
-      reason: 'make_config lists categories the desktop entry does not',
-    );
+    final metainfoCategories = RegExp(
+      r'<category>([^<]+)</category>',
+    ).allMatches(File(_metainfoSrc).readAsStringSync()).map((m) => m.group(1)!);
+    expect(metainfoCategories, unorderedEquals(desktopCategories.toList()));
   });
 
   // Spec/staging skew: a path listed in %files that nothing stages makes

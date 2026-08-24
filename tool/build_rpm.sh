@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Build an installable RPM of the axiotask Linux desktop app WITHOUT fastforge.
+# Build an installable RPM of the axiotask Linux desktop app.
 #
-# This is the standalone path (the fastforge path is `flutter_distributor
-# package --platform linux --targets rpm` — see distribute_options.yaml). It
-# renders an RPM spec whose metadata mirrors linux/packaging/rpm/make_config.yaml,
-# stages the `flutter build linux --release` bundle, and calls rpmbuild.
+# This is the ONE RPM route: it renders the RPM spec, stages the
+# `flutter build linux --release` bundle, and calls rpmbuild. Requires
+# `rpmbuild` (Fedora: `sudo dnf install rpm-build`).
 #
 # Layout the RPM installs:
 #   /usr/lib/axiotask/                 the whole release bundle (binary, data, lib)
@@ -73,8 +72,8 @@ read_version() {
   RELEASE="$build"
 }
 
-# ── Render the RPM spec to stdout. Single source of the RPM metadata; kept in
-#    sync with linux/packaging/rpm/make_config.yaml (enforced by the test).
+# ── Render the RPM spec to stdout. The single source of the RPM metadata; the
+#    packaging test reads it back through --print-spec.
 render_spec() {
   read_version
   cat <<SPEC
@@ -148,7 +147,6 @@ stage_buildroot() {
 validate_config() {
   [ -f pubspec.yaml ] || die "pubspec.yaml missing"
   [ -f "$DESKTOP_SRC" ] || die "desktop entry missing at $DESKTOP_SRC"
-  [ -f linux/packaging/rpm/make_config.yaml ] || die "fastforge make_config.yaml missing"
   grep -q '^Exec=axiotask$' "$DESKTOP_SRC" || die "desktop Exec= must be 'axiotask' (matches /usr/bin/axiotask)"
   # #227 identity guard: the running window's Wayland app_id IS APPLICATION_ID,
   # and GNOME only finds the window's icon through a desktop file of that exact

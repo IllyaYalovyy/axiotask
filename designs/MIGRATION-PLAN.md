@@ -461,8 +461,8 @@ Step 7 — desktop UX parity (fresh design):
   ErrorToast, ToastStack, ToastZIndex contract, AttentionIndicator,
   AuthRecovery, BackgroundSync, Sync, AutoSync, OfflineFirst,
   IncrementalRefresh, AppBoundary/StartupError contracts).
-- T7.9 packaging: fastforge config + RPM build script, gate-checked by a
-  dry-run build. Then (op): build, install, user starts daily-driving.
+- T7.9 packaging: RPM build script, gate-checked by a dry-run build.
+  Then (op): build, install, user starts daily-driving.
 
 Step 8 — mobile UX:
 - T8.1 swipe actions (right-complete, left-strip follows finger), long-

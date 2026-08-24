@@ -2,9 +2,8 @@
 # axiotask — build & install the Linux desktop app FOR THE CURRENT USER.
 #
 # No sudo, nothing outside your home directory. This is the non-RPM path; for a
-# system-wide package use tool/build_rpm.sh (or fastforge, see
-# distribute_options.yaml). The two install the same set of files, one under
-# /usr, this one under ~/.local.
+# system-wide package use tool/build_rpm.sh. The two install the same set of
+# files, one under /usr, this one under ~/.local.
 #
 # What is installed (and why there):
 #   ~/.local/lib/axiotask/                    the whole release bundle
