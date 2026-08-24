@@ -16,6 +16,11 @@ import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/sync_status.dart';
 import 'package:axiotask/src/model/sync_run.dart';
+import 'package:axiotask/src/model/task.dart';
+import 'package:axiotask/src/model/task_list.dart';
+import 'package:axiotask/src/store/database.dart' show AppDatabase;
+import 'package:axiotask/src/store/store.dart';
+import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/properties.dart';
 import 'package:axiotask/src/ui/sync_activity.dart';
 import 'package:axiotask/src/ui/theme.dart';
@@ -38,6 +43,20 @@ List<String> renderedText(WidgetTester tester) => [
   for (final t in tester.widgetList<Text>(find.byType(Text)))
     t.data ?? t.textSpan?.toPlainText() ?? '',
 ];
+
+/// The value rendered beside the 'Pending local changes' label — the number
+/// the user actually reads, not the provider behind it.
+String pendingStat(WidgetTester tester) {
+  final row = find
+      .ancestor(
+        of: find.text('Pending local changes'),
+        matching: find.byType(Row),
+      )
+      .first;
+  return tester
+      .widget<Text>(find.descendant(of: row, matching: find.byType(Text)).last)
+      .data!;
+}
 
 AppSettingsView settingsView({
   SyncStatusView sync = const SyncStatusView.initial(),
@@ -325,6 +344,91 @@ void main() {
       expect(find.textContaining('Jun 15 14:25'), findsOneWidget);
       expect(find.text('12'), findsOneWidget);
       expect(find.text('5'), findsOneWidget);
+    });
+
+    // #232: this screen is left open while sync runs in the background. The
+    // count was a one-shot read taken when the screen first built, so it froze
+    // at whatever the queue held then — it advertised unpushed work after the
+    // push that drained it, and missed work queued while the screen was up.
+    testWidgets('the pending count follows the queue while the screen stays '
+        'open', (tester) async {
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      final store = Store(db);
+      await store.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'L1', title: 'Inbox', updated: 't'),
+          syncState: SyncState.clean,
+          localUpdated: 't',
+        ),
+      );
+
+      tester.view.physicalSize = const Size(1000, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await withClock(Clock.fixed(now), () async {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              // The REAL appSettingsProvider assembly over a REAL store: the
+              // wiring under test. Only the run history is stubbed out.
+              configControllerProvider.overrideWithValue(
+                ConfigController(
+                  path: configFile(),
+                  initial: const AppConfig(),
+                ),
+              ),
+              storeProvider.overrideWithValue(store),
+              syncRunsProvider.overrideWith((ref) async => const <SyncRun>[]),
+            ],
+            child: const MaterialApp(
+              home: Scaffold(body: SyncActivityScreen()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(pendingStat(tester), '0', reason: 'nothing edited yet');
+
+        await store.upsertTask(
+          StoredTask(
+            task: Task(
+              id: 'T1',
+              position: '1',
+              title: 'edited offline',
+              status: TaskStatus.needsAction,
+              updated: 't',
+            ),
+            listId: 'L1',
+            syncState: SyncState.dirty,
+            localUpdated: 't2',
+            pendingOp: 'update',
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          pendingStat(tester),
+          '1',
+          reason: 'work queued while the screen is open must show up',
+        );
+
+        await store.markTaskClean('T1', 'e2', 't3', 't2');
+        await tester.pumpAndSettle();
+        expect(
+          pendingStat(tester),
+          '0',
+          reason: 'the push drained the queue — the screen must stop warning',
+        );
+
+        // Unmount inside the body and let fake time tick once: disposing the
+        // scope cancels the drift stream, and drift cleans its stream store up
+        // on a zero-duration timer. Left to the binding's own teardown that
+        // timer never fires, so the test trips the pending-timer invariant and
+        // `db.close()` waits on it forever.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(milliseconds: 1));
+      });
     });
 
     testWidgets('never synced reads "never", not a blank or an epoch', (
