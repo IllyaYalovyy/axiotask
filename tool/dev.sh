@@ -18,12 +18,21 @@
 #   --prefix NAME    instance prefix (default: dev)
 #   --fresh          wipe the instance's data and config before launching
 #
+# Google sign-in works with no config.json editing when tool/oauth_credentials.json
+# exists (see tool/oauth_defines.sh); the instance's own config.json overrides it.
+#
 # Default mode runs under `flutter run -d linux`, which is the only mode that
 # shows the app's log output (the logger writes through dart:developer, which
 # standalone binaries do not print). Use the default mode when debugging;
 # use --bundle/--release to test the real deployed artifact.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# The OAuth client credentials this build carries (#229). A dev instance gets
+# the same treatment as an install: if the operator created the gitignored
+# credentials file, sign-in works with no config.json editing at all.
+# shellcheck source=tool/oauth_defines.sh
+. "$PWD/tool/oauth_defines.sh"
 
 prefix=flt
 mode=run
@@ -47,19 +56,23 @@ if [ "$fresh" = 1 ]; then
   rm -rf "$data_dir" "$config_dir"
 fi
 
+oauth_define_args
+
 echo "instance '$prefix' (data: $data_dir)"
-echo "Google sign-in needs OAuth credentials in $config_dir/config.json — see README."
+oauth_defines_report
+echo "$config_dir/config.json overrides the bundled credentials — see README."
 
 case "$mode" in
   run)
-    exec env AXIOTASK_PREFIX="$prefix" flutter run -d linux --debug
+    exec env AXIOTASK_PREFIX="$prefix" \
+      flutter run -d linux --debug ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"}
     ;;
   bundle)
-    flutter build linux --debug
+    flutter build linux --debug ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"}
     exec env AXIOTASK_PREFIX="$prefix" build/linux/x64/debug/bundle/axiotask
     ;;
   release)
-    flutter build linux --release
+    flutter build linux --release ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"}
     exec env AXIOTASK_PREFIX="$prefix" build/linux/x64/release/bundle/axiotask
     ;;
 esac

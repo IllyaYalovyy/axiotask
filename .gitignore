@@ -63,5 +63,11 @@ app.*.map.json
 .agent/
 .ktask/
 
+# Build-time OAuth client credentials (#229): the operator creates this file
+# locally so a build can bundle the installed-app client. It carries a real
+# client id/secret and MUST NEVER be committed — see tool/oauth_defines.sh and
+# README, "Google sign-in setup".
+tool/oauth_credentials.json
+
 # alchemist golden-mismatch artifacts (never committed)
 **/failures/

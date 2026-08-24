@@ -20,6 +20,7 @@ import 'src/app/app.dart';
 import 'src/app/auth_sync_runtime.dart';
 import 'src/app/authed_api.dart';
 import 'src/app/bootstrap.dart';
+import 'src/app/google_credentials.dart';
 import 'src/app/logging.dart';
 import 'src/app/platform_paths.dart';
 import 'src/app/providers.dart';
@@ -50,7 +51,10 @@ bool get _isDesktop =>
 /// Public so a test can reproduce a real first launch — bootstrap over a data
 /// directory, then THIS wiring — rather than restate it and miss a defect that
 /// lives here (#228).
-AuthSyncRuntime buildRuntime(BootstrapReady ready) {
+AuthSyncRuntime buildRuntime(
+  BootstrapReady ready, {
+  BundledCredentials bundled = BundledCredentials.fromEnvironment,
+}) {
   final store = Store(ready.database);
   final config = ready.configController;
 
@@ -61,10 +65,17 @@ AuthSyncRuntime buildRuntime(BootstrapReady ready) {
   bool Function()? hasStoredSession;
 
   if (_isDesktop) {
+    // An operator's `config.json` wins; an untouched one falls back to the
+    // credentials this build carries, so a packaged install signs in out of the
+    // box (#229). Nothing here is ever written back to the file.
+    final google = resolveGoogleCredentials(
+      config: config.google,
+      bundled: bundled,
+    );
     final oauthConfig = OAuthConfig(
-      clientId: config.google.clientId,
-      clientSecret: config.google.clientSecret,
-      scopes: config.google.scopes,
+      clientId: google.clientId,
+      clientSecret: google.clientSecret,
+      scopes: google.scopes,
     );
     final tokenStore = FileTokenStore(ready.tokensFile);
     tokenProvider = DesktopTokenProvider(
