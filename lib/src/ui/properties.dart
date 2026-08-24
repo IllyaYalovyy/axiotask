@@ -575,9 +575,6 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
     });
     try {
       final r = await ref.read(localDataResetProvider).run();
-      // The pending-push stat is a one-shot read; after the nuke it would keep
-      // reporting the erased account's queue until the dialog was reopened.
-      ref.invalidate(pendingPushCountProvider);
       _notifyReset(
         'Erased ${r.tasks} task(s) in ${r.lists} list(s). A recovery copy was '
         'saved to ${r.dumpPath}. Sign in with the other account to pull its '

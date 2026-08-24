@@ -119,6 +119,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   }
 
+  /// Tear the tree down INSIDE the test body, then let fake time tick once.
+  ///
+  /// A surface that watches a drift stream (Properties reads the live pending-
+  /// push count) cancels that stream when the `ProviderScope` is disposed, and
+  /// drift defers its stream-store cleanup onto a zero-duration timer. Left to
+  /// the binding's own teardown that timer is created after fake time has
+  /// stopped, so it never fires: the test trips the pending-timer invariant and
+  /// the real `database.close()` teardown then waits on it until the 10-minute
+  /// suite timeout. Unmounting here gives the timer a frame to run on.
+  Future<void> unmountLaunched(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 1));
+  }
+
   testWidgets('the launch says setup is required instead of going quiet', (
     tester,
   ) async {
@@ -196,5 +210,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Sign in with Google'), findsOneWidget);
+
+    await unmountLaunched(tester);
   });
 }

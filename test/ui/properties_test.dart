@@ -606,4 +606,173 @@ void main() {
       );
     });
   });
+
+  // ── #232: the pending-changes counter is LIVE ────────────────────────────
+  //
+  // Driven against a REAL store with the REAL `appSettingsProvider` assembly
+  // (no settings override), because the defect being protected against lives
+  // exactly there: a one-shot read of the push queue answered once per session
+  // and then reported a number that no longer matched a single row on disk.
+  group('pending changes counter is live (#232)', () {
+    /// The Properties dialog over a real store, with the real settings
+    /// assembly — the only wiring that can go stale.
+    Future<void> pumpLive(WidgetTester tester, Store store) async {
+      tester.view.physicalSize = const Size(1000, 1400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            configControllerProvider.overrideWithValue(tempConfig()),
+            storeProvider.overrideWithValue(store),
+          ],
+          child: const MaterialApp(home: Scaffold(body: PropertiesDialog())),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    /// Tear the tree down INSIDE the test body, then pump once more.
+    ///
+    /// Disposing the `ProviderScope` cancels the drift stream, and drift defers
+    /// its stream-store cleanup onto a zero-duration timer. Left to the
+    /// binding's own teardown that timer is created after fake time has already
+    /// stopped, so it never fires: the test trips the pending-timer invariant
+    /// and the `db.close()` teardown then waits on it forever. Unmounting here
+    /// gives the timer a frame to run on.
+    Future<void> unmount(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      // A bare `pump()` does NOT advance fake time, so the zero-duration timer
+      // would still be sitting in the queue; give it a tick to run on.
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+
+    /// The value rendered beside the 'Pending changes' label.
+    String pendingStat(WidgetTester tester) {
+      final row = find
+          .ancestor(
+            of: find.text('Pending changes'),
+            matching: find.byType(Row),
+          )
+          .first;
+      return tester
+          .widget<Text>(
+            find.descendant(of: row, matching: find.byType(Text)).last,
+          )
+          .data!;
+    }
+
+    /// T1 turned into an unpushed local edit (the row a sync would push).
+    StoredTask dirtyT1({String localUpdated = 't2'}) => StoredTask(
+      task: Task(
+        id: 'T1',
+        position: '1',
+        title: 'edited offline',
+        status: TaskStatus.needsAction,
+        updated: 't',
+      ),
+      listId: 'L1',
+      syncState: SyncState.dirty,
+      localUpdated: localUpdated,
+      pendingOp: 'update',
+    );
+
+    testWidgets('the Sync tab follows the queue filling and draining while '
+        'the dialog stays open', (tester) async {
+      final store = await seededStore();
+      await pumpLive(tester, store);
+      expect(pendingStat(tester), '0', reason: 'nothing edited yet');
+
+      // The user edits a task (offline, or just before the next push).
+      await store.upsertTask(dirtyT1());
+      await tester.pumpAndSettle();
+      expect(
+        pendingStat(tester),
+        '1',
+        reason: 'an unpushed edit must show up without reopening Properties',
+      );
+
+      // The push completes: the queue is empty again and the stat must say so.
+      await store.markTaskClean('T1', 'e2', 't3', 't2');
+      await tester.pumpAndSettle();
+      expect(
+        pendingStat(tester),
+        '0',
+        reason: 'a stat stuck on 1 with zero dirty rows is the reported defect',
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('an edit made after the dialog opened still warns in the '
+        'reset confirm', (tester) async {
+      final store = await seededStore();
+      await pumpLive(tester, store);
+
+      // The unsynced edit lands while Properties is already open — the exact
+      // case a session-long snapshot misses, and the one where losing the
+      // warning means erasing data Google never saw.
+      await store.upsertTask(dirtyT1());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Account'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('account-reset-data')),
+        300,
+        scrollable: find.descendant(
+          of: find.byKey(const Key('account-tab-scroll')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('account-reset-data')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.textContaining('1 change(s) on this device never reached Google'),
+        findsOneWidget,
+      );
+      await unmount(tester);
+    });
+
+    testWidgets('a dirty task in a local-only list never counts', (
+      tester,
+    ) async {
+      final store = await seededStore();
+      await store.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'LOCAL', title: 'Scratch', updated: 't'),
+          syncState: SyncState.clean,
+          localUpdated: 't',
+          localOnly: true,
+        ),
+      );
+      await pumpLive(tester, store);
+
+      await store.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'LT',
+            position: '1',
+            title: 'scratch note',
+            status: TaskStatus.needsAction,
+            updated: 't',
+          ),
+          listId: 'LOCAL',
+          syncState: SyncState.dirty,
+          localUpdated: 't2',
+          pendingOp: 'create',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        pendingStat(tester),
+        '0',
+        reason: 'a local-only list is never pushed, so it owes Google nothing',
+      );
+      await unmount(tester);
+    });
+  });
 }

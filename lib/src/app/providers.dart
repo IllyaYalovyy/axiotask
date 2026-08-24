@@ -297,9 +297,14 @@ final localDataResetProvider = Provider<LocalDataReset>(
   ),
 );
 
-/// The live count of local changes awaiting a push (Properties Sync stats).
-final pendingPushCountProvider = FutureProvider<int>(
-  (ref) => ref.watch(storeProvider).pendingPushCount(),
+/// The live count of local changes awaiting a push, shown by Properties, the
+/// Sync activity screen and the reset confirm.
+///
+/// A drift stream, not a one-shot read: this number stays on screen for the
+/// whole session, and a snapshot taken at first watch kept reporting changes
+/// pending long after the push that drained them (#232).
+final pendingPushCountProvider = StreamProvider<int>(
+  (ref) => ref.watch(storeProvider).watchPendingPushCount(),
 );
 
 /// The recent sync runs the Sync activity screen renders (#218), newest first

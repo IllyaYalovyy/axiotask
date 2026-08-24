@@ -695,6 +695,57 @@ void main() {
       // 1 task + 1 list + 1 move = 3; the local-only task is excluded.
       expect(await s.pendingPushCount(), 3);
     });
+
+    // #232: the UI renders this number for a whole session, so a snapshot is
+    // not enough — the count has to follow the queue as it fills and drains.
+    test('the live count follows the queue filling and draining', () async {
+      final s = await freshStore();
+      await s.upsertList(listOf('SYNCED'));
+      await s.upsertList(localListOf('LOCAL'));
+
+      final seen = <int>[];
+      final sub = s.watchPendingPushCount().listen(seen.add);
+      addTearDown(sub.cancel);
+      await pumpEventQueue();
+      expect(seen, [0], reason: 'a clean store owes Google nothing');
+
+      await s.upsertTask(newTask('T1', 'SYNCED', pendingOp: 'update'));
+      await pumpEventQueue();
+      expect(seen, [0, 1], reason: 'a local edit raises the count immediately');
+
+      // A dirty task in a local-only list is never pushed: the live query must
+      // apply the same exclusion as the one-shot read, and a re-run that lands
+      // on the same number must not re-notify the UI.
+      await s.upsertTask(newTask('LT', 'LOCAL'));
+      await pumpEventQueue();
+      expect(seen, [0, 1]);
+
+      await s.markTaskClean('T1', 'e2', _t0, _t0);
+      await pumpEventQueue();
+      expect(seen, [0, 1, 0], reason: 'a completed push drains the queue');
+    });
+
+    // The account-switch erase is a bulk DELETE, not a row write: it must
+    // notify the live count too, or the Account tab would keep advertising
+    // unpushed changes for rows that no longer exist.
+    test(
+      'the live count returns to zero after the account-switch erase',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('SYNCED'));
+        await s.upsertTask(newTask('T1', 'SYNCED', pendingOp: 'update'));
+
+        final seen = <int>[];
+        final sub = s.watchPendingPushCount().listen(seen.add);
+        addTearDown(sub.cancel);
+        await pumpEventQueue();
+        expect(seen, [1]);
+
+        await s.resetLocalData();
+        await pumpEventQueue();
+        expect(seen, [1, 0]);
+      },
+    );
   });
 
   group('clears', () {

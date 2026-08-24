@@ -50,6 +50,22 @@ const String _selectAllTasksSql =
     'ORDER BY (parent_id IS NOT NULL), parent_id, position';
 // find_task_any: any row, tombstones included.
 const String _selectTaskAnySql = 'SELECT $_taskCols FROM tasks WHERE id = ?';
+// pending_push_count: the size of the push queue — dirty/deleted tasks in
+// syncable lists, dirty/deleted lists, and queued position moves. ONE query so
+// the one-shot read and its `watch*` twin cannot answer differently.
+const String _pendingPushCountSql =
+    'SELECT ('
+    'SELECT COUNT(*) FROM tasks t JOIN task_lists l ON l.id = t.list_id '
+    "WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') "
+    'AND l.local_only = 0'
+    ') + ('
+    'SELECT COUNT(*) FROM task_lists '
+    "WHERE (sync_state = 'dirty' OR sync_state = 'deleted') "
+    'AND local_only = 0'
+    ') + ('
+    'SELECT COUNT(*) FROM pending_moves'
+    ') AS c';
+
 // watchTask: the VISIBLE task by id (a tombstone reads as absent, so a delete
 // pushes null onto the detail stream).
 const String _selectVisibleTaskSql =
@@ -899,25 +915,27 @@ class Store {
   /// Read-only — unlike `drain*`, it does not consume the queue, so the UI can
   /// show "N changes pending" without disturbing sync state.
   Future<int> pendingPushCount() async {
-    final tasks = await _db
-        .customSelect(
-          'SELECT COUNT(*) AS c FROM tasks t JOIN task_lists l ON l.id = t.list_id '
-          "WHERE (t.sync_state = 'dirty' OR t.sync_state = 'deleted') "
-          'AND l.local_only = 0',
-        )
-        .getSingle();
-    final lists = await _db
-        .customSelect(
-          'SELECT COUNT(*) AS c FROM task_lists '
-          "WHERE (sync_state = 'dirty' OR sync_state = 'deleted') "
-          'AND local_only = 0',
-        )
-        .getSingle();
-    final moves = await _db
-        .customSelect('SELECT COUNT(*) AS c FROM pending_moves')
-        .getSingle();
-    return tasks.read<int>('c') + lists.read<int>('c') + moves.read<int>('c');
+    final row = await _db.customSelect(_pendingPushCountSql).getSingle();
+    return row.read<int>('c');
   }
+
+  /// Live stream of [pendingPushCount], re-emitting whenever the push queue
+  /// changes — a local edit fills it, a completed push or an erase drains it.
+  ///
+  /// The UI keeps this number on screen for a whole session (Properties, Sync
+  /// activity, the reset confirm), and a one-shot read went stale the moment
+  /// the next edit or push landed — it reported changes pending with no dirty
+  /// row left (#232). [distinct] is the pull-storm guard the task streams use:
+  /// drift invalidation is table-granular, so a sync sweep re-runs the query
+  /// per write, and only a change in the NUMBER may reach the UI.
+  Stream<int> watchPendingPushCount() => _db
+      .customSelect(
+        _pendingPushCountSql,
+        readsFrom: {_db.tasks, _db.taskLists, _db.pendingMoves},
+      )
+      .watch()
+      .map((rows) => rows.single.read<int>('c'))
+      .distinct();
 
   // ── fresh-sync clears ─────────────────────────────────────────────────────
 
