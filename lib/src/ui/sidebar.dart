@@ -2,7 +2,9 @@
 // NavigationRail (the T6.2 footer's integration target). It stacks three
 // sections the reference Sidebar.svelte owns: the five smart views with their
 // count badges, the user's lists (with counts, per-list management, exclusion,
-// and drag reorder), and the auth/sync footer pinned at the bottom.
+// and drag reorder), and the auth/sync footer at the bottom — all on ONE scroll
+// surface, so a short viewport (a landscape phone) scrolls rather than dropping
+// destinations off the end (#235).
 //
 // Fresh Material 3 visuals (Q3), not a pixel port of the Tauri sidebar. It is a
 // PRESENTATIONAL widget: every piece of state and every action is injected, so
@@ -69,8 +71,8 @@ class Sidebar extends StatelessWidget {
   /// The full list-id order after a drag reorder.
   final ValueChanged<List<String>> onReorderLists;
 
-  /// The auth/sync footer, pinned at the bottom. `null` hides it (auth wiring
-  /// pending).
+  /// The auth/sync footer, held at the bottom while there is room and scrolled
+  /// with the rest when there is not. `null` hides it (auth wiring pending).
   final Widget? footer;
 
   /// Open the Properties dialog. `null` hides the chrome row (e.g. in the
@@ -85,50 +87,77 @@ class Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The pinned-when-there-is-room bottom cluster: the auth/sync footer and the
+    // Properties/theme row.
+    final bottom = <Widget>[
+      if (footer != null) ...[const Divider(height: 1), footer!],
+      if (onOpenProperties != null) ...[
+        const Divider(height: 1),
+        _ChromeRow(
+          onOpenProperties: onOpenProperties!,
+          onToggleTheme: onToggleTheme,
+          isDark: isDark,
+        ),
+      ],
+    ];
+
+    // ONE scroll surface for the whole sidebar (#235). The bottom cluster used
+    // to be pinned outside the scroll view, which is fine on a desktop window
+    // and ruinous on a landscape phone: a ~190dp footer against a 360dp-tall
+    // sidebar left the navigation a 170dp slot, so All Tasks and the entire
+    // Lists section fell off the bottom with no way to reach them — a swipe over
+    // the footer (half the surface) moved nothing at all.
+    //
+    // [SliverFillRemaining] with `hasScrollBody: false` keeps BOTH behaviours
+    // from one composition: where there is spare height it stretches and the
+    // Column's `end` alignment holds the footer against the bottom edge exactly
+    // as before; where there is not, it shrinks to the cluster's own height and
+    // the cluster simply scrolls with everything else. Nothing is ever dropped,
+    // and every pixel of the sidebar responds to a swipe.
     return SizedBox(
       width: 260,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: ReorderableListView(
-              key: const Key('sidebar-lists-reorderable'),
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              buildDefaultDragHandles: false,
-              header: _Header(
+      child: CustomScrollView(
+        key: const Key('sidebar-lists-reorderable'),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _Header(
                 selectedViewId: selectedViewId,
                 counts: counts,
                 hasLists: lists.isNotEmpty,
                 onSelectView: onSelectView,
                 onCreateList: () => _createList(context),
               ),
-              onReorderItem: _onReorder,
-              children: [
-                for (var i = 0; i < lists.length; i++)
-                  _ListRow(
-                    key: ValueKey(lists[i].list.id),
-                    index: i,
-                    stored: lists[i],
-                    selected: lists[i].list.id == selectedViewId,
-                    excluded: excludedLists.contains(lists[i].list.id),
-                    count: counts[lists[i].list.id] ?? 0,
-                    onSelect: () => onSelectView(lists[i].list.id),
-                    onRename: () => _renameList(context, lists[i]),
-                    onDelete: () => _deleteList(context, lists[i]),
-                    onToggleExclude: () => onToggleExclude(lists[i].list.id),
-                  ),
-              ],
             ),
           ),
-          if (footer != null) ...[const Divider(height: 1), footer!],
-          if (onOpenProperties != null) ...[
-            const Divider(height: 1),
-            _ChromeRow(
-              onOpenProperties: onOpenProperties!,
-              onToggleTheme: onToggleTheme,
-              isDark: isDark,
+          SliverReorderableList(
+            itemCount: lists.length,
+            onReorderItem: _onReorder,
+            proxyDecorator: _dragProxyDecorator,
+            itemBuilder: (context, i) => _ListRow(
+              key: ValueKey(lists[i].list.id),
+              index: i,
+              stored: lists[i],
+              selected: lists[i].list.id == selectedViewId,
+              excluded: excludedLists.contains(lists[i].list.id),
+              count: counts[lists[i].list.id] ?? 0,
+              onSelect: () => onSelectView(lists[i].list.id),
+              onRename: () => _renameList(context, lists[i]),
+              onDelete: () => _deleteList(context, lists[i]),
+              onToggleExclude: () => onToggleExclude(lists[i].list.id),
             ),
-          ],
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          if (bottom.isNotEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: bottom,
+              ),
+            ),
         ],
       ),
     );
@@ -189,7 +218,25 @@ class Sidebar extends StatelessWidget {
   }
 }
 
-/// The pinned chrome row at the very bottom: the Properties launcher and the
+/// The lift a dragged list row gets — [ReorderableListView]'s own default,
+/// restated here because the bare [SliverReorderableList] supplies none. Without
+/// it a picked-up row would go flat mid-drag.
+Widget _dragProxyDecorator(
+  Widget child,
+  int index,
+  Animation<double> animation,
+) {
+  return AnimatedBuilder(
+    animation: animation,
+    builder: (context, child) => Material(
+      elevation: 6 * Curves.easeInOut.transform(animation.value),
+      child: child,
+    ),
+    child: child,
+  );
+}
+
+/// The chrome row at the very bottom: the Properties launcher and the
 /// sun/moon theme toggle (the reference's sidebar footer row). NO Fresh-sync
 /// here — that lives only inside Properties (destructive, behind a confirm).
 class _ChromeRow extends StatelessWidget {
