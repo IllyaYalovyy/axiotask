@@ -30,6 +30,7 @@ import 'bulk_add.dart';
 import 'bulk_bar.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
 import 'list_pickers.dart';
 import 'search.dart';
@@ -131,8 +132,10 @@ class TaskListView extends ConsumerStatefulWidget {
 
 class _TaskListViewState extends ConsumerState<TaskListView> {
   final TextEditingController _quickAdd = TextEditingController();
-  // The quick-add FocusNode is app-wide (read from quickAddFocusProvider) so the
-  // mobile FAB — which lives outside this pane — can focus the input.
+  // The quick-add FocusNode is app-wide (read from quickAddFocusProvider): the
+  // desktop bar and the touch composer sheet are the same input, so they share
+  // one node. Because it outlives either of them, every request made from the
+  // sheet goes through [_refocusComposer] (#233).
 
   // Transient "pin this new task to the top" id, cleared when the view unmounts
   // on a view switch (only the "all" view mounts this widget today).
@@ -267,10 +270,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _openQuickAddSheet() async {
     final quickAddFocus = ref.read(quickAddFocusProvider);
     // Raise the keyboard with the sheet — the composer is ready to type into
-    // the moment it appears, with no extra tap.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => quickAddFocus.requestFocus(),
-    );
+    // the moment it appears, with no extra tap. Skipped if this view is already
+    // gone: the node is app-wide, and a request made with nothing attached
+    // latches onto whatever mounts it next (#233).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) quickAddFocus.requestFocus();
+    });
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -292,29 +297,49 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               setState(() => _pickedListId = id);
               // The sheet is its own route — re-render its content too.
               setSheetState(() {});
-              quickAddFocus.requestFocus();
+              _refocusComposer(sheetContext, quickAddFocus);
             },
             onSubmit: () {
               _submit();
               // Rapid entry: the field cleared; keep composing.
-              quickAddFocus.requestFocus();
+              _refocusComposer(sheetContext, quickAddFocus);
             },
             onAddPastedLines: (raw) {
               _addPastedLines(raw);
               // The sheet is its own route — re-render its content too.
               setSheetState(() {});
-              quickAddFocus.requestFocus();
+              _refocusComposer(sheetContext, quickAddFocus);
             },
             onDismissPreview: () {
               setState(() => _dateIgnoredFor = _quickAdd.text);
               // The sheet is its own route — re-render its content too.
               setSheetState(() {});
-              quickAddFocus.requestFocus();
+              _refocusComposer(sheetContext, quickAddFocus);
             },
           ),
         ),
       ),
     );
+  }
+
+  /// Hand the caret back to the sheet's composer after an action that stole it
+  /// (a target pick, a submit, a paste offer) — but NEVER onto a route that is
+  /// already on its way out (#233).
+  ///
+  /// The composer's [FocusNode] is app-wide and outlives the sheet, so a
+  /// request that lands once the route has popped focuses a field the user can
+  /// no longer see: the IME connection reopens for a dying route, and the
+  /// bottom view inset it raises has nothing left to retract it — the shell is
+  /// left reserving half the screen for a keyboard that is gone. The shell's
+  /// [ImeInsetGuard] recovers from that state; this keeps the composer from
+  /// causing it.
+  void _refocusComposer(BuildContext sheetContext, FocusNode node) {
+    if (!mounted) return;
+    final route = ModalRoute.of(sheetContext);
+    // `isCurrent` goes false the instant the route is popped — before its exit
+    // animation has drawn a single frame.
+    if (route == null || !route.isCurrent) return;
+    node.requestFocus();
   }
 
   Future<void> _submit() async {

@@ -184,6 +184,80 @@ void main() {
     expect(find.text('half a thought'), findsOneWidget);
   });
 
+  // #233 — the composer must never leave the soft keyboard behind. A focused,
+  // detached field on a route that is on its way out is the suspected mechanism
+  // for the stranded bottom view inset (half the screen reserved for a keyboard
+  // that is gone), so every dismissal path is pinned: the keyboard goes down
+  // with the sheet, and it does not come back up on its own afterwards.
+  for (final dismissal
+      in <({String name, Future<void> Function(WidgetTester) go})>[
+        (
+          name: 'a scrim tap',
+          go: (tester) => tester.tapAt(const Offset(200, 40)),
+        ),
+        (
+          name: 'the system back button',
+          go: (tester) => tester.binding.handlePopRoute(),
+        ),
+        (
+          name: 'a swipe down',
+          go: (tester) async {
+            // From the sheet's drag handle, not its text field — a swipe that
+            // starts on the input is a text gesture, not a dismissal.
+            final sheet = tester.getRect(find.byType(BottomSheet));
+            await tester.flingFrom(
+              Offset(sheet.center.dx, sheet.top + 12),
+              const Offset(0, 400),
+              1000,
+            );
+          },
+        ),
+      ]) {
+    testWidgets('${dismissal.name} takes the keyboard down with the composer, '
+        'and it stays down (#233)', (tester) async {
+      final fake = FakeBackend([row('T1', 'Buy milk')]);
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+      expect(
+        tester.testTextInput.isVisible,
+        isTrue,
+        reason: 'the composer raised the keyboard when it opened',
+      );
+
+      await dismissal.go(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(
+        tester.testTextInput.isVisible,
+        isFalse,
+        reason:
+            'the keyboard must fall the moment the sheet is popped — an IME '
+            'held open over a route that is leaving is what strands the bottom '
+            'view inset and blacks out the lower half of the screen (#233)',
+      );
+
+      // ...and nothing re-raises it while the sheet finishes leaving.
+      await tester.pumpAndSettle();
+      expect(find.text('Add a task'), findsNothing, reason: 'sheet closed');
+      expect(
+        tester.testTextInput.isVisible,
+        isFalse,
+        reason: 'no handler may re-focus the composer on a route that popped',
+      );
+
+      // The release is a dismissal, not a permanent kill: the composer is
+      // still ready to type the next time it is asked for.
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isTrue);
+      await tester.tapAt(const Offset(200, 40));
+      await tester.pumpAndSettle();
+    });
+  }
+
   testWidgets('pulling down from the top runs the refresh action + spinner', (
     tester,
   ) async {
