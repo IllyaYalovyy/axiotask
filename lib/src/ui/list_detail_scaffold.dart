@@ -40,6 +40,7 @@ import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
 import 'ime_inset_guard.dart';
+import 'new_task_fab.dart';
 
 /// A single navigation destination for the shell (rail + bar share this data).
 class ShellDestination {
@@ -71,6 +72,7 @@ class ListDetailScaffold extends StatelessWidget {
     this.onCloseDetail,
     this.title = '',
     this.onNewTask,
+    this.composerOpen = false,
     this.scaffoldKey,
     this.sidebarWidth = defaultSidebarWidth,
     this.detailFraction = defaultDetailFraction,
@@ -140,9 +142,15 @@ class ListDetailScaffold extends StatelessWidget {
   /// The compact app-bar title (the active view's name). Ignored when expanded.
   final String title;
 
-  /// The compact FAB action — focuses the always-visible quick-add input (never
-  /// creates an empty task). `null` hides the FAB (e.g. under a bare golden).
+  /// The compact FAB action — opens the touch composer (never creates an empty
+  /// task). `null` hides the FAB entirely: the fine-pointer layout has its
+  /// always-visible quick-add bar instead (#216), and bare goldens pass nothing.
   final VoidCallback? onNewTask;
+
+  /// Whether the touch composer is currently on screen (#234). The FAB and the
+  /// composer are ONE surface: while the composer is up there is no FAB, so it
+  /// can never render over the sheet it opened. Ignored when expanded.
+  final bool composerOpen;
 
   /// The key for the compact [Scaffold], so the shell can close the drawer after
   /// a navigation. `null` in tests that do not drive the drawer.
@@ -245,38 +253,139 @@ class ListDetailScaffold extends StatelessWidget {
       );
     }
 
+    return _CompactShell(
+      scaffoldKey: scaffoldKey,
+      title: title,
+      sidebar: sidebar,
+      list: list,
+      destinations: destinations,
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onDestinationSelected,
+      onNewTask: onNewTask,
+      composerOpen: composerOpen,
+    );
+  }
+}
+
+/// The compact (phone) chrome: app bar, drawer, list, bottom nav — and the one
+/// touch creation affordance floating over it.
+///
+/// Stateful for the FAB alone (#234). A FAB parked over the list is an
+/// obstruction the moment the user starts reading it, so this listens to the
+/// list's own scrolling and pulls the FAB out of the way while the content
+/// moves up, returning it as soon as the scroll reverses or stops. Nothing else
+/// about the layout reacts — the FAB comes and goes without moving a single row
+/// (the list already reserves [NewTaskFab.clearance] at its foot).
+class _CompactShell extends StatefulWidget {
+  const _CompactShell({
+    required this.title,
+    required this.sidebar,
+    required this.list,
+    required this.destinations,
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+    required this.onNewTask,
+    required this.composerOpen,
+    required this.scaffoldKey,
+  });
+
+  final String title;
+  final Widget sidebar;
+  final Widget list;
+  final List<ShellDestination> destinations;
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+  final VoidCallback? onNewTask;
+  final bool composerOpen;
+  final GlobalKey<ScaffoldState>? scaffoldKey;
+
+  /// How far the list must travel in one direction before the FAB reacts. Big
+  /// enough that a nudge, a tap-jitter or a settling fling tail does not flicker
+  /// it; small enough that a deliberate scroll clears the corner immediately.
+  static const double scrollThreshold = 24;
+
+  @override
+  State<_CompactShell> createState() => _CompactShellState();
+}
+
+class _CompactShellState extends State<_CompactShell> {
+  /// Distance travelled since the last direction change: positive while the
+  /// content moves up (the user is scrolling down the list).
+  double _travelled = 0;
+
+  /// Whether scrolling is currently holding the FAB off screen.
+  bool _hiddenByScroll = false;
+
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
+      return false;
+    }
+    if (notification is ScrollEndNotification) {
+      // At rest the FAB is always there — the list foot is padded for it.
+      _travelled = 0;
+      if (_hiddenByScroll) setState(() => _hiddenByScroll = false);
+    } else if (notification is ScrollUpdateNotification) {
+      final delta = notification.scrollDelta ?? 0;
+      if (delta == 0) return false;
+      // A reversal starts the count again, so "24dp down then 24dp up" reads as
+      // a reversal rather than as 48dp of downward travel.
+      if (delta.sign != _travelled.sign) _travelled = 0;
+      _travelled += delta;
+      if (_travelled > _CompactShell.scrollThreshold && !_hiddenByScroll) {
+        setState(() => _hiddenByScroll = true);
+      } else if (_travelled < -_CompactShell.scrollThreshold &&
+          _hiddenByScroll) {
+        setState(() => _hiddenByScroll = false);
+      }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onNewTask = widget.onNewTask;
+    // A bottom view inset means a keyboard, and a keyboard means something has
+    // focus: a "new task" button floating over the field being typed into is
+    // noise, and a stale inset used to leave it stranded mid-screen (#233).
+    final imeUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
-      key: scaffoldKey,
+      key: widget.scaffoldKey,
       // Keep inputs visible above the soft keyboard (IME) — the quick-add bar
       // and the detail's fields must never sit under the keyboard.
       resizeToAvoidBottomInset: true,
       // The app bar auto-adds the hamburger (a drawer is present) and clears the
       // status bar itself; its title orients the user to the active view.
-      appBar: AppBar(title: Text(title, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(widget.title, overflow: TextOverflow.ellipsis),
+      ),
       // The slide-in drawer IS the full sidebar. Inset its content past the
       // notch / status bar / gesture pill on the top, bottom, and left edges,
       // with a small explicit fallback so un-notched devices still breathe.
       drawer: Drawer(
         child: SafeArea(
           minimum: const EdgeInsets.symmetric(vertical: 8),
-          child: sidebar,
+          child: widget.sidebar,
         ),
       ),
       // The list keeps the app bar's top inset; SafeArea handles the side/bottom
-      // insets the bottom nav does not (a landscape side notch).
-      body: SafeArea(top: false, child: list),
+      // insets the bottom nav does not (a landscape side notch). Only the BODY's
+      // scrolling drives the FAB — the drawer is the Scaffold's own child and
+      // its notifications never reach this listener.
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: SafeArea(top: false, child: widget.list),
+      ),
       floatingActionButton: onNewTask == null
           ? null
-          : FloatingActionButton(
-              tooltip: 'New task',
+          : NewTaskFab(
+              visible: !widget.composerOpen && !imeUp && !_hiddenByScroll,
               onPressed: onNewTask,
-              child: const Icon(Icons.add),
             ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedIndex,
-        onDestinationSelected: onDestinationSelected,
+        selectedIndex: widget.selectedIndex,
+        onDestinationSelected: widget.onDestinationSelected,
         destinations: [
-          for (final d in destinations)
+          for (final d in widget.destinations)
             NavigationDestination(
               icon: Icon(d.icon),
               selectedIcon: Icon(d.selectedIcon),

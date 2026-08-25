@@ -354,6 +354,11 @@ Future<void> showTaskActionSheet(
 ) {
   return showModalBottomSheet<void>(
     context: context,
+    // On the ROOT navigator, above the shell's own chrome (#234). On the
+    // ShellRoute's nested navigator this sheet rendered INSIDE the compact
+    // Scaffold's body — under the "new task" FAB, which sat over its bottom
+    // actions and swallowed taps meant for them ("Delete" opened the composer).
+    useRootNavigator: true,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (context) {

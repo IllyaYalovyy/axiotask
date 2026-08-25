@@ -201,6 +201,9 @@ class AppShell extends ConsumerWidget {
       onNewTask: coarsePointerPlatform(Theme.of(context).platform)
           ? ref.read(newTaskRequestProvider.notifier).bump
           : null,
+      // …and while that composer is up there is NO FAB: the two are one surface
+      // (#234), so the FAB can never render over the sheet it turned into.
+      composerOpen: ref.watch(composerOpenProvider),
       destinations: [
         for (final v in SmartView.values)
           ShellDestination(

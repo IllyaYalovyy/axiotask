@@ -11,6 +11,8 @@
 // counts, and the show-completed toggle are T7.1 — this slice renders the "all"
 // aggregate with completed tasks hidden by default.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +35,7 @@ import 'due_date_picker.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
 import 'list_pickers.dart';
+import 'new_task_fab.dart' show ComposerMorph, NewTaskFab;
 import 'search.dart';
 import 'sort_dropdown.dart';
 import 'task_actions.dart';
@@ -267,8 +270,19 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// scrim tap dismisses it (an unsubmitted draft survives in the controller
   /// and reappears on the next open). Landing toasts render through
   /// ToastOverlay, which sits above modals (F19).
+  ///
+  /// It is not a sheet that HAPPENS to be opened by the FAB — it is the FAB
+  /// (#234). The shell drops the FAB the moment this starts opening and gets it
+  /// back the moment the sheet starts folding, and [ComposerMorph] unfolds the
+  /// surface out of the corner the FAB just left. The route goes on the ROOT
+  /// navigator: on the shell's nested one it rendered UNDER the shell's own
+  /// chrome, which is how the FAB came to cover this composer's submit button.
   Future<void> _openQuickAddSheet() async {
     final quickAddFocus = ref.read(quickAddFocusProvider);
+    // Read the notifier, not through `ref`, so the release below still works if
+    // this view is unmounted while the sheet (a root-navigator route) is up.
+    final composer = ref.read(composerOpenProvider.notifier);
+    composer.set(true);
     // Raise the keyboard with the sheet — the composer is ready to type into
     // the moment it appears, with no extra tap. Skipped if this view is already
     // gone: the node is app-wide, and a request made with nothing attached
@@ -276,50 +290,71 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) quickAddFocus.requestFocus();
     });
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      useSafeArea: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => Padding(
-          // Keep the composer above the keyboard (#166 IME contract).
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
-          ),
-          child: _QuickAddBar(
-            controller: _quickAdd,
-            focusNode: quickAddFocus,
-            dateIgnoredFor: _dateIgnoredFor,
-            lists: _lists,
-            targetListId: _quickAddTargetList,
-            onTargetChanged: (id) {
-              setState(() => _pickedListId = id);
-              // The sheet is its own route — re-render its content too.
-              setSheetState(() {});
-              _refocusComposer(sheetContext, quickAddFocus);
-            },
-            onSubmit: () {
-              _submit();
-              // Rapid entry: the field cleared; keep composing.
-              _refocusComposer(sheetContext, quickAddFocus);
-            },
-            onAddPastedLines: (raw) {
-              _addPastedLines(raw);
-              // The sheet is its own route — re-render its content too.
-              setSheetState(() {});
-              _refocusComposer(sheetContext, quickAddFocus);
-            },
-            onDismissPreview: () {
-              setState(() => _dateIgnoredFor = _quickAdd.text);
-              // The sheet is its own route — re-render its content too.
-              setSheetState(() {});
-              _refocusComposer(sheetContext, quickAddFocus);
-            },
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        useRootNavigator: true,
+        isScrollControlled: true,
+        useSafeArea: true,
+        // The morph draws the sheet surface AND its drag handle itself, so both
+        // unfold as one thing; the route's own background and handle would pop
+        // in at full width behind them.
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        builder: (sheetContext) => ComposerMorph(
+          animation: ModalRoute.of(sheetContext)!.animation!,
+          onDismiss: () => Navigator.of(sheetContext).maybePop(),
+          onFoldStart: () => composer.set(false),
+          child: StatefulBuilder(
+            builder: (sheetContext, setSheetState) => Padding(
+              // Keep the composer above the keyboard (#166 IME contract), and
+              // off the gesture pill when there is no keyboard to clear it (the
+              // route's safe area covers the top edge only).
+              padding: EdgeInsets.only(
+                bottom: math.max(
+                  MediaQuery.viewInsetsOf(sheetContext).bottom,
+                  MediaQuery.paddingOf(sheetContext).bottom,
+                ),
+              ),
+              child: _QuickAddBar(
+                controller: _quickAdd,
+                focusNode: quickAddFocus,
+                dateIgnoredFor: _dateIgnoredFor,
+                lists: _lists,
+                targetListId: _quickAddTargetList,
+                onTargetChanged: (id) {
+                  setState(() => _pickedListId = id);
+                  // The sheet is its own route — re-render its content too.
+                  setSheetState(() {});
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+                onSubmit: () {
+                  _submit();
+                  // Rapid entry: the field cleared; keep composing.
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+                onAddPastedLines: (raw) {
+                  _addPastedLines(raw);
+                  // The sheet is its own route — re-render its content too.
+                  setSheetState(() {});
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+                onDismissPreview: () {
+                  setState(() => _dateIgnoredFor = _quickAdd.text);
+                  // The sheet is its own route — re-render its content too.
+                  setSheetState(() {});
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+              ),
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } finally {
+      // Whatever ended the sheet — a fold, a hot route swap, a torn-down view —
+      // the shell must never be left believing a composer is still up.
+      composer.set(false);
+    }
   }
 
   /// Hand the caret back to the sheet's composer after an action that stole it
@@ -998,11 +1033,15 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final mobile =
         MediaQuery.sizeOf(context).width < ListDetailScaffold.breakpoint;
     final physics = mobile ? const AlwaysScrollableScrollPhysics() : null;
-    // On a phone the "new task" FAB floats over the bottom of the list; pad the
-    // scroll so the last row can clear it (its trailing quick-date/⋯ are never
-    // stuck under the FAB). Desktop has no FAB, so no padding.
-    final listPadding = mobile
-        ? const EdgeInsets.only(bottom: 88)
+    // The "new task" FAB floats over the bottom of the list; pad the scroll so
+    // the LAST row can clear it (its trailing quick-date/⋯ are never stuck
+    // under the FAB — #234). The padding tracks the FAB exactly: the shell
+    // builds one only in the compact layout, and only for a coarse pointer
+    // (#216), so a narrow mouse-driven window spends no room on a clearance it
+    // does not need.
+    final listPadding =
+        mobile && coarsePointerPlatform(Theme.of(context).platform)
+        ? const EdgeInsets.only(bottom: NewTaskFab.clearance)
         : EdgeInsets.zero;
 
     // The heading is present only when there ARE overdue cards to head; it then
@@ -1727,6 +1766,7 @@ class _QuickAddBarState extends State<_QuickAddBar> {
               if (picker != null) ...[const SizedBox(width: 4), picker],
               const SizedBox(width: 8),
               IconButton.filled(
+                key: const Key('quick-add-submit'),
                 tooltip: 'Add task',
                 icon: const Icon(Icons.arrow_upward),
                 onPressed: widget.onSubmit,
