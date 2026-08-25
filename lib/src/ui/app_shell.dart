@@ -74,8 +74,10 @@ class AppShell extends ConsumerWidget {
       titleController.setTitle(title);
     });
 
-    final selectedIndex =
-        SmartView.byId(sel.viewId)?.index ?? SmartView.all.index;
+    // The bottom bar carries the SMART VIEWS only. A list opened from the
+    // drawer is not one of its destinations, so nothing is selected — the bar
+    // never keeps the last smart view highlighted over a list (#236).
+    final selectedIndex = SmartView.byId(sel.viewId)?.index;
 
     // The compact app-bar title — the plain view label (windowTitleFor carries
     // the dev prefix and " — axiotask" suffix, which the on-device app bar

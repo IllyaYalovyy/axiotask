@@ -67,11 +67,15 @@ const _myTasks = StoredTaskList(
 /// goldens (§6 "goldens green … both themes"): the same shell is pinned in both
 /// brightnesses so a regression in either theme's surfaces/contrast is a byte
 /// diff a reviewer must explain, never a silent rewrite.
+/// [listView] renders the shell on a LIST opened from the drawer instead of on
+/// a smart view: the list is not one of the bottom-nav destinations, so the bar
+/// must come up with no destination highlighted at all (#236).
 Widget _shellAt(
   Size size, {
   TextScaler textScaler = TextScaler.noScaling,
   ThemeData? theme,
   TargetPlatform platform = TargetPlatform.android,
+  bool listView = false,
 }) {
   return MediaQuery(
     data: MediaQueryData(size: size, textScaler: textScaler),
@@ -89,7 +93,7 @@ Widget _shellAt(
         data: (theme ?? buildLightTheme()).copyWith(platform: platform),
         child: ListDetailScaffold(
           sidebar: Sidebar(
-            selectedViewId: SmartView.all.id,
+            selectedViewId: listView ? _myTasks.list.id : SmartView.all.id,
             counts: const {'all': 3, 'L1': 3},
             lists: const [_myTasks],
             excludedLists: const {},
@@ -108,14 +112,14 @@ Widget _shellAt(
                 label: v.label,
               ),
           ],
-          selectedIndex: SmartView.all.index,
+          selectedIndex: listView ? null : SmartView.all.index,
           onDestinationSelected: (_) {},
           // The compact form factor renders the mobile chrome: an app bar with
           // the view title + hamburger, and a "new task" FAB.
-          title: 'All Tasks',
+          title: listView ? _myTasks.list.title : SmartView.all.label,
           onNewTask: () {},
           list: TaskListView(
-            viewId: SmartView.all.id,
+            viewId: listView ? _myTasks.list.id : SmartView.all.id,
             selectedTaskId: null,
             onOpenTask: (_) {},
           ),
@@ -152,6 +156,32 @@ void main() {
           name: 'compact',
           constraints: BoxConstraints.tight(phone),
           child: _shellAt(phone),
+        ),
+      ],
+    ),
+  );
+
+  // The bottom bar over a DRAWER LIST (#236). The active view is not one of the
+  // destinations, so the bar carries no indicator pill and no filled icon — the
+  // contrast against `shell_phone` (All Tasks highlighted) is the whole point:
+  // a regression that re-highlights a smart view over a list is a byte diff.
+  goldenTest(
+    'shell — phone bottom nav with no selected destination',
+    fileName: 'shell_phone_list_view',
+    builder: () => GoldenTestGroup(
+      columns: 2,
+      children: [
+        GoldenTestScenario(
+          name: 'drawer list — nothing selected',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, listView: true),
+        ),
+        // Dark too: the unselected icon/label treatment the bar falls back to
+        // is resolved from the theme, so both brightnesses are pinned.
+        GoldenTestScenario(
+          name: 'drawer list dark — nothing selected',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, listView: true, theme: buildDarkTheme()),
         ),
       ],
     ),

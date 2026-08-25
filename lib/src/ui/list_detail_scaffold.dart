@@ -123,8 +123,11 @@ class ListDetailScaffold extends StatelessWidget {
   /// Bottom-nav destinations for the compact layout, in display order.
   final List<ShellDestination> destinations;
 
-  /// Index of the selected destination.
-  final int selectedIndex;
+  /// Index of the selected destination, or `null` when the active view is NOT
+  /// one of [destinations] — a list opened from the drawer (#236). The bar then
+  /// shows no destination as selected rather than keeping the last smart view
+  /// highlighted and claiming the user is somewhere they are not.
+  final int? selectedIndex;
 
   /// Called when the user picks a compact bottom-nav destination.
   final ValueChanged<int> onDestinationSelected;
@@ -293,7 +296,9 @@ class _CompactShell extends StatefulWidget {
   final Widget sidebar;
   final Widget list;
   final List<ShellDestination> destinations;
-  final int selectedIndex;
+
+  /// The selected destination, or `null` for an out-of-set view (#236).
+  final int? selectedIndex;
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback? onNewTask;
   final bool composerOpen;
@@ -381,18 +386,65 @@ class _CompactShellState extends State<_CompactShell> {
               visible: !widget.composerOpen && !imeUp && !_hiddenByScroll,
               onPressed: onNewTask,
             ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: widget.selectedIndex,
-        onDestinationSelected: widget.onDestinationSelected,
-        destinations: [
-          for (final d in widget.destinations)
-            NavigationDestination(
-              icon: Icon(d.icon),
-              selectedIcon: Icon(d.selectedIcon),
-              label: d.label,
-            ),
-        ],
+      bottomNavigationBar: _navigationBar(context),
+    );
+  }
+
+  /// The bottom bar — and, when nothing in it is active, an honest one (#236).
+  ///
+  /// A list opened from the drawer is not one of the destinations, so no
+  /// destination may render as selected. Material's [NavigationBar] has no
+  /// "nothing selected" index (it asserts the index is in range), so the
+  /// out-of-set state is drawn the way M3 describes it: the indicator pill
+  /// cleared, and the destination the sentinel index lands on given the plain
+  /// unselected treatment — its outline icon (no filled variant) and the
+  /// unselected icon/label colours taken from the ambient nav-bar theme, so a
+  /// themed bar stays themed. Taps are unaffected: [onDestinationSelected]
+  /// fires for every destination regardless of the index, so the sentinel slot
+  /// is never a dead tap.
+  Widget _navigationBar(BuildContext context) {
+    final selected = widget.selectedIndex;
+    final bar = NavigationBar(
+      // Crossing the out-of-set boundary rebuilds the bar from scratch, which
+      // resets the destinations' selection animations. Without that reset the
+      // sentinel slot keeps a COMPLETED selection animation from the
+      // out-of-set state and, the moment a real selection returns and the
+      // indicator colour goes back to opaque, flashes a full-size pill under
+      // the wrong destination while the picked one lights up.
+      key: ValueKey<bool>(selected == null),
+      selectedIndex: selected ?? 0,
+      indicatorColor: selected == null ? Colors.transparent : null,
+      onDestinationSelected: widget.onDestinationSelected,
+      destinations: [
+        for (final d in widget.destinations)
+          NavigationDestination(
+            icon: Icon(d.icon),
+            selectedIcon: selected == null ? null : Icon(d.selectedIcon),
+            label: d.label,
+          ),
+      ],
+    );
+    if (selected != null) return bar;
+
+    final theme = Theme.of(context);
+    final barTheme = NavigationBarTheme.of(context);
+    const unselected = <WidgetState>{};
+    // Fall back to the M3 defaults the bar itself would have resolved for an
+    // unselected destination when the theme leaves these unset.
+    final iconTheme =
+        barTheme.iconTheme?.resolve(unselected) ??
+        IconThemeData(size: 24, color: theme.colorScheme.onSurfaceVariant);
+    final labelStyle =
+        barTheme.labelTextStyle?.resolve(unselected) ??
+        theme.textTheme.labelMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        );
+    return NavigationBarTheme(
+      data: barTheme.copyWith(
+        iconTheme: WidgetStatePropertyAll<IconThemeData?>(iconTheme),
+        labelTextStyle: WidgetStatePropertyAll<TextStyle?>(labelStyle),
       ),
+      child: bar,
     );
   }
 }
