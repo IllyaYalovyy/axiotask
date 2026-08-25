@@ -39,6 +39,8 @@
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
+import 'ime_inset_guard.dart';
+
 /// A single navigation destination for the shell (rail + bar share this data).
 class ShellDestination {
   const ShellDestination({
@@ -186,12 +188,17 @@ class ListDetailScaffold extends StatelessWidget {
     // layouts (a Row child when expanded, Offstage when compact) so the
     // ShellRoute's Navigator is never torn down under go_router — unmounting it
     // crashes go_router's popRoute.
-    return PopScope(
-      canPop: !_showingDetail,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _showingDetail) onCloseDetail?.call();
-      },
-      child: expanded ? _buildExpanded() : _buildCompact(),
+    // Every layout is wrapped: a bottom inset that outlives the keyboard would
+    // otherwise reserve half the screen for a keyboard that is gone, leaving a
+    // black region under the body for the rest of the session (#233).
+    return ImeInsetGuard(
+      child: PopScope(
+        canPop: !_showingDetail,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && _showingDetail) onCloseDetail?.call();
+        },
+        child: expanded ? _buildExpanded() : _buildCompact(),
+      ),
     );
   }
 
