@@ -172,6 +172,23 @@ final newTaskRequestProvider = NotifierProvider<NewTaskRequests, int>(
   NewTaskRequests.new,
 );
 
+/// Whether the touch composer — the sheet the FAB morphs into (#234) — is on
+/// screen. The list owns the sheet; the shell owns the FAB; and the two are one
+/// affordance, so the shell must know not to draw a FAB over the composer it
+/// just became. (It used to: the sheet went on the shell's NESTED navigator and
+/// the FAB, one Scaffold above it, covered the composer's own submit button.)
+class ComposerOpen extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  /// Publish that the composer is opening (`true`) or folding away (`false`).
+  void set(bool open) => state = open;
+}
+
+final composerOpenProvider = NotifierProvider<ComposerOpen, bool>(
+  ComposerOpen.new,
+);
+
 /// A stable [GlobalKey] for the compact (phone) [Scaffold], so the shell can
 /// drive its slide-in drawer (open via the hamburger, close after a navigation)
 /// across the rebuilds a route change triggers. Held for the app lifetime — a
