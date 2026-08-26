@@ -5,7 +5,7 @@
 //   width ≥ 600dp (expanded): the sidebar + list + side-by-side detail pane.
 //   width <  600dp (compact):  an app bar (hamburger + view title), a slide-in
 //                              drawer holding the full sidebar, a bottom
-//                              NavigationBar, and a "new task" FAB. An open
+//                              [ShellNavBar], and a "new task" FAB. An open
 //                              detail covers the list full-bleed and the chrome
 //                              hides — the "pushed detail" model without a second
 //                              Navigator, so it renders identically headless at
@@ -41,24 +41,9 @@ import 'package:flutter/material.dart';
 
 import 'ime_inset_guard.dart';
 import 'new_task_fab.dart';
+import 'shell_nav_bar.dart';
 
-/// A single navigation destination for the shell (rail + bar share this data).
-class ShellDestination {
-  const ShellDestination({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-  });
-
-  /// Icon shown when the destination is not selected.
-  final IconData icon;
-
-  /// Icon shown when the destination is selected.
-  final IconData selectedIcon;
-
-  /// The destination label (nav text).
-  final String label;
-}
+export 'shell_nav_bar.dart' show ShellDestination, ShellNavBar;
 
 /// Adaptive list-detail scaffold branching at [breakpoint].
 class ListDetailScaffold extends StatelessWidget {
@@ -386,65 +371,14 @@ class _CompactShellState extends State<_CompactShell> {
               visible: !widget.composerOpen && !imeUp && !_hiddenByScroll,
               onPressed: onNewTask,
             ),
-      bottomNavigationBar: _navigationBar(context),
-    );
-  }
-
-  /// The bottom bar — and, when nothing in it is active, an honest one (#236).
-  ///
-  /// A list opened from the drawer is not one of the destinations, so no
-  /// destination may render as selected. Material's [NavigationBar] has no
-  /// "nothing selected" index (it asserts the index is in range), so the
-  /// out-of-set state is drawn the way M3 describes it: the indicator pill
-  /// cleared, and the destination the sentinel index lands on given the plain
-  /// unselected treatment — its outline icon (no filled variant) and the
-  /// unselected icon/label colours taken from the ambient nav-bar theme, so a
-  /// themed bar stays themed. Taps are unaffected: [onDestinationSelected]
-  /// fires for every destination regardless of the index, so the sentinel slot
-  /// is never a dead tap.
-  Widget _navigationBar(BuildContext context) {
-    final selected = widget.selectedIndex;
-    final bar = NavigationBar(
-      // Crossing the out-of-set boundary rebuilds the bar from scratch, which
-      // resets the destinations' selection animations. Without that reset the
-      // sentinel slot keeps a COMPLETED selection animation from the
-      // out-of-set state and, the moment a real selection returns and the
-      // indicator colour goes back to opaque, flashes a full-size pill under
-      // the wrong destination while the picked one lights up.
-      key: ValueKey<bool>(selected == null),
-      selectedIndex: selected ?? 0,
-      indicatorColor: selected == null ? Colors.transparent : null,
-      onDestinationSelected: widget.onDestinationSelected,
-      destinations: [
-        for (final d in widget.destinations)
-          NavigationDestination(
-            icon: Icon(d.icon),
-            selectedIcon: selected == null ? null : Icon(d.selectedIcon),
-            label: d.label,
-          ),
-      ],
-    );
-    if (selected != null) return bar;
-
-    final theme = Theme.of(context);
-    final barTheme = NavigationBarTheme.of(context);
-    const unselected = <WidgetState>{};
-    // Fall back to the M3 defaults the bar itself would have resolved for an
-    // unselected destination when the theme leaves these unset.
-    final iconTheme =
-        barTheme.iconTheme?.resolve(unselected) ??
-        IconThemeData(size: 24, color: theme.colorScheme.onSurfaceVariant);
-    final labelStyle =
-        barTheme.labelTextStyle?.resolve(unselected) ??
-        theme.textTheme.labelMedium?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        );
-    return NavigationBarTheme(
-      data: barTheme.copyWith(
-        iconTheme: WidgetStatePropertyAll<IconThemeData?>(iconTheme),
-        labelTextStyle: WidgetStatePropertyAll<TextStyle?>(labelStyle),
+      bottomNavigationBar: ShellNavBar(
+        destinations: widget.destinations,
+        // Nullable by construction (#237): a list opened from the drawer is
+        // not a destination, and the bar says so in pixels AND in semantics —
+        // no sentinel index to draw over or explain away.
+        selectedIndex: widget.selectedIndex,
+        onDestinationSelected: widget.onDestinationSelected,
       ),
-      child: bar,
     );
   }
 }
