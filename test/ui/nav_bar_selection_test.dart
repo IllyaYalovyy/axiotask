@@ -1,10 +1,11 @@
-// Bottom-nav selection honesty (#236). The compact bottom [NavigationBar]
+// Bottom-nav selection honesty (#236, #237). The compact bottom [ShellNavBar]
 // carries the smart views only — a list opened from the drawer is NOT one of
 // its destinations. While such a list is the active view the bar must show NO
 // destination as selected: the previously visited smart view keeps neither its
-// filled icon nor its indicator pill, so the bar never claims the user is
-// somewhere they are not. Picking a destination from that state still
-// navigates (no dead tap) and restores that destination's highlight.
+// filled icon nor its indicator pill, and — since #237 — no destination is
+// ANNOUNCED as selected either, so the bar never claims the user is somewhere
+// they are not, on screen or in a screen reader. Picking a destination from
+// that state still navigates (no dead tap) and restores that highlight.
 //
 // These drive the REAL shell (AxiotaskApp → AppShell → ListDetailScaffold) over
 // static provider streams — no database — so every assertion is about what the
@@ -18,8 +19,10 @@ import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/shell_nav_bar.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -56,13 +59,13 @@ void main() {
   /// The icon a destination shows ONLY while it is the selected one — the
   /// user-visible mark of "you are here" in the bar.
   Finder highlightOf(SmartView v) => find.descendant(
-    of: find.byType(NavigationBar),
+    of: find.byType(ShellNavBar),
     matching: find.byIcon(v.selectedIcon),
   );
 
   /// Every smart view's unselected (outlined) icon, i.e. the resting bar.
   void expectNoDestinationHighlighted(WidgetTester tester) {
-    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(find.byType(ShellNavBar), findsOneWidget);
     for (final v in SmartView.values) {
       expect(
         highlightOf(v),
@@ -71,7 +74,7 @@ void main() {
       );
       expect(
         find.descendant(
-          of: find.byType(NavigationBar),
+          of: find.byType(ShellNavBar),
           matching: find.byIcon(v.icon),
         ),
         findsOneWidget,
@@ -173,17 +176,20 @@ void main() {
   testWidgets('returning to a smart view leaves no ghost pill behind', (
     tester,
   ) async {
-    // The bar has no "nothing selected" index, so the out-of-set state points a
-    // sentinel index at a destination it draws unselected. When a real
-    // selection returns, that sentinel slot must not light up: its indicator
-    // pill (whose animation value IS its painted scale and opacity) stays at
-    // zero while the destination the user actually picked grows in.
+    // Coming back from the out-of-set state, ONLY the destination the user
+    // picked may light up: every other indicator pill (whose animation value
+    // IS its painted scale and opacity) stays at zero while that one grows in.
+    // The pre-#237 bar only managed this by rebuilding itself from scratch on
+    // every crossing: its sentinel index otherwise kept a COMPLETED selection
+    // animation parked on the wrong slot, which flashed a full-size pill the
+    // moment the indicator colour went opaque again. Without a sentinel there
+    // is no such slot, but the guarantee is the user's, not the mechanism's.
     await pumpShell(tester);
     await openListFromDrawer(tester);
 
     await tester.tap(
       find.descendant(
-        of: find.byType(NavigationBar),
+        of: find.byType(ShellNavBar),
         matching: find.byIcon(SmartView.all.icon),
       ),
     );
@@ -193,7 +199,7 @@ void main() {
     final pills = tester
         .widgetList<NavigationIndicator>(
           find.descendant(
-            of: find.byType(NavigationBar),
+            of: find.byType(ShellNavBar),
             matching: find.byType(NavigationIndicator),
           ),
         )
@@ -219,7 +225,7 @@ void main() {
     // most likely to treat as "already selected" and swallow the tap.
     await tester.tap(
       find.descendant(
-        of: find.byType(NavigationBar),
+        of: find.byType(ShellNavBar),
         matching: find.byIcon(SmartView.focus.icon),
       ),
     );
@@ -238,5 +244,125 @@ void main() {
     for (final v in SmartView.values.where((v) => v != SmartView.focus)) {
       expect(highlightOf(v), findsNothing);
     }
+  });
+
+  // What a SCREEN READER hears (#237). #236 fixed the pixels; the semantic
+  // announcement stayed wrong, because Material's NavigationBar has no
+  // "nothing selected" index and hardcodes `selected: i == selectedIndex` on an
+  // ANCESTOR of anything a caller supplies — so the sentinel slot the shell had
+  // to point at was announced "Focus, tab, selected" while the user sat in a
+  // list. These assertions read the rendered semantics tree, so they hold no
+  // matter which widget draws the bar.
+  group('bottom-nav semantics', () {
+    /// The bar's tab strip. [WidgetTester.getSemantics] walks UP to the
+    /// nearest unmerged node, so this starts above the bar and descends to the
+    /// strip itself.
+    SemanticsNode tabStrip(WidgetTester tester) {
+      SemanticsNode? strip;
+      void visit(SemanticsNode node) {
+        if (node.getSemanticsData().role == SemanticsRole.tabBar) {
+          strip = node;
+          return;
+        }
+        node.visitChildren((child) {
+          visit(child);
+          return strip == null;
+        });
+      }
+
+      visit(tester.getSemantics(find.byType(ShellNavBar)));
+      return strip!;
+    }
+
+    /// Every destination node, in bar order — read off the ONE strip they hang
+    /// from, so a screen reader treats the five as a single tab strip rather
+    /// than five loose buttons.
+    List<SemanticsNode> tabNodes(WidgetTester tester) {
+      final result = <SemanticsNode>[];
+      tabStrip(tester).visitChildren((child) {
+        expect(child.getSemanticsData().role, SemanticsRole.tab);
+        result.add(child);
+        return true;
+      });
+      return result;
+    }
+
+    testWidgets('a drawer list announces no destination as selected', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      // The restore path (the non-happy start): the app comes up straight on a
+      // list, with no smart view ever visited to clear.
+      await pumpShell(
+        tester,
+        prefs: const Prefs(view: 'L1', onboardingSeen: true),
+      );
+
+      final tabs = tabNodes(tester);
+      expect(tabs, hasLength(SmartView.values.length));
+      for (final v in SmartView.values) {
+        final data = tabs[v.index].getSemanticsData();
+        expect(
+          data.flagsCollection.isSelected.toBoolOrNull(),
+          isFalse,
+          reason: '${v.label} must not be announced as selected on a list',
+        );
+        // The destination is still a reachable, position-announced tab: the
+        // honesty fix must not cost the user the rest of the announcement.
+        expect(
+          data.label,
+          '${v.label}\nTab ${v.index + 1} of ${SmartView.values.length}',
+        );
+        expect(data.hasAction(SemanticsAction.tap), isTrue);
+        expect(tabs[v.index].rect.size, const Size(80, 80));
+      }
+
+      handle.dispose();
+    });
+
+    testWidgets('a smart view announces exactly its own destination', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await pumpShell(tester); // All Tasks, the default view
+
+      final tabs = tabNodes(tester);
+      for (final v in SmartView.values) {
+        expect(
+          tabs[v.index]
+              .getSemanticsData()
+              .flagsCollection
+              .isSelected
+              .toBoolOrNull(),
+          v == SmartView.all,
+          reason: '${v.label} selected state on the All Tasks view',
+        );
+      }
+      handle.dispose();
+    });
+
+    testWidgets('a destination still gives press feedback under the finger', (
+      tester,
+    ) async {
+      await pumpShell(
+        tester,
+        prefs: const Prefs(view: 'L1', onboardingSeen: true),
+      );
+      final ink = tester.allRenderObjects.firstWhere(
+        (o) => o.runtimeType.toString() == '_RenderInkFeatures',
+      );
+      // At rest the ink layer draws only the indicator pills (rounded rects).
+      expect(ink, isNot(paints..circle()));
+
+      final press = await tester.startGesture(
+        tester.getCenter(find.text(SmartView.focus.label)),
+      );
+      addTearDown(press.up);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // A splash under the pressed destination — the touch acknowledgement.
+      expect(ink, paints..circle());
+    });
   });
 }

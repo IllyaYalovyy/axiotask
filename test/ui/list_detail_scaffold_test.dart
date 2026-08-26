@@ -68,7 +68,7 @@ void main() {
       // Expanded renders the injected sidebar (the real one is the Sidebar
       // widget); no bottom nav bar at this width.
       expect(find.text('SIDEBAR-PANE'), findsOneWidget);
-      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(ShellNavBar), findsNothing);
       expect(find.text('LIST-PANE'), findsOneWidget);
     });
 
@@ -84,9 +84,9 @@ void main() {
   });
 
   group('compact (width < 600)', () {
-    testWidgets('shows a NavigationBar over the list', (tester) async {
+    testWidgets('shows a ShellNavBar over the list', (tester) async {
       await pumpScaffold(tester, width: 400);
-      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(ShellNavBar), findsOneWidget);
       expect(find.byType(NavigationRail), findsNothing);
       expect(find.text('LIST-PANE'), findsOneWidget);
     });
@@ -98,7 +98,7 @@ void main() {
       // Non-happy / coarse-pointer path: detail full-screen, list gone.
       expect(find.text('DETAIL-PANE'), findsOneWidget);
       expect(find.text('LIST-PANE'), findsNothing);
-      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(ShellNavBar), findsNothing);
     });
 
     testWidgets('an open detail gets full height (a lazy ListView renders)', (
@@ -147,7 +147,7 @@ void main() {
         await pumpScaffold(tester, width: 800);
         // 800 ≥ 600 and no detail → expanded: sidebar shown, no bottom nav.
         expect(find.text('SIDEBAR-PANE'), findsOneWidget);
-        expect(find.byType(NavigationBar), findsNothing);
+        expect(find.byType(ShellNavBar), findsNothing);
         expect(find.text('LIST-PANE'), findsOneWidget);
       },
     );
@@ -192,7 +192,7 @@ void main() {
       expect(find.text('LIST-PANE'), findsOneWidget);
       expect(find.text('DETAIL-PANE'), findsOneWidget);
       expect(find.text('SIDEBAR-PANE'), findsOneWidget);
-      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(ShellNavBar), findsNothing);
     });
   });
 
