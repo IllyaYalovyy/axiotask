@@ -21,6 +21,13 @@ import '../app/providers.dart';
 import 'auth/account_section.dart';
 import 'date_format.dart';
 import 'sync_activity.dart';
+import 'url_opener.dart';
+
+/// GitHub Sponsors — the ONE place axiotask ever asks for money (#239). The row
+/// lives in the About tab and nowhere else: no banner, no startup prompt, no
+/// badge on the Properties button. App-store billing policy is deliberately
+/// out of scope here (the user deferred it).
+const _sponsorsUrl = 'https://github.com/sponsors/IllyaYalovyy';
 
 /// Open the Properties dialog over the current app surface.
 Future<void> showProperties(BuildContext context) => showDialog<void>(
@@ -444,7 +451,33 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       _stat(theme, 'Instance', settings.instance ?? 'default (production)'),
       _about(theme, 'Database', settings.dbPath),
       _about(theme, 'Config', settings.configPath),
+      const Divider(height: 32),
+      _sponsorRow(theme),
     ],
+  );
+
+  /// The quiet donation ask: a plain tappable row that opens GitHub Sponsors in
+  /// the system browser through the same [urlOpenerProvider] seam as the task
+  /// link badges. A full-width [ListTile] so touch and mouse get the same
+  /// target — the heart alone would be a 24dp bullseye on a phone.
+  Widget _sponsorRow(ThemeData theme) => ListTile(
+    key: const Key('sponsor-link'),
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(Icons.favorite_outline, color: theme.colorScheme.primary),
+    title: const Text('Support axiotask'),
+    subtitle: Text(
+      'Donate via GitHub Sponsors',
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    ),
+    trailing: Icon(
+      Icons.open_in_new,
+      size: 18,
+      color: theme.colorScheme.onSurfaceVariant,
+    ),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    onTap: _openSponsors,
   );
 
   Widget _about(ThemeData theme, String label, String value) => Padding(
@@ -480,6 +513,8 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   );
 
   // ── Actions ─────────────────────────────────────────────────────────────
+  Future<void> _openSponsors() => ref.read(urlOpenerProvider)(_sponsorsUrl);
+
   Future<void> _setPush(bool v) async {
     await ref.read(configControllerProvider).setPushEnabled(v);
     if (mounted) setState(() => _pushEnabled = v);
