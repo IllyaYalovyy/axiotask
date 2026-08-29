@@ -1,4 +1,5 @@
-// Repository layer — the two surfaces that ask people to sponsor the project.
+// Repository and packaging layer — the surfaces that ask people to sponsor
+// the project.
 //
 // What this protects (and the failures it prevents):
 //   - NO BUTTON AT ALL: GitHub only renders the Sponsor button when it finds a
@@ -12,9 +13,13 @@
 //     platform key commented out. Uncommenting one and leaving it blank
 //     (`patreon:`) yields an entry with no value — GitHub rejects the file and
 //     the button disappears, taking the working `github:` entry with it.
-//   - SURFACE DRIFT: the README badge and the Sponsor button are two separate
-//     declarations of the same account. Renaming the account in one place only
-//     points half the readers at a 404.
+//   - NO DONATE BUTTON IN SOFTWARE CENTRES: GNOME Software and KDE Discover
+//     render a native Donate affordance only from `<url type="donation">` in
+//     the AppStream metainfo. Without that element the Linux app page has no
+//     way to sponsor at all, and — as with FUNDING.yml — nothing errors.
+//   - SURFACE DRIFT: the README badge, the Sponsor button and the metainfo
+//     donation URL are three separate declarations of the same account.
+//     Renaming the account in one place only points some readers at a 404.
 //
 // Pure file reads — no clock, no network, no build.
 @Tags(['packaging'])
@@ -31,6 +36,12 @@ const String _sponsorAccount = 'IllyaYalovyy';
 
 /// Where the Sponsor button links once GitHub has read the config.
 const String _sponsorUrl = 'https://github.com/sponsors/$_sponsorAccount';
+
+/// The AppStream metainfo shipped by the Linux packaging (#226) — installed
+/// verbatim by both tool/install.sh and the RPM, so what it declares here is
+/// what a software centre shows.
+const String _metainfoPath =
+    'linux/packaging/io.github.illyayalovyy.axiotask.metainfo.xml';
 
 /// The three locations GitHub searches, in its documented order.
 const List<String> _searchedPaths = <String>[
@@ -108,6 +119,49 @@ void main() {
         _fundingEntries()['github']!,
       }, reason: 'README and FUNDING.yml must name one account, not two');
     });
+  });
+
+  // #240: the Linux surface. A software centre has no README and no GitHub
+  // page — the only sponsorship affordance it can offer comes from the
+  // metainfo's donation URL.
+  group('AppStream metainfo donation URL', () {
+    late String xml;
+
+    setUpAll(() => xml = File(_metainfoPath).readAsStringSync());
+
+    test('declares the sponsors page as the donation url', () {
+      expect(
+        xml,
+        contains('<url type="donation">$_sponsorUrl</url>'),
+        reason:
+            'GNOME Software / KDE Discover render a Donate button only from '
+            '<url type="donation">; it must carry the exact sponsors URL '
+            '$_sponsorUrl',
+      );
+    });
+
+    // Non-happy path: the element is there but names somebody else, or the
+    // file grew a second donation URL. Both keep appstreamcli quiet enough to
+    // ship while sending money to the wrong page — or to whichever of two
+    // entries the centre happens to read first.
+    test(
+      'declares exactly one donation url, and no other sponsors account',
+      () {
+        final donations = RegExp(
+          r'<url type="donation">([^<]+)</url>',
+        ).allMatches(xml).map((m) => m.group(1)!).toList();
+        expect(donations, <String>[
+          _sponsorUrl,
+        ], reason: 'expected one donation url naming $_sponsorAccount');
+
+        final accounts = RegExp(
+          r'github\.com/sponsors/([A-Za-z0-9-]+)',
+        ).allMatches(xml).map((m) => m.group(1)!).toSet();
+        expect(accounts, <String>{
+          _fundingEntries()['github']!,
+        }, reason: 'metainfo and FUNDING.yml must name one account, not two');
+      },
+    );
   });
 }
 
