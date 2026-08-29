@@ -339,6 +339,14 @@ void main() {
         isTrue,
         reason: 'AppStream metainfo must be installed for software centres',
       );
+      // Installed VERBATIM: whatever the repo file declares — the donation
+      // URL (#240), the release version, the description — is exactly what a
+      // software centre reads. A transform here would silently drop elements.
+      expect(
+        metainfo.readAsStringSync(),
+        File(_metainfoPath).readAsStringSync(),
+        reason: 'install.sh must copy the metainfo unmodified',
+      );
 
       // The installed entry is not the repo file: install.sh rewrites Exec= to
       // the absolute launcher path. Re-validate what actually landed.
