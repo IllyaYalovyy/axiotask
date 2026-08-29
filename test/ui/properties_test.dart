@@ -21,9 +21,11 @@ import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/properties.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
+import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -101,6 +103,8 @@ void main() {
     Future<void> Function()? freshSync,
     Future<void> Function()? refreshAction,
     Prefs prefs = const Prefs(),
+    List<Override> extraOverrides = const [],
+    ThemeData? theme,
   }) async {
     tester.view.physicalSize = const Size(1000, 1400);
     tester.view.devicePixelRatio = 1.0;
@@ -119,8 +123,12 @@ void main() {
             freshSyncActionProvider.overrideWithValue(freshSync),
           if (refreshAction != null)
             refreshActionProvider.overrideWithValue(refreshAction),
+          ...extraOverrides,
         ],
-        child: const MaterialApp(home: Scaffold(body: PropertiesDialog())),
+        child: MaterialApp(
+          theme: theme,
+          home: const Scaffold(body: PropertiesDialog()),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -604,6 +612,112 @@ void main() {
         isNull,
         reason: 'the ratified order is sign out, then reset',
       );
+    });
+  });
+
+  // ── #239: the sponsor ask lives in About, and NOWHERE else ───────────────
+  //
+  // Protects two things at once: the row hands the EXACT sponsors URL to the
+  // url-opener seam (a typo'd or truncated URL is a dead donation link the
+  // user can only discover by being annoyed), and the ask never leaks out of
+  // the About tab into a banner, badge or startup prompt.
+  group('About tab — Support axiotask (#239)', () {
+    const sponsorsUrl = 'https://github.com/sponsors/IllyaYalovyy';
+
+    Future<void> openAbout(WidgetTester tester) async {
+      await tester.tap(find.text('About'));
+      await tester.pumpAndSettle();
+    }
+
+    /// WCAG contrast ratio between two opaque colours.
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance();
+      final lb = b.computeLuminance();
+      final hi = la > lb ? la : lb;
+      final lo = la > lb ? lb : la;
+      return (hi + 0.05) / (lo + 0.05);
+    }
+
+    testWidgets('tapping the row hands the exact sponsors URL to the opener', (
+      tester,
+    ) async {
+      final opened = <String>[];
+      await pumpProps(
+        tester,
+        extraOverrides: [
+          urlOpenerProvider.overrideWithValue((url) async => opened.add(url)),
+        ],
+      );
+      await openAbout(tester);
+
+      expect(find.text('Support axiotask'), findsOneWidget);
+      expect(find.text('Donate via GitHub Sponsors'), findsOneWidget);
+      // A Material icon, never an emoji glyph.
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('sponsor-link')),
+          matching: find.byIcon(Icons.favorite_outline),
+        ),
+        findsOneWidget,
+      );
+      // Touch-reachable: the whole row is the target, not the icon.
+      expect(
+        tester.getSize(find.byKey(const Key('sponsor-link'))).height,
+        greaterThanOrEqualTo(48.0),
+      );
+
+      await tester.tap(find.byKey(const Key('sponsor-link')));
+      await tester.pump();
+      expect(opened, [sponsorsUrl]);
+    });
+
+    testWidgets('the row is legible in dark, and still opens there', (
+      tester,
+    ) async {
+      final opened = <String>[];
+      await pumpProps(
+        tester,
+        theme: ThemeData(brightness: Brightness.dark),
+        extraOverrides: [
+          urlOpenerProvider.overrideWithValue((url) async => opened.add(url)),
+        ],
+      );
+      await openAbout(tester);
+
+      final iconFinder = find.descendant(
+        of: find.byKey(const Key('sponsor-link')),
+        matching: find.byIcon(Icons.favorite_outline),
+      );
+      expect(iconFinder, findsOneWidget);
+
+      // The heart must be VISIBLE against the dark surface it sits on — a
+      // colour pinned to the light scheme would disappear here.
+      final context = tester.element(iconFinder);
+      final icon = tester.widget<Icon>(iconFinder);
+      final effective = icon.color ?? IconTheme.of(context).color!;
+      final surface = Theme.of(context).colorScheme.surface;
+      expect(contrast(effective, surface), greaterThanOrEqualTo(3.0));
+
+      await tester.tap(find.byKey(const Key('sponsor-link')));
+      await tester.pump();
+      expect(opened, [sponsorsUrl]);
+    });
+
+    testWidgets('no sponsor ask renders outside the About tab', (tester) async {
+      await pumpProps(tester);
+
+      // The dialog opens on Sync: nothing asks for money here...
+      expect(find.text('Support axiotask'), findsNothing);
+      expect(find.byKey(const Key('sponsor-link')), findsNothing);
+
+      await tester.tap(find.text('Account'));
+      await tester.pumpAndSettle();
+      expect(find.text('Support axiotask'), findsNothing);
+      expect(find.byKey(const Key('sponsor-link')), findsNothing);
+
+      // ...and only the About tab does.
+      await openAbout(tester);
+      expect(find.byKey(const Key('sponsor-link')), findsOneWidget);
     });
   });
 
