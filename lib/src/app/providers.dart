@@ -353,6 +353,20 @@ final syncStatusStreamProvider = StreamProvider<SyncStatusView>(
   (ref) => Stream.value(const SyncStatusView.initial()),
 );
 
+/// The live per-run sync signal (#255) — one event when a run starts and one
+/// when it ends. F5 overrides this with the scheduler's `runs` stream; the
+/// default never emits, so an app without a mounted runtime (widget tests, the
+/// error screen) simply never shows a sync line.
+final syncRunEventsProvider = StreamProvider<SyncRunEvent>(
+  (ref) => const Stream<SyncRunEvent>.empty(),
+);
+
+/// Whether a sync run is in flight RIGHT NOW — what the quiet sync line
+/// renders from. False before the first event and false after every finish.
+final syncRunningProvider = Provider<bool>(
+  (ref) => ref.watch(syncRunEventsProvider).value?.running ?? false,
+);
+
 /// The sanitized sync-status view the Sync tab and footer render, derived from
 /// the live [syncStatusStreamProvider] (its latest value, or "never synced"
 /// before the first emission).

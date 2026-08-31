@@ -15,6 +15,7 @@ import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 
 import '../date_format.dart';
+import '../sync_feedback.dart';
 import 'auth_sync_status.dart';
 
 /// The auth/sync footer, rendered from a standalone [AuthSyncStatus].
@@ -25,6 +26,7 @@ class AuthSyncFooter extends StatelessWidget {
     required this.onSignOut,
     required this.onSync,
     required this.onOpenProperties,
+    this.confirmedRuns = 0,
     super.key,
   });
 
@@ -43,6 +45,12 @@ class AuthSyncFooter extends StatelessWidget {
   /// Open Properties — the "needs attention" button's destination, where the
   /// sanitized cause and Sync actions live (#136).
   final VoidCallback onOpenProperties;
+
+  /// How many sync runs have CHANGED something so far (#255). Every increase
+  /// draws a check over the status dot; the value itself means nothing, only
+  /// its movement does. A run that pulled and pushed nothing never moves it —
+  /// the once-a-minute poll that finds no news stays silent.
+  final int confirmedRuns;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +89,7 @@ class AuthSyncFooter extends StatelessWidget {
           const SizedBox(height: 10),
           _StatusRow(
             status: status,
+            confirmedRuns: confirmedRuns,
             onSignOut: onSignOut,
             colors: colors,
             textTheme: theme.textTheme,
@@ -153,12 +162,14 @@ class _AttentionButton extends StatelessWidget {
 class _StatusRow extends StatelessWidget {
   const _StatusRow({
     required this.status,
+    required this.confirmedRuns,
     required this.onSignOut,
     required this.colors,
     required this.textTheme,
   });
 
   final AuthSyncStatus status;
+  final int confirmedRuns;
   final VoidCallback onSignOut;
   final ColorScheme colors;
   final TextTheme textTheme;
@@ -174,11 +185,20 @@ class _StatusRow extends StatelessWidget {
 
     return Row(
       children: [
-        Container(
-          key: const Key('auth-footer-dot'),
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: _dotColor(), shape: BoxShape.circle),
+        // The dot is also where a confirmed sync says so: the check is drawn
+        // OVER it (#255), from a wrapper the dot alone sizes — the row's
+        // geometry is the same mark or no mark.
+        SyncCheckMark(
+          runs: confirmedRuns,
+          child: Container(
+            key: const Key('auth-footer-dot'),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: _dotColor(),
+              shape: BoxShape.circle,
+            ),
+          ),
         ),
         const SizedBox(width: 8),
         // The Tooltip wraps only the phrase and adds no geometry of its own, so

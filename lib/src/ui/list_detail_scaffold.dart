@@ -63,6 +63,7 @@ class ListDetailScaffold extends StatelessWidget {
     this.detail,
     this.onCloseDetail,
     this.title = '',
+    this.syncLine,
     this.onNewTask,
     this.composerOpen = false,
     this.scaffoldKey,
@@ -136,6 +137,14 @@ class ListDetailScaffold extends StatelessWidget {
 
   /// The compact app-bar title (the active view's name). Ignored when expanded.
   final String title;
+
+  /// The quiet sync line (#255), OVERLAID on the compact app bar's bottom edge.
+  /// A widget rather than a bool so this scaffold keeps no provider dependency
+  /// (it is mounted with no [ProviderScope] in goldens and layout tests), and
+  /// so a sync starting rebuilds the line alone. It rides the bar's
+  /// `flexibleSpace`, which adds no height whatsoever: a sync can never move a
+  /// row. `null` on a layout that shows no sync at all.
+  final Widget? syncLine;
 
   /// The compact FAB action — opens the touch composer (never creates an empty
   /// task). `null` hides the FAB entirely: the fine-pointer layout has its
@@ -251,6 +260,7 @@ class ListDetailScaffold extends StatelessWidget {
     return _CompactShell(
       scaffoldKey: scaffoldKey,
       title: title,
+      syncLine: syncLine,
       sidebar: sidebar,
       list: list,
       destinations: destinations,
@@ -278,6 +288,7 @@ class ListDetailScaffold extends StatelessWidget {
 class _CompactShell extends StatefulWidget {
   const _CompactShell({
     required this.title,
+    required this.syncLine,
     required this.sidebar,
     required this.list,
     required this.destinations,
@@ -289,6 +300,7 @@ class _CompactShell extends StatefulWidget {
   });
 
   final String title;
+  final Widget? syncLine;
   final Widget sidebar;
   final Widget list;
   final List<ShellDestination> destinations;
@@ -426,6 +438,17 @@ class _CompactShellState extends State<_CompactShell>
           topPadding: topInset,
           bar: AppBar(
             title: Text(widget.title, overflow: TextOverflow.ellipsis),
+            // The sync line lives in `flexibleSpace` — the one slot that fills
+            // the bar without changing its preferred height (`bottom` would
+            // add its own, pushing every row down the moment a sync began).
+            // Bottom-aligned, so it sits on the bar's edge even while the bar
+            // is sliding away under a scroll (#244).
+            flexibleSpace: widget.syncLine == null
+                ? null
+                : Align(
+                    alignment: Alignment.bottomCenter,
+                    child: widget.syncLine,
+                  ),
             actions: [
               ValueListenableBuilder<ListChromeActions?>(
                 valueListenable: _chrome,

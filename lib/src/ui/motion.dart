@@ -94,6 +94,48 @@ abstract final class MotionDurations {
 
   static const int _completionSettleMs = 140;
   static const int _completionCollapseMs = 180;
+
+  // ── Composed spans ───────────────────────────────────────────────────────
+  // Not new values: each is two or three of the steps above, run back to back
+  // by ONE controller, with a fraction naming where each beat ends. The
+  // completion sequence above is the same shape; these follow it.
+
+  /// The quiet sync line's completion, end to end (#255): the determinate FILL
+  /// to the end ([short]) followed by the FADE out ([medium]).
+  static const Duration syncLineFinish = Duration(
+    milliseconds: _syncLineFillMs + _syncLineFadeMs,
+  );
+
+  /// Where the fill ends inside [syncLineFinish] — past it the line is full
+  /// width and only fading.
+  static const double syncLineFillFraction =
+      _syncLineFillMs / (_syncLineFillMs + _syncLineFadeMs);
+
+  static const int _syncLineFillMs = 100;
+  static const int _syncLineFadeMs = 200;
+
+  /// The footer's sync check-mark, end to end (#255): the stroke DRAWING in
+  /// ([medium]), a HOLD long enough for a glance to land on it ([long]), then
+  /// the FADE back to the status dot ([medium]). The hold is what makes it a
+  /// confirmation rather than a blink — a mark that draws and immediately
+  /// leaves is gone before the eye reaches the footer.
+  static const Duration syncCheck = Duration(
+    milliseconds: _syncCheckDrawMs + _syncCheckHoldMs + _syncCheckFadeMs,
+  );
+
+  /// Where the stroke finishes inside [syncCheck].
+  static const double syncCheckDrawFraction =
+      _syncCheckDrawMs /
+      (_syncCheckDrawMs + _syncCheckHoldMs + _syncCheckFadeMs);
+
+  /// Where the hold ends inside [syncCheck] — past it the mark is fading.
+  static const double syncCheckHoldFraction =
+      (_syncCheckDrawMs + _syncCheckHoldMs) /
+      (_syncCheckDrawMs + _syncCheckHoldMs + _syncCheckFadeMs);
+
+  static const int _syncCheckDrawMs = 200;
+  static const int _syncCheckHoldMs = 300;
+  static const int _syncCheckFadeMs = 200;
 }
 
 /// The easing vocabulary. Material 3's three, and one documented exception.
