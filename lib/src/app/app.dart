@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ui/haptics.dart';
 import '../ui/theme.dart';
 import '../ui/toast.dart';
 import 'pending_edits.dart';
@@ -23,6 +24,7 @@ class AxiotaskApp extends ConsumerWidget {
     final router = ref.watch(routerProvider);
     final themeMode = ref.watch(themeModeProvider);
     final toasts = ref.watch(toastControllerProvider);
+    final haptics = ref.watch(hapticsProvider);
 
     return MaterialApp.router(
       // Base app title (task switcher / accessibility). The live desktop window
@@ -40,6 +42,7 @@ class AxiotaskApp extends ConsumerWidget {
       builder: (context, child) => PendingEditsLifecycleFlusher(
         child: ToastOverlay(
           controller: toasts,
+          haptics: haptics,
           child: child ?? const SizedBox.shrink(),
         ),
       ),

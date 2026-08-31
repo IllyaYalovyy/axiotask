@@ -39,6 +39,7 @@ import 'completion_motion.dart';
 import 'date_format.dart';
 import 'detail_motion.dart';
 import 'due_date_picker.dart';
+import 'haptics.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
 import 'list_motion.dart';
@@ -691,6 +692,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _quickMove(String id, DateMove move) async {
     final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
+    _haptics.tick();
     final res = await commands.setDue(id, move);
     if (!mounted) return;
     offerDueCascadeUndo(toasts, commands, res);
@@ -704,6 +706,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final commands = ref.read(commandsProvider);
     final pick = await showDueDatePicker(context, initial: currentDue);
     if (pick == null || !mounted) return;
+    _haptics.tick(); // a picked day is a quick-date apply like any other
     final res = switch (pick) {
       DuePickClear() => await commands.setDue(id, DateMove.clear),
       DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
@@ -746,6 +749,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   }
 
   void _toggleSelect(String id) {
+    _haptics.tick(); // joining or leaving a selection is the same small event
     setState(() {
       if (!_selectedIds.remove(id)) {
         _selectedIds.add(id);
@@ -769,6 +773,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     });
     _syncBackHandle();
   }
+
+  /// The haptic vocabulary this surface speaks (#257) — already behind the
+  /// `haptics` pref, so a call site never asks whether it is on.
+  Haptics get _haptics => ref.read(hapticsProvider);
 
   /// A 4-second info toast reporting a bulk op's outcome ("N tasks `<verb>`").
   void _bulkToast(int n, String verb) {
@@ -813,6 +821,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _bulkSetDue(DateMove move) async {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    _haptics.tick(); // one tick for the whole selection, not one per task
     _bulkChanges(ids);
     _clearSelection();
     for (final id in ids) {
@@ -833,6 +842,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (pick == null || !mounted) return;
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    _haptics.tick();
     _bulkChanges(ids);
     _clearSelection();
     for (final id in ids) {
@@ -852,6 +862,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
+    _haptics.confirm(); // ONE confirm for the op, never one per task
     _clearSelection();
     // Capture every delete token so one Undo restores all N (each with its own
     // subtree, parent, and position) — the same undoDelete the single-row delete
@@ -1046,6 +1057,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _toggle(StoredTask stored) async {
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
+    // A tick the instant the box flips, not when the write lands: the user is
+    // being told their tap registered, and that is true before the store says
+    // anything (#257).
+    _haptics.tick();
     final token = await commands.toggleComplete(stored.task.id);
     if (!mounted || !token.wasCompleting) return;
     toasts.showUndo(
@@ -1058,6 +1073,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _delete(StoredTask t) async {
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
+    _haptics.confirm(); // a removal is felt more firmly than a tick (#257)
     final token = await commands.deleteTask(t.task.id);
     if (!mounted) return;
     toasts.showUndo(
@@ -1450,6 +1466,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       // reference disables it too).
       content = ReorderableListView.builder(
         buildDefaultDragHandles: false,
+        // The lift is felt under the finger the moment the row detaches, and
+        // the drop when it lands — the two ends of a gesture the user cannot
+        // otherwise confirm without watching the screen (#257).
+        onReorderStart: (_) => _haptics.tick(),
+        onReorderEnd: (_) => _haptics.tick(),
         physics: physics,
         padding: listPadding,
         itemCount: items.length + headerOffset,
@@ -1916,6 +1937,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         onOpenUrl: openUrl,
         completionProgress: completion,
         commit: _commits[t.id],
+        // The row reports ONE event itself: a swipe crossing its action
+        // threshold, which happens while the finger is still down (#257).
+        haptics: _haptics,
       ),
     );
   }

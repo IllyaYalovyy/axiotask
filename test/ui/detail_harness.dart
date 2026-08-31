@@ -15,6 +15,7 @@ import 'package:axiotask/src/model/dates.dart'
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/haptics.dart';
 import 'package:axiotask/src/ui/task_detail.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
@@ -578,6 +579,7 @@ Future<FakeBackend> pumpDetail(
   ThemeData? theme,
   Size size = const Size(1000, 2400),
   double textScale = 1.0,
+  Haptics? hapticsDevice,
 }) async {
   final fake = FakeBackend(initial, newId: newId);
   addTearDown(fake.dispose);
@@ -596,6 +598,8 @@ Future<FakeBackend> pumpDetail(
         if (lists.isNotEmpty)
           listsProvider.overrideWith((ref) => Stream.value(lists)),
         if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
+        if (hapticsDevice != null)
+          hapticsDeviceProvider.overrideWithValue(hapticsDevice),
       ],
       child: MaterialApp(
         // A caller that cares about COLOUR pins the real app theme (the panel's

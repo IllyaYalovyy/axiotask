@@ -9,6 +9,7 @@
 // `toastControllerProvider` the surface under test writes to — the same
 // controller instance, exactly as in production.
 
+import 'package:axiotask/src/ui/haptics.dart';
 import 'package:axiotask/src/ui/toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 Widget wrapWithToast(BuildContext context, Widget? child) => Consumer(
   builder: (context, ref, _) => ToastOverlay(
     controller: ref.read(toastControllerProvider),
+    haptics: ref.watch(hapticsProvider),
     child: child ?? const SizedBox.shrink(),
   ),
 );

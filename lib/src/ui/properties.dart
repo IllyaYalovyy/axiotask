@@ -21,6 +21,7 @@ import '../app/providers.dart';
 import 'auth/account_section.dart';
 import 'date_format.dart';
 import 'sync_activity.dart';
+import 'theme.dart' show coarsePointerPlatform;
 import 'url_opener.dart';
 
 /// GitHub Sponsors — the ONE place axiotask ever asks for money (#239). The row
@@ -433,6 +434,26 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
+        // Haptics exist only where there is a haptic engine to drive: the seam
+        // is a no-op off Android (#257), so on a mouse platform this switch
+        // would be furniture that changes nothing. Chosen by POINTER, like
+        // every other touch-only affordance in the app (F16 #194).
+        if (coarsePointerPlatform(theme.platform)) ...[
+          const SizedBox(height: 20),
+          _sectionHeading(theme, 'Feedback'),
+          SwitchListTile(
+            key: const Key('haptics-toggle'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Haptics'),
+            subtitle: const Text(
+              'A short vibration when a task is completed, selected, '
+              'rescheduled, dragged or deleted.',
+            ),
+            value: ref.watch(prefsControllerProvider).haptics,
+            onChanged: (v) =>
+                ref.read(prefsControllerProvider.notifier).setHaptics(v),
+          ),
+        ],
       ],
     );
   }

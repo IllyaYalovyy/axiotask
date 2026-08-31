@@ -59,6 +59,7 @@ class Prefs {
     this.listOrder = const [],
     this.onboardingSeen = false,
     this.hideCompletedSubtasks = false,
+    this.haptics = true,
     this.windowSize,
     this.sidebarWidth,
     this.detailFraction,
@@ -91,6 +92,12 @@ class Prefs {
   /// Whether completed subtasks are hidden in the detail panel.
   final bool hideCompletedSubtasks;
 
+  /// Whether the app answers a gesture with a haptic tick (#257). ON by
+  /// default — tactile confirmation is the cheapest "it happened" signal a
+  /// phone has, so it is opt-OUT. Android only: on the desktop the seam is a
+  /// no-op and the toggle is not rendered at all.
+  final bool haptics;
+
   /// Persisted window size, or `null` if never saved. Size-only (no position).
   final WindowSize? windowSize;
 
@@ -117,6 +124,7 @@ class Prefs {
     'list_order',
     'onboarding_seen',
     'hide_completed_subtasks',
+    'haptics',
     'window_size',
     'sidebar_width',
     'detail_fraction',
@@ -131,6 +139,7 @@ class Prefs {
     List<String>? listOrder,
     bool? onboardingSeen,
     bool? hideCompletedSubtasks,
+    bool? haptics,
     WindowSize? windowSize,
     double? sidebarWidth,
     double? detailFraction,
@@ -143,6 +152,7 @@ class Prefs {
     listOrder: listOrder ?? this.listOrder,
     onboardingSeen: onboardingSeen ?? this.onboardingSeen,
     hideCompletedSubtasks: hideCompletedSubtasks ?? this.hideCompletedSubtasks,
+    haptics: haptics ?? this.haptics,
     windowSize: windowSize ?? this.windowSize,
     sidebarWidth: sidebarWidth ?? this.sidebarWidth,
     detailFraction: detailFraction ?? this.detailFraction,
@@ -159,6 +169,7 @@ class Prefs {
     'list_order': listOrder,
     'onboarding_seen': onboardingSeen,
     'hide_completed_subtasks': hideCompletedSubtasks,
+    'haptics': haptics,
     if (windowSize != null) 'window_size': windowSize!.toJson(),
     if (sidebarWidth != null) 'sidebar_width': sidebarWidth,
     if (detailFraction != null) 'detail_fraction': detailFraction,
@@ -175,6 +186,7 @@ class Prefs {
     listOrder: (json['list_order'] as List?)?.cast<String>() ?? const [],
     onboardingSeen: json['onboarding_seen'] as bool? ?? false,
     hideCompletedSubtasks: json['hide_completed_subtasks'] as bool? ?? false,
+    haptics: json['haptics'] as bool? ?? true,
     windowSize: WindowSize.fromJson(json['window_size']),
     sidebarWidth: _positiveDouble(json['sidebar_width']),
     detailFraction: _fraction(json['detail_fraction']),

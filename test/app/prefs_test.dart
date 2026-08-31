@@ -38,6 +38,7 @@ void main() {
       listOrder: ['l2', 'l1'],
       onboardingSeen: true,
       hideCompletedSubtasks: true,
+      haptics: false,
     );
     store.save(saved);
 
@@ -49,6 +50,14 @@ void main() {
     expect(reloaded.listOrder, ['l2', 'l1']);
     expect(reloaded.onboardingSeen, isTrue);
     expect(reloaded.hideCompletedSubtasks, isTrue);
+    expect(reloaded.haptics, isFalse);
+  });
+
+  test('a prefs file written before haptics existed reads as ON (#257)', () {
+    // The pref is opt-OUT: an upgrade must not silence a user who never chose
+    // to be silenced.
+    prefsFile().writeAsStringSync('{"theme":"dark"}');
+    expect(PrefsStore(prefsFile()).load().haptics, isTrue);
   });
 
   group('window size (size-only persistence)', () {
