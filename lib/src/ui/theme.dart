@@ -61,14 +61,15 @@ Color dueColor(DueUrgency urgency, ColorScheme scheme) => switch (urgency) {
 };
 
 /// Whether [platform] is a touch-primary platform — a coarse pointer with no
-/// hover and no secondary-tap (Android/iOS/Fuchsia). There the "⋯" overflow is
-/// the ONLY route to a row's context actions, so the task row renders it at
-/// EVERY width; a mouse platform (Linux/macOS/Windows) reaches the same actions
-/// by right-click, so the overflow stays hidden. It also picks the quick-date
-/// presentation: a bottom sheet under a finger, an anchored menu on a mouse
-/// (#243). The choice is by pointer capability, never window width — width only
-/// picks the layout (F16 #194). Read from `Theme.of(context).platform` so it is
-/// overridable in tests and follows the running platform in production.
+/// hover and no secondary-tap (Android/iOS/Fuchsia). There the right-click
+/// context menu is unreachable, so touch-only affordances render — the list
+/// toolbar's "Select tasks" entry (#245), the swipe quick actions — while a
+/// mouse platform (Linux/macOS/Windows) reaches the same functions by
+/// right-click. It also picks the quick-date presentation: a bottom sheet under
+/// a finger, an anchored menu on a mouse (#243). The choice is by pointer
+/// capability, never window width — width only picks the layout (F16 #194).
+/// Read from `Theme.of(context).platform` so it is overridable in tests and
+/// follows the running platform in production.
 bool coarsePointerPlatform(TargetPlatform platform) => switch (platform) {
   TargetPlatform.android ||
   TargetPlatform.iOS ||

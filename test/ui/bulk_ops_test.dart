@@ -311,4 +311,144 @@ void main() {
     expect(opened, ['A']);
     expect(find.byType(BulkBar), findsNothing);
   });
+
+  // ── the two actions the retired per-row ⋮ handed over (#245) ──────────────
+
+  group('bulk Duplicate + Make subtasks of… (#245)', () {
+    testWidgets('bulk Duplicate copies EVERY selected task', (tester) async {
+      var seq = 0;
+      final fake = await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('B', 'bread'), row('C', 'cheese')],
+        lists: oneList,
+        newId: () => 'copy-${seq++}',
+      );
+      await ctrlClick(tester, 'apples');
+      await ctrlClick(tester, 'bread');
+      await tester.tap(find.byKey(const Key('bulk-duplicate')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final titles = fake.tasks.map((t) => t.task.title).toList();
+      expect(titles, containsAll(['apples (copy)', 'bread (copy)']));
+      expect(
+        titles.where((t) => t == 'cheese (copy)'),
+        isEmpty,
+        reason: 'an unselected task is never duplicated',
+      );
+      expect(find.text('2 tasks duplicated'), findsOneWidget);
+      expect(find.byType(BulkBar), findsNothing, reason: 'selection cleared');
+    });
+
+    testWidgets('bulk Make subtasks of… nests the whole selection under the '
+        'picked parent', (tester) async {
+      final fake = await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('B', 'bread'), row('C', 'cheese')],
+        lists: oneList,
+      );
+      await ctrlClick(tester, 'apples');
+      await ctrlClick(tester, 'bread');
+      await tester.tap(find.byKey(const Key('bulk-demote')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      // Only a legal host is offered: never a task that is itself selected.
+      expect(find.byKey(const Key('parent-picker-C')), findsOneWidget);
+      expect(find.byKey(const Key('parent-picker-A')), findsNothing);
+      expect(find.byKey(const Key('parent-picker-B')), findsNothing);
+
+      await tester.tap(find.byKey(const Key('parent-picker-C')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(fake.tasks.firstWhere((t) => t.task.id == 'A').task.parent, 'C');
+      expect(fake.tasks.firstWhere((t) => t.task.id == 'B').task.parent, 'C');
+      expect(find.text('2 tasks nested'), findsOneWidget);
+    });
+
+    testWidgets('a candidate that ALREADY has subtasks is still a legal host — '
+        'the two-level rule caps the CHILD, not the parent', (tester) async {
+      final fake = await pumpList(
+        tester,
+        initial: [
+          row('P', 'parent'),
+          row('S', 'sub', parent: 'P'),
+          row('A', 'apples'),
+        ],
+        lists: oneList,
+      );
+      await ctrlClick(tester, 'apples');
+      await tester.tap(find.byKey(const Key('bulk-demote')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.byKey(const Key('parent-picker-P')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(fake.tasks.firstWhere((t) => t.task.id == 'A').task.parent, 'P');
+    });
+
+    testWidgets('the action is HIDDEN when a selected task has subtasks of its '
+        'own — it can never become a subtask', (tester) async {
+      await pumpList(
+        tester,
+        initial: [
+          row('P', 'parent'),
+          row('S', 'sub', parent: 'P'),
+          row('C', 'cheese'),
+        ],
+        lists: oneList,
+      );
+      await ctrlClick(tester, 'parent');
+      expect(find.byKey(const Key('bulk-duplicate')), findsOneWidget);
+      expect(find.byKey(const Key('bulk-demote')), findsNothing);
+    });
+
+    testWidgets('the action is HIDDEN for a selection spanning two lists — no '
+        'single parent can host it', (tester) async {
+      await pumpList(
+        tester,
+        viewId: 'all',
+        initial: [
+          row('A', 'apples'),
+          row('X', 'elsewhere', listId: 'L2'),
+          row('C', 'cheese'),
+        ],
+        lists: twoLists,
+      );
+      await ctrlClick(tester, 'apples');
+      await ctrlClick(tester, 'elsewhere');
+      expect(find.byKey(const Key('bulk-demote')), findsNothing);
+    });
+
+    testWidgets('the bar keeps every action reachable on a 400dp phone at 1.3x '
+        'text — it wraps, it never overflows', (tester) async {
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('C', 'cheese')],
+        lists: oneList,
+        size: const Size(400, 900),
+        textScale: 1.3,
+      );
+      await ctrlClick(tester, 'apples');
+
+      expect(tester.takeException(), isNull);
+      for (final k in const [
+        'bulk-complete',
+        'bulk-due',
+        'bulk-move',
+        'bulk-duplicate',
+        'bulk-demote',
+        'bulk-delete',
+        'bulk-clear-selection',
+      ]) {
+        expect(
+          find.byKey(Key(k)).hitTestable(),
+          findsOneWidget,
+          reason: '$k must stay tappable on a narrow phone at 1.3x text',
+        );
+      }
+    });
+  });
 }

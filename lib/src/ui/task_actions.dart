@@ -1,26 +1,62 @@
-// The per-row ACTION SURFACE (MIGRATION-PLAN §4). A single action list — Edit
-// title, Edit notes, Set due date, Move to list, Detach/Make-subtask-of,
-// Duplicate, Details, Open in Google Tasks, Delete — reachable two ways so no
-// pointer class is stranded:
+// The DESKTOP right-click ACTION SURFACE (MIGRATION-PLAN §4). A single action
+// list — Select, Edit title, Edit notes, Set due date, Move to list,
+// Detach/Make-subtask-of, Duplicate, Details, Open in Google Tasks, Delete —
+// shown by [showTaskContextMenu]: a small menu positioned at the cursor,
+// clamped to the viewport, dismissed by tapping outside.
 //
-//   • desktop right-click → [showTaskContextMenu]: a small menu positioned at
-//     the cursor, clamped to the viewport, dismissed by tapping outside;
-//   • touch (and any pointer) → [showTaskActionSheet]: a modal bottom sheet
-//     carrying the SAME actions, the coarse-pointer path (no hover, no
-//     right-click).
+// A coarse pointer has NO surface here (#245). The per-row "⋮" and its bottom
+// sheet are gone: touch reaches every one of these functions where it already
+// lives — the row tap (Details), the row's date segment and swipe-left (Set due
+// date), a long-press or the toolbar's "Select tasks" (Select), the detail
+// screen (Edit title/notes, Move to list, Detach, Duplicate, Make subtask of…,
+// Open in Google, Delete) and the bulk bar (all of the whole-selection ops).
 //
 // Submenus (Set due date, Move to list) expand INLINE on tap — click-not-hover
-// (ported from ContextMenu.svelte's click-to-open rule), which also makes them
-// work under touch. The keyboard-navigation sub-suite dies with the keyboard
-// layer; the ACTIONS all port.
+// (ported from ContextMenu.svelte's click-to-open rule). The keyboard-navigation
+// sub-suite dies with the keyboard layer; the ACTIONS all port.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app/commands.dart';
 import '../model/dates.dart' show DateMove;
+import '../model/task_tree.dart' show canNestUnder;
 import '../store/stored.dart';
 import 'quick_date_menu.dart';
+
+/// The ONE duplicate rule, shared by the desktop context menu, the detail
+/// screen's overflow and the bulk bar (#245): a fresh task titled
+/// "`<title>` (copy)" in the SAME list and under the SAME parent, so a
+/// duplicated subtask stays a subtask and the two-level invariant holds.
+///
+/// [title] overrides the stored title for a copy taken while an editor still
+/// holds an uncommitted rename.
+Future<void> duplicateTask(
+  Commands commands,
+  StoredTask task, {
+  String? title,
+}) => commands.createTask(
+  listId: task.listId,
+  parentId: task.task.parent,
+  title: '${title ?? task.task.title} (copy)',
+);
+
+/// The legal parents [task] may be demoted under (#88): every OTHER top-level
+/// task in the SAME list — a candidate that already has subtasks is fine, a
+/// candidate that IS one is not. [canNestUnder] is the single source of truth
+/// for the two-level rule, and [all] must be the FULL task set (it is what says
+/// whether [task] has subtasks of its own).
+List<StoredTask> demoteCandidates(StoredTask task, List<StoredTask> all) {
+  final tasks = all.map((t) => t.task);
+  return all
+      .where(
+        (c) =>
+            c.listId == task.listId &&
+            canNestUnder(task.task.id, c.task, tasks),
+      )
+      .toList();
+}
 
 /// One entry in the task action surface. A [TaskMenuItem] is a leaf action; a
 /// [TaskMenuSubmenu] expands inline into its child items; a [TaskMenuDivider]
@@ -322,38 +358,6 @@ Future<void> showTaskContextMenu(
             ),
           ),
         ],
-      );
-    },
-  );
-}
-
-/// Show the touch action sheet carrying every context action — the coarse-
-/// pointer path (no hover, no right-click). A drag handle plus the shared
-/// [TaskActionMenu].
-Future<void> showTaskActionSheet(
-  BuildContext context,
-  List<TaskMenuEntry> entries,
-) {
-  return showModalBottomSheet<void>(
-    context: context,
-    // On the ROOT navigator, above the shell's own chrome (#234). On the
-    // ShellRoute's nested navigator this sheet rendered INSIDE the compact
-    // Scaffold's body — under the "new task" FAB, which sat over its bottom
-    // actions and swallowed taps meant for them ("Delete" opened the composer).
-    useRootNavigator: true,
-    showDragHandle: true,
-    isScrollControlled: true,
-    builder: (context) {
-      return SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.7,
-          ),
-          child: TaskActionMenu(
-            entries: entries,
-            onClose: () => Navigator.of(context).pop(),
-          ),
-        ),
       );
     },
   );

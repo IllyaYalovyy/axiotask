@@ -140,6 +140,137 @@ void main() {
     });
   });
 
+  group("touch entry to selection — the toolbar's 'Select tasks' (#245)", () {
+    /// Open the list toolbar's overflow and enter selection mode through it.
+    Future<void> selectTasksFromToolbar(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('toolbar-overflow')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.tap(find.byKey(const Key('toolbar-select-tasks')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+    }
+
+    testWidgets('enters selection mode with NOTHING selected, bulk bar shown, '
+        'and the first row tap then selects', (tester) async {
+      final opened = <String>[];
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('B', 'bread')],
+        lists: oneList,
+        opened: opened,
+      );
+      expect(find.byType(BulkBar), findsNothing);
+
+      await selectTasksFromToolbar(tester);
+
+      expect(find.byType(BulkBar), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const Key('bulk-count'))).data,
+        'Select tasks',
+        reason: 'the bar names the mode while the selection is still empty',
+      );
+
+      // The FIRST plain tap selects rather than opening the detail — the whole
+      // point of entering the mode before touching a row.
+      await plainTap(tester, 'apples');
+      expect(find.text('1 selected'), findsOneWidget);
+      expect(opened, isEmpty);
+    });
+
+    testWidgets('with nothing selected the whole-selection actions are '
+        'disabled — no button that does nothing', (tester) async {
+      await pumpList(tester, initial: [row('A', 'apples')], lists: oneList);
+      await selectTasksFromToolbar(tester);
+
+      for (final k in const [
+        'bulk-complete',
+        'bulk-due',
+        'bulk-move',
+        'bulk-duplicate',
+        'bulk-delete',
+      ]) {
+        expect(
+          tester.widget<TextButton>(find.byKey(Key(k))).onPressed,
+          isNull,
+          reason: '$k must be disabled while nothing is selected',
+        );
+      }
+
+      // Selecting one row arms them.
+      await plainTap(tester, 'apples');
+      expect(
+        tester
+            .widget<TextButton>(find.byKey(const Key('bulk-complete')))
+            .onPressed,
+        isNotNull,
+      );
+    });
+
+    testWidgets('clearing the empty mode restores plain tap-to-open', (
+      tester,
+    ) async {
+      final opened = <String>[];
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples')],
+        lists: oneList,
+        opened: opened,
+      );
+      await selectTasksFromToolbar(tester);
+      await tester.tap(find.byKey(const Key('bulk-clear-selection')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.byType(BulkBar), findsNothing);
+      await plainTap(tester, 'apples');
+      expect(opened, ['A']);
+    });
+
+    testWidgets('the overflow stays MOUNTED once the mode is on (its entry '
+        'merely greys out) — the toolbar never re-flows under the finger', (
+      tester,
+    ) async {
+      await pumpList(tester, initial: [row('A', 'apples')], lists: oneList);
+      final before = tester.getRect(
+        find.byKey(const Key('show-completed-toggle')),
+      );
+      await selectTasksFromToolbar(tester);
+
+      expect(find.byKey(const Key('toolbar-overflow')), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(const Key('show-completed-toggle'))),
+        before,
+        reason: 'entering the mode must not move the toolbar controls',
+      );
+      await tester.tap(find.byKey(const Key('toolbar-overflow')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        tester
+            .widget<PopupMenuItem<String>>(
+              find.byKey(const Key('toolbar-select-tasks')),
+            )
+            .enabled,
+        isFalse,
+        reason: 'the mode is already on — the entry has nothing left to do',
+      );
+    });
+
+    testWidgets('the toolbar overflow is a COARSE-pointer affordance — the '
+        'desktop reaches selection by Ctrl-click and right-click', (
+      tester,
+    ) async {
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples')],
+        lists: oneList,
+        platform: TargetPlatform.linux,
+      );
+      expect(find.byKey(const Key('toolbar-overflow')), findsNothing);
+    });
+  });
+
   group('list orientation — the list-name tag', () {
     testWidgets('the All view tags every row with its list name', (
       tester,

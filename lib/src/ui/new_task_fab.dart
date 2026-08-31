@@ -49,8 +49,8 @@ class NewTaskFab extends StatefulWidget {
   /// Its margin from the screen edges — the [Scaffold] uses the same value.
   static const double margin = 16;
 
-  /// The bottom padding a scrollable owes the FAB so the LAST row's trailing
-  /// actions (the "⋯", the quick-date strip) are never stuck under it. The FAB
+  /// The bottom padding a scrollable owes the FAB so the LAST row is never
+  /// stuck under it — neither read nor tappable. The FAB
   /// occupies [size] plus its margin above the bottom nav; the second margin is
   /// the breathing room between the row and the FAB.
   static const double clearance = size + margin * 2;

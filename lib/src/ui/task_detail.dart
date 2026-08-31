@@ -20,6 +20,9 @@
 //     lives in its parent's list (#93). Moving lists repoints the panel to the
 //     recreated row.
 //   • clickable links detected in the title/notes.
+//   • the app-bar overflow: Duplicate and "Make subtask of…" (#88's parent
+//     picker) — the two functions the retired per-row "⋮" sheet used to be the
+//     only touch home for (#245).
 //   • the empty-subtask discard-on-close rule: closing an untitled, dateless,
 //     childless subtask left untouched removes it — but NEVER one with children
 //     of its own (that would silently take the subtree, with no undo).
@@ -43,7 +46,9 @@ import '../model/task_tree.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'list_pickers.dart';
 import 'quick_date_menu.dart';
+import 'task_actions.dart' show demoteCandidates, duplicateTask;
 import 'theme.dart';
 import 'toast.dart';
 import 'url_detect.dart';
@@ -371,6 +376,35 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
         .moveTask(subId, parentId: null, previousId: parentId);
   }
 
+  /// Copy this task as "`<title>` (copy)" in the same list and under the same
+  /// parent — the ONE duplicate rule ([duplicateTask]) the desktop context menu
+  /// and the bulk bar also use. Pending field edits are flushed first, and the
+  /// copy is taken from the LIVE title, so duplicating mid-rename copies what is
+  /// on screen rather than the last-saved value.
+  Future<void> _duplicate(StoredTask t) async {
+    _flushEdits();
+    final typed = _title.text.trim();
+    await duplicateTask(
+      ref.read(commandsProvider),
+      t,
+      title: typed.isEmpty ? null : typed,
+    );
+    if (!mounted) return;
+    // The panel stays on the original, so without a word nothing on screen says
+    // the copy happened.
+    ref.read(toastControllerProvider).showInfo('Duplicated');
+  }
+
+  /// Nest this task under a parent chosen from the #88 picker (offered only for
+  /// a childless top-level task with a legal host — see [demoteCandidates]).
+  Future<void> _demote(StoredTask t, List<StoredTask> candidates) async {
+    if (candidates.isEmpty) return;
+    _flushEdits();
+    final parentId = await showParentPicker(context, candidates: candidates);
+    if (parentId == null || !mounted) return;
+    await ref.read(commandsProvider).moveTask(t.task.id, parentId: parentId);
+  }
+
   /// Move the top-level [id] to [targetListId]. `moveTaskToList` recreates the
   /// subtree under a fresh id and returns it, so the panel repoints there (#93
   /// only hides this affordance for subtasks — a parent may still move lists).
@@ -429,6 +463,12 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
         : null;
     final lists = ref.watch(orderedListsProvider);
     final links = urlsForTask(title: task.title, notes: task.notes);
+    // The legal parents this task could be nested under (#88) — empty for a
+    // subtask, for a task with children, and when the list holds no other
+    // childless top-level task.
+    final hosts = subtask
+        ? const <StoredTask>[]
+        : demoteCandidates(current, all);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -459,6 +499,44 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Delete',
               onPressed: () => _delete(current),
+            ),
+            PopupMenuButton<String>(
+              key: const Key('detail-overflow'),
+              tooltip: 'More actions',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (value) => value == 'duplicate'
+                  ? _duplicate(current)
+                  : _demote(current, hosts),
+              itemBuilder: (context) => [
+                const PopupMenuItem<String>(
+                  key: Key('detail-duplicate'),
+                  value: 'duplicate',
+                  child: Row(
+                    children: [
+                      Icon(Icons.copy_all_outlined, size: 20),
+                      SizedBox(width: 12),
+                      // A Material menu caps its width; at a large text scale
+                      // the label wraps rather than being clipped away.
+                      Flexible(child: Text('Duplicate')),
+                    ],
+                  ),
+                ),
+                // Only a childless TOP-LEVEL task with a legal host may be
+                // demoted: a subtask detaches first (the breadcrumb), and a
+                // parent can never become a subtask (invariant #1).
+                if (!subtask && hosts.isNotEmpty)
+                  const PopupMenuItem<String>(
+                    key: Key('detail-demote'),
+                    value: 'demote',
+                    child: Row(
+                      children: [
+                        Icon(Icons.subdirectory_arrow_right, size: 20),
+                        SizedBox(width: 12),
+                        Flexible(child: Text('Make subtask of…')),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ],
         ),
