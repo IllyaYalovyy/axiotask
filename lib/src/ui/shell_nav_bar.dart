@@ -31,6 +31,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show SemanticsRole;
 
+import 'motion.dart';
+
 /// A single navigation destination for the shell (rail + bar share this data).
 class ShellDestination {
   const ShellDestination({
@@ -71,8 +73,9 @@ class ShellNavBar extends StatelessWidget {
   static const double height = 80;
 
   /// How long a destination takes to go from unselected to selected — the
-  /// framework bar's default, so the transition feels unchanged.
-  static const Duration selectionDuration = Duration(milliseconds: 500);
+  /// framework bar's own span ([MotionDurations.navSelection]), so the
+  /// transition feels unchanged.
+  static const Duration selectionDuration = MotionDurations.navSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -152,6 +155,16 @@ class _DestinationState extends State<_Destination>
   /// Owned per destination: a [MultiChildLayoutDelegate] keys its children by
   /// id while it lays out, so instances are not shared between cells.
   final _DestinationLayout _layout = _DestinationLayout();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations" (Android) / reduced motion: the pill and the icon
+    // still change, they just arrive instead of growing.
+    _selection.duration = Motion.of(
+      context,
+    ).resolve(ShellNavBar.selectionDuration);
+  }
 
   @override
   void didUpdateWidget(_Destination oldWidget) {

@@ -24,23 +24,21 @@
 
 import 'package:flutter/material.dart';
 
-const int _settleMs = 140;
-const int _collapseMs = 180;
+import 'motion.dart';
 
 /// How long the strike sweep / fade / shrink takes.
-const Duration completionSettleDuration = Duration(milliseconds: _settleMs);
+const Duration completionSettleDuration = MotionDurations.completionSettle;
 
 /// How long a departing row takes to fold its height away, after the settle.
-const Duration completionCollapseDuration = Duration(milliseconds: _collapseMs);
+const Duration completionCollapseDuration = MotionDurations.completionCollapse;
 
 /// Settle + collapse — the whole sequence, end to end.
-const Duration completionSequenceDuration = Duration(
-  milliseconds: _settleMs + _collapseMs,
-);
+const Duration completionSequenceDuration = MotionDurations.completionSequence;
 
 /// Where the settle ends inside [completionSequenceDuration] — the point a
 /// completed row that STAYS on screen rests at.
-const double completionSettleFraction = _settleMs / (_settleMs + _collapseMs);
+const double completionSettleFraction =
+    MotionDurations.completionSettleFraction;
 
 const Interval _settleInterval = Interval(
   0,
