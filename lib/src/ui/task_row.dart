@@ -79,7 +79,6 @@ class TaskRow extends StatefulWidget {
     this.openInDetail = false,
     this.onSelectToggle,
     this.onContextMenu,
-    this.onShowActions,
     this.editRequested = false,
     this.onEditDone,
     this.pendingEdits,
@@ -173,11 +172,6 @@ class TaskRow extends StatefulWidget {
   /// Open the desktop right-click context menu at the given GLOBAL pointer
   /// position; `null` disables the right-click surface.
   final void Function(Offset globalPosition)? onContextMenu;
-
-  /// Open the touch action sheet (the coarse-pointer "⋯" overflow); `null`
-  /// hides the overflow button. Rendered persistently on a touch platform at
-  /// every width (F16 #194 — see [coarsePointerPlatform]).
-  final VoidCallback? onShowActions;
 
   /// When true, the row enters inline-rename mode (the context menu's
   /// "Edit title"); the row calls [onEditDone] when it leaves edit mode.
@@ -490,13 +484,10 @@ class _TaskRowState extends State<TaskRow> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // The "⋯" overflow is the coarse-pointer path to every context action, and
-    // the choice to show it is by POINTER CAPABILITY, never window width
-    // (F16 #194): a touch pointer has no hover and no right-click, so on a touch
-    // platform the overflow must render at EVERY width — a tablet or landscape
-    // phone past the 600dp LAYOUT breakpoint still needs it. A mouse platform
-    // reaches the same actions by right-click, so the overflow stays hidden and
-    // the row stays clean. Width picks the list/detail layout, not this surface.
+    // No per-row "⋮" on ANY pointer (#245): it cost a 48dp column on every row
+    // and went unused. A mouse reaches the actions by right-click; a finger
+    // reaches them by the row tap (detail), the date segment, swipe, long-press
+    // and the bulk bar — see [showTaskContextMenu]'s header for the full map.
     final width = MediaQuery.sizeOf(context).width;
     // Refresh the swipe edge-gutter limits (F15 #193): the leading gutter is the
     // wider of the drawer edge band and the left system-gesture inset; the
@@ -505,8 +496,6 @@ class _TaskRowState extends State<TaskRow> {
     final gestureInsets = MediaQuery.systemGestureInsetsOf(context);
     _leftEdgeLimit = math.max(_drawerEdgeWidth, gestureInsets.left);
     _rightEdgeLimit = width - gestureInsets.right;
-    final showOverflow =
-        coarsePointerPlatform(theme.platform) && widget.onShowActions != null;
     // The completion sequence's progress (#241): the list hands every row the
     // same animation, so a tick, a swipe-right and a bulk Complete settle
     // identically. Standing alone (no sequence around it) the row simply wears
@@ -530,7 +519,7 @@ class _TaskRowState extends State<TaskRow> {
           child: Transform.translate(
             key: const Key('swipe-content'),
             // The whole row body is one open-the-detail surface (#214):
-            // explicit controls (checkbox, badges, overflow, strip) win
+            // explicit controls (checkbox, badges) win
             // the gesture arena as deeper children; every other tap —
             // including the space the old invisible checkbox box used to
             // swallow and the former dead zones between the title band
@@ -590,18 +579,6 @@ class _TaskRowState extends State<TaskRow> {
                       ],
                     ),
                   ),
-                  if (showOverflow)
-                    SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: IconButton(
-                        key: const Key('row-overflow'),
-                        padding: EdgeInsets.zero,
-                        tooltip: 'Task actions',
-                        icon: const Icon(Icons.more_vert),
-                        onPressed: widget.onShowActions,
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -672,8 +649,8 @@ class _TaskRowState extends State<TaskRow> {
     // Double-tap-to-rename is a DESKTOP affordance only. On a touch platform an
     // onDoubleTap recognizer would make every open-tap wait out the ~300ms
     // double-tap window before firing — a sluggish tap-to-open on the primary
-    // mobile gesture. Drop it there (rename on touch is the ⋯ / long-press
-    // menu's "Edit title"); the mouse keeps double-click-to-rename (F19 #198).
+    // mobile gesture. Drop it there (rename on touch is the detail screen's Title
+    // field); the mouse keeps double-click-to-rename (F19 #198).
     final doubleTapToRename = coarsePointerPlatform(theme.platform)
         ? null
         : _startEdit;

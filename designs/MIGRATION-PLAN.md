@@ -286,11 +286,14 @@ below, visuals fresh (Q3).
   strip; swipe-right completes; long-press selects (motion cancels);
   metadata row (notes icon, URL badge/count/open, relative due + overdue/
   today styling + ↳ inherited, progress a/b, pending-sync dot, list tag);
-  completion animation. **Touch action surface (RULED per review): every
-  context-menu action — Duplicate, Make-subtask-of, Detach, dates, Move,
-  Details, Open-in-Google, Delete — is reachable on coarse pointers via a
-  per-row overflow "⋯" ACTION SHEET; desktop keeps the right-click menu
-  (click-not-hover submenus).** No add-subtask affordance (#91).
+  completion animation. **Touch action surface (RULED 2026-08-30, #245):
+  every context-menu action — Duplicate, Make-subtask-of, Detach, dates,
+  Move, Details, Open-in-Google, Delete — is reachable on coarse pointers
+  WITHOUT a per-row overflow button: the row tap (Details), the date
+  segment and swipe-left (dates), a long-press or the toolbar's "Select
+  tasks" (Select), the DETAIL screen and the BULK bar (everything else).
+  Desktop keeps the right-click menu (click-not-hover submenus).** No
+  add-subtask affordance (#91).
 - TaskDetail → `ui/task_detail.dart`: full inventory contract — auto-save-
   on-blur/close diff-only, live-tracking without clobbering typing,
   prev/next siblings, subtask checklist (add-with-kept-focus, per-subtask
@@ -448,8 +451,9 @@ Step 7 — desktop UX parity (fresh design):
   TaskDetail, DetailWorkflow, SubtaskReorder, remaining TwoLevelTree).
 - T7.5 search + open-in-google (suites: SearchOverlay, OpenInGoogle).
 - T7.6 selection + bulk bar + BulkAdd + duplicate + demote/move pickers +
-  the row ACTION SURFACE per §4 (desktop context menu + touch "⋯" sheet
-  covering every action) (suites: BulkOps, BulkAdd, DemoteToSubtask,
+  the row ACTION SURFACE per §4 (desktop context menu; touch reaches every
+  action through the detail screen and the bulk bar, #245) (suites:
+  BulkOps, BulkAdd, DemoteToSubtask,
   MoveToList, MoveToListPicker, ContextMenu [PORT cases], PasteCreate's
   bulk-split case, DragAndDrop semantics).
 - T7.7 properties + backup export/import (+2 latest_backup tests) +
@@ -520,7 +524,7 @@ raw errors never surfaced); needs-attention indicator; command watchdog.
 
 Mobile: swipe quick actions, long-press select, pull-to-refresh, FAB,
 drawer, safe areas, IME, back precedence, 48dp targets, text-scale 1.3;
-every context-menu action reachable via the row action sheet.
+every context-menu action reachable via the detail screen and the bulk bar.
 
 Quality bars: analyze/custom_lint clean; coverage at ratchet; goldens green
 (both form factors, both themes); property suite + dual-device + oracle

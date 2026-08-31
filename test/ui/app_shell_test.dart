@@ -307,6 +307,32 @@ void main() {
       expect(find.widgetWithText(TextField, 'my task'), findsNothing);
     });
 
+    testWidgets('back leaves the EMPTY selection mode entered from the toolbar '
+        '— it never exits the app instead (#245)', (tester) async {
+      final router = buildAppRouter(initialViewId: 'all');
+      await pumpPhone(
+        tester,
+        store: seenPrefs(),
+        router: router,
+        tasks: [storedTask('T1', 'my task')],
+      );
+
+      await tester.tap(find.byKey(const Key('toolbar-overflow')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('toolbar-select-tasks')));
+      await tester.pumpAndSettle();
+      expect(find.byType(BulkBar), findsOneWidget);
+
+      final handled = await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        handled,
+        isTrue,
+        reason: 'back leaves the mode; it must not fall through to the OS',
+      );
+      expect(find.byType(BulkBar), findsNothing);
+    });
+
     testWidgets(
       'back closes the detail FIRST, then a second back clears the selection',
       (tester) async {

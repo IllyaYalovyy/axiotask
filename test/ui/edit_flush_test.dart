@@ -16,6 +16,8 @@ import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/window_title_controller.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/router.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show kDoubleTapMinTime;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +28,10 @@ import 'detail_harness.dart';
 
 void main() {
   late Directory tmp;
-  setUp(() => tmp = Directory.systemTemp.createTempSync('axiotask_flush_test'));
+  setUp(() {
+    debugDefaultTargetPlatformOverride = null;
+    tmp = Directory.systemTemp.createTempSync('axiotask_flush_test');
+  });
   tearDown(() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
@@ -41,9 +46,15 @@ void main() {
     WidgetTester tester, {
     required List<StoredTask> initialTasks,
     List<StoredTaskList> initialLists = const [],
+    TargetPlatform? platform,
   }) async {
     // Compact form factor — the phone chrome where the system-back path is the
     // one that closes a full-screen detail.
+    // NOT an addTearDown: flutter_test asserts every foundation debug var is
+    // unset at the END OF THE BODY, before tear-downs run — so each test that
+    // pins a platform clears it itself, and the setUp above catches a leak from
+    // a body that failed early.
+    debugDefaultTargetPlatformOverride = platform;
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -162,12 +173,16 @@ void main() {
     );
   });
 
-  // Open a row's inline-rename editor through the touch action surface (the ⋯
-  // overflow → the bottom sheet's "Edit title"), the mobile path to rename.
-  Future<void> startInlineRename(WidgetTester tester) async {
-    await tester.tap(find.byKey(const Key('row-overflow')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('taskmenu-edit')));
+  // Open a row's inline-rename editor the way a MOUSE does — a double-click on
+  // the title (F19 #198). Since #245 removed the per-row "⋮" sheet this is the
+  // only entry to the inline editor: a finger renames in the detail panel
+  // instead (covered by the notes/title cases above), so the two rename-flush
+  // cases below pin a narrow DESKTOP window, where both a lifecycle pause and a
+  // back that closes the app can still strand a mid-typing edit.
+  Future<void> startInlineRename(WidgetTester tester, String title) async {
+    await tester.tap(find.text(title));
+    await tester.pump(kDoubleTapMinTime);
+    await tester.tap(find.text(title));
     await tester.pumpAndSettle();
   }
 
@@ -178,9 +193,10 @@ void main() {
         tester,
         initialTasks: [row('T1', 'old title')],
         initialLists: [list('L1', 'My Tasks')],
+        platform: TargetPlatform.linux,
       );
 
-      await startInlineRename(tester);
+      await startInlineRename(tester, 'old title');
       // The inline editor is mounted, seeded with the current title.
       expect(find.widgetWithText(TextField, 'old title'), findsOneWidget);
 
@@ -197,6 +213,7 @@ void main() {
         fake.tasks.firstWhere((t) => t.task.id == 'T1').task.title,
         'new title',
       );
+      debugDefaultTargetPlatformOverride = null;
     },
   );
 
@@ -207,9 +224,10 @@ void main() {
       tester,
       initialTasks: [row('T1', 'old title')],
       initialLists: [list('L1', 'My Tasks')],
+      platform: TargetPlatform.linux,
     );
 
-    await startInlineRename(tester);
+    await startInlineRename(tester, 'old title');
     expect(find.widgetWithText(TextField, 'old title'), findsOneWidget);
 
     // Type into the inline editor but do NOT blur — then background the app.
@@ -224,6 +242,7 @@ void main() {
       'renamed inline',
       reason: 'a mid-typing rename is not lost to a process the OS may kill',
     );
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('system back from a blank subtask discards it (G4 #183)', (

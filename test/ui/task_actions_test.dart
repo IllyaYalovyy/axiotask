@@ -375,39 +375,41 @@ void main() {
   // overflow — even a tablet / landscape phone past the 600dp LAYOUT breakpoint
   // — while a mouse pointer reaches the same actions by right-click and the
   // overflow stays hidden. Width picks the list/detail LAYOUT, never the surface.
-  group('action surface is pointer-gated, not width-gated (F16 #194)', () {
-    testWidgets(
-      'a touch pointer shows the "⋯" overflow at 700dp (past the 600dp '
-      'breakpoint) carrying every action',
-      (tester) async {
-        await pumpList(
-          tester,
-          initial: [row('A', 'apples', webViewLink: 'https://g/1')],
-          lists: oneList,
-          // A tablet / landscape phone: expanded LAYOUT, still a coarse pointer.
-          size: const Size(700, 900),
-          platform: TargetPlatform.android,
-        );
-        expect(find.byKey(const Key('row-overflow')), findsOneWidget);
-        await tester.tap(find.byKey(const Key('row-overflow')));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 350));
-        // The sheet carries the FULL action set (nothing is unreachable on a
-        // touch pointer that lacks hover and right-click).
-        expect(find.byKey(const Key('taskmenu-edit')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-notes')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-due')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-move')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-duplicate')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-details')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-open-google')), findsOneWidget);
-        expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
-      },
+  group('the per-row ⋮ is GONE — right-click is the whole surface (#245)', () {
+    /// Every "⋮" a row could be carrying, at any width, on any pointer.
+    Finder rowOverflow() => find.descendant(
+      of: find.byType(TaskRow),
+      matching: find.byIcon(Icons.more_vert),
     );
 
-    testWidgets('a compact touch phone still shows the "⋯" overflow', (
+    testWidgets('a compact touch phone row carries NO overflow button', (
       tester,
     ) async {
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples', webViewLink: 'https://g/1')],
+        lists: oneList,
+        size: const Size(420, 900),
+        platform: TargetPlatform.android,
+      );
+      expect(find.byKey(const Key('row-overflow')), findsNothing);
+      expect(rowOverflow(), findsNothing);
+    });
+
+    testWidgets('a touch tablet at 700dp carries none either — the button is '
+        'gone at EVERY width, not merely hidden on a phone', (tester) async {
+      await pumpList(
+        tester,
+        initial: [row('A', 'apples'), row('B', 'bread')],
+        lists: oneList,
+        size: const Size(700, 900),
+        platform: TargetPlatform.android,
+      );
+      expect(rowOverflow(), findsNothing);
+    });
+
+    testWidgets('a long-press on a touch row still enters selection — the row '
+        'gesture that survived the sheet', (tester) async {
       await pumpList(
         tester,
         initial: [row('A', 'apples')],
@@ -415,36 +417,41 @@ void main() {
         size: const Size(420, 900),
         platform: TargetPlatform.android,
       );
-      expect(find.byKey(const Key('row-overflow')), findsOneWidget);
+      await tester.longPress(find.text('apples'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('1 selected'), findsOneWidget);
     });
 
-    testWidgets('the desktop mouse path shows NO "⋯" at the SAME 700dp width — '
-        'right-click carries the actions instead', (tester) async {
+    testWidgets('the desktop mouse row shows no "⋮" either, and right-click '
+        'still carries the FULL action set', (tester) async {
       await pumpList(
         tester,
-        initial: [row('A', 'apples')],
-        lists: oneList,
-        // Same width as the touch case above; only the pointer differs.
-        size: const Size(700, 900),
-        platform: TargetPlatform.linux,
-      );
-      expect(find.byKey(const Key('row-overflow')), findsNothing);
-      // The desktop path is unchanged: a right-click still opens the menu.
-      await rightClick(tester, 'apples');
-      expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
-    });
-
-    testWidgets('the desktop mouse path shows NO "⋯" on a wide window either', (
-      tester,
-    ) async {
-      await pumpList(
-        tester,
-        initial: [row('A', 'apples')],
+        initial: [row('A', 'apples', webViewLink: 'https://g/1')],
         lists: oneList,
         size: const Size(1200, 900),
         platform: TargetPlatform.linux,
       );
-      expect(find.byKey(const Key('row-overflow')), findsNothing);
+      expect(rowOverflow(), findsNothing);
+
+      await rightClick(tester, 'apples');
+      for (final id in const [
+        'select',
+        'edit',
+        'notes',
+        'due',
+        'move',
+        'duplicate',
+        'details',
+        'open-google',
+        'delete',
+      ]) {
+        expect(
+          find.byKey(Key('taskmenu-$id')),
+          findsOneWidget,
+          reason: 'the kept desktop menu lost "$id"',
+        );
+      }
     });
   });
 }

@@ -10,8 +10,9 @@
 // So the harness below models the real tree exactly: a [ListDetailScaffold]
 // whose `list` child sits inside its OWN [Navigator], the way the ShellRoute
 // mounts it. Every assertion is about what a finger can see and reach — the
-// composer's submit is hit-testable, the FAB is on screen or it is not, a row's
-// "⋯" clears the FAB — never about which route object the sheet landed on.
+// composer's submit is hit-testable, the FAB is on screen or it is not, the last
+// row's date button clears the FAB — never about which route object the sheet
+// landed on.
 //
 // Determinism: static provider streams over the in-memory FakeBackend (no
 // database, no clock, no network). Animations are driven by explicit
@@ -23,6 +24,7 @@ import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/new_task_fab.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
@@ -226,8 +228,8 @@ void main() {
     expect(fab, findsOneWidget, reason: 'at rest the FAB is always there');
   });
 
-  testWidgets('the last row keeps its "⋯" out from under the FAB at rest '
-      '(#234)', (tester) async {
+  testWidgets('the last row keeps its date button out from under the FAB at '
+      'rest (#234)', (tester) async {
     final fake = FakeBackend([
       for (var i = 0; i < 30; i++) row('T$i', 'Task $i', position: '$i'),
     ]);
@@ -245,42 +247,44 @@ void main() {
     await tester.pumpAndSettle();
     expect(fab, findsOneWidget);
 
-    // The bottom-most row action is still the topmost thing at its own centre.
-    final overflow = find.byKey(const Key('row-overflow')).last;
+    // The bottom-most row's own quick-date button is still the topmost thing at
+    // its own centre (the per-row "⋮" that used to stand here is gone, #245 —
+    // the date segment is now the last row's trailing affordance).
+    final dueButton = find.byKey(const Key('row-due-segment')).last;
     expect(
-      tester.getRect(overflow).overlaps(tester.getRect(fab)),
+      tester.getRect(dueButton).overlaps(tester.getRect(fab)),
       isFalse,
       reason:
           'the list is padded by the FAB clearance, so the last row never '
           'hides under it',
     );
-    await tester.tap(overflow);
+    await tester.tap(dueButton);
     await tester.pumpAndSettle();
-    expect(find.text('Delete'), findsOneWidget);
+    expect(find.byKey(quickDateKey('tomorrow')), findsOneWidget);
   });
 
-  testWidgets('a row action sheet covers the FAB — it can never swallow a tap '
-      'meant for an action (#234)', (tester) async {
+  testWidgets('a row quick-date sheet covers the FAB — it can never swallow a '
+      'tap meant for an action (#234)', (tester) async {
     final fake = FakeBackend([
       for (var i = 0; i < 12; i++) row('T$i', 'Task $i', position: '$i'),
     ]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
-    await tester.tap(find.byKey(const Key('row-overflow')).first);
+    await tester.tap(find.byKey(const Key('row-due-segment')).first);
     await tester.pumpAndSettle();
 
-    // The sheet is a full-screen-height modal on the same navigator the
-    // composer uses, so it is ABOVE the shell's FAB rather than under it: the
-    // FAB is no longer reachable at its own centre, where "Delete" is drawn.
+    // The sheet is a modal on the ROOT navigator — the one the composer uses —
+    // so it is ABOVE the shell's FAB rather than under it: the FAB is no longer
+    // reachable at its own centre, where the sheet's last option is drawn.
     expect(
       fab.hitTestable(),
       findsNothing,
       reason:
-          'a tap on the action under the FAB must reach the action — this '
-          'sheet used to render inside the shell body, beneath the FAB',
+          'a tap on the option under the FAB must reach the option — a sheet '
+          'pushed on the shell navigator renders beneath the FAB',
     );
-    expect(find.text('Delete').hitTestable(), findsOneWidget);
+    expect(find.byKey(quickDateKey('clear')).hitTestable(), findsOneWidget);
   });
 
   testWidgets('rapid consecutive adds: the sheet stays open and an empty '

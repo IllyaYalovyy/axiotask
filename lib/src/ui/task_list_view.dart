@@ -26,7 +26,7 @@ import '../app/quick_add.dart';
 import '../model/dates.dart' show DateMove, applyDateMove;
 import '../model/effective_due.dart';
 import '../model/task.dart';
-import '../model/task_tree.dart';
+import '../model/task_tree.dart' show hasSubtasks, isSubtask;
 import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'bulk_add.dart';
@@ -167,9 +167,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // resolve demote candidates and task rows without re-reading the provider.
   List<StoredTask> _all = const [];
 
-  // The current multi-select (BulkOps). Empty means the bulk bar is hidden.
-  // The widget is keyed per-view, so a view switch remounts and clears it.
+  // The current multi-select (BulkOps). The widget is keyed per-view, so a view
+  // switch remounts and clears it.
   final Set<String> _selectedIds = {};
+
+  // Whether selection MODE is on. Usually that is "something is selected", but
+  // the toolbar's "Select tasks" (#245) enters the mode with an EMPTY selection
+  // — the visible touch entry that replaced the retired row menu's "Select".
+  // The bulk bar follows this flag, and while it is on a plain row tap toggles
+  // membership instead of opening the detail. Deselecting the last row leaves
+  // the mode (the Android convention), so the list never gets stuck in it.
+  bool _selectionMode = false;
 
   // The one row asked to enter inline rename via the context menu's "Edit
   // title"; cleared when that row leaves edit mode.
@@ -286,7 +294,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// ladder (T8.3) — non-empty means a back should clear it rather than exit.
   void _syncBackHandle() => ref
       .read(selectionBackHandleProvider.notifier)
-      .set(_selectedIds.isEmpty ? null : _clearSelection);
+      .set(_selectionMode ? _clearSelection : null);
 
   /// Run a manual refresh (mobile pull-to-refresh): a real sync when a session
   /// is live, else a no-op over the always-live reactive store.
@@ -627,9 +635,25 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   // ── multi-select + bulk operations (BulkOps) ──────────────────────────────
 
+  /// Enter selection mode with nothing selected — the toolbar's "Select tasks"
+  /// (#245). The bulk bar appears named-but-disarmed and the next row tap
+  /// selects instead of opening.
+  void _enterSelectionMode() {
+    if (_selectionMode) return;
+    setState(() => _selectionMode = true);
+    _syncBackHandle();
+  }
+
   void _toggleSelect(String id) {
     setState(() {
-      if (!_selectedIds.remove(id)) _selectedIds.add(id);
+      if (!_selectedIds.remove(id)) {
+        _selectedIds.add(id);
+        _selectionMode = true;
+      } else if (_selectedIds.isEmpty) {
+        // The last row was deselected: leave the mode rather than stranding an
+        // empty bar that still swallows taps.
+        _selectionMode = false;
+      }
     });
     // Republish selection liveness so the shell's back ladder (T8.3) knows a
     // back should now clear (or, when the last row is deselected, stop clearing)
@@ -638,7 +662,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   }
 
   void _clearSelection() {
-    setState(_selectedIds.clear);
+    setState(() {
+      _selectedIds.clear();
+      _selectionMode = false;
+    });
     _syncBackHandle();
   }
 
@@ -758,24 +785,82 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (mounted) _bulkToast(ids.length, 'moved');
   }
 
+  /// Copy every selected task (#245 — Duplicate lost its per-row menu and needs
+  /// a whole-selection home).
+  Future<void> _bulkDuplicate() async {
+    final ids = _selectedIds.toList();
+    final byId = {for (final t in _all) t.task.id: t};
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    var made = 0;
+    for (final id in ids) {
+      final t = byId[id];
+      // The row may have vanished between selection and op (a sync pull, another
+      // gesture): there is nothing to copy, so skip it rather than inventing one.
+      if (t == null) continue;
+      await duplicateTask(commands, t);
+      made++;
+    }
+    if (mounted) _bulkToast(made, 'duplicated');
+  }
+
+  /// The parents every selected task may legally nest under (#88 + #245): a task
+  /// outside the selection that can host ALL of them. Empty means the bulk
+  /// action is not offered at all — a selection spanning lists, or containing a
+  /// task with subtasks of its own, has no legal single host.
+  ///
+  /// This is [canNestUnder] applied to a whole selection WITHOUT re-scanning the
+  /// task set for every (selected, candidate) pair — the list rebuilds on every
+  /// store emit, and the naive form is quadratic in the task count. The only
+  /// part of the predicate that depends on the child is "has no subtasks of its
+  /// own", answered once per selected task; what is left is a property of the
+  /// candidate alone (top-level, same list, not itself selected).
+  List<StoredTask> _bulkDemoteCandidates() {
+    if (_selectedIds.isEmpty) return const [];
+    final selected = _all
+        .where((t) => _selectedIds.contains(t.task.id))
+        .toList();
+    // An id in the selection that no longer exists (a sync pull removed it):
+    // offer nothing rather than silently nesting a partial selection.
+    if (selected.length != _selectedIds.length) return const [];
+    final listId = selected.first.listId;
+    if (selected.any((t) => t.listId != listId)) return const [];
+    final tasks = _all.map((t) => t.task).toList(growable: false);
+    if (selected.any((t) => hasSubtasks(t.task.id, tasks))) return const [];
+    return _all
+        .where(
+          (c) =>
+              !_selectedIds.contains(c.task.id) &&
+              c.listId == listId &&
+              !isSubtask(c.task),
+        )
+        .toList();
+  }
+
+  /// Nest the whole selection under one picked parent (#245's bulk half of the
+  /// #88 picker).
+  Future<void> _bulkDemote() async {
+    final candidates = _bulkDemoteCandidates();
+    if (candidates.isEmpty) return;
+    final parentId = await showParentPicker(context, candidates: candidates);
+    if (parentId == null || !mounted) return;
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    for (final id in ids) {
+      await commands.moveTask(id, parentId: parentId);
+    }
+    if (mounted) _bulkToast(ids.length, 'nested');
+  }
+
   // ── per-row action surface (§4) ───────────────────────────────────────────
 
-  /// The legal parents [t] could be demoted under: every OTHER childless
-  /// top-level task in the SAME list (#88). canNestUnder is the single source of
-  /// truth for the two-level rule.
-  List<StoredTask> _demoteCandidates(StoredTask t) => _all
-      .where(
-        (c) =>
-            c.listId == t.listId &&
-            canNestUnder(t.task.id, c.task, _all.map((x) => x.task)),
-      )
-      .toList();
-
-  /// Build and show the row's action surface: the desktop context menu at
-  /// [globalPosition] (a right-click), or the touch action sheet ([globalPosition]
-  /// null). Both carry EVERY action.
-  Future<void> _showRowActions(StoredTask t, {Offset? globalPosition}) async {
-    final demotable = t.task.parent == null && _demoteCandidates(t).isNotEmpty;
+  /// Build and show the row's DESKTOP context menu at [globalPosition] (a
+  /// right-click). There is no coarse-pointer counterpart: the per-row "⋮" and
+  /// its sheet are gone (#245).
+  Future<void> _showRowActions(StoredTask t, Offset globalPosition) async {
+    final demotable =
+        t.task.parent == null && demoteCandidates(t, _all).isNotEmpty;
     final entries = buildTaskMenu(
       task: t,
       lists: _lists,
@@ -795,11 +880,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       onOpenGoogle: () => _openGoogle(t),
       onDelete: () => _delete(t),
     );
-    if (globalPosition != null) {
-      await showTaskContextMenu(context, globalPosition, entries);
-    } else {
-      await showTaskActionSheet(context, entries);
-    }
+    await showTaskContextMenu(context, globalPosition, entries);
   }
 
   /// Move [t]'s subtree to [targetListId] and surface an undoable toast (F11:
@@ -836,7 +917,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   /// Demote [t] into a subtask via the searchable parent picker (#88).
   Future<void> _demote(StoredTask t) async {
-    final candidates = _demoteCandidates(t);
+    final candidates = demoteCandidates(t, _all);
     if (candidates.isEmpty) return;
     final parentId = await showParentPicker(context, candidates: candidates);
     if (parentId == null || !mounted) return;
@@ -844,15 +925,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   }
 
   /// Duplicate [t] as "`<title>` (copy)" in the same list and parent.
-  Future<void> _duplicate(StoredTask t) async {
-    await ref
-        .read(commandsProvider)
-        .createTask(
-          listId: t.listId,
-          parentId: t.task.parent,
-          title: '${t.task.title} (copy)',
-        );
-  }
+  Future<void> _duplicate(StoredTask t) =>
+      duplicateTask(ref.read(commandsProvider), t);
 
   /// Open the task's Google Tasks URL via the shared opener.
   Future<void> _openGoogle(StoredTask t) async {
@@ -1093,6 +1167,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           sort: sort,
           showCompleted: prefs.showCompleted,
           onSearch: _openSearch,
+          // The VISIBLE touch entry into multi-select (#245). A mouse already
+          // has two (Ctrl-click and the right-click menu's "Select"), so the
+          // overflow — and the extra 48dp it costs — is a coarse-pointer
+          // affordance only, exactly like the swipe actions. It stays MOUNTED
+          // once selection mode is on (merely disabled): a control that vanishes
+          // when used would re-flow the toolbar under the finger that just
+          // tapped it.
+          selectTasksEnabled: !_selectionMode,
+          onSelectTasks: coarsePointerPlatform(Theme.of(context).platform)
+              ? _enterSelectionMode
+              : null,
           onBulkAdd: _defaultTargetList == null ? null : () => _openBulkAdd(),
           onSort: (m) => ref
               .read(prefsControllerProvider.notifier)
@@ -1108,13 +1193,16 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               : null,
         ),
         const Divider(height: 1),
-        if (_selectedIds.isNotEmpty)
+        if (_selectionMode)
           BulkBar(
             count: _selectedIds.length,
             onComplete: _bulkComplete,
             onSetDue: _bulkSetDue,
             onPickDue: _bulkPickDue,
             onMove: _bulkMove,
+            onDuplicate: _bulkDuplicate,
+            // Hidden outright when no single task can host the whole selection.
+            onDemote: _bulkDemoteCandidates().isEmpty ? null : _bulkDemote,
             onDelete: _bulkDelete,
             onClear: _clearSelection,
           ),
@@ -1160,8 +1248,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         MediaQuery.sizeOf(context).width < ListDetailScaffold.breakpoint;
     final physics = mobile ? const AlwaysScrollableScrollPhysics() : null;
     // The "new task" FAB floats over the bottom of the list; pad the scroll so
-    // the LAST row can clear it (its trailing quick-date/⋯ are never stuck
-    // under the FAB — #234). The padding tracks the FAB exactly: the shell
+    // the LAST row can clear it (never hidden under the FAB — #234). The
+    // padding tracks the FAB exactly: the shell
     // builds one only in the compact layout, and only for a coarse pointer
     // (#216), so a narrow mouse-driven window spends no room on a clearance it
     // does not need.
@@ -1496,15 +1584,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       subtaskTotal: subTotal[t.id] ?? 0,
       listTag: listTag,
       selected: _selectedIds.contains(t.id),
-      selectionActive: _selectedIds.isNotEmpty,
+      selectionActive: _selectionMode,
       // Straight from the ROUTER-derived selection (#221), never from a
       // tap-local field, so the highlight follows the detail through every
       // entry path — row tap, search jump, detail prev/next, the quick-add
       // follow, or a bare URL change — all of which move the route.
       openInDetail: widget.selectedTaskId == t.id,
       onSelectToggle: () => _toggleSelect(t.id),
-      onContextMenu: (pos) => _showRowActions(stored, globalPosition: pos),
-      onShowActions: () => _showRowActions(stored),
+      onContextMenu: (pos) => _showRowActions(stored, pos),
       editRequested: _editId == t.id,
       onEditDone: () {
         if (_editId == t.id) setState(() => _editId = null);
@@ -1547,12 +1634,16 @@ class _DepartingRow {
   final Duration since;
 }
 
-/// The list toolbar: the sort-order dropdown and the show-completed toggle.
+/// The list toolbar: the sort-order dropdown, the show-completed toggle, and
+/// the overflow menu carrying the list-wide actions that have no room of their
+/// own.
 class _ListToolbar extends StatelessWidget {
   const _ListToolbar({
     required this.sort,
     required this.showCompleted,
     required this.onSearch,
+    required this.onSelectTasks,
+    required this.selectTasksEnabled,
     required this.onBulkAdd,
     required this.onSort,
     required this.onShowCompleted,
@@ -1562,6 +1653,15 @@ class _ListToolbar extends StatelessWidget {
   final SortMode sort;
   final bool showCompleted;
   final VoidCallback onSearch;
+
+  /// Enter multi-select with nothing selected (#245). `null` HIDES the whole
+  /// overflow — a mouse reaches selection by Ctrl-click and the right-click
+  /// menu instead.
+  final VoidCallback? onSelectTasks;
+
+  /// Whether that entry is live; `false` greys it out (the mode is already on)
+  /// without unmounting the button and re-flowing the toolbar.
+  final bool selectTasksEnabled;
 
   /// Open the BulkAdd dialog; `null` disables it (no list to target).
   final VoidCallback? onBulkAdd;
@@ -1653,6 +1753,38 @@ class _ListToolbar extends StatelessWidget {
                   ),
                 ),
               ),
+              if (onSelectTasks != null)
+                PopupMenuButton<String>(
+                  key: const Key('toolbar-overflow'),
+                  tooltip: 'More list actions',
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (_) => onSelectTasks!(),
+                  itemBuilder: (context) => [
+                    PopupMenuItem<String>(
+                      key: const Key('toolbar-select-tasks'),
+                      value: 'select',
+                      enabled: selectTasksEnabled,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.check_box_outlined,
+                            size: 20,
+                            // PopupMenuItem greys the LABEL of a disabled entry
+                            // (a DefaultTextStyle) but not an icon, which would
+                            // leave a half-disabled row.
+                            color: selectTasksEnabled
+                                ? null
+                                : Theme.of(context).disabledColor,
+                          ),
+                          const SizedBox(width: 12),
+                          // A Material menu caps its width; at a large text
+                          // scale the label wraps rather than being clipped.
+                          const Flexible(child: Text('Select tasks')),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ],
