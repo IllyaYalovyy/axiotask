@@ -7,6 +7,7 @@
 
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/ui/bulk_bar.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -233,10 +234,14 @@ void main() {
     await ctrlClick(tester, 'apples');
     await ctrlClick(tester, 'bread');
     // The fake resolves the move against the clock, so run the op under it.
+    // ONE "Due" button now carries the whole frozen option set (#243).
     await withClock(testClock, () async {
-      await tester.tap(find.byKey(const Key('bulk-tomorrow')));
+      await tester.tap(find.byKey(const Key('bulk-due')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(quickDateKey('tomorrow')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
     });
 
     // testClock is 2026-06-15 → tomorrow is the 16th (canonical Z form).
@@ -258,9 +263,12 @@ void main() {
       lists: oneList,
     );
     await ctrlClick(tester, 'apples');
-    await tester.tap(find.byKey(const Key('bulk-clear-date')));
+    await tester.tap(find.byKey(const Key('bulk-due')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(quickDateKey('clear')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(fake.tasks.single.task.due, isNull);
     expect(find.text('1 task cleared'), findsOneWidget);
   });

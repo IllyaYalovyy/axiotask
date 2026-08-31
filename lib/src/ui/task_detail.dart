@@ -43,6 +43,7 @@ import '../model/task_tree.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'quick_date_menu.dart';
 import 'theme.dart';
 import 'toast.dart';
 import 'url_detect.dart';
@@ -559,6 +560,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                       visibleChildren[i].task.id,
                       visibleChildren[i].task.due,
                     ),
+                    onSetDue: (m) => _quickDue(visibleChildren[i].task.id, m),
                     onMoveUp: i == 0
                         ? null
                         : () => _reorderUp(
@@ -629,14 +631,19 @@ class _Breadcrumb extends StatelessWidget {
   }
 }
 
-/// The task's own due date: a tappable badge that opens the calendar, plus the
-/// one-gesture quick-date strip (Today / Tomorrow / +1 week / +1 month / Clear).
+/// The task's own due date: one field that raises the ONE shared quick-date
+/// option set (#243) — Today · Tomorrow · Next week · Next month ·
+/// Pick a date… · Clear.
+///
+/// It used to be a calendar button with its OWN chip row beneath it, worded
+/// "+1 week" / "+1 month" — a second vocabulary for the moves the rest of the
+/// app called "Next week" / "Next month", and one that could not reach the
+/// calendar or a clear without leaving the chips. One control, one list.
 ///
 /// The date itself wears the SHARED urgency tone (#242) — the same colour the
 /// row's due badge and the Focus "Overdue (N)" heading use — so opening a task
-/// never changes what its date's colour means. The outline and the quick-date
-/// chips stay neutral: the urgency is a property of the DATE, not of the
-/// controls around it.
+/// never changes what its date's colour means. The outline stays neutral: the
+/// urgency is a property of the DATE, not of the control around it.
 class _DueField extends StatelessWidget {
   const _DueField({
     required this.due,
@@ -645,7 +652,11 @@ class _DueField extends StatelessWidget {
   });
 
   final String? due;
+
+  /// Open the calendar ("Pick a date…").
   final VoidCallback onPick;
+
+  /// Apply a frozen move from the shared menu.
   final ValueChanged<DateMove> onQuick;
 
   @override
@@ -660,48 +671,36 @@ class _DueField extends StatelessWidget {
       children: [
         Text('Due date', style: theme.textTheme.labelMedium),
         const SizedBox(height: 4),
-        OutlinedButton.icon(
-          key: const Key('due-field'),
-          onPressed: onPick,
-          icon: const Icon(Icons.event_outlined, size: 18),
-          label: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              label.isEmpty ? 'No date' : label,
-              // Semibold on overdue only — the same emphasis the row's badge
-              // carries, so the two surfaces read as one signal.
-              style: TextStyle(
-                color: color,
-                fontWeight: urgency == DueUrgency.overdue
-                    ? FontWeight.w600
-                    : null,
+        QuickDateAnchor(
+          onSetDue: onQuick,
+          onPickDate: onPick,
+          builder: (context, open) => OutlinedButton.icon(
+            key: const Key('due-field'),
+            onPressed: open,
+            icon: const Icon(Icons.event_outlined, size: 18),
+            label: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label.isEmpty ? 'No date' : label,
+                // Semibold on overdue only — the same emphasis the row's badge
+                // carries, so the two surfaces read as one signal.
+                style: TextStyle(
+                  color: color,
+                  fontWeight: urgency == DueUrgency.overdue
+                      ? FontWeight.w600
+                      : null,
+                ),
               ),
             ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: color,
+              minimumSize: const Size.fromHeight(44),
+              alignment: Alignment.centerLeft,
+            ),
           ),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: color,
-            minimumSize: const Size.fromHeight(44),
-            alignment: Alignment.centerLeft,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          children: [
-            _chip(context, 'Today', () => onQuick(DateMove.today)),
-            _chip(context, 'Tomorrow', () => onQuick(DateMove.tomorrow)),
-            _chip(context, '+1 week', () => onQuick(DateMove.nextWeek)),
-            _chip(context, '+1 month', () => onQuick(DateMove.nextMonth)),
-            if (has) _chip(context, 'Clear', () => onQuick(DateMove.clear)),
-          ],
         ),
       ],
     );
-  }
-
-  Widget _chip(BuildContext context, String label, VoidCallback onTap) {
-    return ActionChip(label: Text(label), onPressed: onTap);
   }
 }
 
@@ -891,6 +890,7 @@ class _SubtaskRow extends StatelessWidget {
     required this.onToggle,
     required this.onOpen,
     required this.onPickDue,
+    required this.onSetDue,
     required this.onMoveUp,
     required this.onMoveDown,
     super.key,
@@ -901,7 +901,12 @@ class _SubtaskRow extends StatelessWidget {
   final bool isLast;
   final VoidCallback onToggle;
   final VoidCallback onOpen;
+
+  /// Open the calendar for this subtask ("Pick a date…").
   final VoidCallback onPickDue;
+
+  /// Apply a frozen move to this subtask from the shared menu.
+  final ValueChanged<DateMove> onSetDue;
   final VoidCallback? onMoveUp;
   final VoidCallback? onMoveDown;
 
@@ -964,19 +969,26 @@ class _SubtaskRow extends StatelessWidget {
         // panel as the parent's Due field, and leaving it on the button default
         // would paint every subtask date — overdue ones included — in the tone
         // that now means "due today".
-        Tooltip(
-          message:
-              'Subtask due date: ${hasDue ? task.due!.substring(0, 10) : 'No date'}',
-          child: TextButton(
-            key: Key('sub-due-${task.id}'),
-            onPressed: onPickDue,
-            style: TextButton.styleFrom(
-              foregroundColor: dueColor(
-                hasDue ? dueUrgency(task.due) : DueUrgency.none,
-                theme.colorScheme,
+        // The same quick-date set the parent's Due field raises (#243): a
+        // subtask is dated the way everything else in the app is dated.
+        QuickDateAnchor(
+          onSetDue: onSetDue,
+          onPickDate: onPickDue,
+          sheetTitle: 'Subtask due date',
+          builder: (context, open) => Tooltip(
+            message:
+                'Subtask due date: ${hasDue ? task.due!.substring(0, 10) : 'No date'}',
+            child: TextButton(
+              key: Key('sub-due-${task.id}'),
+              onPressed: open,
+              style: TextButton.styleFrom(
+                foregroundColor: dueColor(
+                  hasDue ? dueUrgency(task.due) : DueUrgency.none,
+                  theme.colorScheme,
+                ),
               ),
+              child: Text(hasDue ? formatDue(task.due) : 'no date'),
             ),
-            child: Text(hasDue ? formatDue(task.due) : 'no date'),
           ),
         ),
       ],

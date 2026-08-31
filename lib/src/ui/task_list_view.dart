@@ -13,6 +13,7 @@
 
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,7 +23,7 @@ import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../app/quick_add.dart';
-import '../model/dates.dart' show DateMove;
+import '../model/dates.dart' show DateMove, applyDateMove;
 import '../model/effective_due.dart';
 import '../model/task.dart';
 import '../model/task_tree.dart';
@@ -37,6 +38,7 @@ import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
 import 'list_pickers.dart';
 import 'new_task_fab.dart' show ComposerMorph, NewTaskFab;
+import 'quick_date_menu.dart';
 import 'search.dart';
 import 'sort_dropdown.dart';
 import 'task_actions.dart';
@@ -150,6 +152,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // (the preview chip's ×), so its phrase is not re-read as a due date.
   String _dateIgnoredFor = '';
 
+  /// A date the user set EXPLICITLY on the draft, from the composer's date
+  /// button (#243), as a bare `YYYY-MM-DD`; `null` when the draft carries no
+  /// explicit pick. An explicit pick OUTRANKS a date phrase parsed out of the
+  /// title — the user said what they meant with a tap, so typing "next week"
+  /// afterwards does not silently overrule it.
+  String? _pickedDue;
+
   // The known lists, kept current by the build's watch so quick-add can resolve
   // its target synchronously at submit time.
   List<StoredTaskList> _lists = const [];
@@ -220,9 +229,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   /// The natural-language due parsed from the current input, unless the user
   /// dismissed it for this exact text.
-  String? get _previewDue => _quickAdd.text == _dateIgnoredFor
-      ? null
-      : parseQuickAddDue(_quickAdd.text);
+  String? get _previewDue =>
+      _pickedDue ??
+      (_quickAdd.text == _dateIgnoredFor
+          ? null
+          : parseQuickAddDue(_quickAdd.text));
 
   @override
   void initState() {
@@ -339,6 +350,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                 controller: _quickAdd,
                 focusNode: quickAddFocus,
                 dateIgnoredFor: _dateIgnoredFor,
+                pickedDue: _pickedDue,
                 lists: _lists,
                 targetListId: _quickAddTargetList,
                 onTargetChanged: (id) {
@@ -359,8 +371,26 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
                 onDismissPreview: () {
-                  setState(() => _dateIgnoredFor = _quickAdd.text);
+                  setState(() {
+                    _dateIgnoredFor = _quickAdd.text;
+                    _pickedDue = null;
+                  });
                   // The sheet is its own route — re-render its content too.
+                  setSheetState(() {});
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+                onSetDue: (move) {
+                  _setDraftDue(move);
+                  // The sheet is its own route — re-render its content too.
+                  setSheetState(() {});
+                  _refocusComposer(sheetContext, quickAddFocus);
+                },
+                onPickDue: () async {
+                  await _pickDraftDue();
+                  // The sheet is its own route — re-render its content too,
+                  // but only while both this view and that route survive the
+                  // calendar the user was just in.
+                  if (!mounted || !sheetContext.mounted) return;
                   setSheetState(() {});
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
@@ -390,9 +420,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   void _refocusComposer(BuildContext sheetContext, FocusNode node) {
     if (!mounted) return;
     final route = ModalRoute.of(sheetContext);
-    // `isCurrent` goes false the instant the route is popped — before its exit
-    // animation has drawn a single frame.
-    if (route == null || !route.isCurrent) return;
+    // `isActive` goes false the instant the route is popped — before its exit
+    // animation has drawn a single frame — which is exactly the #233 state to
+    // refuse. It stays TRUE while another modal (the quick-date sheet, the
+    // calendar) is layered on top and closing again, which is when the caret
+    // must come back rather than be abandoned.
+    if (route == null || !route.isActive) return;
     node.requestFocus();
   }
 
@@ -502,8 +535,40 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       _newestId = stored.task.id;
       _quickAdd.clear();
       _dateIgnoredFor = '';
+      _pickedDue = null;
     });
     return stored;
+  }
+
+  /// Set the draft's date from the composer's shared quick-date menu (#243).
+  /// [DateMove.clear] drops the date AND silences a date phrase already typed
+  /// in the title, so "no date" means no date however the date got there —
+  /// exactly what the preview chip's × does.
+  void _setDraftDue(DateMove move) {
+    final n = clock.now();
+    final today = DateTime.utc(n.year, n.month, n.day);
+    final moved = applyDateMove(today, move);
+    setState(() {
+      _pickedDue = moved == null ? null : _ymd(moved);
+      if (moved == null) _dateIgnoredFor = _quickAdd.text;
+    });
+  }
+
+  /// The composer's "Pick a date…": the same calendar every other surface
+  /// opens, landing in the same preview chip. A dismissed picker leaves the
+  /// draft's date untouched.
+  Future<void> _pickDraftDue() async {
+    final pick = await showDueDatePicker(context, initial: _previewDue);
+    if (pick == null || !mounted) return;
+    setState(() {
+      switch (pick) {
+        case DuePickClear():
+          _pickedDue = null;
+          _dateIgnoredFor = _quickAdd.text;
+        case DuePickDate(:final ymd):
+          _pickedDue = ymd;
+      }
+    });
   }
 
   /// The quick-add's entry in the pending-edits registry — commit the draft on
@@ -629,6 +694,27 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         ids.length,
         move == DateMove.clear ? 'cleared' : 'rescheduled',
       );
+    }
+  }
+
+  /// The bulk "Pick a date…": one calendar for the whole selection. Bulk could
+  /// not reach a picked day at all before the surfaces were unified (#243).
+  Future<void> _bulkPickDue() async {
+    final pick = await showDueDatePicker(context);
+    if (pick == null || !mounted) return;
+    final ids = _selectedIds.toList();
+    final commands = ref.read(commandsProvider);
+    _clearSelection();
+    for (final id in ids) {
+      switch (pick) {
+        case DuePickClear():
+          await commands.setDue(id, DateMove.clear);
+        case DuePickDate(:final ymd):
+          await commands.setDueRaw(id, ymd);
+      }
+    }
+    if (mounted) {
+      _bulkToast(ids.length, pick is DuePickClear ? 'cleared' : 'rescheduled');
     }
   }
 
@@ -893,6 +979,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     setState(() {
       _quickAdd.clear();
       _dateIgnoredFor = '';
+      _pickedDue = null;
     });
     await _commitBulkAdd(
       BulkAddResult(text: raw, mode: BulkAddMode.perLine, listId: target),
@@ -971,6 +1058,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             controller: _quickAdd,
             focusNode: quickAddFocus,
             dateIgnoredFor: _dateIgnoredFor,
+            pickedDue: _pickedDue,
             lists: _lists,
             targetListId: _quickAddTargetList,
             onTargetChanged: (id) {
@@ -982,8 +1070,21 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             onSubmit: _submit,
             onAddPastedLines: _addPastedLines,
             onDismissPreview: () {
-              setState(() => _dateIgnoredFor = _quickAdd.text);
+              setState(() {
+                _dateIgnoredFor = _quickAdd.text;
+                _pickedDue = null;
+              });
               quickAddFocus.requestFocus();
+            },
+            onSetDue: (move) {
+              _setDraftDue(move);
+              // Setting a date is a detour, not a destination: the caret comes
+              // straight back to the draft (the #217 target-picker rule).
+              quickAddFocus.requestFocus();
+            },
+            onPickDue: () async {
+              await _pickDraftDue();
+              if (mounted) quickAddFocus.requestFocus();
             },
           ),
           const Divider(height: 1),
@@ -1012,6 +1113,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             count: _selectedIds.length,
             onComplete: _bulkComplete,
             onSetDue: _bulkSetDue,
+            onPickDue: _bulkPickDue,
             onMove: _bulkMove,
             onDelete: _bulkDelete,
             onClear: _clearSelection,
@@ -1566,6 +1668,14 @@ class _ListToolbar extends StatelessWidget {
 /// chip used to leave on a 400dp phone.
 const double _kDraftFloor = 160;
 
+/// A LOCAL calendar day as the bare `YYYY-MM-DD` the composer's draft carries
+/// (the same shape [parseQuickAddDue] returns, so the preview chip and the
+/// create path cannot disagree about the format).
+String _ymd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}'
+    '-${d.month.toString().padLeft(2, '0')}'
+    '-${d.day.toString().padLeft(2, '0')}';
+
 /// The always-visible quick-add input, its live date preview chip, and submit.
 ///
 /// A keystroke rebuilds ONLY this bar (to update the natural-language date
@@ -1579,12 +1689,15 @@ class _QuickAddBar extends StatefulWidget {
     required this.controller,
     required this.focusNode,
     required this.dateIgnoredFor,
+    required this.pickedDue,
     required this.lists,
     required this.targetListId,
     required this.onTargetChanged,
     required this.onSubmit,
     required this.onAddPastedLines,
     required this.onDismissPreview,
+    required this.onSetDue,
+    required this.onPickDue,
   });
 
   final TextEditingController controller;
@@ -1604,6 +1717,18 @@ class _QuickAddBar extends StatefulWidget {
   /// title text (the preview chip's ×), so its phrase is not re-read as a due
   /// date. Owned by the parent; changing it flows a fresh value down here.
   final String dateIgnoredFor;
+
+  /// The date the user set EXPLICITLY on this draft from the date button
+  /// (#243), or `null`. It outranks the parsed phrase, so the chip shows it and
+  /// the create uses it. Owned by the parent (it performs the create).
+  final String? pickedDue;
+
+  /// Set the draft's date from the shared quick-date menu.
+  final ValueChanged<DateMove> onSetDue;
+
+  /// Open the calendar for the draft ("Pick a date…").
+  final VoidCallback onPickDue;
+
   final VoidCallback onSubmit;
 
   /// Accept the multi-line-paste offer (#219): create one task per line of the
@@ -1726,9 +1851,11 @@ class _QuickAddBarState extends State<_QuickAddBar> {
   /// dismissed it for this exact text. Recomputed on each local rebuild so a
   /// keystroke updates only this bar. Mirrors [_TaskListViewState._previewDue],
   /// which the parent's submit path reads from the same live controller text.
-  String? get _previewDue => widget.controller.text == widget.dateIgnoredFor
-      ? null
-      : parseQuickAddDue(widget.controller.text);
+  String? get _previewDue =>
+      widget.pickedDue ??
+      (widget.controller.text == widget.dateIgnoredFor
+          ? null
+          : parseQuickAddDue(widget.controller.text));
 
   @override
   Widget build(BuildContext context) {
@@ -1748,12 +1875,12 @@ class _QuickAddBarState extends State<_QuickAddBar> {
             lists: widget.lists,
             targetListId: widget.targetListId!,
             onChanged: widget.onTargetChanged,
-            // A coarse pointer with the date chip up spends the row on the
-            // chip and the send button, leaving the input its floor and little
-            // else: a labelled picker would not fit inside it. The composer
-            // sheds the destination LABEL there — never the control, whose menu
-            // still shows which list is checked.
-            compact: touch && (hasPreview || offer != null),
+            // A coarse pointer's composer line now permanently carries the
+            // date button as well (#243), so on a phone there is no width left
+            // for a labelled destination at any time — with a chip up or not.
+            // The composer sheds the destination LABEL there, never the
+            // control, whose menu still shows which list is checked (#217).
+            compact: touch,
           )
         : null;
     return Padding(
@@ -1776,9 +1903,15 @@ class _QuickAddBarState extends State<_QuickAddBar> {
                       // (with its gap), or the decorative "+" the field falls
                       // back to — both cost the caret line the same 48dp.
                       (picker != null ? 52 : 48) -
+                      52 - // gap + the date button (#243)
                       56 // gap + the send button
                       )
-                  .clamp(64.0, 168.0);
+                  // The draft's floor OUTRANKS the chip: on a 400dp phone the
+                  // row cannot seat a readable input, a date button, a
+                  // destination and a send button AND a full-width chip, so
+                  // the chip is what ellipsises (#223's ruling, re-applied now
+                  // that the date button shares the line).
+                  .clamp(48.0, 168.0);
           return Row(
             children: [
               Expanded(
@@ -1911,6 +2044,34 @@ class _QuickAddBarState extends State<_QuickAddBar> {
                     deleteButtonTooltipMessage: 'Keep as text',
                     onDeleted: widget.onDismissPreview,
                   ),
+              ],
+              // One tap to a date at CREATION (#243): the same frozen option
+              // set every other surface offers, so a task can be born dated
+              // without typing a phrase or opening the detail panel. With a
+              // date already on the draft it stays on the row — it is how that
+              // date is CHANGED (the chip's × only removes it).
+              //
+              // It stands down for the paste-split offer, exactly as the date
+              // chip does: while the question is "one task or N?" a date is
+              // not the decision being made, and the offer needs the width.
+              if (offer == null) ...[
+                const SizedBox(width: 4),
+                QuickDateAnchor(
+                  onSetDue: widget.onSetDue,
+                  onPickDate: widget.onPickDue,
+                  sheetTitle: 'Due date for this task',
+                  builder: (context, open) => IconButton(
+                    key: const Key('quick-add-date-button'),
+                    tooltip: 'Set a due date',
+                    // A finger-sized target on the composer's single line.
+                    constraints: const BoxConstraints(
+                      minWidth: 48,
+                      minHeight: 48,
+                    ),
+                    icon: const Icon(Icons.event_outlined),
+                    onPressed: open,
+                  ),
+                ),
               ],
               // The destination sits between the draft and the send button, so the
               // row reads "<title> → <list> ↑" (#217).

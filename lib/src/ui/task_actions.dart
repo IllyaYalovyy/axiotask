@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 
 import '../model/dates.dart' show DateMove;
 import '../store/stored.dart';
+import 'quick_date_menu.dart';
 
 /// One entry in the task action surface. A [TaskMenuItem] is a leaf action; a
 /// [TaskMenuSubmenu] expands inline into its child items; a [TaskMenuDivider]
@@ -118,47 +119,28 @@ List<TaskMenuEntry> buildTaskMenu({
       onInvoke: onEditNotes,
     ),
     const TaskMenuDivider(),
+    // Generated from the ONE frozen option set (#243) — this submenu shares its
+    // wording, order and icons with the row's date segment, the detail panel,
+    // the bulk bar and the composer, because they all read the same list.
     TaskMenuSubmenu(
       id: 'due',
       icon: Icons.event,
       label: 'Set due date',
       items: [
-        TaskMenuItem(
-          id: 'due-today',
-          icon: Icons.today,
-          label: 'Today',
-          onInvoke: () => onSetDue(DateMove.today),
-        ),
-        TaskMenuItem(
-          id: 'due-tomorrow',
-          icon: Icons.wb_sunny_outlined,
-          label: 'Tomorrow',
-          onInvoke: () => onSetDue(DateMove.tomorrow),
-        ),
-        TaskMenuItem(
-          id: 'due-week',
-          icon: Icons.next_week_outlined,
-          label: 'Next week',
-          onInvoke: () => onSetDue(DateMove.nextWeek),
-        ),
-        TaskMenuItem(
-          id: 'due-month',
-          icon: Icons.calendar_month_outlined,
-          label: 'Next month',
-          onInvoke: () => onSetDue(DateMove.nextMonth),
-        ),
-        TaskMenuItem(
-          id: 'due-pick',
-          icon: Icons.calendar_today_outlined,
-          label: 'Pick a date…',
-          onInvoke: onPickDate,
-        ),
-        TaskMenuItem(
-          id: 'due-clear',
-          icon: Icons.event_busy_outlined,
-          label: 'Clear',
-          onInvoke: () => onSetDue(DateMove.clear),
-        ),
+        for (final item in kQuickDateItems)
+          TaskMenuItem(
+            id: 'due-${item.id}',
+            icon: item.icon,
+            label: item.label,
+            onInvoke: () {
+              final move = item.move;
+              if (move == null) {
+                onPickDate();
+              } else {
+                onSetDue(move);
+              }
+            },
+          ),
       ],
     ),
     TaskMenuSubmenu(

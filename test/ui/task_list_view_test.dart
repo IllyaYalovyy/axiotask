@@ -18,11 +18,11 @@ import 'package:axiotask/src/model/dates.dart'
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
@@ -895,12 +895,12 @@ void main() {
   // other rows to stay consistent, an undoable toast says so and Undo reverts
   // the whole cascade as one unit (mirrors the reference DueConsistency suite).
   group('DueConsistency (#164 cascade toast)', () {
-    Future<void> hoverRow(WidgetTester tester) async {
-      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await g.addPointer(location: Offset.zero);
-      addTearDown(g.removePointer);
-      await g.moveTo(tester.getCenter(find.byType(TaskRow)));
+    /// Open the row's shared quick-date surface — a tap on its date segment,
+    /// the one route to a quick reschedule since the strip was retired (#243).
+    Future<void> openRowDates(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('row-due-segment')).first);
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
     }
 
     testWidgets('a cascade shows an undoable toast; Undo reverts the whole '
@@ -919,8 +919,8 @@ void main() {
         cascadedParent: false,
       );
 
-      await hoverRow(tester);
-      await tester.tap(find.byKey(const Key('quick-date-today')));
+      await openRowDates(tester);
+      await tester.tap(find.byKey(quickDateKey('today')));
       await tester.pump(); // resolve setDue → raise the cascade toast
       await tester.pump(const Duration(milliseconds: 750)); // let it settle in
 
@@ -940,8 +940,8 @@ void main() {
         initial: [row('P', 'Lonely', '1', due: '2026-06-20')],
       );
       // Default result → cascaded 0.
-      await hoverRow(tester);
-      await tester.tap(find.byKey(const Key('quick-date-today')));
+      await openRowDates(tester);
+      await tester.tap(find.byKey(quickDateKey('today')));
       await tester.pump();
       await tester.pump();
       expect(find.textContaining('moved to match'), findsNothing);
@@ -960,7 +960,10 @@ void main() {
 
         await tester.tap(find.text('no date'));
         await tester.pumpAndSettle();
-        // The calendar is up with its Today / Clear actions.
+        // The date segment raises the shared quick-date set; the calendar is
+        // one of its options (#243).
+        await tester.tap(find.byKey(quickDateKey('pick')));
+        await tester.pumpAndSettle();
         expect(find.byKey(const Key('due-picker-today')), findsOneWidget);
 
         await tester.tap(find.byKey(const Key('due-picker-today')));
@@ -976,6 +979,8 @@ void main() {
       await withClock(_clock, () async {
         await pumpView(tester, initial: [row('T', 'plan trip', '1')]);
         await tester.tap(find.text('no date'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(quickDateKey('pick')));
         await tester.pumpAndSettle();
 
         await tester.tap(find.byKey(const Key('due-picker-cancel')));
