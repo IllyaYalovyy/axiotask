@@ -1091,7 +1091,7 @@ class _SubtaskRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   decoration: done ? TextDecoration.lineThrough : null,
-                  color: done ? theme.disabledColor : null,
+                  color: done ? completedTitleColor(theme.colorScheme) : null,
                 ),
               ),
             ),

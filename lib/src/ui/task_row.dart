@@ -674,7 +674,7 @@ class _TaskRowState extends State<TaskRow> {
               child: StrikeSweep(
                 title: widget.title.isEmpty ? 'Untitled' : widget.title,
                 progress: completion,
-                completedColor: theme.disabledColor,
+                completedColor: completedTitleColor(theme.colorScheme),
               ),
             ),
             if (widget.pendingSync)
@@ -743,6 +743,7 @@ class _TaskRowState extends State<TaskRow> {
             ),
           if ((widget.listTag ?? '').isNotEmpty)
             Container(
+              key: const Key('list-tag'),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest,

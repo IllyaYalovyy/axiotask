@@ -29,6 +29,10 @@ import 'url_opener.dart';
 /// out of scope here (the user deferred it).
 const _sponsorsUrl = 'https://github.com/sponsors/IllyaYalovyy';
 
+/// Material's minimum touch target — the height the dialog's tabs are pinned
+/// to, since Material's own text-only [Tab] default is 46dp.
+const _tabHeight = 48.0;
+
 /// Open the Properties dialog over the current app surface.
 Future<void> showProperties(BuildContext context) => showDialog<void>(
   context: context,
@@ -91,11 +95,14 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
               const TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
+                // Material's text-only tab is 46dp tall — 2dp under its own
+                // 48dp touch-target minimum, and the only sub-48 target left in
+                // the app (#247). Named here rather than left to the default.
                 tabs: [
-                  Tab(text: 'Sync'),
-                  Tab(text: 'Appearance'),
-                  Tab(text: 'Account'),
-                  Tab(text: 'About'),
+                  Tab(text: 'Sync', height: _tabHeight),
+                  Tab(text: 'Appearance', height: _tabHeight),
+                  Tab(text: 'Account', height: _tabHeight),
+                  Tab(text: 'About', height: _tabHeight),
                 ],
               ),
               Expanded(
@@ -125,12 +132,29 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       children: [
         Icon(Icons.settings_outlined, color: theme.colorScheme.primary),
         const SizedBox(width: 10),
-        Text('Properties', style: theme.textTheme.titleLarge),
+        // Flexible, so a phone at 2x system text ellipsizes the title instead
+        // of overflowing the header (#247). It costs nothing at every other
+        // size: the [Spacer] beside it is pure slack, so as long as the title
+        // fits it still takes its natural width.
+        Flexible(
+          child: Text(
+            'Properties',
+            style: theme.textTheme.titleLarge,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
         if (settings.instance != null) ...[
           const SizedBox(width: 10),
-          Chip(
-            label: Text(settings.instance!),
-            visualDensity: VisualDensity.compact,
+          Flexible(
+            child: Chip(
+              label: Text(
+                settings.instance!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              visualDensity: VisualDensity.compact,
+            ),
           ),
         ],
         const Spacer(),

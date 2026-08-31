@@ -15,19 +15,81 @@ import 'date_format.dart';
 const Color _seed = Colors.deepPurple;
 
 /// The Material 3 light theme.
-ThemeData buildLightTheme() => ThemeData(
-  colorScheme: ColorScheme.fromSeed(seedColor: _seed),
-  useMaterial3: true,
-);
+ThemeData buildLightTheme() =>
+    _themeFrom(ColorScheme.fromSeed(seedColor: _seed));
 
 /// The Material 3 dark theme (same seed, dark brightness).
-ThemeData buildDarkTheme() => ThemeData(
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: _seed,
-    brightness: Brightness.dark,
-  ),
-  useMaterial3: true,
+ThemeData buildDarkTheme() => _themeFrom(
+  ColorScheme.fromSeed(seedColor: _seed, brightness: Brightness.dark),
 );
+
+/// Both themes, from their scheme — including the component themes that carry
+/// the app's CONTRAST contract (#247).
+///
+/// `ColorScheme.fromSeed` is generous with the `on*` text roles and careless
+/// with everything else, so the two component defaults below are corrected
+/// here rather than at each call site, and the third is pinned so a future
+/// Material default cannot silently move it. Every value is measured against
+/// the WCAG bar that applies to it by `test/ui/a11y_contrast_test.dart`.
+ThemeData _themeFrom(ColorScheme scheme) => ThemeData(
+  colorScheme: scheme,
+  useMaterial3: true,
+  // Dividers are STRUCTURE here, not decoration: the rule that fences the
+  // detail overflow's Delete off from the safe actions (#246), the one between
+  // the sidebar's smart views and its lists, the section rules in Properties.
+  // M3 draws them in `outlineVariant` — 1.6:1 on the light page, 2.0:1 on the
+  // dark one, a line a low-vision user does not see at all. `outline` is the
+  // neighbouring role that clears 3:1 on every surface the app puts a divider
+  // on. Set in both places because `Divider` reads the component theme while
+  // older Material widgets still read [ThemeData.dividerColor].
+  dividerColor: scheme.outline,
+  dividerTheme: DividerThemeData(color: scheme.outline),
+  // The phone's ONE creation affordance. M3 seeds the FAB `primaryContainer`,
+  // which sits 1.2:1 from the light page: a 56dp shape with no discernible
+  // edge, identifiable only by the glyph inside it. `primary` is the role that
+  // says "the primary action" and clears 3:1 against the page in both themes.
+  floatingActionButtonTheme: FloatingActionButtonThemeData(
+    backgroundColor: scheme.primary,
+    foregroundColor: scheme.onPrimary,
+  ),
+  checkboxTheme: CheckboxThemeData(side: _checkboxOutline(scheme)),
+);
+
+/// The outline of an UNCHECKED checkbox at rest — the only thing that says a
+/// tickable box is there at all, and the app's densest control (every task row
+/// carries one).
+///
+/// Same colour Material 3 resolves today (`onSurfaceVariant`, 8.9:1 / 10.9:1
+/// on the page); pinning it makes the contrast this app's contract instead of
+/// an unowned framework default that a future Material release can move under
+/// us. Every other state resolves to `null` and therefore keeps the framework's
+/// own value: the checked box is filled (no outline), and hover / focus /
+/// press deliberately darken to `onSurface` — emphasis this must not flatten.
+WidgetStateBorderSide _checkboxOutline(ColorScheme scheme) =>
+    WidgetStateBorderSide.resolveWith((states) {
+      const framework = {
+        WidgetState.selected,
+        WidgetState.disabled,
+        WidgetState.error,
+        WidgetState.hovered,
+        WidgetState.focused,
+        WidgetState.pressed,
+      };
+      if (states.any(framework.contains)) return null;
+      return BorderSide(width: 2, color: scheme.onSurfaceVariant);
+    });
+
+/// The tone a COMPLETED task's title wears — in the list row and in the detail
+/// panel's subtask list, so "done" looks the same in both places.
+///
+/// Quieter than an open task's title, but still READ. [ThemeData.disabledColor]
+/// (`onSurface` at 38%) put it at 2.3:1 on the light page and 3.0:1 on the dark
+/// one, under the 4.5:1 AA bar for body text — and a completed task is content
+/// the user asked to see ("Show completed"), still tappable and still
+/// un-completable, so 1.4.3's exemption for inactive controls does not cover
+/// it. `onSurfaceVariant` is the M3 role for exactly this de-emphasis, and it
+/// is what the search results already use for a completed hit.
+Color completedTitleColor(ColorScheme scheme) => scheme.onSurfaceVariant;
 
 /// Map the persisted `theme` pref to a [ThemeMode]. Anything other than the two
 /// explicit choices resolves to [ThemeMode.system] (the safe default that
