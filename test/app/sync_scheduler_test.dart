@@ -150,6 +150,62 @@ void main() {
       expect(seen.single.lastError, isNotNull, reason: 'failure surfaces it');
     });
 
+    test('a run that moves data announces itself as CHANGED (#255)', () async {
+      final h = await makeHarness();
+      h.client.seedList('L1', 'Inbox');
+      h.client.seedTask('L1', 'T1', 'Buy milk', '00000000000000000001');
+      final seen = <SyncRunEvent>[];
+      final sub = h.scheduler.runs.listen(seen.add);
+      addTearDown(sub.cancel);
+
+      await h.scheduler.runSync();
+      await pumpEventQueue();
+
+      // Exactly two transitions, in order: the line goes up, then it comes
+      // down — and the footer learns this run was worth a check-mark.
+      expect(seen, hasLength(2));
+      expect(seen.first, const SyncRunEvent.started());
+      expect(
+        seen.last,
+        const SyncRunEvent.finished(changed: true, failed: false),
+      );
+    });
+
+    test('a run with nothing to do finishes UNCHANGED — the footer stays '
+        'silent (#255)', () async {
+      final h = await makeHarness();
+      final seen = <SyncRunEvent>[];
+      final sub = h.scheduler.runs.listen(seen.add);
+      addTearDown(sub.cancel);
+
+      // Nothing on the server, nothing local: the once-a-minute poll that
+      // finds no news. It still shows the line; it must not claim a change.
+      await h.scheduler.runSync();
+      await pumpEventQueue();
+
+      expect(seen, [
+        const SyncRunEvent.started(),
+        const SyncRunEvent.finished(changed: false, failed: false),
+      ]);
+    });
+
+    test('a FAILED run still finishes — the sync line can never stick on '
+        '(#255)', () async {
+      final h = await makeHarness();
+      final seen = <SyncRunEvent>[];
+      final sub = h.scheduler.runs.listen(seen.add);
+      addTearDown(sub.cancel);
+
+      h.client.failNext(Method.listTasklists, () => const Unauthorized());
+      await expectLater(h.scheduler.runSync(), throwsA(isA<Object>()));
+      await pumpEventQueue();
+
+      expect(seen, [
+        const SyncRunEvent.started(),
+        const SyncRunEvent.finished(changed: false, failed: true),
+      ]);
+    });
+
     test('the public surface emits the sanitized projection — no raw error '
         'text ever rides a snapshot (#131/#187)', () async {
       final h = await makeHarness(push: true);

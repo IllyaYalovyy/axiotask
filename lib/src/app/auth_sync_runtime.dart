@@ -141,6 +141,11 @@ class AuthSyncRuntime {
       _config.autoSyncOnStart || _config.pushEnabled || _hasStoredSession(),
     ),
     syncStatusStreamProvider.overrideWith((ref) => _syncStatuses()),
+    // The per-run signal the quiet sync line and the footer check-mark ride
+    // (#255). Unlike the status stream this is NOT seeded: there is no
+    // "current" transition to replay, and a seed would raise a line for a run
+    // that ended before the widget tree existed.
+    syncRunEventsProvider.overrideWith((ref) => scheduler.runs),
     refreshActionProvider.overrideWithValue(refresh),
     freshSyncActionProvider.overrideWithValue(freshSync),
     // Built from the scope's Ref so the gesture can raise a toast on the ONE

@@ -265,6 +265,8 @@ class SyncScheduler {
   final SyncStatus _status = SyncStatus();
   final StreamController<SyncStatusView> _statusController =
       StreamController<SyncStatusView>.broadcast();
+  final StreamController<SyncRunEvent> _runController =
+      StreamController<SyncRunEvent>.broadcast();
 
   /// Serializes sync runs — only one runs at a time (prevents double-push
   /// races). The tail of the currently-running (or last) run.
@@ -291,6 +293,15 @@ class SyncScheduler {
   /// snapshot — the same projection [status] returns, so no raw error text can
   /// ride the stream to a subscriber (#131/#187).
   Stream<SyncStatusView> get statuses => _statusController.stream;
+
+  /// Emitted at the START and again at the END of every run — the transient
+  /// signal the quiet sync line and the footer check-mark ride (#255).
+  /// [statuses] cannot serve: it fires only after a run, so nothing on it can
+  /// say "a run is happening now", and its counters survive a failure.
+  ///
+  /// Broadcast and non-replaying: a subscriber that mounts mid-run misses the
+  /// start, which is right — it has no line up to take down.
+  Stream<SyncRunEvent> get runs => _runController.stream;
 
   /// Wake the background loop (a mutation happened). A no-op unless the loop is
   /// running and — via its own auth gate — actually authenticated.
@@ -368,22 +379,37 @@ class SyncScheduler {
 
     SyncOutcome? outcome;
     SyncError? error;
+    // The line goes up here and comes down in the `finally` — so it comes down
+    // on a failure, on a rethrow, and on an error no arm below catches. A
+    // progress line that can outlive its run is worse than no line at all.
+    _emitRun(const SyncRunEvent.started());
     try {
-      outcome = await engine.run();
-    } on SyncError catch (e) {
-      error = e;
-    }
+      try {
+        outcome = await engine.run();
+      } on SyncError catch (e) {
+        error = e;
+      }
 
-    _recordOutcome(outcome, error);
-    // Emit the SANITIZED projection, not the raw record: the internal
-    // lastRawError (dedup key, may carry SQL) must never reach a subscriber
-    // (#131/#187). SyncStatusView.of is an independent snapshot, so a later
-    // run's mutation can't retroactively alter what a listener received.
-    final snapshot = SyncStatusView.of(_status);
-    if (!_statusController.isClosed) _statusController.add(snapshot);
+      _recordOutcome(outcome, error);
+      // Emit the SANITIZED projection, not the raw record: the internal
+      // lastRawError (dedup key, may carry SQL) must never reach a subscriber
+      // (#131/#187). SyncStatusView.of is an independent snapshot, so a later
+      // run's mutation can't retroactively alter what a listener received.
+      final snapshot = SyncStatusView.of(_status);
+      if (!_statusController.isClosed) _statusController.add(snapshot);
+    } finally {
+      final moved =
+          outcome != null &&
+          (outcome.pulled > 0 || outcome.pushed > 0 || outcome.deleted > 0);
+      _emitRun(SyncRunEvent.finished(changed: moved, failed: outcome == null));
+    }
 
     if (error != null) throw error;
     return outcome!;
+  }
+
+  void _emitRun(SyncRunEvent event) {
+    if (!_runController.isClosed) _runController.add(event);
   }
 
   void _recordOutcome(SyncOutcome? outcome, SyncError? error) {
@@ -491,8 +517,11 @@ class SyncScheduler {
     }
   }
 
-  /// Release the notifier stream. Call at shutdown.
-  Future<void> dispose() => _statusController.close();
+  /// Release the notifier streams. Call at shutdown.
+  Future<void> dispose() async {
+    await _statusController.close();
+    await _runController.close();
+  }
 
   /// Run [body] after any in-flight run finishes, and make the NEXT caller wait
   /// on this one — a tiny async mutex over the sync guard.

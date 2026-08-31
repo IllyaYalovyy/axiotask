@@ -27,6 +27,7 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
+import 'package:axiotask/src/ui/sync_feedback.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/views.dart';
@@ -70,12 +71,17 @@ const _myTasks = StoredTaskList(
 /// [listView] renders the shell on a LIST opened from the drawer instead of on
 /// a smart view: the list is not one of the bottom-nav destinations, so the bar
 /// must come up with no destination highlighted at all (#236).
+/// [syncing] renders the shell WHILE a sync run is in flight (#255): the 2dp
+/// line on the app bar's bottom edge. Every other scenario passes the line in
+/// its idle state — exactly as the real shell always mounts it — so the at-rest
+/// goldens prove the line costs no pixel when nothing is syncing.
 Widget _shellAt(
   Size size, {
   TextScaler textScaler = TextScaler.noScaling,
   ThemeData? theme,
   TargetPlatform platform = TargetPlatform.android,
   bool listView = false,
+  bool syncing = false,
 }) {
   return MediaQuery(
     data: MediaQueryData(size: size, textScaler: textScaler),
@@ -117,6 +123,7 @@ Widget _shellAt(
           // The compact form factor renders the mobile chrome: an app bar with
           // the view title + hamburger, and a "new task" FAB.
           title: listView ? _myTasks.list.title : SmartView.all.label,
+          syncLine: SyncProgressLine(running: syncing),
           onNewTask: () {},
           list: TaskListView(
             viewId: listView ? _myTasks.list.id : SmartView.all.id,
@@ -156,6 +163,30 @@ void main() {
           name: 'compact',
           constraints: BoxConstraints.tight(phone),
           child: _shellAt(phone),
+        ),
+      ],
+    ),
+  );
+
+  // Quiet visible sync (#255): the SAME phone shell with a run in flight. The
+  // only difference from `shell_phone` is a 2dp line on the app bar's bottom
+  // edge — nothing else may move, which is the whole point of overlaying it in
+  // `flexibleSpace` instead of adding it as the bar's `bottom`.
+  //
+  // NOT settled: the running line is an INDETERMINATE progress indicator, which
+  // never settles (pumpAndSettle would time out on it). The clock is advanced
+  // by a fixed span instead, so the sweep is pinned at one deterministic point
+  // of its cycle.
+  goldenTest(
+    'shell — phone form factor with a sync running',
+    fileName: 'shell_phone_syncing',
+    pumpBeforeTest: (tester) => tester.pump(const Duration(milliseconds: 500)),
+    builder: () => GoldenTestGroup(
+      children: [
+        GoldenTestScenario(
+          name: 'compact — sync line on the app bar edge',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, syncing: true),
         ),
       ],
     ),

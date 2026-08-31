@@ -11,6 +11,7 @@
 // counts, and the show-completed toggle are T7.1 — this slice renders the "all"
 // aggregate with completed tasks hidden by default.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
@@ -19,6 +20,7 @@ import 'package:flutter/services.dart' show Clipboard;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app/commands.dart' show CommandError, CompleteToken, DeleteToken;
+import '../app/logging.dart' show Log;
 import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
@@ -45,6 +47,7 @@ import 'new_task_fab.dart' show ComposerMorph, NewTaskFab;
 import 'quick_date_menu.dart';
 import 'search.dart';
 import 'sort_dropdown.dart';
+import 'sync_feedback.dart';
 import 'task_actions.dart';
 import 'task_row.dart';
 import 'theme.dart';
@@ -349,8 +352,37 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       .set(_selectionMode ? _clearSelection : null);
 
   /// Run a manual refresh (mobile pull-to-refresh): a real sync when a session
-  /// is live, else a no-op over the always-live reactive store.
-  Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
+  /// is live, else a no-op over the always-live reactive store — handed off to
+  /// the quiet sync line (#255).
+  ///
+  /// The gesture's own spinner retires the moment the run is actually UNDER
+  /// WAY, and the 2dp line on the app bar's edge carries it from there — so a
+  /// manual pull and the 60s poll are ONE thing on screen rather than a
+  /// spinner turning beside a line for the same sync. Only the indicator
+  /// changes hands; the run itself is untouched and finishes on its own.
+  ///
+  /// RACED against the refresh itself, because not every refresh raises a run:
+  /// signed out it is a documented no-op, and in a tree with no runtime
+  /// mounted the run stream never emits at all. Whichever happens first ends
+  /// the gesture, so the spinner can never be left turning forever.
+  Future<void> _pullRefresh() async {
+    final started = Completer<void>();
+    final handoff = ref.listenManual<bool>(syncRunningProvider, (_, running) {
+      if (running && !started.isCompleted) started.complete();
+    });
+    // The runtime's refresh already logs and sanitizes its own failures into
+    // the status the footer renders. Once the line has taken over we stop
+    // awaiting this future, so it needs its own handler or a late throw would
+    // escape as an unhandled async error with nothing left to catch it.
+    final refresh = ref
+        .read(refreshActionProvider)()
+        .catchError((Object e) => Log.warn('pull-to-refresh failed: $e'));
+    try {
+      await Future.any([refresh, started.future]);
+    } finally {
+      handoff.close();
+    }
+  }
 
   // The toolbar handlers below are METHODS, not closures built in `build`, so
   // that the [ListChromeActions] the compact shell renders (#244) compares
@@ -1267,31 +1299,50 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         ],
         // The compact shell hosts these actions in its ONE app bar (#244); on
         // every other layout they are this pane's own toolbar. Never both.
-        if (chrome == null) ...[
-          _ListToolbar(
-            sort: sort,
-            showCompleted: prefs.showCompleted,
-            onSearch: _openSearch,
-            // The VISIBLE touch entry into multi-select (#245). A mouse already
-            // has two (Ctrl-click and the right-click menu's "Select"), so the
-            // overflow — and the extra 48dp it costs — is a coarse-pointer
-            // affordance only, exactly like the swipe actions. It stays MOUNTED
-            // once selection mode is on (merely disabled): a control that
-            // vanishes when used would re-flow the toolbar under the finger
-            // that just tapped it.
-            selectTasksEnabled: !_selectionMode,
-            onSelectTasks: touch ? _enterSelectionMode : null,
-            onBulkAdd: actions.onBulkAdd,
-            onSort: _setSort,
-            onShowCompleted: _setShowCompleted,
-            // Clear-completed is a concrete-list-only action, and only while
-            // completed tasks are visible (you cannot bulk-delete what you
-            // cannot see). Smart views (aggregating across lists) never offer
-            // it.
-            onClearCompleted: actions.onClearCompleted,
+        if (chrome == null)
+          // The expanded layout has no app bar, so this pane's top chrome IS
+          // one: the quiet sync line rides the toolbar's bottom edge here
+          // (#255). A Stack, never another Column child — the line is painted
+          // over the divider and moves nothing.
+          Stack(
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _ListToolbar(
+                    sort: sort,
+                    showCompleted: prefs.showCompleted,
+                    onSearch: _openSearch,
+                    // The VISIBLE touch entry into multi-select (#245). A
+                    // mouse already has two (Ctrl-click and the right-click
+                    // menu's "Select"), so the overflow — and the extra 48dp
+                    // it costs — is a coarse-pointer affordance only, exactly
+                    // like the swipe actions. It stays MOUNTED once selection
+                    // mode is on (merely disabled): a control that vanishes
+                    // when used would re-flow the toolbar under the finger
+                    // that just tapped it.
+                    selectTasksEnabled: !_selectionMode,
+                    onSelectTasks: touch ? _enterSelectionMode : null,
+                    onBulkAdd: actions.onBulkAdd,
+                    onSort: _setSort,
+                    onShowCompleted: _setShowCompleted,
+                    // Clear-completed is a concrete-list-only action, and
+                    // only while completed tasks are visible (you cannot
+                    // bulk-delete what you cannot see). Smart views
+                    // (aggregating across lists) never offer it.
+                    onClearCompleted: actions.onClearCompleted,
+                  ),
+                  const Divider(height: 1),
+                ],
+              ),
+              const Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LiveSyncLine(),
+              ),
+            ],
           ),
-          const Divider(height: 1),
-        ],
         if (_selectionMode)
           BulkBar(
             count: _selectedIds.length,

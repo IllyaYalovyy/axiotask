@@ -30,8 +30,21 @@ class SidebarAuthSyncFooter extends ConsumerStatefulWidget {
 class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
   bool _syncing = false;
 
+  /// How many runs have moved data since this footer mounted (#255). Counted
+  /// here rather than read off the status: the status keeps a SUCCESSFUL run's
+  /// counters through the next failure, so "pulled 3" can still be true long
+  /// after the run that pulled them.
+  int _confirmedRuns = 0;
+
   @override
   Widget build(BuildContext context) {
+    // Every run that CHANGED something draws the check once. A no-op poll and
+    // a failed run both leave the footer exactly as it was.
+    ref.listen(syncRunEventsProvider, (previous, next) {
+      final event = next.value;
+      if (event == null || event.running || !event.changed) return;
+      setState(() => _confirmedRuns++);
+    });
     final snapshot = ref.watch(authSnapshotProvider).value;
     final sync = ref.watch(syncStatusViewProvider);
     final syncIntended = ref.watch(syncIntendedProvider);
@@ -52,6 +65,7 @@ class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
 
     return AuthSyncFooter(
       status: status,
+      confirmedRuns: _confirmedRuns,
       onSignIn: ref.read(signInActionProvider),
       onSignOut: ref.read(signOutActionProvider),
       onSync: _sync,

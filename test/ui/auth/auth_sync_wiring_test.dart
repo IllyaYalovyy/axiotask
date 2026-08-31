@@ -24,6 +24,7 @@ import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
+import 'package:axiotask/src/ui/motion.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/toast.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
@@ -136,6 +137,44 @@ void main() {
     // Sign-in kicked off a first sync, so the status reads "Synced …".
     expect(find.textContaining('Synced'), findsOneWidget);
     expect(runtime.scheduler.status.totalSyncs, 1);
+  });
+
+  testWidgets('a sync that MOVED data draws the footer check-mark (#255)', (
+    tester,
+  ) async {
+    // The whole chain, end to end: scheduler run → run-event stream → provider
+    // override → footer. A stub anywhere in it and no mark is drawn.
+    final server = FakeTasksApi()
+      ..seedList('L1', 'Inbox')
+      ..seedTask('L1', 'T1', 'Buy milk', '00000000000000000001');
+    final runtime = await makeRuntime(
+      tokenProvider: FakeTokenProvider.withToken('access-1'),
+      client: server,
+    );
+    await pumpFooter(tester, runtime);
+    final check = find.byKey(const Key('sync-check-mark'));
+    expect(check, findsNothing);
+
+    // Sign-in triggers a first sync, which pulls the seeded task.
+    await tester.tap(find.byKey(const Key('auth-footer-signin')));
+    await settle(tester);
+    expect(runtime.scheduler.status.lastPulled, greaterThan(0));
+    expect(check, findsOneWidget, reason: 'that run moved data — say so');
+
+    // Let the mark run out, then sync again with nothing new on either side:
+    // the common case, and it must pass in complete silence.
+    await tester.pump(MotionDurations.syncCheck);
+    await tester.pump();
+    expect(check, findsNothing);
+
+    await runtime.refresh();
+    await settle(tester);
+    expect(runtime.scheduler.status.totalSyncs, 2);
+    expect(
+      check,
+      findsNothing,
+      reason: 'a no-op poll changed nothing — no congratulation',
+    );
   });
 
   testWidgets('a sign-in that fails with a provider outage says so out loud', (

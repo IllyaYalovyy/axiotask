@@ -122,3 +122,55 @@ class SyncStatusView {
       needsAttention = false,
       needsReauth = false;
 }
+
+/// A live signal about ONE sync run — the transient facts the outcome-carrying
+/// [SyncStatusView] deliberately does not hold (#255).
+///
+/// The status record answers "where does sync stand": it is emitted once, AFTER
+/// a run, and a UI reading it can tell neither that a run is in flight nor
+/// whether the run that just ended actually moved anything (its counters are
+/// left untouched by a failure, so yesterday's numbers survive today's error).
+/// The quiet sync line needs the first fact and the footer's check-mark the
+/// second, so the scheduler emits this pair of transitions around every run.
+///
+/// Sanitized by construction: three booleans, no provider text, no counts that
+/// could name a list or a task (#131/#187).
+class SyncRunEvent {
+  /// A run has just STARTED — the line appears.
+  const SyncRunEvent.started()
+    : running = true,
+      changed = false,
+      failed = false;
+
+  /// A run has just ENDED, whatever its outcome — the line fills and fades.
+  const SyncRunEvent.finished({required this.changed, required this.failed})
+    : running = false;
+
+  /// Whether a run is in flight as of this event.
+  final bool running;
+
+  /// Whether the finished run MOVED data — anything pulled, pushed or deleted.
+  /// A clean no-op poll (by far the common case, once a minute, forever) is
+  /// `false`, and the footer stays silent for it.
+  final bool changed;
+
+  /// Whether the finished run ended in a failure. Failures keep their existing
+  /// toast/status path — the line simply goes, it never turns red — but a
+  /// failed run has, by definition, confirmed nothing.
+  final bool failed;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SyncRunEvent &&
+      other.running == running &&
+      other.changed == changed &&
+      other.failed == failed;
+
+  @override
+  int get hashCode => Object.hash(running, changed, failed);
+
+  @override
+  String toString() => running
+      ? 'SyncRunEvent.started()'
+      : 'SyncRunEvent.finished(changed: $changed, failed: $failed)';
+}

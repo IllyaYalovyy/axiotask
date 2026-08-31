@@ -19,6 +19,7 @@ import 'onboarding.dart';
 import 'properties.dart';
 import 'router.dart';
 import 'sidebar.dart';
+import 'sync_feedback.dart';
 import 'task_detail.dart';
 import 'task_list_view.dart';
 import 'theme.dart' show coarsePointerPlatform;
@@ -182,6 +183,9 @@ class AppShell extends ConsumerWidget {
       sidebar: sidebar,
       scaffoldKey: scaffoldKey,
       title: viewTitle,
+      // The quiet sync line (#255) on the compact app bar's bottom edge. Its
+      // own Consumer, so a sync starting or ending never rebuilds the shell.
+      syncLine: const LiveSyncLine(),
       // Desktop divider drags (#210): the persisted widths seed the expanded
       // layout, and each drag end / double-click reset writes back through the
       // prefs controller (one write per gesture, not per frame).
