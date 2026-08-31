@@ -28,7 +28,10 @@
 // never from the constant a helper returns, so a widget that stops consulting
 // the theme fails exactly like a theme with the wrong colour in it.
 
+import 'package:axiotask/src/model/task_list.dart';
+import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/new_task_fab.dart';
+import 'package:axiotask/src/ui/sidebar.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:clock/clock.dart';
@@ -130,6 +133,59 @@ Future<void> _pumpRow(
     );
     await tester.pump();
   });
+}
+
+/// The alpha every ancestor [Opacity] multiplies onto what [of] paints. A row
+/// held at 50% opacity is 50% opacity to the eye no matter what colour its
+/// style names, so contrast has to be measured through it.
+double _ancestorOpacity(WidgetTester tester, Finder of) {
+  var alpha = 1.0;
+  for (final o in tester.widgetList<Opacity>(
+    find.ancestor(of: of, matching: find.byType(Opacity)),
+  )) {
+    alpha *= o.opacity;
+  }
+  return alpha;
+}
+
+/// The drawer's list section with one EXCLUDED list, under [theme].
+Future<void> _pumpSidebar(WidgetTester tester, ThemeData theme) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: theme,
+      home: Scaffold(
+        body: Row(
+          children: [
+            Sidebar(
+              selectedViewId: 'all',
+              counts: const {'L1': 4},
+              lists: const [
+                StoredTaskList(
+                  list: TaskList(
+                    id: 'L1',
+                    title: 'Work',
+                    etag: 'e',
+                    updated: 't',
+                  ),
+                  syncState: SyncState.clean,
+                  localUpdated: 't',
+                ),
+              ],
+              excludedLists: const {'L1'},
+              onSelectView: (_) {},
+              onCreateList: (_, {localOnly = false}) {},
+              onRenameList: (_, _) {},
+              onDeleteList: (_) {},
+              onToggleExclude: (_) {},
+              onReorderLists: (_) {},
+            ),
+            const Expanded(child: SizedBox()),
+          ],
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -341,6 +397,47 @@ void main() {
           reason:
               '$name: a completed title must still read QUIETER than an open '
               'one — legible is not the same as undimmed',
+        );
+      });
+
+      // ── The drawer's excluded list (#248) ─────────────────────────────────
+      // Non-happy path: a list the user took OUT of the smart views. It is not
+      // a disabled control — it opens, renames, reorders and deletes like any
+      // other — so 1.4.3 applies in full. Held at 50% opacity it measured 2.3:1
+      // and the italic bought nothing; the `visibility_off` glyph now carries
+      // the meaning and has to be seen (1.4.11) for that to be true.
+      testWidgets('an excluded list is quieter but still legible', (
+        tester,
+      ) async {
+        await _pumpSidebar(tester, theme);
+
+        final title = find.text('Work');
+        final titleColor = _glyphColor(tester, title).withValues(
+          alpha: _glyphColor(tester, title).a * _ancestorOpacity(tester, title),
+        );
+        expect(
+          _ratioOn(titleColor, scheme.surface),
+          greaterThanOrEqualTo(_aaText),
+          reason: '$name: an excluded list\'s name cannot be read',
+        );
+        expect(
+          _ratioOn(titleColor, scheme.surface),
+          lessThan(_ratioOn(scheme.onSurface, scheme.surface)),
+          reason:
+              '$name: an excluded list must still read QUIETER than an '
+              'included one',
+        );
+
+        final glyph = find.byIcon(Icons.visibility_off_outlined);
+        final glyphColor = _glyphColor(tester, glyph).withValues(
+          alpha: _glyphColor(tester, glyph).a * _ancestorOpacity(tester, glyph),
+        );
+        expect(
+          _ratioOn(glyphColor, scheme.surface),
+          greaterThanOrEqualTo(_nonText),
+          reason:
+              '$name: the exclusion glyph — the only thing that says WHY the '
+              'row is quiet — vanishes into the drawer',
         );
       });
 
