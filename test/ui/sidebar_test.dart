@@ -445,6 +445,37 @@ void main() {
     expect(order.indexOf('L3'), lessThan(2), reason: 'Errands moved up');
   });
 
+  testWidgets('a lifted list row carries the app-wide drag weight (#256)', (
+    tester,
+  ) async {
+    // The sidebar drags through a bare [SliverReorderableList], which supplies
+    // no proxy decorator at all — a list picked up here used to go FLAT while a
+    // task picked up two panes over gained elevation, scale and a tonal surface.
+    // One lift, both drags.
+    await pump(tester, lists: [list('L1', 'Work'), list('L2', 'Home')]);
+    final handles = find.byIcon(Icons.drag_indicator);
+    final gesture = await tester.startGesture(tester.getCenter(handles.first));
+    await tester.pump(const Duration(milliseconds: 50));
+    await gesture.moveBy(const Offset(0, 24));
+    await tester.pump(); // the proxy mounts, still flat
+    await tester.pump(); // the lift's first tick
+    await tester.pump(const Duration(milliseconds: 100)); // Motion.short
+
+    final surface = find.byKey(const Key('drag-lift-surface'));
+    expect(tester.widget<Material>(surface).elevation, 6);
+    expect(
+      tester
+          .widget<Transform>(find.byKey(const Key('drag-lift-scale')))
+          .transform
+          .getMaxScaleOnAxis(),
+      closeTo(1.02, 0.0001),
+    );
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(surface, findsNothing, reason: 'the proxy is gone once it lands');
+  });
+
   testWidgets('the footer is rendered when provided', (tester) async {
     await pump(tester, footer: const Text('FOOTER-MARKER'));
     expect(find.text('FOOTER-MARKER'), findsOneWidget);
