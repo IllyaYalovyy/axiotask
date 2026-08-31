@@ -21,7 +21,7 @@ import 'router.dart';
 import 'sidebar.dart';
 import 'task_detail.dart';
 import 'task_list_view.dart';
-import 'task_row.dart' show coarsePointerPlatform;
+import 'theme.dart' show coarsePointerPlatform;
 import 'toast.dart';
 import 'views.dart';
 

@@ -13,6 +13,7 @@
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/ui/date_format.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_detail.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:flutter/material.dart';
@@ -293,7 +294,7 @@ void main() {
       expect(due.onPressed, isNotNull);
     });
 
-    testWidgets('a quick "Today" chip sets the date via setDue', (
+    testWidgets('the Due field\'s "Today" sets the date via setDue', (
       tester,
     ) async {
       final fake = await pumpDetail(
@@ -301,7 +302,9 @@ void main() {
         taskId: 'P',
         initial: [row('P', 'undated')],
       );
-      await tester.tap(find.widgetWithText(ActionChip, 'Today'));
+      await tester.tap(find.byKey(const Key('due-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(quickDateKey('today')));
       await settleDetail(tester);
       expect(fake.setDueCalls, ['P=DateMove.today']);
       expect(
@@ -310,23 +313,21 @@ void main() {
       );
     });
 
-    testWidgets('the Clear chip only shows when a date is set, and clears it', (
-      tester,
-    ) async {
-      // Undated: no Clear chip.
+    testWidgets('Clear removes the date', (tester) async {
       final fake = await pumpDetail(
         tester,
         taskId: 'P',
         initial: [row('P', 'dated', due: '2026-06-15T00:00:00.000Z')],
       );
-      expect(find.widgetWithText(ActionChip, 'Clear'), findsOneWidget);
-      await tester.tap(find.widgetWithText(ActionChip, 'Clear'));
+      await tester.tap(find.byKey(const Key('due-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(quickDateKey('clear')));
       await settleDetail(tester);
       expect(fake.setDueCalls, ['P=DateMove.clear']);
       expect(fake.tasks.firstWhere((t) => t.task.id == 'P').task.due, isNull);
     });
 
-    testWidgets('picking a day in the calendar sets it via setDueRaw', (
+    testWidgets('"Pick a date…" opens the calendar and sets it via setDueRaw', (
       tester,
     ) async {
       final fake = await pumpDetail(
@@ -335,6 +336,8 @@ void main() {
         initial: [row('P', 'dated', due: '2026-06-15T00:00:00.000Z')],
       );
       await tester.tap(find.byKey(const Key('due-field')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(quickDateKey('pick')));
       await tester.pumpAndSettle();
       expect(find.byType(CalendarDatePicker), findsOneWidget);
       await tester.tap(find.text('20'));
@@ -370,6 +373,8 @@ void main() {
         ],
       );
       await tester.tap(find.byKey(const Key('sub-due-S')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(quickDateKey('pick')));
       await tester.pumpAndSettle();
       expect(find.byType(CalendarDatePicker), findsOneWidget);
       await tester.tap(find.text('17'));

@@ -1,8 +1,13 @@
 // The multi-select bulk bar (BulkOps). Shown while a selection exists; carries
-// the whole-selection actions — Complete, quick reschedule (Today / Tomorrow /
-// Next week / Clear date), Move to a list, Delete — plus a clear-selection
-// button. Each op is the caller's to perform against the selected ids; this
-// widget only renders the toolbar and reports the count.
+// the whole-selection actions — Complete, "Due" (the ONE shared quick-date
+// menu, #243), Move to a list, Delete — plus a clear-selection button. Each op
+// is the caller's to perform against the selected ids; this widget only renders
+// the toolbar and reports the count.
+//
+// The four hard-coded date buttons this replaced (Today / Tomorrow / Next week
+// / Clear date) were a fourth vocabulary AND a subset — bulk could not reach
+// "Next month" or a picked day at all. Behind one "Due" button the whole frozen
+// set is available to a selection, exactly as it is to a single row.
 //
 // The `x`-key / Space / Ctrl+M keyboard triggers of the reference die with the
 // keyboard layer; every action here is a tappable button, so touch and mouse
@@ -11,6 +16,7 @@
 import 'package:flutter/material.dart';
 
 import '../model/dates.dart' show DateMove;
+import 'quick_date_menu.dart';
 
 /// The bulk-actions toolbar for [count] selected tasks.
 class BulkBar extends StatelessWidget {
@@ -18,6 +24,7 @@ class BulkBar extends StatelessWidget {
     required this.count,
     required this.onComplete,
     required this.onSetDue,
+    required this.onPickDue,
     required this.onMove,
     required this.onDelete,
     required this.onClear,
@@ -28,7 +35,14 @@ class BulkBar extends StatelessWidget {
   final int count;
 
   final VoidCallback onComplete;
+
+  /// Apply a frozen move to every selected task.
   final void Function(DateMove move) onSetDue;
+
+  /// Open the calendar ("Pick a date…") and apply the chosen day to every
+  /// selected task.
+  final VoidCallback onPickDue;
+
   final VoidCallback onMove;
   final VoidCallback onDelete;
   final VoidCallback onClear;
@@ -60,25 +74,22 @@ class BulkBar extends StatelessWidget {
               label: const Text('Complete'),
               onPressed: onComplete,
             ),
-            TextButton(
-              key: const Key('bulk-today'),
-              onPressed: () => onSetDue(DateMove.today),
-              child: const Text('Today'),
-            ),
-            TextButton(
-              key: const Key('bulk-tomorrow'),
-              onPressed: () => onSetDue(DateMove.tomorrow),
-              child: const Text('Tomorrow'),
-            ),
-            TextButton(
-              key: const Key('bulk-week'),
-              onPressed: () => onSetDue(DateMove.nextWeek),
-              child: const Text('Next week'),
-            ),
-            TextButton(
-              key: const Key('bulk-clear-date'),
-              onPressed: () => onSetDue(DateMove.clear),
-              child: const Text('Clear date'),
+            QuickDateAnchor(
+              onSetDue: onSetDue,
+              onPickDate: onPickDue,
+              sheetTitle: '$count selected · due date',
+              builder: (context, open) => TextButton.icon(
+                key: const Key('bulk-due'),
+                icon: const Icon(Icons.event, size: 18),
+                label: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Due'),
+                    Icon(Icons.arrow_drop_down, size: 18),
+                  ],
+                ),
+                onPressed: open,
+              ),
             ),
             TextButton.icon(
               key: const Key('bulk-move'),

@@ -1,14 +1,15 @@
 // TaskWidget [touch] sub-suite + CheckboxTapTarget contract (MIGRATION-PLAN §5
 // T8.1). Protects the coarse-pointer gesture path grafted onto the desktop
-// TaskRow: a swipe right completes the task, a swipe left reveals the quick-date
-// action strip (following the finger while peeking, latched open at rest), a
-// long-press toggles selection with motion cancelling it, and a vertical drag
-// still scrolls the list (gesture-vs-scroll slop). Every assertion is on what a
-// gesture actually renders or the callback it fires — never "a method was
-// called". Touch gestures are gated to a coarse pointer, so the mouse path
-// (hover + right-click) is deliberately left untouched and is asserted here too.
+// TaskRow: a swipe right completes the task, a swipe left opens the ONE shared
+// quick-date sheet for the row (#243 — the in-row strip it used to reveal is
+// retired, D-1), a long-press toggles selection with motion cancelling it, and
+// a vertical drag still scrolls the list (gesture-vs-scroll slop). Every
+// assertion is on what a gesture actually renders or the callback it fires —
+// never "a method was called". Touch gestures are gated to a coarse pointer, so
+// the mouse path (right-click) is deliberately left untouched and asserted too.
 
 import 'package:axiotask/src/model/dates.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,7 @@ void main() {
     List<String>? toggled,
     List<String>? selected,
     List<DateMove>? moves,
+    List<String>? picked,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -51,6 +53,9 @@ void main() {
                   ? null
                   : () => selected.add(title),
               onSetDue: wireSetDue ? (m) => moves?.add(m) : null,
+              // The date menu needs BOTH a move sink and a calendar route —
+              // "Pick a date…" is one of its six frozen options.
+              onPickDate: wireSetDue ? () => picked?.add(title) : null,
             ),
           ),
         ),
@@ -97,142 +102,104 @@ void main() {
     });
   });
 
-  group('swipe left → quick-date strip', () {
-    testWidgets('a swipe left reveals the quick-date action strip', (
+  group('swipe left → the shared quick-date sheet (#243)', () {
+    testWidgets('a swipe left opens the frozen option set for the row', (
       tester,
     ) async {
       final toggled = <String>[];
-      final moves = <DateMove>[];
-      await pumpRow(tester, toggled: toggled, moves: moves);
+      await pumpRow(tester, toggled: toggled);
 
-      // Hidden before any gesture (no hover on touch).
-      expect(find.byKey(const Key('quick-date-today')), findsNothing);
+      // Nothing is on screen before the gesture (no hover on touch, and the
+      // in-row strip is retired).
+      expect(find.byKey(quickDateKey('today')), findsNothing);
 
       await tester.drag(rowFinder(), const Offset(-180, 0));
       await settle(tester);
 
-      expect(find.byKey(const Key('quick-date-today')), findsOneWidget);
-      expect(find.byKey(const Key('quick-date-tomorrow')), findsOneWidget);
-      expect(toggled, isEmpty, reason: 'swipe left reveals, never completes');
+      for (final label in const [
+        'Today',
+        'Tomorrow',
+        'Next week',
+        'Next month',
+        'Pick a date…',
+        'Clear',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(toggled, isEmpty, reason: 'swipe left never completes');
     });
 
-    testWidgets('a revealed strip button still fires its DateMove', (
-      tester,
-    ) async {
+    testWidgets('choosing an option from the swiped-open sheet fires its '
+        'DateMove and closes the sheet', (tester) async {
       final moves = <DateMove>[];
       await pumpRow(tester, moves: moves);
 
       await tester.drag(rowFinder(), const Offset(-180, 0));
       await settle(tester);
-      await tester.tap(find.byKey(const Key('quick-date-tomorrow')));
+      await tester.tap(find.byKey(quickDateKey('tomorrow')));
       await settle(tester);
 
       expect(moves, [DateMove.tomorrow]);
-    });
-
-    testWidgets('the revealed strip labels its actions in words', (
-      tester,
-    ) async {
-      // The failure this prevents: the strip regressing to glyph codes. The
-      // revealed reschedule actions must be labeled in words a first-time user
-      // reads without a legend ("→o →t →w →m" shipped once and read as alien —
-      // user directive 2026-08-19); the two long moves carry their full name in
-      // the tooltip.
-      final moves = <DateMove>[];
-      await pumpRow(tester, due: '2026-08-30', moves: moves);
-      await tester.drag(rowFinder(), const Offset(-180, 0));
-      await settle(tester);
-      expect(find.text('Today'), findsOneWidget);
-      expect(find.text('Tomorrow'), findsOneWidget);
-      expect(find.text('1 wk'), findsOneWidget);
-      expect(find.text('1 mo'), findsOneWidget);
       expect(
-        find.byKey(const Key('quick-date-clear')),
-        findsOneWidget,
-        reason: 'a dated task offers Remove date',
-      );
-    });
-
-    testWidgets('picking a date on the latched strip closes it (F19 #198)', (
-      tester,
-    ) async {
-      // The failure this prevents: after a swipe-left latches the strip open,
-      // tapping a quick-date button reschedules but leaves the strip sitting
-      // open over the row — the user then has to tap away to dismiss it. The
-      // action is done, so the strip must close itself.
-      final moves = <DateMove>[];
-      await pumpRow(tester, moves: moves);
-
-      await tester.drag(rowFinder(), const Offset(-180, 0));
-      await settle(tester);
-      expect(
-        find.byKey(const Key('quick-date-today')),
-        findsOneWidget,
-        reason: 'the strip latched open after the swipe',
-      );
-
-      await tester.tap(find.byKey(const Key('quick-date-today')));
-      await settle(tester);
-
-      expect(moves, [DateMove.today], reason: 'the reschedule still fires');
-      expect(
-        find.byKey(const Key('quick-date-today')),
+        find.byKey(quickDateKey('tomorrow')),
         findsNothing,
-        reason: 'the strip closes itself after the action',
+        reason: 'the sheet dismisses itself once the date is set',
       );
     });
 
-    testWidgets('a partial left swipe peeks the strip and the content follows '
-        'the finger', (tester) async {
+    testWidgets('"Pick a date…" from the swiped-open sheet routes to the '
+        'calendar', (tester) async {
+      final picked = <String>[];
+      final moves = <DateMove>[];
+      await pumpRow(tester, moves: moves, picked: picked);
+
+      await tester.drag(rowFinder(), const Offset(-180, 0));
+      await settle(tester);
+      await tester.tap(find.byKey(quickDateKey('pick')));
+      await settle(tester);
+
+      expect(picked, ['buy milk']);
+      expect(moves, isEmpty, reason: 'a calendar route is not a move');
+    });
+
+    testWidgets('a partial left swipe drags the content with the finger and '
+        'snaps back below the threshold', (tester) async {
       await pumpRow(tester);
 
       final gesture = await tester.startGesture(tester.getCenter(rowFinder()));
       await gesture.moveBy(const Offset(-50, 0));
       await tester.pump();
 
-      // The strip peeks…
-      expect(find.byKey(const Key('quick-date-today')), findsOneWidget);
-      // …and the row content has shifted left to follow the finger.
+      // The row content follows the finger — the only feedback that the
+      // shortcut is live before it fires.
       final t = tester.widget<Transform>(
         find.byKey(const Key('swipe-content')),
       );
       expect(
         t.transform.getTranslation().x,
         lessThan(0),
-        reason: 'the content tracks the finger during a left peek',
+        reason: 'the content tracks the finger during a left drag',
       );
 
-      // Release below threshold → snaps closed, no lingering strip.
+      // Release below threshold → the row settles square and nothing opens.
       await gesture.up();
       await settle(tester);
-      expect(find.byKey(const Key('quick-date-today')), findsNothing);
+      expect(find.byKey(quickDateKey('today')), findsNothing);
+      final after = tester.widget<Transform>(
+        find.byKey(const Key('swipe-content')),
+      );
+      expect(after.transform.getTranslation().x, 0);
     });
 
-    testWidgets('tapping the row with the strip open closes it without opening '
-        'the detail', (tester) async {
-      final opened = <String>[];
-      await pumpRow(tester, opened: opened);
-
-      await tester.drag(rowFinder(), const Offset(-180, 0));
-      await settle(tester);
-      expect(find.byKey(const Key('quick-date-today')), findsOneWidget);
-
-      await tester.tap(find.text('buy milk'));
-      await settle(tester);
-
-      expect(opened, isEmpty, reason: 'the tap closes the strip, not opens');
-      expect(find.byKey(const Key('quick-date-today')), findsNothing);
-    });
-
-    testWidgets('with onSetDue unwired a left swipe reveals nothing and does '
-        'not complete', (tester) async {
+    testWidgets('with the date menu unwired a left swipe reveals nothing and '
+        'does not complete', (tester) async {
       final toggled = <String>[];
       await pumpRow(tester, wireSetDue: false, toggled: toggled);
 
       await tester.drag(rowFinder(), const Offset(-180, 0));
       await settle(tester);
 
-      expect(find.byKey(const Key('quick-date-today')), findsNothing);
+      expect(find.byKey(quickDateKey('today')), findsNothing);
       expect(toggled, isEmpty);
     });
   });
@@ -314,7 +281,7 @@ void main() {
         await settle(tester);
 
         expect(
-          find.byKey(const Key('quick-date-today')),
+          find.byKey(quickDateKey('today')),
           findsNothing,
           reason: 'a swipe from the system-gesture inset is ignored',
         );
@@ -429,7 +396,7 @@ void main() {
       );
       expect(toggled, isEmpty, reason: 'a vertical drag is not a complete');
       expect(moves, isEmpty);
-      expect(find.byKey(const Key('quick-date-today')), findsNothing);
+      expect(find.byKey(quickDateKey('today')), findsNothing);
     });
   });
 
@@ -462,17 +429,25 @@ void main() {
     });
 
     testWidgets(
-      'the swipe-revealed action buttons meet the 48dp touch target',
+      'every option in the swipe-opened sheet meets the 48dp touch target',
       (tester) async {
         await pumpRow(tester);
         await tester.drag(rowFinder(), const Offset(-180, 0));
         await settle(tester);
 
-        final btn = find.byKey(const Key('quick-date-today'));
-        expect(btn, findsOneWidget);
-        final box = tester.renderObject<RenderBox>(btn);
-        expect(box.size.width, greaterThanOrEqualTo(48));
-        expect(box.size.height, greaterThanOrEqualTo(48));
+        for (final id in const [
+          'today',
+          'tomorrow',
+          'week',
+          'month',
+          'pick',
+          'clear',
+        ]) {
+          final option = find.byKey(quickDateKey(id));
+          expect(option, findsOneWidget);
+          final box = tester.renderObject<RenderBox>(option);
+          expect(box.size.height, greaterThanOrEqualTo(48), reason: id);
+        }
       },
     );
   });
