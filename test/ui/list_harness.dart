@@ -40,6 +40,7 @@ Future<FakeBackend> pumpList(
   List<String>? openedNotes,
   Size size = const Size(1200, 1400),
   TargetPlatform? platform,
+  ThemeData? theme,
   UrlOpener? urlOpener,
   String Function()? newId,
   ValueNotifier<String?>? selection,
@@ -77,7 +78,11 @@ Future<FakeBackend> pumpList(
           // window width (F16 #194) — a touch platform (default in tests) shows
           // the "⋯" overflow at every width, a desktop platform reaches the same
           // actions by right-click. Tests pin the desktop path by overriding it.
-          theme: platform == null ? null : ThemeData(platform: platform),
+          // A suite that cares about the REAL surfaces (contrast, text scale)
+          // passes the app's own [theme]; everyone else keeps the default.
+          theme: theme == null
+              ? (platform == null ? null : ThemeData(platform: platform))
+              : (platform == null ? theme : theme.copyWith(platform: platform)),
           // Mount the F19 toast overlay so migrated undo/info toasts render.
           // [disableAnimations] stands in for the platform accessibility flag
           // (Android "remove animations" / desktop reduced motion), which the
