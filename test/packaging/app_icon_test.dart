@@ -16,6 +16,15 @@
 //     device; without <monochrome> the Android 13+ themed-icon home screen
 //     falls back to the full-colour icon. The XML must reference layers that
 //     actually exist at every density.
+//   - THE SCALABLE ICON IS UNREADABLE: gdk-pixbuf identifies a file by
+//     sniffing its first 256 BYTES and nothing further. The hicolor scalable
+//     entry IS the master, and the master carries a long design-notes comment;
+//     while that comment sat BEFORE the root element it pushed `<svg` to byte
+//     2217, far outside the sniff window, and GNOME answered "couldn't
+//     recognize the image file format". Search and the app grid ask for sizes
+//     the PNG set does not carry (96px, and every 2x scale), fall back to the
+//     scalable file, and drew a blank tile (#261). The root element must open
+//     inside that window.
 //   - ORPHAN BINARIES: the rasters are DERIVED from one SVG master by
 //     tool/gen_icons.py. A hand-edited or stale PNG silently diverges from the
 //     master. The checked-in sha256 manifest plus the generator's --check mode
@@ -26,6 +35,7 @@
 @Tags(['packaging'])
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -36,6 +46,10 @@ const _master = 'assets/branding/axiotask.svg';
 
 /// Recorded hashes of everything the generator emits.
 const _manifest = 'assets/branding/icons.sha256';
+
+/// The hicolor scalable entry — a verbatim copy of the master, and the file
+/// GNOME reads for every icon size the PNG set does not carry.
+const _scalable = 'linux/packaging/icons/hicolor/scalable/apps/axiotask.svg';
 
 /// sha256 of the stock Flutter template mipmaps that shipped in this repo
 /// before #225. If any launcher bitmap ever hashes to one of these again, the
@@ -89,6 +103,58 @@ String _mipmapPath(String density, String name) =>
   return (width: be32(16), height: be32(20));
 }
 
+/// gdk-pixbuf decides a file's format from its first 256 bytes and reads no
+/// further. Measured on this machine against the real loader: an `<svg` that
+/// starts at byte 246 loads, one at byte 256 does not.
+const _sniffWindowBytes = 256;
+
+/// The margin the assertion enforces — well inside the real window, so a few
+/// more bytes of XML declaration can never silently walk up to the cliff.
+const _svgTagMaxOffset = 200;
+
+/// Byte offset of the first `<svg` in [path], or -1 if there is none.
+int _svgTagOffset(String path) {
+  final bytes = File(path).readAsBytesSync();
+  const needle = <int>[0x3C, 0x73, 0x76, 0x67]; // '<svg'
+  for (var i = 0; i + needle.length <= bytes.length; i++) {
+    var hit = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (bytes[i + j] != needle[j]) {
+        hit = false;
+        break;
+      }
+    }
+    if (hit) return i;
+  }
+  return -1;
+}
+
+/// Asks gdk-pixbuf — the loader behind GNOME's icon lookup — to rasterize an
+/// SVG at a pixel size, exactly the way the shell does.
+const _pixbufLoadScript =
+    'import sys, gi\n'
+    'gi.require_version("GdkPixbuf", "2.0")\n'
+    'from gi.repository import GdkPixbuf\n'
+    'size = int(sys.argv[2])\n'
+    'pb = GdkPixbuf.Pixbuf.new_from_file_at_size(sys.argv[1], size, size)\n'
+    'print(pb.get_width(), pb.get_height())\n';
+
+bool _pixbufAvailable() =>
+    Process.runSync('python3', [
+      '-c',
+      'import gi; gi.require_version("GdkPixbuf", "2.0"); '
+          'from gi.repository import GdkPixbuf',
+    ]).exitCode ==
+    0;
+
+/// The locale is pinned: the assertion below reads glib's own error text, and
+/// a translated message would make this test pass or fail by environment.
+ProcessResult _pixbufLoadAt(String path, int size) => Process.runSync(
+  'python3',
+  ['-c', _pixbufLoadScript, path, '$size'],
+  environment: const {'LC_ALL': 'C', 'LANGUAGE': 'C'},
+);
+
 String _sha256(File f) => sha256.convert(f.readAsBytesSync()).toString();
 
 void _expectSquarePng(String path, int size) {
@@ -128,6 +194,101 @@ void main() {
           reason: 'master must keep id="$id" (tool/gen_icons.py derives on it)',
         );
       }
+    });
+
+    // #261: the design notes used to sit between the XML declaration and the
+    // root element, which put `<svg` at byte 2217 — nearly nine times past the
+    // window gdk-pixbuf sniffs — so every size served from the scalable file
+    // came up blank. Comments belong INSIDE <svg>.
+    test('the root <svg> element opens inside the format-sniff window', () {
+      for (final path in [_master, _scalable]) {
+        final offset = _svgTagOffset(path);
+        expect(offset, isNot(-1), reason: '$path has no <svg element at all');
+        expect(
+          offset,
+          lessThan(_svgTagMaxOffset),
+          reason:
+              '$path opens <svg at byte $offset. gdk-pixbuf sniffs only the '
+              'first $_sniffWindowBytes bytes, so anything past that leaves '
+              'the file "unrecognized" and GNOME draws a blank icon (#261). '
+              'Move the leading comment INSIDE the <svg> element.',
+        );
+      }
+    });
+
+    // The assertion above is a proxy for one thing only: can the desktop's own
+    // loader open this file? Ask it directly, at the sizes the shell requests
+    // that no PNG in the theme carries — 96px for search and the app grid, and
+    // its 2x scale.
+    test(
+      'gdk-pixbuf renders the scalable icon at the sizes GNOME asks for',
+      () {
+        if (!_pixbufAvailable()) {
+          markTestSkipped(
+            'python3 gobject-introspection / GdkPixbuf not installed — the '
+            'sniff-window assertion above still guards the committed bytes',
+          );
+          return;
+        }
+        for (final size in [96, 192]) {
+          final r = _pixbufLoadAt(_scalable, size);
+          expect(
+            r.exitCode,
+            0,
+            reason:
+                'gdk-pixbuf could not render $_scalable at ${size}px:\n'
+                '${r.stderr}',
+          );
+          expect(
+            '${r.stdout}'.trim(),
+            '$size $size',
+            reason: 'the loader must return a ${size}px square',
+          );
+        }
+      },
+    );
+
+    // Non-happy path: prove the 200-byte rule is not a superstition. Push the
+    // SAME art past the sniff window and the loader must refuse it — that
+    // refusal IS the blank icon #261 reported.
+    test('gdk-pixbuf refuses the same art when <svg> falls past the window', () {
+      if (!_pixbufAvailable()) {
+        markTestSkipped('python3 GdkPixbuf not installed');
+        return;
+      }
+      final bytes = File(_scalable).readAsBytesSync();
+      final offset = _svgTagOffset(_scalable);
+      final tmp = Directory.systemTemp.createTempSync('axiotask_sniff');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final victim = File('${tmp.path}/axiotask.svg');
+      // Same document, same root element — only shoved down the file behind a
+      // comment long enough to fill the sniff window, as #261 had it.
+      final filler = 'x' * _sniffWindowBytes;
+      victim.writeAsBytesSync([
+        ...bytes.sublist(0, offset),
+        ...utf8.encode('<!--$filler-->\n'),
+        ...bytes.sublist(offset),
+      ]);
+      expect(
+        _svgTagOffset(victim.path),
+        greaterThan(_sniffWindowBytes),
+        reason: 'the fixture must actually push <svg out of the window',
+      );
+
+      final r = _pixbufLoadAt(victim.path, 96);
+      expect(
+        r.exitCode,
+        isNot(0),
+        reason:
+            'gdk-pixbuf loaded an SVG whose root element is past byte '
+            '$_sniffWindowBytes — the premise of the assertion above no longer '
+            'holds and the guard can be reconsidered',
+      );
+      expect(
+        '${r.stderr}',
+        contains('recognize'),
+        reason: 'the failure must be the format-sniff one #261 hit',
+      );
     });
   });
 
@@ -371,6 +532,40 @@ void main() {
         reason: '--check must reject a tampered raster',
       );
       expect('${r.stdout}${r.stderr}', contains(_hicolorPath(48)));
+    });
+
+    // Non-happy path: the generator must refuse to EMIT an unloadable scalable
+    // icon, not just report drift. It copies the master verbatim, so it is the
+    // one place that can stop #261 from being reintroduced by an edit.
+    test('--check refuses a master whose <svg> falls outside the window', () {
+      if (!_rendererAvailable()) {
+        markTestSkipped('python3 cairosvg not installed');
+        return;
+      }
+      final tmp = Directory.systemTemp.createTempSync('axiotask_icons');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      for (final path in [_master, _manifest, ...recorded.keys]) {
+        final dest = File('${tmp.path}/$path');
+        dest.parent.createSync(recursive: true);
+        File(path).copySync(dest.path);
+      }
+      final master = File('${tmp.path}/$_master');
+      final bytes = master.readAsBytesSync();
+      final offset = _svgTagOffset(master.path);
+      final filler = 'x' * _sniffWindowBytes;
+      master.writeAsBytesSync([
+        ...bytes.sublist(0, offset),
+        ...utf8.encode('<!--$filler-->\n'),
+        ...bytes.sublist(offset),
+      ]);
+
+      final r = _gen(['--check', '--root', tmp.path]);
+      expect(
+        r.exitCode,
+        isNot(0),
+        reason: 'the generator must reject a master gdk-pixbuf cannot open',
+      );
+      expect('${r.stdout}${r.stderr}', contains('#261'));
     });
 
     // Non-happy path: on a machine without the renderer the generator must say

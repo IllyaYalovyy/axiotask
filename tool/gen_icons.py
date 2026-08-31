@@ -86,6 +86,31 @@ _ADAPTIVE_TRANSFORM = (
 )
 
 
+# gdk-pixbuf — the loader behind GNOME's icon lookup — identifies an image from
+# its first 256 BYTES and reads no further. The scalable hicolor entry IS the
+# master, so anything ahead of the master's root element eats that budget: while
+# the design notes sat before <svg> they put it at byte 2217, the file came back
+# "unrecognized", and every size GNOME serves from the SVG (96px, all 2x scales)
+# rendered blank (#261). Comments belong INSIDE the <svg> element.
+SNIFF_WINDOW_BYTES = 256
+# Enforced with margin, so a longer XML declaration cannot creep up to the edge.
+SVG_TAG_MAX_OFFSET = 200
+
+
+def _assert_sniffable(master_bytes):
+    offset = master_bytes.find(b"<svg")
+    if offset < 0:
+        sys.exit(f"error: {MASTER} has no <svg root element")
+    if offset >= SVG_TAG_MAX_OFFSET:
+        sys.exit(
+            f"error: {MASTER} opens <svg at byte {offset}. gdk-pixbuf sniffs "
+            f"only the first {SNIFF_WINDOW_BYTES} bytes, so this file — and the "
+            f"scalable hicolor icon copied from it — would be 'unrecognized' "
+            f"and every icon GNOME renders from it blank (#261). Move the "
+            f"leading comment INSIDE the <svg> element."
+        )
+
+
 def _hicolor_png(size):
     return f"linux/packaging/icons/hicolor/{size}x{size}/apps/axiotask.png"
 
@@ -234,6 +259,7 @@ def _render_all(root_dir, out_dir):
         sys.exit(f"error: master icon not found at {master_path}")
     with open(master_path, "rb") as handle:
         master_bytes = handle.read()
+    _assert_sniffable(master_bytes)
     master_root = ET.fromstring(master_bytes)
 
     written = []
