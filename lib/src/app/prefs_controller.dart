@@ -51,6 +51,11 @@ class PrefsController extends Notifier<Prefs> {
   void setShowCompleted(bool value) =>
       _write(state.copyWith(showCompleted: value));
 
+  /// Turn the haptic vocabulary on or off (#257). Persisted, and read by
+  /// `hapticsProvider`, so flipping it silences (or restores) every event at
+  /// once without any call site knowing.
+  void setHaptics(bool value) => _write(state.copyWith(haptics: value));
+
   /// Collapse or reveal completed subtasks in the detail panel checklist.
   /// Persisted so a tidy checklist stays tidy across panels and sessions.
   void setHideCompletedSubtasks(bool value) =>

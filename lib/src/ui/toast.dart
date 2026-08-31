@@ -23,6 +23,8 @@ import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'haptics.dart';
+
 /// How a toast reads: a neutral [info]/undo notice, or a red [error].
 enum ToastVariant { info, error }
 
@@ -194,11 +196,18 @@ class ToastOverlay extends StatefulWidget {
   const ToastOverlay({
     required this.controller,
     required this.child,
+    this.haptics = const NoHaptics(),
     super.key,
   });
 
   final ToastController controller;
   final Widget child;
+
+  /// The haptic seam an Undo answers through (#257). Undo is the one toast
+  /// action that reverses something the user already saw happen, so it is felt
+  /// exactly as firmly as the delete it undoes. A labelled action ("View" on a
+  /// landing toast) is navigation and stays silent.
+  final Haptics haptics;
 
   @override
   State<ToastOverlay> createState() => _ToastOverlayState();
@@ -206,7 +215,8 @@ class ToastOverlay extends StatefulWidget {
 
 class _ToastOverlayState extends State<ToastOverlay> {
   late final OverlayEntry _entry = OverlayEntry(
-    builder: (_) => ToastStack(controller: widget.controller),
+    builder: (_) =>
+        ToastStack(controller: widget.controller, haptics: widget.haptics),
   );
 
   @override
@@ -224,9 +234,16 @@ class _ToastOverlayState extends State<ToastOverlay> {
 /// Only the cards are hit-testable; the empty region passes pointers through to
 /// the app beneath.
 class ToastStack extends StatelessWidget {
-  const ToastStack({required this.controller, super.key});
+  const ToastStack({
+    required this.controller,
+    this.haptics = const NoHaptics(),
+    super.key,
+  });
 
   final ToastController controller;
+
+  /// See [ToastOverlay.haptics].
+  final Haptics haptics;
 
   @override
   Widget build(BuildContext context) {
@@ -254,7 +271,13 @@ class ToastStack extends StatelessWidget {
                           toast: t,
                           onUndo: t.onUndo == null
                               ? null
-                              : () => controller._undo(t),
+                              : () {
+                                  // An UNDO (the unlabelled button) is a
+                                  // reversal and is felt; a labelled action is
+                                  // a jump and is not (#257).
+                                  if (t.actionLabel == null) haptics.confirm();
+                                  controller._undo(t);
+                                },
                           onDismiss: () => controller.dismiss(t.id),
                         ),
                       ),

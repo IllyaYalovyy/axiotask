@@ -31,6 +31,7 @@ import 'commit_flash.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
 import 'detail_motion.dart';
+import 'haptics.dart';
 import 'quick_date_menu.dart';
 import 'theme.dart';
 import 'url_detect.dart';
@@ -87,6 +88,7 @@ class TaskRow extends StatefulWidget {
     this.onInlineEditActive,
     this.completionProgress,
     this.commit,
+    this.haptics = const NoHaptics(),
     super.key,
   });
 
@@ -195,6 +197,15 @@ class TaskRow extends StatefulWidget {
   /// rather than exit the app mid-rename. `null` skips it (an isolated test).
   final void Function(VoidCallback? commit)? onInlineEditActive;
 
+  /// The haptic seam this row's own gestures speak through (#257). Only ONE
+  /// row event is the row's to report: a swipe crossing the distance at which
+  /// it would fire, which happens while the finger is still down and so has no
+  /// callback anywhere else. Everything else a row does (the checkbox, the
+  /// selection toggle, a quick date) is a callback the list answers, and the
+  /// list ticks there. Defaults to the no-op, so a row mounted outside the app
+  /// is silent.
+  final Haptics haptics;
+
   /// The most recent write the STORE confirmed for this task, and which element
   /// of the row it changed (#252) — the row washes that element once per
   /// commit. `null` for a row that has had none (and for a row mounted outside
@@ -239,6 +250,12 @@ class _TaskRowState extends State<TaskRow> {
 
   // Cumulative horizontal travel of the in-flight swipe (for the end decision).
   double _swipeDx = 0;
+  // Whether the in-flight swipe is currently PAST the distance at which
+  // releasing would fire its action — the rising edge of this is the one haptic
+  // a row reports itself (#257), so the user learns "let go now" without
+  // looking. Falls back to false if the finger comes back, and ticks again on
+  // the next crossing: it is a live statement about the gesture, not a latch.
+  bool _swipeArmed = false;
   // The content's live horizontal offset (0 at rest, negative while peeking).
   double _swipeOffset = 0;
 
@@ -360,12 +377,24 @@ class _TaskRowState extends State<TaskRow> {
     }
   }
 
+  /// Whether a release at [dx] of travel would actually DO something — a
+  /// swipe-right on an already-completed row, or a swipe-left on a row with no
+  /// calendar route, fires nothing, and a gesture that fires nothing must not
+  /// promise that it will.
+  bool _swipeWouldAct(double dx) =>
+      (dx >= _swipeThreshold && !widget.completed) ||
+      (dx <= -_swipeThreshold && _dateMenuWired);
+
   void _onSwipeStart(DragStartDetails _) {
     _swipeDx = 0;
+    _swipeArmed = false;
   }
 
   void _onSwipeUpdate(DragUpdateDetails d) {
     _swipeDx += d.primaryDelta ?? 0;
+    final armed = _swipeWouldAct(_swipeDx);
+    if (armed && !_swipeArmed) widget.haptics.tick();
+    _swipeArmed = armed;
     setState(() {
       if (_swipeDx < -10 && _dateMenuWired) {
         // A leftward drag drags the content with the finger — dampened and
@@ -380,6 +409,7 @@ class _TaskRowState extends State<TaskRow> {
 
   void _onSwipeEnd(DragEndDetails _) {
     final dx = _swipeDx;
+    _swipeArmed = false;
     var complete = false;
     var openDates = false;
     setState(() {
@@ -415,6 +445,7 @@ class _TaskRowState extends State<TaskRow> {
   }
 
   void _onSwipeCancel() {
+    _swipeArmed = false;
     setState(() => _swipeOffset = 0);
   }
 

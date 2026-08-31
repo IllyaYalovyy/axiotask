@@ -49,6 +49,7 @@ import '../model/task_tree.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'haptics.dart';
 import 'list_pickers.dart';
 import 'quick_date_menu.dart';
 import 'task_actions.dart' show demoteCandidates, duplicateTask;
@@ -224,6 +225,9 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     ref.read(commandsProvider).setNotes(task.id, value);
   }
 
+  /// The haptic vocabulary this panel speaks (#257), already pref-gated.
+  Haptics get _haptics => ref.read(hapticsProvider);
+
   Future<void> _addSubtask(StoredTask parent) async {
     final title = _newSubtask.text.trim();
     if (title.isEmpty) return; // an empty add creates nothing
@@ -244,6 +248,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     // Flush any pending field edits before the row goes away.
     _saveTitle();
     _saveNotes();
+    _haptics.confirm(); // #257 — a removal is felt, like the list's own delete
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
     final token = await commands.deleteTask(task.task.id);
@@ -310,6 +315,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   Future<void> _quickDue(String id, DateMove move) async {
     final toasts = ref.read(toastControllerProvider);
     final commands = ref.read(commandsProvider);
+    _haptics.tick();
     final res = await commands.setDue(id, move);
     if (!mounted) return;
     offerDueCascadeUndo(toasts, commands, res);
@@ -324,6 +330,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final commands = ref.read(commandsProvider);
     final pick = await showDueDatePicker(context, initial: currentDue);
     if (pick == null || !mounted) return;
+    _haptics.tick();
     final res = switch (pick) {
       DuePickClear() => await commands.setDue(id, DateMove.clear),
       DuePickDate(:final ymd) => await commands.setDueRaw(id, ymd),
@@ -682,9 +689,14 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                     task: visibleChildren[i].task,
                     isFirst: i == 0,
                     isLast: i == visibleChildren.length - 1,
-                    onToggle: () => ref
-                        .read(commandsProvider)
-                        .toggleComplete(visibleChildren[i].task.id),
+                    onToggle: () {
+                      // The same tick a top-level checkbox gets: a subtask is
+                      // still a box the user tapped (#257).
+                      _haptics.tick();
+                      ref
+                          .read(commandsProvider)
+                          .toggleComplete(visibleChildren[i].task.id);
+                    },
                     onOpen: () => _navigate(
                       () => widget.onOpenTask(visibleChildren[i].task.id),
                     ),

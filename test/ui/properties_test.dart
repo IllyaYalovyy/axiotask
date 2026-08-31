@@ -420,6 +420,51 @@ void main() {
       expect(tile.value, 'light');
       expect(find.text('Light'), findsOneWidget);
     });
+
+    testWidgets(
+      'the haptics switch is ON by default and silences the app when turned '
+      'off (#257)',
+      (tester) async {
+        final store = PrefsStore(File(p.join(tmp.path, 'prefs.json')));
+        await pumpProps(
+          tester,
+          extraOverrides: [prefsStoreProvider.overrideWithValue(store)],
+        );
+        await tester.tap(find.text('Appearance'));
+        await tester.pumpAndSettle();
+
+        final toggle = find.byKey(const Key('haptics-toggle'));
+        expect(toggle, findsOneWidget);
+        expect(
+          tester.widget<SwitchListTile>(toggle).value,
+          isTrue,
+          reason: 'haptics are opt-OUT',
+        );
+
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+
+        expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+        expect(
+          store.load().haptics,
+          isFalse,
+          reason: 'the choice survives a restart',
+        );
+      },
+    );
+
+    testWidgets('the haptics switch is absent on a desktop pointer', (
+      tester,
+    ) async {
+      // The seam is a no-op off Android; a switch that changes nothing is not
+      // an affordance, it is furniture.
+      await pumpProps(tester, theme: ThemeData(platform: TargetPlatform.linux));
+      await tester.tap(find.text('Appearance'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('haptics-toggle')), findsNothing);
+      expect(find.text('Haptics'), findsNothing);
+    });
   });
 
   group('Account tab', () {

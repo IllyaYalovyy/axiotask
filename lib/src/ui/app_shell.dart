@@ -15,6 +15,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'detail_motion.dart';
 import 'guarded_command.dart';
+import 'haptics.dart';
 import 'list_detail_scaffold.dart';
 import 'onboarding.dart';
 import 'properties.dart';
@@ -172,6 +173,7 @@ class AppShell extends ConsumerWidget {
         ref.read(prefsControllerProvider.notifier).setTheme(next);
       },
       isDark: _resolvedDark(context, prefs.theme),
+      haptics: ref.watch(hapticsProvider),
     );
 
     // The system-back close of the detail is a go_router navigation via the

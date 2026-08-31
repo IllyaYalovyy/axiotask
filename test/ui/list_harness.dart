@@ -9,6 +9,7 @@ import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/detail_motion.dart';
+import 'package:axiotask/src/ui/haptics.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
@@ -25,6 +26,10 @@ final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 /// Pump [TaskListView] on a desktop-width surface (or [size]) over a
 /// [FakeBackend] seeded with [initial] and [lists]. Navigation callbacks are
 /// captured into [opened] / [openedNotes] so a test can assert the intent.
+///
+/// [hapticsDevice] overrides the raw device seam (#257) with a recorder, and
+/// [haptics] drives the pref that gates it — so a suite can assert both what a
+/// gesture asked the device for and that the pref silences it.
 ///
 /// [selection] stands in for the ROUTER-derived `selectedTaskId` the real
 /// ViewListPane passes down: pushing a new value into it and pumping is exactly
@@ -48,6 +53,8 @@ Future<FakeBackend> pumpList(
   bool disableAnimations = false,
   double textScale = 1.0,
   DetailOriginController? originScope,
+  Haptics? hapticsDevice,
+  bool haptics = true,
 }) async {
   // A unique-id generator by default: the manual-sort list is a
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
@@ -68,8 +75,14 @@ Future<FakeBackend> pumpList(
       ProviderScope(
         overrides: [
           prefsProvider.overrideWithValue(
-            Prefs(showCompleted: showCompleted, sortPerView: sortPerView),
+            Prefs(
+              showCompleted: showCompleted,
+              sortPerView: sortPerView,
+              haptics: haptics,
+            ),
           ),
+          if (hapticsDevice != null)
+            hapticsDeviceProvider.overrideWithValue(hapticsDevice),
           commandsProvider.overrideWithValue(fake),
           allTasksProvider.overrideWith((ref) => fake.tasksStream),
           listsProvider.overrideWith((ref) => Stream.value(lists)),

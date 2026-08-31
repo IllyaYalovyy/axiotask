@@ -17,6 +17,7 @@
 import 'package:flutter/material.dart';
 
 import '../store/stored.dart';
+import 'haptics.dart';
 import 'task_row.dart' show touchTarget;
 import 'views.dart';
 
@@ -41,6 +42,7 @@ class Sidebar extends StatelessWidget {
     this.onOpenProperties,
     this.onToggleTheme,
     this.isDark = false,
+    this.haptics = const NoHaptics(),
     super.key,
   });
 
@@ -88,6 +90,11 @@ class Sidebar extends StatelessWidget {
 
   /// Whether the active theme is dark — selects the sun/moon glyph.
   final bool isDark;
+
+  /// The haptic seam a list drag speaks through (#257) — the lift and the drop,
+  /// exactly like a task drag in the list. Defaults to the no-op, so a sidebar
+  /// mounted outside the app is silent.
+  final Haptics haptics;
 
   @override
   Widget build(BuildContext context) {
@@ -138,6 +145,8 @@ class Sidebar extends StatelessWidget {
           SliverReorderableList(
             itemCount: lists.length,
             onReorderItem: _onReorder,
+            onReorderStart: (_) => haptics.tick(),
+            onReorderEnd: (_) => haptics.tick(),
             proxyDecorator: _dragProxyDecorator,
             itemBuilder: (context, i) => _ListRow(
               key: ValueKey(lists[i].list.id),
