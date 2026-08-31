@@ -43,6 +43,7 @@ import '../model/task_tree.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
+import 'theme.dart';
 import 'toast.dart';
 import 'url_detect.dart';
 import 'url_opener.dart';
@@ -630,6 +631,12 @@ class _Breadcrumb extends StatelessWidget {
 
 /// The task's own due date: a tappable badge that opens the calendar, plus the
 /// one-gesture quick-date strip (Today / Tomorrow / +1 week / +1 month / Clear).
+///
+/// The date itself wears the SHARED urgency tone (#242) — the same colour the
+/// row's due badge and the Focus "Overdue (N)" heading use — so opening a task
+/// never changes what its date's colour means. The outline and the quick-date
+/// chips stay neutral: the urgency is a property of the DATE, not of the
+/// controls around it.
 class _DueField extends StatelessWidget {
   const _DueField({
     required this.due,
@@ -646,6 +653,8 @@ class _DueField extends StatelessWidget {
     final theme = Theme.of(context);
     final has = (due ?? '').isNotEmpty;
     final label = has ? formatDue(due) : 'No date';
+    final urgency = has ? dueUrgency(due) : DueUrgency.none;
+    final color = dueColor(urgency, theme.colorScheme);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -657,9 +666,20 @@ class _DueField extends StatelessWidget {
           icon: const Icon(Icons.event_outlined, size: 18),
           label: Align(
             alignment: Alignment.centerLeft,
-            child: Text(label.isEmpty ? 'No date' : label),
+            child: Text(
+              label.isEmpty ? 'No date' : label,
+              // Semibold on overdue only — the same emphasis the row's badge
+              // carries, so the two surfaces read as one signal.
+              style: TextStyle(
+                color: color,
+                fontWeight: urgency == DueUrgency.overdue
+                    ? FontWeight.w600
+                    : null,
+              ),
+            ),
           ),
           style: OutlinedButton.styleFrom(
+            foregroundColor: color,
             minimumSize: const Size.fromHeight(44),
             alignment: Alignment.centerLeft,
           ),
@@ -939,12 +959,23 @@ class _SubtaskRow extends StatelessWidget {
         ),
         // The per-subtask due button. Its tooltip carries the precise ISO date
         // (stable for tests) while the visible label is the friendly form.
+        //
+        // It wears the shared urgency tone too (#242): it is a DATE on the same
+        // panel as the parent's Due field, and leaving it on the button default
+        // would paint every subtask date — overdue ones included — in the tone
+        // that now means "due today".
         Tooltip(
           message:
               'Subtask due date: ${hasDue ? task.due!.substring(0, 10) : 'No date'}',
           child: TextButton(
             key: Key('sub-due-${task.id}'),
             onPressed: onPickDue,
+            style: TextButton.styleFrom(
+              foregroundColor: dueColor(
+                hasDue ? dueUrgency(task.due) : DueUrgency.none,
+                theme.colorScheme,
+              ),
+            ),
             child: Text(hasDue ? formatDue(task.due) : 'no date'),
           ),
         ),

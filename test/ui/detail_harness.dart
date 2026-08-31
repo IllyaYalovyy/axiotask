@@ -556,12 +556,16 @@ Future<FakeBackend> pumpDetail(
   VoidCallback? onPrev,
   VoidCallback? onNext,
   UrlOpener? urlOpener,
+  ThemeData? theme,
+  Size size = const Size(1000, 2400),
+  double textScale = 1.0,
 }) async {
   final fake = FakeBackend(initial, newId: newId);
   addTearDown(fake.dispose);
   // A tall surface so the whole panel lays out and every subtask row is built
   // (a lazy ListView culls children below the fold, hiding them from finders).
-  tester.view.physicalSize = const Size(1000, 2400);
+  // A caller probing narrow/large-text layout overrides it.
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -575,8 +579,16 @@ Future<FakeBackend> pumpDetail(
         if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
       ],
       child: MaterialApp(
+        // A caller that cares about COLOUR pins the real app theme (the panel's
+        // urgency tones are scheme roles); everyone else keeps the default.
+        theme: theme,
         // Mount the F19 toast overlay so the panel's delete/move undo renders.
-        builder: wrapWithToast,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: wrapWithToast(context, child),
+        ),
         home: Scaffold(
           body: TaskDetail(
             taskId: taskId,
