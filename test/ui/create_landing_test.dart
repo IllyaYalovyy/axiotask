@@ -12,12 +12,19 @@
 // engine against the fake Google, creates tasks the way an offline session does,
 // then runs the sync that lands them and asserts that every row on screen is
 // the SAME State object it was before — nothing re-inserted.
+//
+// #251 gave those rows an ARRIVAL motion, which sharpens the same contract: a
+// row whose identity survived the landing must not replay its entrance either.
+// Learning a remote id is not a task joining the list, and a list that shivered
+// three to five seconds after every create would be worse than the silence it
+// replaced.
 
 import 'package:axiotask/src/api/fake_tasks_api.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/sync/engine.dart';
+import 'package:axiotask/src/ui/list_motion.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
@@ -39,6 +46,19 @@ List<String> _rowTitles(WidgetTester tester) => tester
 /// list re-inserts the row instead of moving it.
 State _rowState(WidgetTester tester, String title) =>
     tester.state(find.widgetWithText(TaskRow, title));
+
+/// The rendered height of the slot holding the row titled [title]. A row that is
+/// growing into place (#251) is shorter than one that is simply there.
+double _slotHeight(WidgetTester tester, String title) => tester
+    .getSize(
+      find
+          .ancestor(
+            of: find.widgetWithText(TaskRow, title),
+            matching: find.byType(RowMotion),
+          )
+          .first,
+    )
+    .height;
 
 /// Let the store's stream deliver and the list rebuild, without ever settling
 /// on the quick-add field's cursor timer.
@@ -103,9 +123,13 @@ void main() {
             .createTask(listId: listId, title: title);
       }
       await _flush(tester);
+      // Let the three arrivals finish, so what follows measures the landing and
+      // nothing else.
+      await tester.pump(listMotionWindow);
 
       final before = _rowTitles(tester);
       final states = {for (final t in before) t: _rowState(tester, t)};
+      final heights = {for (final t in before) t: _slotHeight(tester, t)};
       expect(before, [
         'three',
         'two',
@@ -129,7 +153,19 @@ void main() {
           same(states[title]),
           reason: '"$title" was re-inserted instead of staying put',
         );
+        // …and it did not replay its arrival either (#251): the row is exactly
+        // as tall as it was, so nothing is growing back into place.
+        expect(
+          _slotHeight(tester, title),
+          heights[title],
+          reason: '"$title" re-ran its enter when the create landed',
+        );
       }
+      expect(
+        tester.binding.transientCallbackCount,
+        0,
+        reason: 'the landing left no row motion running',
+      );
     });
   });
 }

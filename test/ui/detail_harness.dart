@@ -94,6 +94,15 @@ class FakeBackend implements Commands {
     localUpdated: 't',
   );
 
+  /// Simulate a sync PULL rewriting the whole local set: rows appear, rows
+  /// disappear, exactly as the store's stream reports them after a pull.
+  void pushAll(List<StoredTask> tasks) {
+    _tasks
+      ..clear()
+      ..addAll(tasks);
+    _emit();
+  }
+
   /// Simulate an external write (e.g. a sync pull) retitling a task, so tests
   /// can exercise the panel's live-tracking / clobber-avoidance.
   void pushExternal(String id, String title) {
