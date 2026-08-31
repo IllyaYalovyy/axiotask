@@ -145,17 +145,61 @@ void main() {
     expect(find.text('No lists'), findsOneWidget);
   });
 
-  testWidgets('an excluded list is dimmed and italicized', (tester) async {
-    await pump(tester, lists: [list('L1', 'Work')], excluded: {'L1'});
-    final text = tester.widget<Text>(find.text('Work'));
-    expect(text.style?.fontStyle, FontStyle.italic);
-    // The dimming Opacity wraps the row.
-    final opacity = tester.widget<Opacity>(
-      find
-          .ancestor(of: find.text('Work'), matching: find.byType(Opacity))
-          .first,
+  // ── Exclusion: an explicit affordance, not "disabled" styling (#248) ──────
+  // The failure barred: an excluded list rendered ONLY as dim + italic. That is
+  // the universal inactive-control look — it says nothing about WHY the row is
+  // quiet, and a screen reader announces nothing at all about it.
+  group('an excluded list says so:', () {
+    testWidgets('it shows the visibility_off icon and announces why', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await pump(tester, lists: [list('L1', 'Work')], excluded: {'L1'});
+
+      // The visible signal sits in the row itself, next to the title.
+      final icon = find.descendant(
+        of: find.ancestor(of: find.text('Work'), matching: find.byType(Row)),
+        matching: find.byIcon(Icons.visibility_off_outlined),
+      );
+      expect(icon, findsOneWidget);
+      // …and TalkBack reads the same words the tooltip shows.
+      expect(
+        tester.getSemantics(icon.first).label,
+        'Work\nExcluded from smart views',
+        reason: 'the row must announce the list AND why it is quiet',
+      );
+
+      // The title is no longer italic: italics carried no meaning and cost
+      // legibility on the app's densest navigation surface.
+      expect(tester.widget<Text>(find.text('Work')).style?.fontStyle, isNull);
+      handle.dispose();
+    });
+
+    testWidgets(
+      'the glyph is a marker, not a dead zone — the row still opens',
+      (tester) async {
+        // It sits inside the row's tap target: a finger that lands on it must
+        // open the list like any other part of the row.
+        final cap = await pump(
+          tester,
+          lists: [list('L1', 'Work')],
+          excluded: {'L1'},
+        );
+        await tester.tap(find.byIcon(Icons.visibility_off_outlined));
+        await tester.pumpAndSettle();
+        expect(cap.selected, ['L1']);
+      },
     );
-    expect(opacity.opacity, 0.5);
+
+    testWidgets('an included list shows neither the icon nor the label', (
+      tester,
+    ) async {
+      final handle = tester.ensureSemantics();
+      await pump(tester, lists: [list('L1', 'Work')]);
+      expect(find.byIcon(Icons.visibility_off_outlined), findsNothing);
+      expect(find.bySemanticsLabel('Excluded from smart views'), findsNothing);
+      handle.dispose();
+    });
   });
 
   testWidgets(
@@ -241,6 +285,140 @@ void main() {
     await tester.pumpAndSettle();
     expect(cap.toggled, ['L1']);
   });
+
+  // ── The list menu: three distinct things, Delete fenced off (#248) ────────
+  // The failure barred: `Delete list` sitting undivided, in the same tone,
+  // directly under the exclude toggle the user reaches for routinely — a
+  // slightly mis-aimed tap lands on an irreversible cascade delete.
+  group('the list menu:', () {
+    testWidgets('fences Delete list off and tones it destructive', (
+      tester,
+    ) async {
+      await pump(tester, lists: [list('L1', 'Work')]);
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+
+      // Reading order down the menu: Rename, the exclude toggle, a rule, then
+      // the destructive entry last.
+      double y(Finder f) => tester.getCenter(f).dy;
+      expect(
+        y(find.text('Rename')),
+        lessThan(y(find.text('Exclude from smart views'))),
+      );
+      expect(find.byType(PopupMenuDivider), findsOneWidget);
+      expect(
+        y(find.text('Exclude from smart views')),
+        lessThan(y(find.byType(PopupMenuDivider))),
+      );
+      expect(
+        y(find.byType(PopupMenuDivider)),
+        lessThan(y(find.text('Delete list'))),
+        reason: 'Delete list must sit below the rule that fences it off',
+      );
+
+      // Each entry carries its own glyph, so the three read as three things.
+      expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.visibility_off_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+
+      // …and only the destructive one is error-toned.
+      final error = Theme.of(
+        tester.element(find.text('Delete list')),
+      ).colorScheme.error;
+      expect(tester.widget<Text>(find.text('Delete list')).style?.color, error);
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.delete_outline)).color,
+        error,
+      );
+      expect(
+        tester.widget<Text>(find.text('Rename')).style?.color,
+        isNot(error),
+      );
+    });
+
+    testWidgets('an excluded list offers the mirrored Include glyph', (
+      tester,
+    ) async {
+      // The non-happy state: already excluded, so the menu offers the way back
+      // and its glyph flips with it.
+      await pump(tester, lists: [list('L1', 'Work')], excluded: {'L1'});
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.widgetWithText(Row, 'Include in smart views'),
+          matching: find.byIcon(Icons.visibility_outlined),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the ⋮ button keeps a ≥48dp touch target', (tester) async {
+      await pump(
+        tester,
+        lists: [list('L1', 'Work')],
+        platform: TargetPlatform.android,
+      );
+      final size = tester.getSize(find.byType(PopupMenuButton<String>));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+    });
+  });
+
+  for (final scale in [1.3, 2.0]) {
+    testWidgets(
+      'at ${scale}x text scale the excluded row still fits icon + badge',
+      (tester) async {
+        // The sidebar is a fixed 260dp column: enlarge the system font and the
+        // title, the new exclusion glyph, the count badge and the ⋮ all have to
+        // keep sharing that width. A RenderFlex overflow throws here.
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+            child: MaterialApp(
+              home: Scaffold(
+                body: Row(
+                  children: [
+                    Sidebar(
+                      selectedViewId: 'all',
+                      counts: const {'L1': 128},
+                      lists: [list('L1', 'Household errands and repairs')],
+                      excludedLists: const {'L1'},
+                      onSelectView: (_) {},
+                      onCreateList: (_, {localOnly = false}) {},
+                      onRenameList: (_, _) {},
+                      onDeleteList: (_) {},
+                      onToggleExclude: (_) {},
+                      onReorderLists: (_) {},
+                    ),
+                    const Expanded(child: SizedBox()),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(find.byIcon(Icons.visibility_off_outlined), findsOneWidget);
+        expect(find.text('128'), findsOneWidget);
+        // …and the menu it opens wraps its longest entry rather than overflowing.
+        await tester.tap(find.byIcon(Icons.more_vert));
+        await tester.pumpAndSettle();
+        expect(find.text('Include in smart views'), findsOneWidget);
+        expect(find.text('Delete list'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        // Dismiss it well outside both the menu and the 260dp sidebar.
+        await tester.tapAt(const Offset(700, 20));
+        await tester.pumpAndSettle();
+        // Everything still inside the 260dp column, nothing clipped off the edge.
+        expect(
+          tester.getBottomRight(find.text('128')).dx,
+          lessThanOrEqualTo(260),
+        );
+      },
+    );
+  }
 
   testWidgets('dragging a list handle reports the reordered ids', (
     tester,

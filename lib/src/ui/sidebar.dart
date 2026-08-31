@@ -20,6 +20,10 @@ import '../store/stored.dart';
 import 'task_row.dart' show touchTarget;
 import 'views.dart';
 
+/// What exclusion means, in the one wording the row's glyph, its tooltip, its
+/// screen-reader label and the menu entry that sets it all share.
+const _excludedLabel = 'Excluded from smart views';
+
 /// The adaptive navigation sidebar.
 class Sidebar extends StatelessWidget {
   const Sidebar({
@@ -418,8 +422,9 @@ class _NavRow extends StatelessWidget {
   }
 }
 
-/// A list row: selectable, dimmed when excluded, with a drag handle and an
-/// overflow menu (rename / delete / exclude).
+/// A list row: selectable, marked with a [Icons.visibility_off_outlined] glyph
+/// when excluded from the smart views, with a drag handle and an overflow menu
+/// (rename / exclude / delete).
 class _ListRow extends StatelessWidget {
   const _ListRow({
     required this.index,
@@ -455,60 +460,82 @@ class _ListRow extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(24),
           onTap: onSelect,
-          child: Opacity(
-            opacity: excluded ? 0.5 : 1,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, right: 4),
-              child: Row(
-                children: [
-                  ReorderableDragStartListener(
-                    index: index,
-                    // The drag handle is the ONLY grab point for touch reorder
-                    // in the drawer; a finger needs a 48dp target (F19 #198). The
-                    // glyph stays 18dp — only the hit area grows, and only on a
-                    // coarse pointer so the desktop sidebar stays compact.
-                    child: touchTarget(
-                      Theme.of(context).platform,
-                      Icon(
-                        Icons.drag_indicator,
-                        size: 18,
-                        color: colors.onSurfaceVariant,
-                      ),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 8, right: 4),
+            child: Row(
+              children: [
+                ReorderableDragStartListener(
+                  index: index,
+                  // The drag handle is the ONLY grab point for touch reorder
+                  // in the drawer; a finger needs a 48dp target (F19 #198). The
+                  // glyph stays 18dp — only the hit area grows, and only on a
+                  // coarse pointer so the desktop sidebar stays compact.
+                  child: touchTarget(
+                    Theme.of(context).platform,
+                    Icon(
+                      Icons.drag_indicator,
+                      size: 18,
+                      color: colors.onSurfaceVariant,
                     ),
                   ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  stored.localOnly
+                      ? Icons.cloud_off_outlined
+                      : Icons.list_alt_outlined,
+                  size: 18,
+                  color: colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    stored.list.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      // An excluded list recedes by TONE, not by opacity: the
+                      // row is fully active (it opens, renames, reorders), so
+                      // WCAG 1.4.3 applies to its name in full and the 50%
+                      // dim it used to wear measured 3.3:1 / 4.4:1 (#248).
+                      // `onSurfaceVariant` is the same quiet-but-readable
+                      // role a completed task's title moved to in #247.
+                      color: selected
+                          ? colors.onSecondaryContainer
+                          : excluded
+                          ? colors.onSurfaceVariant
+                          : colors.onSurface,
+                    ),
+                  ),
+                ),
+                // WHY the row is quiet, said out loud — a glyph a low-vision
+                // user can see and a label TalkBack reads, in place of the
+                // italic that announced nothing at all.
+                if (excluded) ...[
+                  // Tight against the title: on a 260dp column every dp the
+                  // glyph takes is a dp of list name the user loses.
                   const SizedBox(width: 4),
-                  Icon(
-                    stored.localOnly
-                        ? Icons.cloud_off_outlined
-                        : Icons.list_alt_outlined,
-                    size: 18,
-                    color: colors.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      stored.list.title,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontStyle: excluded ? FontStyle.italic : null,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w400,
-                        color: selected
-                            ? colors.onSecondaryContainer
-                            : colors.onSurface,
-                      ),
+                  Tooltip(
+                    message: _excludedLabel,
+                    // The glyph carries the label itself; letting the tooltip
+                    // add its own would announce the same words twice.
+                    excludeFromSemantics: true,
+                    child: Icon(
+                      Icons.visibility_off_outlined,
+                      size: 16,
+                      semanticLabel: _excludedLabel,
+                      color: colors.onSurfaceVariant,
                     ),
-                  ),
-                  _CountBadge(count: count),
-                  _ListMenu(
-                    excluded: excluded,
-                    onRename: onRename,
-                    onDelete: onDelete,
-                    onToggleExclude: onToggleExclude,
                   ),
                 ],
-              ),
+                _CountBadge(count: count),
+                _ListMenu(
+                  excluded: excluded,
+                  onRename: onRename,
+                  onDelete: onDelete,
+                  onToggleExclude: onToggleExclude,
+                ),
+              ],
             ),
           ),
         ),
@@ -546,15 +573,66 @@ class _ListMenu extends StatelessWidget {
             onToggleExclude();
         }
       },
-      itemBuilder: (_) => [
-        const PopupMenuItem(value: 'rename', child: Text('Rename')),
-        PopupMenuItem(
-          value: 'exclude',
-          child: Text(
-            excluded ? 'Include in smart views' : 'Exclude from smart views',
+      itemBuilder: (context) {
+        final error = Theme.of(context).colorScheme.error;
+        return [
+          const PopupMenuItem(
+            value: 'rename',
+            child: _MenuRow(
+              // The glyph the task menu already uses for "change this
+              // thing's title" — one icon set across the app.
+              icon: Icons.edit_outlined,
+              label: 'Rename',
+            ),
           ),
+          PopupMenuItem(
+            value: 'exclude',
+            child: _MenuRow(
+              icon: excluded
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              // The menu says what a tap DOES ("Exclude…"); the row's glyph
+              // says what the list IS ("Excluded…").
+              label: excluded
+                  ? 'Include in smart views'
+                  : 'Exclude from smart views',
+            ),
+          ),
+          // Deleting a list cascades every task in it and there is no undo, so
+          // it is fenced off from the toggle above it and toned as what it is
+          // — a mis-aimed tap used to land straight on it (#248).
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'delete',
+            child: _MenuRow(
+              icon: Icons.delete_outline,
+              label: 'Delete list',
+              color: error,
+            ),
+          ),
+        ];
+      },
+    );
+  }
+}
+
+/// One icon + label line in the list menu; [color] tones the destructive entry.
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.icon, required this.label, this.color});
+
+  final IconData icon;
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(label, style: TextStyle(color: color)),
         ),
-        const PopupMenuItem(value: 'delete', child: Text('Delete list')),
       ],
     );
   }
