@@ -38,6 +38,7 @@ import 'compact_chrome.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
 import 'detail_motion.dart';
+import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'due_date_picker.dart';
 import 'haptics.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
@@ -1471,6 +1472,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         // otherwise confirm without watching the screen (#257).
         onReorderStart: (_) => _haptics.tick(),
         onReorderEnd: (_) => _haptics.tick(),
+        // The row under the finger takes the app's one lift (#256); the
+        // framework's edge auto-scroll is left at its default, so a target
+        // below the fold is still reachable.
+        proxyDecorator: dragLiftProxyDecorator,
         physics: physics,
         padding: listPadding,
         itemCount: items.length + headerOffset,
@@ -1582,9 +1587,23 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     int newIndex,
   ) async {
     final anchor = reorderAnchor(tasks, oldIndex, newIndex);
+    // A drop that changes nothing — back where it started, or across nothing but
+    // other lists' cards — is not a landing: no write, and nothing to say (#256).
     if (anchor == null) return;
     final id = tasks[oldIndex].task.id;
     await ref.read(commandsProvider).reorderTaskAfter(id, anchor.previousId);
+    // A reorder is the one confirmed write that changes no FIELD of the task, so
+    // [_detectCommits] cannot see it: the row is flashed from here instead, over
+    // the whole row, because its new place is what changed about it (#252/#256).
+    //
+    // Only once the row is back in the list. While the drop animation runs the
+    // reorderable builds the dragged slot as an empty box and re-creates the
+    // row's subtree when the proxy goes away — a commit published before that
+    // frame would be handed to a widget about to be replaced by one that has
+    // never seen it, and #252's already-played guard would swallow the flash.
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    setState(() => _commits[id] = TaskCommit(CommitTarget.row, ++_commitSeq));
   }
 
   /// Confirm, then permanently clear the completed tasks in the current list.

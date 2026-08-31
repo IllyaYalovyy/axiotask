@@ -17,6 +17,7 @@
 import 'package:flutter/material.dart';
 
 import '../store/stored.dart';
+import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'haptics.dart';
 import 'task_row.dart' show touchTarget;
 import 'views.dart';
@@ -147,7 +148,7 @@ class Sidebar extends StatelessWidget {
             onReorderItem: _onReorder,
             onReorderStart: (_) => haptics.tick(),
             onReorderEnd: (_) => haptics.tick(),
-            proxyDecorator: _dragProxyDecorator,
+            proxyDecorator: dragLiftProxyDecorator,
             itemBuilder: (context, i) => _ListRow(
               key: ValueKey(lists[i].list.id),
               index: i,
@@ -229,24 +230,6 @@ class Sidebar extends StatelessWidget {
     );
     if (ok == true) onDeleteList(l.list.id);
   }
-}
-
-/// The lift a dragged list row gets — [ReorderableListView]'s own default,
-/// restated here because the bare [SliverReorderableList] supplies none. Without
-/// it a picked-up row would go flat mid-drag.
-Widget _dragProxyDecorator(
-  Widget child,
-  int index,
-  Animation<double> animation,
-) {
-  return AnimatedBuilder(
-    animation: animation,
-    builder: (context, child) => Material(
-      elevation: 6 * Curves.easeInOut.transform(animation.value),
-      child: child,
-    ),
-    child: child,
-  );
 }
 
 /// The chrome row at the very bottom: the Properties launcher and the
