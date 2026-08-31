@@ -27,14 +27,18 @@ import 'ids.dart' show newLocalId;
 /// Otherwise the edit is an `update`. Port of `commands.rs::dirty_op`.
 String dirtyOp(String? remoteId) => remoteId == null ? 'create' : 'update';
 
-// A strictly monotonic tick, mirroring the reference's atomic `LAST_TICK`, so
-// two creates in the same microsecond still get distinct, ordered positions.
+// A strictly monotonic tick in NANOseconds since the epoch, mirroring the
+// reference's atomic `LAST_TICK`, so two creates in the same microsecond still
+// get distinct, ordered positions.
 int _lastPositionTick = 0;
 
-// The largest 19-digit base value, so `_positionBase - tick` stays a positive
-// int64 that pads to exactly 19 digits (matching the reference's `u64::MAX -
-// tick` placeholder).
-const int _positionBase = 9223372036854775807; // 2^63 - 1
+// `u64::MAX` — the descending base the reference subtracts the tick from, and
+// the same base Google's own top-insert positions descend from. It does NOT fit
+// in Dart's SIGNED 64-bit int, so the subtraction runs in [BigInt]: truncating
+// it to 2^63-1 would emit a 19-digit placeholder ('!9223372036…') that sorts
+// AFTER every 20-digit position Google mints ('!18446744073709551611'), i.e.
+// below rows a new task must sit above (#249).
+final BigInt _positionBase = BigInt.parse('18446744073709551615');
 
 /// A distinct, ordered placeholder position for a freshly created row. Port of
 /// `commands.rs::next_local_position`.
@@ -42,17 +46,21 @@ const int _positionBase = 9223372036854775807; // 2^63 - 1
 /// A local task has no server-assigned position until it syncs (a local-only
 /// list never syncs at all). Handing every new row the SAME constant made a
 /// later reorder's position-swap a no-op (#80), so each row gets a distinct,
-/// ordered value. The `!` prefix sorts before Google's numeric positions, so a
-/// new row lands at the top of its list — matching how Google inserts new tasks
-/// — and a larger tick yields a smaller value, so newer rows sort ahead of
-/// older ones.
+/// ordered value. A larger tick yields a smaller value, so newer rows sort
+/// ahead of older ones.
+///
+/// The value must be the placement GOOGLE will assign, because the sync adopts
+/// the server's position and any disagreement re-shuffles the list under the
+/// user 3-5s after they typed (#249). Google puts an `insert` with no
+/// `previous` at the TOP of its list, so the placeholder has to sort before
+/// every position already in play: the `!` prefix (0x21) clears the numeric
+/// positions, and `u64::MAX - nowNanos` clears the `u64::MAX - n` values
+/// Google's own top inserts carry (the epoch tick dwarfs any `n`).
 String nextLocalPosition() {
-  final nowMicros = clock.now().toUtc().microsecondsSinceEpoch;
-  final tick = nowMicros > _lastPositionTick
-      ? nowMicros
-      : _lastPositionTick + 1;
+  final nowNanos = clock.now().toUtc().microsecondsSinceEpoch * 1000;
+  final tick = nowNanos > _lastPositionTick ? nowNanos : _lastPositionTick + 1;
   _lastPositionTick = tick;
-  return '!${(_positionBase - tick).toString().padLeft(19, '0')}';
+  return '!${(_positionBase - BigInt.from(tick)).toString().padLeft(19, '0')}';
 }
 
 /// Errors a command raises for the caller to surface. The user-facing

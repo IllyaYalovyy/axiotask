@@ -5,6 +5,7 @@
 // STATE the store persists (rows returned by list_tasks / all_tasks), never
 // which method ran — a stubbed no-op Commands fails every one of these.
 
+import 'package:axiotask/src/api/fake_tasks_api.dart';
 import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/model/dates.dart' show DateMove;
 import 'package:axiotask/src/model/task.dart';
@@ -136,6 +137,21 @@ void main() {
       expect(a.compareTo('0'), lessThan(0));
       // Newer sorts ahead of older.
       expect(b.compareTo(a), lessThan(0));
+    });
+
+    // #249: the placeholder is a PREDICTION of where Google will put the row —
+    // an `insert` with no `previous` goes to the top and comes back carrying a
+    // 20-digit `u64::MAX - n` position. A placeholder that sorts after those
+    // put a fresh row BELOW rows it must sit above, and the sync that adopted
+    // Google's position 3-5s later visibly re-shuffled the list.
+    test('sorts before the position Google gives a top insert', () async {
+      final client = FakeTasksApi();
+      client.seedList('L1', 'Inbox');
+      final googleTop = await client.insertTask(
+        'L1',
+        const NewTask(title: 'inserted at the top'),
+      );
+      expect(nextLocalPosition().compareTo(googleTop.position), lessThan(0));
     });
   });
 
