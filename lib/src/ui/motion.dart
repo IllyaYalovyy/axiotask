@@ -47,6 +47,13 @@ abstract final class MotionDurations {
   /// app; anything slower stops being feedback and starts being a wait.
   static const Duration emphasized = Duration(milliseconds: 400);
 
+  /// 40ms — the OFFSET between one animating list row and the next (#251), not
+  /// a span of its own: it delays a motion, it does not lengthen one. The
+  /// smallest gap at which a batch of rows reads as a cascade instead of one
+  /// block; much more and the list starts dealing cards. Eight rows is the cap,
+  /// so the last one it allows waits 280ms before it begins.
+  static const Duration rowStagger = Duration(milliseconds: 40);
+
   // ── Bespoke spans ────────────────────────────────────────────────────────
   // Each of these shipped before the scale existed and is kept here at its
   // EXACT previous value: #250 defines the vocabulary, it changes no motion

@@ -37,7 +37,9 @@ import 'date_format.dart';
 import 'due_date_picker.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
+import 'list_motion.dart';
 import 'list_pickers.dart';
+import 'motion.dart' show MotionDurations;
 import 'new_task_fab.dart' show ComposerMorph, NewTaskFab;
 import 'quick_date_menu.dart';
 import 'search.dart';
@@ -197,6 +199,22 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // 30-second toast. Their row starts folded so it expands into place.
   final Set<String> _returning = {};
 
+  // Rows kept on screen ONLY to play their #251 leave: a task that left the
+  // filtered list for a reason that is NOT a completion — deleted, rescheduled
+  // out of this view, moved to another list, or dropped by a sync pull. Keyed by
+  // task id → the last snapshot to draw, the index it held, and its place in the
+  // stagger.
+  final Map<String, _DepartingRow> _leaving = {};
+
+  // Ids that ARRIVED in the filtered list and are still growing into place —
+  // created here, restored by an Undo, or brought in by a sync pull.
+  final Map<String, _Arrival> _arriving = {};
+
+  // Whether a build has already seen this view's contents. The FIRST one never
+  // animates: launching the app, or switching to a view, is not eight rows
+  // arriving — it is what the view is.
+  bool _seenContents = false;
+
   // The visible rows of the previous build, so the next one can tell which ids
   // just left the filtered list.
   List<StoredTask> _lastVisible = const [];
@@ -279,7 +297,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // silently keeping tasks flowing into the list you left behind. The shell
     // keys this widget per view (so a switch usually remounts); this covers the
     // in-place update too, so the contract does not depend on the key.
-    if (oldWidget.viewId != widget.viewId) _pickedListId = null;
+    if (oldWidget.viewId != widget.viewId) {
+      _pickedListId = null;
+      // Another view's rows are not this view's rows arriving and leaving. Start
+      // its choreography from nothing, with nothing in flight from before.
+      _seenContents = false;
+      _lastVisible = const [];
+      _arriving.clear();
+      _leaving.clear();
+      _departing.clear();
+      _returning.clear();
+    }
   }
 
   @override
@@ -1079,8 +1107,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   @override
   Widget build(BuildContext context) {
-    final all =
-        ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+    final tasksAsync = ref.watch(allTasksProvider);
+    final all = tasksAsync.asData?.value ?? const <StoredTask>[];
     _all = all;
     // Keep the lists subscribed and current so quick-add resolves its target.
     _lists = ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
@@ -1128,9 +1156,14 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         subDone[p] = (subDone[p] ?? 0) + 1;
       }
     }
-    // Hold on to the rows that just left the filtered list because they were
-    // completed, so they can fold away instead of vanishing (#241).
-    final items = _withDepartures(displayTasks, all);
+    // Hold on to the rows that just left the filtered list so they can fold away
+    // instead of vanishing (#241 for a completion, #251 for every other exit),
+    // and mark the ones that just arrived so they grow into place.
+    final items = _choreograph(
+      displayTasks,
+      all,
+      hasData: tasksAsync.asData != null,
+    );
     final openUrl = ref.read(urlOpenerProvider);
     final quickAddFocus = ref.watch(quickAddFocusProvider);
     // ONE creation affordance per pointer class (#216): touch creates through
@@ -1522,77 +1555,156 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     return Padding(padding: const EdgeInsets.only(top: 10), child: row);
   }
 
-  /// The rows to render this build: the visible ones, plus the recently
-  /// completed ones still folding away, re-inserted where they stood (#241).
+  /// The rows to render this build: the visible ones — flagged when they just
+  /// ARRIVED — plus the ones that just left, re-inserted where they stood so
+  /// they can fold away instead of vanishing.
   ///
-  /// A row departs only when it left the filtered list WHILE COMPLETED — the
-  /// completion sequence is what the collapse belongs to. A deleted row (gone
-  /// from [all]) or one that merely moved lists keeps its instant removal.
-  List<_RowItem> _withDepartures(
+  /// A departure that is a COMPLETION belongs to #241 and plays its own
+  /// settle-then-collapse sequence. Every other exit (deleted, rescheduled out
+  /// of this view, moved to another list, dropped by a sync pull) is #251's
+  /// leave, and every arrival is #251's enter.
+  ///
+  /// Restraint is enforced here rather than in the widget: at most
+  /// [listMotionRowCap] rows are given a motion on any one change and the rest
+  /// simply snap, and each one is offset from the last by
+  /// [MotionDurations.rowStagger] — so a sync that rewrites two hundred rows is
+  /// over within [listMotionWindow] instead of rippling for seconds.
+  ///
+  /// Until [hasData] has been true once, nothing animates at all: the first
+  /// contents a view shows are not an event, they are the view.
+  List<_RowItem> _choreograph(
     List<StoredTask> visible,
-    List<StoredTask> all,
-  ) {
-    // A row that left while scrolled OUT of view is never built, so it never
-    // reports its collapse finished. Drop any hold that has outlived the
-    // sequence rather than let an invisible slot linger in the list for good.
+    List<StoredTask> all, {
+    required bool hasData,
+  }) {
+    final ready = _seenContents;
+    _seenContents = _seenContents || hasData;
+    // A row that left (or arrived) while scrolled OUT of view is never built, so
+    // it never reports its motion finished. Drop any hold that has outlived its
+    // motion rather than let an invisible slot linger in the list for good.
     final now = WidgetsBinding.instance.currentFrameTimeStamp;
     _departing.removeWhere(
       (_, r) => now - r.since > completionSequenceDuration * 2,
     );
+    _leaving.removeWhere((_, r) => now - r.since > listMotionWindow * 2);
+    _arriving.removeWhere((_, a) => now - a.since > listMotionWindow * 2);
     final visibleIds = {for (final t in visible) t.task.id};
-    // A folding row whose task is back in the list (an Undo) rejoins the live
-    // rows and expands into place rather than snapping open.
+    // A folding row whose task is back in the list rejoins the live rows: a
+    // completion collapse reverses into place (#241), and a #251 leave lets go
+    // of its slot so the row re-enters as an arrival below.
     for (final id in _departing.keys.toList()) {
       if (visibleIds.contains(id)) {
         _departing.remove(id);
         _returning.add(id);
       }
     }
+    _leaving.removeWhere((id, _) => visibleIds.contains(id));
+
+    // One budget for the whole change, shared by the rows leaving and the rows
+    // arriving, so a delete-and-insert never doubles the cap.
+    var budget = ready ? listMotionRowCap : 0;
+    Duration nextSlot() =>
+        MotionDurations.rowStagger * (listMotionRowCap - budget--);
+
+    final lastIds = {for (final t in _lastVisible) t.task.id};
+    // Indexed once: the departure loop below asks after a task per row it lost,
+    // and a sync that rewrites two hundred rows loses two hundred of them in a
+    // single build — a linear scan each time would be quadratic work on the UI
+    // isolate at exactly the moment this file promises not to stutter.
+    final byId = {for (final t in all) t.task.id: t};
     for (var i = 0; i < _lastVisible.length; i++) {
       final id = _lastVisible[i].task.id;
-      if (visibleIds.contains(id) || _departing.containsKey(id)) continue;
-      // The row's CURRENT state decides, not the stale snapshot: the very build
-      // that drops a ticked row is the one that first sees it completed.
-      final current = all.where((t) => t.task.id == id).firstOrNull;
-      if (current == null || current.task.status != TaskStatus.completed) {
+      if (visibleIds.contains(id) ||
+          _departing.containsKey(id) ||
+          _leaving.containsKey(id)) {
         continue;
       }
-      _departing[id] = _DepartingRow(current, i, now);
+      // The row's CURRENT state decides, not the stale snapshot: the very build
+      // that drops a ticked row is the one that first sees it completed.
+      final current = byId[id];
+      if (current != null && current.task.status == TaskStatus.completed) {
+        if (!ready) continue;
+        _departing[id] = _DepartingRow(current, i, now);
+        continue;
+      }
+      if (budget <= 0) continue;
+      // A deleted task is gone from [all] entirely — the last snapshot the list
+      // held is what folds away.
+      _leaving[id] = _DepartingRow(
+        current ?? _lastVisible[i],
+        i,
+        now,
+        delay: nextSlot(),
+      );
+    }
+    for (final t in visible) {
+      final id = t.task.id;
+      if (lastIds.contains(id) || _arriving.containsKey(id)) continue;
+      if (budget <= 0) break;
+      _arriving[id] = _Arrival(nextSlot(), now);
     }
     _lastVisible = visible;
-    final items = [for (final t in visible) _RowItem(t, departing: false)];
-    if (_departing.isEmpty) return items;
-    final folding = _departing.values.toList()
-      ..sort((a, b) => a.index.compareTo(b.index));
-    for (final row in folding) {
-      items.insert(
-        row.index.clamp(0, items.length),
-        _RowItem(row.task, departing: true),
-      );
+
+    final items = [
+      for (final t in visible)
+        _RowItem(
+          t,
+          motion: _arriving.containsKey(t.task.id)
+              ? _SlotMotion.entering
+              : _SlotMotion.none,
+          delay: _arriving[t.task.id]?.delay ?? Duration.zero,
+        ),
+    ];
+    if (_departing.isEmpty && _leaving.isEmpty) return items;
+    final folding = [
+      for (final r in _departing.values)
+        (
+          index: r.index,
+          item: _RowItem(r.task, motion: _SlotMotion.completing),
+        ),
+      for (final r in _leaving.values)
+        (
+          index: r.index,
+          item: _RowItem(r.task, motion: _SlotMotion.leaving, delay: r.delay),
+        ),
+    ]..sort((a, b) => a.index.compareTo(b.index));
+    for (final f in folding) {
+      items.insert(f.index.clamp(0, items.length), f.item);
     }
     return items;
   }
 
-  /// Wrap one list item in the completion sequence (#241), keyed by [key] so a
-  /// row that folds away and comes back keeps its own animation.
+  /// Wrap one list item in its choreography — the #251 enter/leave outside, the
+  /// #241 completion sequence inside — keyed by [key] (the task's own id) so a
+  /// row that folds away and comes back keeps its own animation, and so a
+  /// create landing on Google never looks like a fresh arrival.
   Widget _motion(
     _RowItem item,
     Key key,
     Widget Function(Animation<double> completion) builder,
   ) {
     final id = item.task.task.id;
-    return CompletionMotion(
+    return RowMotion(
       key: key,
-      completed: item.task.task.status == TaskStatus.completed,
-      departing: item.departing,
-      returning: _returning.contains(id),
-      onDeparted: () {
-        if (_departing.remove(id) != null) setState(() {});
+      entering: item.motion == _SlotMotion.entering,
+      leaving: item.motion == _SlotMotion.leaving,
+      delay: item.delay,
+      // Clearing an arrival changes nothing on screen (the flag is read only
+      // while the row is growing), so it needs no rebuild.
+      onEntered: () => _arriving.remove(id),
+      onLeft: () {
+        if (_leaving.remove(id) != null) setState(() {});
       },
-      // Clearing the mark changes nothing on screen (it is read only when a row
-      // is first built), so it needs no rebuild.
-      onReturned: () => _returning.remove(id),
-      builder: (context, completion) => builder(completion),
+      child: CompletionMotion(
+        completed: item.task.task.status == TaskStatus.completed,
+        departing: item.motion == _SlotMotion.completing,
+        returning: _returning.contains(id),
+        onDeparted: () {
+          if (_departing.remove(id) != null) setState(() {});
+        },
+        onReturned: () => _returning.remove(id),
+        builder: (context, completion) => builder(completion),
+      ),
     );
   }
 
@@ -1652,25 +1764,73 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   }
 }
 
-/// One rendered list slot: a task, and whether it is only still there to fold
-/// away (#241).
-class _RowItem {
-  const _RowItem(this.task, {required this.departing});
+/// What a rendered list slot is doing this frame.
+enum _SlotMotion {
+  /// Nothing — the row is simply part of the list.
+  none,
 
-  final StoredTask task;
-  final bool departing;
+  /// The row has just joined and is growing into place (#251).
+  entering,
+
+  /// The row was completed out of the filtered list and is playing #241's
+  /// settle-then-collapse.
+  completing,
+
+  /// The row left for any other reason and is folding away (#251).
+  leaving,
 }
 
-/// A completed row held for its collapse: the snapshot to draw and the row index
-/// it occupied when it left.
+/// One rendered list slot: a task, what its motion is doing, and where it sits
+/// in the stagger.
+class _RowItem {
+  const _RowItem(
+    this.task, {
+    this.motion = _SlotMotion.none,
+    this.delay = Duration.zero,
+  });
+
+  final StoredTask task;
+  final _SlotMotion motion;
+  final Duration delay;
+
+  /// Whether the slot is held open only to play a departure — it holds a list
+  /// index but no place in the live task order.
+  bool get departing =>
+      motion == _SlotMotion.completing || motion == _SlotMotion.leaving;
+}
+
+/// A row held for its departure: the snapshot to draw, the row index it occupied
+/// when it left, and its place in the stagger.
 class _DepartingRow {
-  const _DepartingRow(this.task, this.index, this.since);
+  const _DepartingRow(
+    this.task,
+    this.index,
+    this.since, {
+    this.delay = Duration.zero,
+  });
 
   final StoredTask task;
   final int index;
 
   /// The frame the row left on, so a hold can be expired even if its row is
   /// never built (it departed off-screen) and never reports back.
+  final Duration since;
+
+  /// How long this row waits before its fold starts. Always zero for a
+  /// completion, which is a one-row event by construction.
+  final Duration delay;
+}
+
+/// A row that has just arrived and is still growing into place.
+class _Arrival {
+  const _Arrival(this.delay, this.since);
+
+  /// How long this row waits before it starts growing.
+  final Duration delay;
+
+  /// The frame it arrived on, so an arrival that is never built (it landed
+  /// off-screen) is eventually forgotten instead of animating whenever the user
+  /// happens to scroll to it.
   final Duration since;
 }
 

@@ -24,6 +24,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'list_motion.dart' show RowFold;
 import 'motion.dart';
 
 /// How long the strike sweep / fade / shrink takes.
@@ -189,27 +190,16 @@ class _CompletionMotionState extends State<CompletionMotion>
     return AnimatedBuilder(
       animation: _collapse,
       child: item,
-      builder: (context, child) {
-        final factor = 1 - _collapse.value;
-        // A fully folded row is not built at all: it occupies no space, catches
-        // no taps, and is genuinely gone from the tree the frame it reaches
-        // zero — a zero-height row that still answered finds and hit-tests
-        // would be a ghost in every sense.
-        if (factor <= 0) return const SizedBox.shrink();
+      builder: (context, child) => RowFold(
+        // The fold is the SHARED one (#251): a row leaves this list exactly one
+        // way, whether it was ticked, deleted or rescheduled out of the view.
+        factor: 1 - _collapse.value,
         // A row on its way out takes no input. It is a shrinking target sliding
         // under the finger, and everything it still offers (un-complete, open,
         // reschedule) would be aimed at a task that is leaving — the Undo toast
         // is the one affordance for second thoughts.
-        final item = IgnorePointer(ignoring: widget.departing, child: child);
-        if (factor >= 1) return item;
-        return ClipRect(
-          child: Align(
-            alignment: Alignment.topCenter,
-            heightFactor: factor,
-            child: item,
-          ),
-        );
-      },
+        child: IgnorePointer(ignoring: widget.departing, child: child!),
+      ),
     );
   }
 }
