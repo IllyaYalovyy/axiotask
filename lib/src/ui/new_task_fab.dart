@@ -28,6 +28,8 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import 'motion.dart';
+
 /// The "new task" floating action button — the phone's one creation affordance.
 ///
 /// [visible] is the whole contract: false and it scales away and leaves the
@@ -55,11 +57,11 @@ class NewTaskFab extends StatefulWidget {
   /// the breathing room between the row and the FAB.
   static const double clearance = size + margin * 2;
 
-  /// How long the FAB takes to leave or return. DELIBERATELY shorter than the
-  /// composer's own route transition: the FAB must be gone before the sheet has
-  /// unfolded far enough to reach the corner, or the two read as two surfaces
-  /// trading places instead of one becoming the other.
-  static const Duration transition = Duration(milliseconds: 120);
+  /// How long the FAB takes to leave or return — and, because the shell's app
+  /// bar leaves at the same pace, the span the whole compact chrome shares.
+  /// (Why it is shorter than the composer's own route transition:
+  /// [MotionDurations.fabTransition].)
+  static const Duration transition = MotionDurations.fabTransition;
 
   @override
   State<NewTaskFab> createState() => _NewTaskFabState();
@@ -77,9 +79,18 @@ class _NewTaskFabState extends State<NewTaskFab>
   /// the way back — leaving should never draw attention to itself.
   late final Animation<double> _scale = CurvedAnimation(
     parent: _controller,
-    curve: Curves.easeOutBack,
-    reverseCurve: Curves.easeIn,
+    curve: MotionCurves.fabLanding,
+    reverseCurve: MotionCurves.exit,
   );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations" (Android) / reduced motion: the FAB still leaves and
+    // returns, it just stops travelling to get there — the same rule the app
+    // bar beside it already follows.
+    _controller.duration = Motion.of(context).resolve(NewTaskFab.transition);
+  }
 
   @override
   void didUpdateWidget(covariant NewTaskFab oldWidget) {
@@ -218,7 +229,7 @@ class _ComposerMorphState extends State<ComposerMorph> {
             ),
           ),
           builder: (context, surface) {
-            final t = Curves.easeOutCubic.transform(
+            final t = MotionCurves.enter.transform(
               widget.animation.value.clamp(0.0, 1.0),
             );
             final width = lerpDouble(NewTaskFab.size, full, t)!;

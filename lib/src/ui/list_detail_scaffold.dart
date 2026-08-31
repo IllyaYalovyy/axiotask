@@ -46,6 +46,7 @@ import 'package:flutter/material.dart';
 
 import 'compact_chrome.dart';
 import 'ime_inset_guard.dart';
+import 'motion.dart';
 import 'new_task_fab.dart';
 import 'shell_nav_bar.dart';
 
@@ -340,9 +341,7 @@ class _CompactShellState extends State<_CompactShell>
     // "Remove animations" (Android) / reduced motion: the bar still leaves and
     // returns, it just stops travelling to get there — the same rule the
     // completion collapse follows (#241).
-    _bar.duration = MediaQuery.disableAnimationsOf(context)
-        ? Duration.zero
-        : NewTaskFab.transition;
+    _bar.duration = Motion.of(context).resolve(NewTaskFab.transition);
     final imeUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     if (imeUp == _imeUp) return;
     _imeUp = imeUp;
