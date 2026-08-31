@@ -181,8 +181,11 @@ void main() {
         );
         await tester.tap(find.byKey(const Key('list-dropdown')));
         await tester.pumpAndSettle();
+        // Bounded from here on: the move raises an Undo toast, and since #258
+        // that toast draws a 30-second countdown — pumpAndSettle would run its
+        // whole life out and settle on a screen the toast has already left.
         await tester.tap(find.text('Personal').last);
-        await tester.pumpAndSettle();
+        await settleDetail(tester);
 
         expect(fake.movedToList, ['P->L2']);
         // A confirmation toast names the destination (the row otherwise just
@@ -210,13 +213,15 @@ void main() {
         );
         await tester.tap(find.byKey(const Key('list-dropdown')));
         await tester.pumpAndSettle();
+        // Bounded: see the sibling test — the undo toast's #258 countdown never
+        // lets pumpAndSettle idle before the toast has lapsed.
         await tester.tap(find.text('Personal').last);
-        await tester.pumpAndSettle();
+        await settleDetail(tester);
         expect(fake.movedToList, ['P->L2']);
         expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
 
         await tester.tap(find.text('Undo'));
-        await tester.pumpAndSettle();
+        await settleDetail(tester);
         // The clone is gone and the original 'P' is back in its source list…
         expect(fake.tasks.any((t) => t.task.id == 'P-moved'), isFalse);
         final restored = fake.tasks.firstWhere((t) => t.task.id == 'P');
