@@ -40,6 +40,8 @@ import 'date_format.dart';
 import 'detail_motion.dart';
 import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'due_date_picker.dart';
+import 'empty_state.dart';
+import 'first_snapshot.dart';
 import 'haptics.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
@@ -102,17 +104,6 @@ import 'views.dart';
   if (previousId == currentPrevious) return null;
   return (previousId: previousId);
 }
-
-/// The empty-state message for [viewId] — a per-view reassurance for a smart
-/// view, the generic prompt for a list / All Tasks. Ports the reference's
-/// per-view empty strings.
-String emptyMessageFor(String viewId) => switch (viewId) {
-  'focus' => 'All clear for this week',
-  'upcoming' => 'Nothing upcoming',
-  'missed' => 'Nothing overdue',
-  'unscheduled' => 'Everything is scheduled',
-  _ => 'No tasks yet',
-};
 
 /// The All-Tasks list plus its quick-add bar for [viewId].
 class TaskListView extends ConsumerStatefulWidget {
@@ -1384,6 +1375,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             subDone,
             subTotal,
             openUrl,
+            hasData: _seenContents,
           ),
         ),
       ],
@@ -1408,8 +1400,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     Map<String, DueInfo> dueInfo,
     Map<String, int> subDone,
     Map<String, int> subTotal,
-    UrlOpener openUrl,
-  ) {
+    UrlOpener openUrl, {
+    required bool hasData,
+  }) {
     final sort = SortMode.byId(
       ref.read(prefsControllerProvider).sortPerView[widget.viewId],
     );
@@ -1443,25 +1436,25 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
     final Widget content;
     if (items.isEmpty) {
-      final empty = Center(
-        child: Text(
-          emptyMessageFor(widget.viewId),
-          style: Theme.of(context).textTheme.bodyMedium,
+      // Scrollable on EVERY layout, and for two reasons at once: on a phone a
+      // full-height scroll view is what lets an over-pull arm the refresh over
+      // an empty list, and everywhere it is what keeps the state from
+      // overflowing when the system text scale turns an icon and two lines
+      // into more than the pane is tall (#247's rule, #260's surface).
+      content = LayoutBuilder(
+        builder: (context, c) => SingleChildScrollView(
+          physics: mobile ? const AlwaysScrollableScrollPhysics() : null,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: c.maxHeight),
+            // Keyed by view: switching from one empty view to another is
+            // ENTERING a state, and the icon that names it arrives with it.
+            child: EmptyStateView(
+              key: ValueKey('empty-${widget.viewId}'),
+              viewId: widget.viewId,
+            ),
+          ),
         ),
       );
-      // Keep the empty view pull-refreshable on a phone: a full-height scroll
-      // view that always accepts an over-pull.
-      content = mobile
-          ? LayoutBuilder(
-              builder: (context, c) => SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: c.maxHeight),
-                  child: empty,
-                ),
-              ),
-            )
-          : empty;
     } else if (sort == SortMode.manual) {
       // Drag reorder rides ONLY the manual sort (backend position); the other
       // sorts derive their order, so reordering them is meaningless (the
@@ -1576,8 +1569,19 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       );
     }
 
-    if (!mobile) return content;
-    return RefreshIndicator(onRefresh: _pullRefresh, child: content);
+    // Nothing on this pane may claim the store said something it has not said
+    // yet: until the first snapshot lands the gate holds the pane, and past
+    // the grace it shows skeleton rows rather than a spinner (#260).
+    final gated = FirstSnapshotGate(hasData: hasData, child: content);
+    if (!mobile) return gated;
+    return RefreshIndicator(
+      onRefresh: _pullRefresh,
+      // The gesture's indicator and the line it hands off to (#255) are one
+      // piece of feedback, so they are one colour — the app's primary, stated
+      // here rather than inherited from whatever Material defaults to next.
+      color: Theme.of(context).colorScheme.primary,
+      child: gated,
+    );
   }
 
   /// Apply a drag from [oldIndex] to [newIndex] over the visible [tasks] as a

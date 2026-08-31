@@ -57,9 +57,14 @@ class AppShell extends ConsumerWidget {
     // the intro on. The Flutter bootstrap always ensures a default list, so
     // "empty workspace" here means "no tasks yet" (adapted from the reference's
     // lists-and-tasks-empty gate). Once dismissed, onboardingSeen keeps it away.
-    final allTasks =
-        ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
-    final showOnboarding = allTasks.isEmpty && !prefs.onboardingSeen;
+    //
+    // It waits for the store to ANSWER (#260): "not loaded yet" is not "empty",
+    // and a returning user with a first-launch pref would otherwise be shown a
+    // modal welcome for the one frame before their tasks arrive.
+    final tasksSnapshot = ref.watch(allTasksProvider);
+    final allTasks = tasksSnapshot.asData?.value ?? const <StoredTask>[];
+    final showOnboarding =
+        tasksSnapshot.hasValue && allTasks.isEmpty && !prefs.onboardingSeen;
     // Persist the welcome as seen — from its button OR the back-ladder's top
     // rung (T8.3), so a back dismissal sticks exactly like a tap dismissal.
     void dismissOnboarding() =>

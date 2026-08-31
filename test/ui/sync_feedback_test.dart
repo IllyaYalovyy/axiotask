@@ -550,6 +550,39 @@ void main() {
       expect(_line, findsNothing, reason: 'no run happened, so no line');
     });
 
+    testWidgets('the spinner is drawn in the app\'s primary colour (#260)', (
+      tester,
+    ) async {
+      // The gesture's own indicator and the line it hands off to are ONE piece
+      // of feedback, so they are one colour: whatever the theme calls primary,
+      // never whatever a future Material default happens to pick.
+      final fake = FakeBackend([row('T1', 'a'), row('T2', 'b')]);
+      addTearDown(fake.dispose);
+      final refresh = Completer<void>();
+      addTearDown(refresh.complete);
+      await pumpChrome(
+        tester,
+        fake: fake,
+        events: const Stream<SyncRunEvent>.empty(),
+        onRefresh: () => refresh.future,
+      );
+
+      await pullDown(tester);
+      final drawn = tester
+          .widget<RefreshProgressIndicator>(
+            find.byType(RefreshProgressIndicator),
+          )
+          .valueColor!
+          .value!;
+      final primary = buildLightTheme().colorScheme.primary;
+      expect(
+        (drawn.r, drawn.g, drawn.b),
+        (primary.r, primary.g, primary.b),
+        reason: 'the arc is the theme\'s primary',
+      );
+      expect(drawn.a, greaterThan(0), reason: 'and it is actually painted');
+    });
+
     testWidgets('the list can leave mid-run — the hand-off outlives nothing', (
       tester,
     ) async {
