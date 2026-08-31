@@ -27,6 +27,7 @@ import 'package:flutter/services.dart';
 
 import '../app/pending_edits.dart';
 import '../model/dates.dart';
+import 'commit_flash.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
 import 'quick_date_menu.dart';
@@ -84,6 +85,7 @@ class TaskRow extends StatefulWidget {
     this.pendingEdits,
     this.onInlineEditActive,
     this.completionProgress,
+    this.commit,
     super.key,
   });
 
@@ -191,6 +193,12 @@ class TaskRow extends StatefulWidget {
   /// the shell intercepts it and calls this commit to save-and-close the editor
   /// rather than exit the app mid-rename. `null` skips it (an isolated test).
   final void Function(VoidCallback? commit)? onInlineEditActive;
+
+  /// The most recent write the STORE confirmed for this task, and which element
+  /// of the row it changed (#252) — the row washes that element once per
+  /// commit. `null` for a row that has had none (and for a row mounted outside
+  /// the list, which has nothing watching the store for it).
+  final TaskCommit? commit;
 
   @override
   State<TaskRow> createState() => _TaskRowState();
@@ -572,7 +580,18 @@ class _TaskRowState extends State<TaskRow> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _mainLine(theme, completion),
+                        // A rename that LANDS washes the title line, wherever
+                        // it was typed — this row's inline editor, the detail
+                        // panel's Title field, a sync pull (#252). OUTSIDE
+                        // [_mainLine] because the inline editor replaces the
+                        // whole line while it is open: a wrapper inside would
+                        // be torn down by the very rename it exists to report,
+                        // and would come back with nothing left to play.
+                        CommitFlash(
+                          commit: widget.commit,
+                          target: CommitTarget.title,
+                          child: _mainLine(theme, completion),
+                        ),
                         if (!coarsePointerPlatform(theme.platform))
                           const SizedBox(height: 2),
                         _metaLine(theme),
@@ -616,14 +635,26 @@ class _TaskRowState extends State<TaskRow> {
       decorated = content;
     }
 
+    // A commit whose changed element is unknown or several washes the WHOLE row
+    // (#252): a bulk action that hit N rows at once, or a change the sync
+    // pulled in. Outside the selection/detail washes, so it reads as one flash
+    // over the row as the user sees it, and square — a row has no corners of
+    // its own to round.
+    final flashed = CommitFlash(
+      commit: widget.commit,
+      target: CommitTarget.row,
+      radius: 0,
+      child: decorated,
+    );
+
     // Secondary-tap (right-click) opens the desktop context menu anywhere on the
     // row; touch selection is the long-press bound by _wrapTouchGestures below.
     final withContext = widget.onContextMenu == null
-        ? decorated
+        ? flashed
         : GestureDetector(
             behavior: HitTestBehavior.translucent,
             onSecondaryTapDown: (d) => widget.onContextMenu!(d.globalPosition),
-            child: decorated,
+            child: flashed,
           );
     // The coarse-pointer swipe/long-press layer wraps everything so a gesture
     // anywhere on the row is caught (T8.1).
@@ -742,22 +773,29 @@ class _TaskRowState extends State<TaskRow> {
               theme: theme,
             ),
           if ((widget.listTag ?? '').isNotEmpty)
-            Container(
-              key: const Key('list-tag'),
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              // A long list name ellipsizes rather than pushing the tag past the
-              // (narrow) meta column and overflowing it (G9 #208). Each Wrap
-              // child is constrained to the column width, so an un-capped tag is
-              // the one meta item that can exceed it.
-              child: Text(
-                widget.listTag!,
-                style: muted,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            // A move to another list washes the tag that names the new one
+            // (#252) — in a cross-list view the row stays put, and the tag is
+            // the only thing about it that changed.
+            CommitFlash(
+              commit: widget.commit,
+              target: CommitTarget.listTag,
+              child: Container(
+                key: const Key('list-tag'),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                // A long list name ellipsizes rather than pushing the tag past
+                // the (narrow) meta column and overflowing it (G9 #208). Each
+                // Wrap child is constrained to the column width, so an un-capped
+                // tag is the one meta item that can exceed it.
+                child: Text(
+                  widget.listTag!,
+                  style: muted,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
         ],
@@ -827,6 +865,14 @@ class _TaskRowState extends State<TaskRow> {
       );
     }
 
+    // A date that LANDS washes the badge that shows it (#252) — the quick-date
+    // menu, the calendar, a swipe-left, a clear. Inside the 48dp touch target,
+    // so the wash hugs the badge rather than the invisible box around it.
+    child = CommitFlash(
+      commit: widget.commit,
+      target: CommitTarget.due,
+      child: child,
+    );
     if (widget.onPickDate == null) return child;
     // A touch pointer gets a full 48dp hit target on this small date segment
     // (F19 #198 — a finger can't reliably land on ~20dp of text); the mouse

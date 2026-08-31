@@ -105,9 +105,19 @@ class FakeBackend implements Commands {
 
   /// Simulate an external write (e.g. a sync pull) retitling a task, so tests
   /// can exercise the panel's live-tracking / clobber-avoidance.
+  ///
+  /// The row lands CLEAN, exactly as `Store.upsertRemoteTask` writes a pulled
+  /// row (its `WHERE sync_state = 'clean'` also means a pull can only ever land
+  /// on a row that was already clean). That is what tells the app a change came
+  /// from Google rather than from a local edit — the #252 commit flash reads it.
   void pushExternal(String id, String title) {
     final i = _tasks.indexWhere((t) => t.task.id == id);
-    _tasks[i] = _rebuild(_tasks[i], _tasks[i].task.copyWith(title: title));
+    _tasks[i] = StoredTask(
+      task: _tasks[i].task.copyWith(title: title),
+      listId: _tasks[i].listId,
+      syncState: SyncState.clean,
+      localUpdated: 't',
+    );
     _emit();
   }
 
