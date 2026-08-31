@@ -51,6 +51,7 @@ import 'ime_inset_guard.dart';
 import 'motion.dart';
 import 'new_task_fab.dart';
 import 'shell_nav_bar.dart';
+import 'view_motion.dart';
 
 export 'shell_nav_bar.dart' show ShellDestination, ShellNavBar;
 
@@ -687,7 +688,11 @@ class _CompactShellState extends State<_CompactShell>
           shown: _bar.value,
           topPadding: topInset,
           bar: AppBar(
-            title: Text(widget.title, overflow: TextOverflow.ellipsis),
+            // The title CROSS-FADES as the view changes (#254), on the same
+            // frame the pane transition and the nav-bar pill start on — a
+            // label that snapped a frame ahead would arrive before the content
+            // it names.
+            title: ViewTitle(widget.title),
             // The sync line lives in `flexibleSpace` — the one slot that fills
             // the bar without changing its preferred height (`bottom` would
             // add its own, pushing every row down the moment a sync began).
