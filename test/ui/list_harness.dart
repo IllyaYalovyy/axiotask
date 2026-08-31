@@ -43,6 +43,8 @@ Future<FakeBackend> pumpList(
   UrlOpener? urlOpener,
   String Function()? newId,
   ValueNotifier<String?>? selection,
+  bool disableAnimations = false,
+  double textScale = 1.0,
 }) async {
   // A unique-id generator by default: the manual-sort list is a
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
@@ -77,7 +79,16 @@ Future<FakeBackend> pumpList(
           // actions by right-click. Tests pin the desktop path by overriding it.
           theme: platform == null ? null : ThemeData(platform: platform),
           // Mount the F19 toast overlay so migrated undo/info toasts render.
-          builder: wrapWithToast,
+          // [disableAnimations] stands in for the platform accessibility flag
+          // (Android "remove animations" / desktop reduced motion), which the
+          // completion sequence honours by jumping to its end state (#241).
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              disableAnimations: disableAnimations,
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: wrapWithToast(context, child),
+          ),
           home: Scaffold(
             body: ValueListenableBuilder<String?>(
               valueListenable: selected,

@@ -24,6 +24,7 @@ import 'package:flutter/services.dart';
 
 import '../app/pending_edits.dart';
 import '../model/dates.dart';
+import 'completion_motion.dart';
 import 'date_format.dart';
 import 'url_detect.dart';
 
@@ -95,6 +96,7 @@ class TaskRow extends StatefulWidget {
     this.onEditDone,
     this.pendingEdits,
     this.onInlineEditActive,
+    this.completionProgress,
     super.key,
   });
 
@@ -107,6 +109,13 @@ class TaskRow extends StatefulWidget {
   /// Whether the task is completed (drives the checkbox, strikethrough, and the
   /// completion fade/shrink).
   final bool completed;
+
+  /// The completion sequence's settle progress (0 = open, 1 = completed), which
+  /// drives the strike sweep, the fade, and the shrink together (#241). Supplied
+  /// by the list's [CompletionMotion] so a tick, a swipe-right, and a bulk
+  /// Complete all animate identically. When `null` the completed look is simply
+  /// drawn at rest — a row with no sequence around it has nothing to play.
+  final Animation<double>? completionProgress;
 
   /// The task's OWN due date (raw `YYYY-MM-DD…`, `null`/empty when unset).
   /// Formatted for display here — never pass a pre-formatted label.
@@ -520,20 +529,26 @@ class _TaskRowState extends State<TaskRow> {
     _rightEdgeLimit = width - gestureInsets.right;
     final showOverflow =
         coarsePointerPlatform(theme.platform) && widget.onShowActions != null;
+    // The completion sequence's progress (#241): the list hands every row the
+    // same animation, so a tick, a swipe-right and a bulk Complete settle
+    // identically. Standing alone (no sequence around it) the row simply wears
+    // the resting look for its state.
+    final completion =
+        widget.completionProgress ??
+        AlwaysStoppedAnimation<double>(widget.completed ? 1.0 : 0.0);
     // The quick-date strip is revealed by hover (a non-touch affordance); the
     // coarse-pointer swipe path is T8.1.
     final content = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
-      child: AnimatedOpacity(
+      child: FadeTransition(
+        key: const Key('row-completion-fade'),
         // Completion fades the whole row (the reference's `.completed`/
         // `.completing` opacity), so a checked task reads as "done, on its way
         // out" before the show-completed filter removes it.
-        opacity: widget.completed ? 0.5 : 1.0,
-        duration: const Duration(milliseconds: 250),
-        child: AnimatedScale(
-          scale: widget.completed ? 0.98 : 1.0,
-          duration: const Duration(milliseconds: 250),
+        opacity: completion.drive(Tween<double>(begin: 1.0, end: 0.5)),
+        child: ScaleTransition(
+          scale: completion.drive(Tween<double>(begin: 1.0, end: 0.98)),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             child: Stack(
@@ -598,7 +613,7 @@ class _TaskRowState extends State<TaskRow> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _mainLine(theme),
+                              _mainLine(theme, completion),
                               if (!coarsePointerPlatform(theme.platform))
                                 const SizedBox(height: 2),
                               _metaLine(theme),
@@ -702,7 +717,8 @@ class _TaskRowState extends State<TaskRow> {
   }
 
   /// The main line: title (or inline editor) and the pending-sync dot.
-  Widget _mainLine(ThemeData theme) {
+  /// [completion] drives the title's strike sweep (#241).
+  Widget _mainLine(ThemeData theme, Animation<double> completion) {
     if (_editing) {
       return TextField(
         controller: _editor,
@@ -741,16 +757,10 @@ class _TaskRowState extends State<TaskRow> {
         child: Row(
           children: [
             Expanded(
-              child: Text(
-                widget.title.isEmpty ? 'Untitled' : widget.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  decoration: widget.completed
-                      ? TextDecoration.lineThrough
-                      : null,
-                  color: widget.completed ? theme.disabledColor : null,
-                ),
+              child: StrikeSweep(
+                title: widget.title.isEmpty ? 'Untitled' : widget.title,
+                progress: completion,
+                completedColor: theme.disabledColor,
               ),
             ),
             if (widget.pendingSync)
