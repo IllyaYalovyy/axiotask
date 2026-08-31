@@ -609,3 +609,14 @@ Future<void> settleDetail(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 350));
 }
+
+/// Open the detail app bar's "⋮" overflow — since #246 EVERY non-navigation
+/// action (Duplicate, Make subtask of…/Detach, Open in Google Tasks, Delete)
+/// lives there, so a suite reaching one of them goes through here. Bounded
+/// pumps rather than pumpAndSettle: the panel may hold a focused field whose
+/// cursor never stops blinking (see TESTING.md).
+Future<void> openDetailOverflow(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('detail-overflow')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}

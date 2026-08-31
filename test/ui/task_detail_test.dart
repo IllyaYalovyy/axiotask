@@ -259,7 +259,8 @@ void main() {
         initial: [row('P', 'doomed')],
         closed: closed,
       );
-      await tester.tap(find.byTooltip('Delete'));
+      await openDetailOverflow(tester);
+      await tester.tap(find.byKey(const Key('detail-delete')));
       await settleDetail(tester);
       expect(fake.deleted, hasLength(1));
       expect(closed, ['close'], reason: 'panel closes after delete');

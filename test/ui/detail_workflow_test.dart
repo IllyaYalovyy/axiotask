@@ -79,8 +79,8 @@ void main() {
           row('S', 'Nested Child', parent: 'P'),
         ],
       );
-      expect(find.text('Detach from parent'), findsOneWidget);
-      await tester.tap(find.text('Detach from parent'));
+      await openDetailOverflow(tester);
+      await tester.tap(find.byKey(const Key('detail-detach')));
       await settleDetail(tester);
 
       expect(fake.movedTasks, ['S:parent=null:prev=P']);
@@ -93,6 +93,8 @@ void main() {
 
     testWidgets('a top-level task offers no detach affordance', (tester) async {
       await pumpDetail(tester, taskId: 'P', initial: [row('P', 'top')]);
+      await openDetailOverflow(tester);
+      expect(find.byKey(const Key('detail-detach')), findsNothing);
       expect(find.text('Detach from parent'), findsNothing);
     });
   });
