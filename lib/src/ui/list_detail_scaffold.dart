@@ -3,7 +3,8 @@
 // no forked screens.
 //
 //   width ≥ 600dp (expanded): the sidebar + list + side-by-side detail pane.
-//   width <  600dp (compact):  an app bar (hamburger + view title), a slide-in
+//   width <  600dp (compact):  ONE app bar (hamburger + view title + the hosted
+//                              list's own actions — #244), a slide-in
 //                              drawer holding the full sidebar, a bottom
 //                              [ShellNavBar], and a "new task" FAB. An open
 //                              detail covers the list full-bleed and the chrome
@@ -31,14 +32,19 @@
 // natively), the drawer content is inset from the top/bottom/left with an
 // explicit un-notched fallback, the FAB floats above the bottom gesture pill and
 // off the right edge (Scaffold's FAB location honours the view padding), and the
-// full-screen detail is wrapped so its header clears the status bar.
+// full-screen detail is wrapped so its header clears the status bar. When the
+// compact bar collapses out of the way (#244) the body takes its slot but stops
+// at the status bar — rows never slide under the notch.
 //
 // flutter_adaptive_scaffold is discontinued, so this is deliberately a handful
 // of framework primitives we own and golden-test at both form factors.
 
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
+import 'compact_chrome.dart';
 import 'ime_inset_guard.dart';
 import 'new_task_fab.dart';
 import 'shell_nav_bar.dart';
@@ -255,15 +261,19 @@ class ListDetailScaffold extends StatelessWidget {
   }
 }
 
-/// The compact (phone) chrome: app bar, drawer, list, bottom nav — and the one
-/// touch creation affordance floating over it.
+/// The compact (phone) chrome: ONE app bar (title + the hosted list's own
+/// actions), drawer, list, bottom nav — and the one touch creation affordance
+/// floating over it.
 ///
-/// Stateful for the FAB alone (#234). A FAB parked over the list is an
-/// obstruction the moment the user starts reading it, so this listens to the
-/// list's own scrolling and pulls the FAB out of the way while the content
-/// moves up, returning it as soon as the scroll reverses or stops. Nothing else
-/// about the layout reacts — the FAB comes and goes without moving a single row
-/// (the list already reserves [NewTaskFab.clearance] at its foot).
+/// Stateful for the chrome that MOVES (#234, #244). A FAB parked over the list
+/// — and a bar pinned above it — are obstructions the moment the user starts
+/// reading, so this listens to the list's own scrolling and pulls BOTH out of
+/// the way while the content moves up, returning them together as soon as the
+/// scroll reverses or stops. One gesture, one [scrollThreshold], one state.
+///
+/// The FAB comes and goes without moving a single row (the list already
+/// reserves [NewTaskFab.clearance] at its foot); the app bar takes its slot
+/// with it, so the rows follow it up rather than leaving a hole behind.
 class _CompactShell extends StatefulWidget {
   const _CompactShell({
     required this.title,
@@ -289,31 +299,83 @@ class _CompactShell extends StatefulWidget {
   final bool composerOpen;
   final GlobalKey<ScaffoldState>? scaffoldKey;
 
-  /// How far the list must travel in one direction before the FAB reacts. Big
-  /// enough that a nudge, a tap-jitter or a settling fling tail does not flicker
-  /// it; small enough that a deliberate scroll clears the corner immediately.
+  /// How far the list must travel in one direction before the chrome reacts.
+  /// Big enough that a nudge, a tap-jitter or a settling fling tail does not
+  /// flicker it; small enough that a deliberate scroll clears the corner
+  /// immediately. Shared by the FAB and the app bar so they move as one.
   static const double scrollThreshold = 24;
 
   @override
   State<_CompactShell> createState() => _CompactShellState();
 }
 
-class _CompactShellState extends State<_CompactShell> {
+class _CompactShellState extends State<_CompactShell>
+    with SingleTickerProviderStateMixin {
   /// Distance travelled since the last direction change: positive while the
   /// content moves up (the user is scrolling down the list).
   double _travelled = 0;
 
-  /// Whether scrolling is currently holding the FAB off screen.
+  /// Whether scrolling is currently holding the chrome off screen.
   bool _hiddenByScroll = false;
+
+  /// Whether a soft keyboard is up. A bottom view inset means something has
+  /// focus, and a user who is typing must never be left without the bar (nor
+  /// shown a "new task" button floating over the field — #233).
+  bool _imeUp = false;
+
+  /// How much of the app bar is on screen: 1 pinned, 0 collapsed. Driven at the
+  /// FAB's own pace so the two halves of the chrome leave and return together.
+  late final AnimationController _bar = AnimationController(
+    vsync: this,
+    duration: NewTaskFab.transition,
+    value: 1,
+  );
+
+  /// The channel the hosted list publishes its toolbar actions into (#244).
+  final ListChromeController _chrome = ListChromeController();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations" (Android) / reduced motion: the bar still leaves and
+    // returns, it just stops travelling to get there — the same rule the
+    // completion collapse follows (#241).
+    _bar.duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : NewTaskFab.transition;
+    final imeUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    if (imeUp == _imeUp) return;
+    _imeUp = imeUp;
+    _syncBar();
+  }
+
+  @override
+  void dispose() {
+    _bar.dispose();
+    _chrome.dispose();
+    super.dispose();
+  }
+
+  /// Drive the bar to where the current state says it belongs. A raised
+  /// keyboard CANCELS the hide outright: whatever the scroll was doing, the bar
+  /// comes back.
+  void _syncBar() {
+    if (_hiddenByScroll && !_imeUp) {
+      _bar.reverse();
+    } else {
+      _bar.forward();
+    }
+  }
 
   bool _onScroll(ScrollNotification notification) {
     if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
       return false;
     }
     if (notification is ScrollEndNotification) {
-      // At rest the FAB is always there — the list foot is padded for it.
+      // At rest the chrome is always there — the list foot is padded for the
+      // FAB, and a bar you cannot reach at rest is a bar you cannot use.
       _travelled = 0;
-      if (_hiddenByScroll) setState(() => _hiddenByScroll = false);
+      if (_hiddenByScroll) _setHidden(false);
     } else if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0;
       if (delta == 0) return false;
@@ -322,63 +384,102 @@ class _CompactShellState extends State<_CompactShell> {
       if (delta.sign != _travelled.sign) _travelled = 0;
       _travelled += delta;
       if (_travelled > _CompactShell.scrollThreshold && !_hiddenByScroll) {
-        setState(() => _hiddenByScroll = true);
+        _setHidden(true);
       } else if (_travelled < -_CompactShell.scrollThreshold &&
           _hiddenByScroll) {
-        setState(() => _hiddenByScroll = false);
+        _setHidden(false);
       }
     }
     return false;
   }
 
+  void _setHidden(bool hidden) {
+    setState(() => _hiddenByScroll = hidden);
+    _syncBar();
+  }
+
   @override
   Widget build(BuildContext context) {
     final onNewTask = widget.onNewTask;
-    // A bottom view inset means a keyboard, and a keyboard means something has
-    // focus: a "new task" button floating over the field being typed into is
-    // noise, and a stale inset used to leave it stranded mid-screen (#233).
-    final imeUp = MediaQuery.viewInsetsOf(context).bottom > 0;
-    return Scaffold(
-      key: widget.scaffoldKey,
-      // Keep inputs visible above the soft keyboard (IME) — the quick-add bar
-      // and the detail's fields must never sit under the keyboard.
-      resizeToAvoidBottomInset: true,
-      // The app bar auto-adds the hamburger (a drawer is present) and clears the
-      // status bar itself; its title orients the user to the active view.
-      appBar: AppBar(
-        title: Text(widget.title, overflow: TextOverflow.ellipsis),
-      ),
-      // The slide-in drawer IS the full sidebar. Inset its content past the
-      // notch / status bar / gesture pill on the top, bottom, and left edges,
-      // with a small explicit fallback so un-notched devices still breathe.
-      drawer: Drawer(
-        child: SafeArea(
-          minimum: const EdgeInsets.symmetric(vertical: 8),
-          child: widget.sidebar,
-        ),
-      ),
-      // The list keeps the app bar's top inset; SafeArea handles the side/bottom
-      // insets the bottom nav does not (a landscape side notch). Only the BODY's
-      // scrolling drives the FAB — the drawer is the Scaffold's own child and
-      // its notifications never reach this listener.
-      body: NotificationListener<ScrollNotification>(
+    final topInset = MediaQuery.paddingOf(context).top;
+    // Built ONCE per rebuild and handed to the collapse animation as its
+    // pre-built child: the list is the expensive subtree and nothing in it
+    // changes as the bar slides. Only the BODY's scrolling drives the chrome —
+    // the drawer is the Scaffold's own child and its notifications never reach
+    // this listener. SafeArea handles the side/bottom insets the bottom nav
+    // does not (a landscape side notch); the TOP is left to the app bar.
+    final body = CompactChromeScope(
+      controller: _chrome,
+      child: NotificationListener<ScrollNotification>(
         onNotification: _onScroll,
         child: SafeArea(top: false, child: widget.list),
       ),
-      floatingActionButton: onNewTask == null
-          ? null
-          : NewTaskFab(
-              visible: !widget.composerOpen && !imeUp && !_hiddenByScroll,
-              onPressed: onNewTask,
+    );
+    return AnimatedBuilder(
+      animation: _bar,
+      child: body,
+      builder: (context, body) {
+        // The app bar auto-adds the hamburger (a drawer is present) and clears
+        // the status bar itself; its title orients the user to the active view,
+        // and the hosted list's own actions ride beside it — ONE bar (#244).
+        final bar = CollapsingAppBar(
+          shown: _bar.value,
+          topPadding: topInset,
+          bar: AppBar(
+            title: Text(widget.title, overflow: TextOverflow.ellipsis),
+            actions: [
+              ValueListenableBuilder<ListChromeActions?>(
+                valueListenable: _chrome,
+                builder: (context, actions, _) => actions == null
+                    ? const SizedBox.shrink()
+                    : CompactListActions(actions: actions),
+              ),
+            ],
+          ),
+        );
+        // As the bar collapses its slot shrinks and the body's top rises with
+        // it — but never past the status bar: rows must not slide under the
+        // notch just because the bar went away.
+        final statusBarFloor = math.max(
+          0.0,
+          topInset - bar.preferredSize.height,
+        );
+        return Scaffold(
+          key: widget.scaffoldKey,
+          // Keep inputs visible above the soft keyboard (IME) — the quick-add
+          // bar and the detail's fields must never sit under the keyboard.
+          resizeToAvoidBottomInset: true,
+          appBar: bar,
+          // The slide-in drawer IS the full sidebar. Inset its content past the
+          // notch / status bar / gesture pill on the top, bottom, and left
+          // edges, with a small explicit fallback so un-notched devices still
+          // breathe.
+          drawer: Drawer(
+            child: SafeArea(
+              minimum: const EdgeInsets.symmetric(vertical: 8),
+              child: widget.sidebar,
             ),
-      bottomNavigationBar: ShellNavBar(
-        destinations: widget.destinations,
-        // Nullable by construction (#237): a list opened from the drawer is
-        // not a destination, and the bar says so in pixels AND in semantics —
-        // no sentinel index to draw over or explain away.
-        selectedIndex: widget.selectedIndex,
-        onDestinationSelected: widget.onDestinationSelected,
-      ),
+          ),
+          body: Padding(
+            padding: EdgeInsets.only(top: statusBarFloor),
+            child: body!,
+          ),
+          floatingActionButton: onNewTask == null
+              ? null
+              : NewTaskFab(
+                  visible: !widget.composerOpen && !_imeUp && !_hiddenByScroll,
+                  onPressed: onNewTask,
+                ),
+          bottomNavigationBar: ShellNavBar(
+            destinations: widget.destinations,
+            // Nullable by construction (#237): a list opened from the drawer is
+            // not a destination, and the bar says so in pixels AND in semantics
+            // — no sentinel index to draw over or explain away.
+            selectedIndex: widget.selectedIndex,
+            onDestinationSelected: widget.onDestinationSelected,
+          ),
+        );
+      },
     );
   }
 }

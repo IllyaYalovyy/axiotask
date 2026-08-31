@@ -31,6 +31,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'bulk_add.dart';
 import 'bulk_bar.dart';
+import 'compact_chrome.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
@@ -299,6 +300,22 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// Run a manual refresh (mobile pull-to-refresh): a real sync when a session
   /// is live, else a no-op over the always-live reactive store.
   Future<void> _pullRefresh() => ref.read(refreshActionProvider)();
+
+  // The toolbar handlers below are METHODS, not closures built in `build`, so
+  // that the [ListChromeActions] the compact shell renders (#244) compares
+  // equal across rebuilds — two tear-offs of the same method on the same object
+  // are equal, two closure literals never are.
+
+  /// Set the sort order of the current view.
+  void _setSort(SortMode mode) =>
+      ref.read(prefsControllerProvider.notifier).setSort(widget.viewId, mode);
+
+  /// Show or hide completed tasks across the views.
+  void _setShowCompleted(bool value) =>
+      ref.read(prefsControllerProvider.notifier).setShowCompleted(value);
+
+  /// Open the bulk-add dialog on this view's default target list.
+  Future<void> _openBulkAddDefault() => _openBulkAdd();
 
   /// The touch creation surface (#216): a modal bottom-sheet composer over the
   /// same controller/focus/submit machinery as the desktop bar, so drafts,
@@ -1125,6 +1142,32 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     ref.listen(newTaskRequestProvider, (previous, next) {
       if (touch && next != previous) _openQuickAddSheet();
     });
+    // The list-wide actions, wherever they end up rendering. Every callback is
+    // a METHOD TEAR-OFF, never a closure literal: [ListChromeActions] is
+    // value-equal, and equal tear-offs are what keep a republish from looking
+    // like a change to the hosting app bar (see compact_chrome.dart).
+    final actions = ListChromeActions(
+      sort: sort,
+      showCompleted: prefs.showCompleted,
+      onSearch: _openSearch,
+      selectTasksEnabled: !_selectionMode,
+      onSelectTasks: touch ? _enterSelectionMode : null,
+      onBulkAdd: _defaultTargetList == null ? null : _openBulkAddDefault,
+      onSort: _setSort,
+      onShowCompleted: _setShowCompleted,
+      onClearCompleted: prefs.showCompleted && !_isSmartView
+          ? _confirmClearCompleted
+          : null,
+    );
+    // Hosted by the compact shell? Then it owns the bar these actions live in
+    // (#244). Published after the frame: a provider/notifier written mid-build
+    // would drive a rebuild of a tree that is still building.
+    final chrome = CompactChromeScope.maybeOf(context);
+    if (chrome != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) chrome.publish(actions);
+      });
+    }
     return Column(
       children: [
         if (!touch) ...[
@@ -1163,36 +1206,33 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           ),
           const Divider(height: 1),
         ],
-        _ListToolbar(
-          sort: sort,
-          showCompleted: prefs.showCompleted,
-          onSearch: _openSearch,
-          // The VISIBLE touch entry into multi-select (#245). A mouse already
-          // has two (Ctrl-click and the right-click menu's "Select"), so the
-          // overflow — and the extra 48dp it costs — is a coarse-pointer
-          // affordance only, exactly like the swipe actions. It stays MOUNTED
-          // once selection mode is on (merely disabled): a control that vanishes
-          // when used would re-flow the toolbar under the finger that just
-          // tapped it.
-          selectTasksEnabled: !_selectionMode,
-          onSelectTasks: coarsePointerPlatform(Theme.of(context).platform)
-              ? _enterSelectionMode
-              : null,
-          onBulkAdd: _defaultTargetList == null ? null : () => _openBulkAdd(),
-          onSort: (m) => ref
-              .read(prefsControllerProvider.notifier)
-              .setSort(widget.viewId, m),
-          onShowCompleted: (v) =>
-              ref.read(prefsControllerProvider.notifier).setShowCompleted(v),
-          // Clear-completed is a concrete-list-only action, and only while
-          // completed tasks are visible (you cannot bulk-delete what you cannot
-          // see). Smart views (which aggregate across lists) never offer it.
-          onClearCompleted:
-              prefs.showCompleted && SmartView.byId(widget.viewId) == null
-              ? _confirmClearCompleted
-              : null,
-        ),
-        const Divider(height: 1),
+        // The compact shell hosts these actions in its ONE app bar (#244); on
+        // every other layout they are this pane's own toolbar. Never both.
+        if (chrome == null) ...[
+          _ListToolbar(
+            sort: sort,
+            showCompleted: prefs.showCompleted,
+            onSearch: _openSearch,
+            // The VISIBLE touch entry into multi-select (#245). A mouse already
+            // has two (Ctrl-click and the right-click menu's "Select"), so the
+            // overflow — and the extra 48dp it costs — is a coarse-pointer
+            // affordance only, exactly like the swipe actions. It stays MOUNTED
+            // once selection mode is on (merely disabled): a control that
+            // vanishes when used would re-flow the toolbar under the finger
+            // that just tapped it.
+            selectTasksEnabled: !_selectionMode,
+            onSelectTasks: touch ? _enterSelectionMode : null,
+            onBulkAdd: actions.onBulkAdd,
+            onSort: _setSort,
+            onShowCompleted: _setShowCompleted,
+            // Clear-completed is a concrete-list-only action, and only while
+            // completed tasks are visible (you cannot bulk-delete what you
+            // cannot see). Smart views (aggregating across lists) never offer
+            // it.
+            onClearCompleted: actions.onClearCompleted,
+          ),
+          const Divider(height: 1),
+        ],
         if (_selectionMode)
           BulkBar(
             count: _selectedIds.length,
