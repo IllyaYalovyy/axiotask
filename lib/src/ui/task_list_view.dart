@@ -31,6 +31,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'bulk_add.dart';
 import 'bulk_bar.dart';
+import 'commit_flash.dart' show CommitTarget, TaskCommit;
 import 'compact_chrome.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
@@ -215,6 +216,26 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // arriving — it is what the view is.
   bool _seenContents = false;
 
+  // The last write the STORE confirmed for each visible row, and which element
+  // of it changed (#252). Read straight off the store's own emissions, so it
+  // covers every surface that can commit one — this list's quick-date menu and
+  // inline rename, the detail panel, the row menu, a bulk action, a sync pull —
+  // without any of them having to announce it.
+  final Map<String, TaskCommit> _commits = {};
+
+  // Monotonic id for the next commit. It is what makes a REPEAT legible: two
+  // identical writes in a row are two commits, so the second restarts the flash
+  // instead of being swallowed as "nothing changed".
+  int _commitSeq = 0;
+
+  // Ids a bulk action is currently applying to, so their commits flash the WHOLE
+  // row rather than one badge (#252). A side channel because it is the only
+  // thing about a bulk change the store cannot tell us: the ops run one await at
+  // a time, so each row's write arrives on its own emission and looks exactly
+  // like a single-row edit. Set at the start of the op (never accumulated across
+  // two), and each id is spent by the emission that carries its change.
+  final Set<String> _bulkChanging = {};
+
   // The visible rows of the previous build, so the next one can tell which ids
   // just left the filtered list.
   List<StoredTask> _lastVisible = const [];
@@ -307,6 +328,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       _leaving.clear();
       _departing.clear();
       _returning.clear();
+      _commits.clear();
+      _bulkChanging.clear();
     }
   }
 
@@ -757,6 +780,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _bulkSetDue(DateMove move) async {
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    _bulkChanges(ids);
     _clearSelection();
     for (final id in ids) {
       await commands.setDue(id, move);
@@ -776,6 +800,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (pick == null || !mounted) return;
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    _bulkChanges(ids);
     _clearSelection();
     for (final id in ids) {
       switch (pick) {
@@ -823,6 +848,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     if (target == null || !mounted) return;
     final ids = _selectedIds.toList();
     final commands = ref.read(commandsProvider);
+    _bulkChanges(ids);
     _clearSelection();
     for (final id in ids) {
       await commands.moveTaskToList(id, target);
@@ -1606,7 +1632,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     Duration nextSlot() =>
         MotionDurations.rowStagger * (listMotionRowCap - budget--);
 
-    final lastIds = {for (final t in _lastVisible) t.task.id};
+    // The PREVIOUS build's rows by id — "was this row already on screen, and if
+    // so, in what state". The arrival loop below asks the first half of that
+    // question, [_detectCommits] the second.
+    final lastById = {for (final t in _lastVisible) t.task.id: t};
     // Indexed once: the departure loop below asks after a task per row it lost,
     // and a sync that rewrites two hundred rows loses two hundred of them in a
     // single build — a linear scan each time would be quadratic work on the UI
@@ -1639,10 +1668,15 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
     for (final t in visible) {
       final id = t.task.id;
-      if (lastIds.contains(id) || _arriving.containsKey(id)) continue;
+      if (lastById.containsKey(id) || _arriving.containsKey(id)) continue;
       if (budget <= 0) break;
       _arriving[id] = _Arrival(nextSlot(), now);
     }
+    // The #252 commit flash rides the same before/after pair: what CHANGED
+    // about a row that was already on screen. A row that has just arrived is
+    // not a commit — it has its own entrance above.
+    if (ready) _detectCommits(visible, before: lastById);
+    _commits.removeWhere((id, _) => !visibleIds.contains(id));
     _lastVisible = visible;
 
     final items = [
@@ -1673,6 +1707,61 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     }
     return items;
   }
+
+  /// Record what the store just CHANGED about each row that was already on
+  /// screen — the #252 commit flash's trigger.
+  ///
+  /// The store's emission is the confirmation: by the time a task arrives here
+  /// with a different title, date or list, the write is durable. That is why
+  /// this reads the data rather than the call sites — an edit flashes the same
+  /// way whether it came from this list, the detail panel, the row menu, or
+  /// Google.
+  void _detectCommits(
+    List<StoredTask> visible, {
+    required Map<String, StoredTask> before,
+  }) {
+    for (final after in visible) {
+      final was = before[after.task.id];
+      if (was == null) continue;
+      final changed = <CommitTarget>[
+        if (was.task.title != after.task.title) CommitTarget.title,
+        if (was.task.due != after.task.due) CommitTarget.due,
+        if (was.listId != after.listId) CommitTarget.listTag,
+      ];
+      if (changed.isEmpty) continue;
+      // Our own edit coming back from Google (dirty → clean): a pull can only
+      // land on a row that is already clean (the store's
+      // `WHERE sync_state = 'clean'`), so this is the PUSH landing — Google's
+      // own formatting of the value we wrote, or an identical-content 412 the
+      // engine resolved by adopting the remote. The user saw that commit when
+      // it was written; the round trip is not a second one.
+      if (was.syncState == SyncState.dirty &&
+          after.syncState == SyncState.clean) {
+        continue;
+      }
+      // Spent only by an emission that actually flashes, so a suppressed round
+      // trip cannot swallow the mark a bulk write is still waiting to use.
+      final bulk = _bulkChanging.remove(after.task.id);
+      // The whole row when the changed element is unknown or several: a bulk
+      // action (which hit N rows at once, and where WHICH rows is the thing
+      // worth showing), a change the sync pulled in (the row landed clean —
+      // nothing local wrote it, and a pull can rewrite any number of fields),
+      // or simply more than one field at a time.
+      final target =
+          bulk || changed.length > 1 || after.syncState == SyncState.clean
+          ? CommitTarget.row
+          : changed.single;
+      _commits[after.task.id] = TaskCommit(target, ++_commitSeq);
+    }
+  }
+
+  /// Declare the rows a bulk action is about to write, so their commits flash
+  /// the whole row (#252). Replaces any previous op's ids — two bulk actions
+  /// never overlap from the user's side, and an id nothing ever changed must
+  /// not colour a later single-field edit.
+  void _bulkChanges(Iterable<String> ids) => _bulkChanging
+    ..clear()
+    ..addAll(ids);
 
   /// Wrap one list item in its choreography — the #251 enter/leave outside, the
   /// #241 completion sequence inside — keyed by [key] (the task's own id) so a
@@ -1760,6 +1849,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       onPickDate: () => _openDatePicker(t.id, t.due),
       onOpenUrl: openUrl,
       completionProgress: completion,
+      commit: _commits[t.id],
     );
   }
 }
