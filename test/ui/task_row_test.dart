@@ -290,12 +290,11 @@ void main() {
     testWidgets('the due segment is tappable ONLY when onPickDate is wired', (
       tester,
     ) async {
-      // No handler → plain text, no InkWell wrapping the segment.
+      // No handler → plain text, no tap surface of its own around the segment.
+      // (The ROW is one tap surface either way — this asserts the segment does
+      // not become a second, dead one.)
       await pumpRow(tester);
-      expect(
-        find.ancestor(of: find.text('no date'), matching: find.byType(InkWell)),
-        findsNothing,
-      );
+      expect(find.byKey(const Key('row-due-segment')), findsNothing);
 
       // With a handler → tapping fires it.
       final picked = <String>[];
@@ -333,17 +332,11 @@ void main() {
 
   group('metadata badge 48dp touch targets (F19 #198)', () {
     // The tap target for the metadata badges (the due segment, the link badge)
-    // is the InkWell wrapping the glyph. On a touch pointer it must be ≥48dp so
-    // a finger can land on it; on a mouse it stays compact (the desktop row is
-    // dense — the vision's standard).
-    double dueSegmentHeight(WidgetTester tester) => tester
-        .getSize(
-          find.ancestor(
-            of: find.text('no date'),
-            matching: find.byType(InkWell),
-          ),
-        )
-        .height;
+    // is the tap surface wrapping the glyph. On a touch pointer it must be
+    // ≥48dp so a finger can land on it; on a mouse it stays compact (the
+    // desktop row is dense — the vision's standard).
+    double dueSegmentHeight(WidgetTester tester) =>
+        tester.getSize(find.byKey(const Key('row-due-segment'))).height;
 
     testWidgets('the due segment is a ≥48dp target on a touch pointer', (
       tester,
@@ -519,7 +512,7 @@ void main() {
       );
       expect(checkbox.height, greaterThanOrEqualTo(48));
       final dueTarget = tester.getSize(
-        find.ancestor(of: find.text('Aug 1'), matching: find.byType(InkWell)),
+        find.byKey(const Key('row-due-segment')),
       );
       expect(dueTarget.height, greaterThanOrEqualTo(48));
     });

@@ -33,6 +33,7 @@ import 'date_format.dart';
 import 'detail_motion.dart';
 import 'haptics.dart';
 import 'quick_date_menu.dart';
+import 'state_layer.dart';
 import 'theme.dart';
 import 'url_detect.dart';
 
@@ -567,9 +568,16 @@ class _TaskRowState extends State<TaskRow> {
             // Completion is ONLY the checkbox (and the deliberate
             // swipe-right) — precision directive 2026-08-18.
             offset: Offset(_swipeOffset, 0),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+            // ONE state layer for the whole body (#259): the hover wash, the
+            // press ripple and the keyboard focus ring all belong to the
+            // open-the-detail surface, so they cover exactly it — inside the
+            // row's own 8dp gutter, rounded to match, rather than bleeding to
+            // the window edge. It replaces a bare GestureDetector: the row is
+            // the app's most-used control and was the one that answered a
+            // pointer with nothing at all.
+            child: StateLayer(
               onTap: _onBodyTap,
+              borderRadius: BorderRadius.circular(8),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -732,41 +740,47 @@ class _TaskRowState extends State<TaskRow> {
     // paddings on top of them made the mobile list sparse (density directive
     // 2026-08-18 — the 'touch row density' contract).
     final compact = coarsePointerPlatform(theme.platform);
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _onBodyTap,
-      onDoubleTap: doubleTapToRename,
-      child: Padding(
-        padding: EdgeInsets.only(
-          top: compact ? 4 : 12,
-          bottom: compact ? 0 : 2,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: StrikeSweep(
-                title: widget.title.isEmpty ? 'Untitled' : widget.title,
-                progress: completion,
-                completedColor: completedTitleColor(theme.colorScheme),
-              ),
+    final line = Padding(
+      padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: compact ? 0 : 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: StrikeSweep(
+              title: widget.title.isEmpty ? 'Untitled' : widget.title,
+              progress: completion,
+              completedColor: completedTitleColor(theme.colorScheme),
             ),
-            if (widget.pendingSync)
-              Padding(
-                padding: const EdgeInsets.only(left: 6),
-                child: Tooltip(
-                  key: const Key('pending-dot'),
-                  message: 'Not synced to Google yet',
-                  child: Icon(
-                    Icons.circle,
-                    size: 8,
-                    color: theme.colorScheme.tertiary,
-                    semanticLabel: 'Pending sync',
-                  ),
+          ),
+          if (widget.pendingSync)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Tooltip(
+                key: const Key('pending-dot'),
+                message: 'Not synced to Google yet',
+                child: Icon(
+                  Icons.circle,
+                  size: 8,
+                  color: theme.colorScheme.tertiary,
+                  semanticLabel: 'Pending sync',
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
+    );
+    // The row's ONE tap surface is the body's [StateLayer] (#259), so this
+    // layer no longer catches the tap — a press on the title washes and ripples
+    // exactly like a press on any other part of the row, instead of being
+    // swallowed by a bare GestureDetector over the busiest part of it. What
+    // stays is the desktop-only double-click-to-rename, and it competes with
+    // the StateLayer's tap recognizer exactly as it competed with the tap
+    // recognizer that used to sit here — so the desktop's tap timing is
+    // unchanged, and a touch row has no second recognizer at all.
+    if (doubleTapToRename == null) return line;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onDoubleTap: doubleTapToRename,
+      child: line,
     );
   }
 
@@ -928,9 +942,9 @@ class _TaskRowState extends State<TaskRow> {
       ),
     );
     if (!_dateMenuWired) {
-      return InkWell(
+      return StateLayer(
         key: const Key('row-due-segment'),
-        onTap: widget.onPickDate,
+        onTap: widget.onPickDate!,
         borderRadius: BorderRadius.circular(4),
         child: target,
       );
@@ -938,7 +952,7 @@ class _TaskRowState extends State<TaskRow> {
     return QuickDateAnchor(
       onSetDue: widget.onSetDue!,
       onPickDate: widget.onPickDate!,
-      builder: (context, open) => InkWell(
+      builder: (context, open) => StateLayer(
         key: const Key('row-due-segment'),
         onTap: open,
         borderRadius: BorderRadius.circular(4),
@@ -1014,7 +1028,7 @@ class _LinkBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: url,
-      child: InkWell(
+      child: StateLayer(
         key: const Key('link-badge'),
         onTap: () => onOpen(url),
         borderRadius: BorderRadius.circular(4),
