@@ -392,7 +392,6 @@ void main() {
         size: const Size(420, 900),
         platform: TargetPlatform.android,
       );
-      expect(find.byKey(const Key('row-overflow')), findsNothing);
       expect(rowOverflow(), findsNothing);
     });
 
