@@ -37,6 +37,7 @@ import 'commit_flash.dart' show CommitTarget, TaskCommit;
 import 'compact_chrome.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
+import 'detail_motion.dart';
 import 'due_date_picker.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
 import 'list_detail_scaffold.dart' show ListDetailScaffold;
@@ -1864,43 +1865,58 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // a single concrete-list view needs no tag (F18). The tag is the list's own
     // title, resolved from the current lists set.
     final listTag = _isSmartView ? _listTitleOrNull(stored.listId) : null;
-    return TaskRow(
-      key: ValueKey(t.id),
-      title: t.title,
-      notes: t.notes,
-      completed: t.status == TaskStatus.completed,
-      due: t.due,
-      inheritedDue: dueInfo[t.id]?.propagated,
-      pendingSync: stored.syncState == SyncState.dirty,
-      subtaskDone: subDone[t.id] ?? 0,
-      subtaskTotal: subTotal[t.id] ?? 0,
-      listTag: listTag,
-      selected: _selectedIds.contains(t.id),
-      selectionActive: _selectionMode,
-      // Straight from the ROUTER-derived selection (#221), never from a
-      // tap-local field, so the highlight follows the detail through every
-      // entry path — row tap, search jump, detail prev/next, the quick-add
-      // follow, or a bare URL change — all of which move the route.
-      openInDetail: widget.selectedTaskId == t.id,
-      onSelectToggle: () => _toggleSelect(t.id),
-      onContextMenu: (pos) => _showRowActions(stored, pos),
-      editRequested: _editId == t.id,
-      onEditDone: () {
-        if (_editId == t.id) setState(() => _editId = null);
-      },
-      // So a mid-typing inline rename survives a system-back / backgrounding,
-      // like the detail panel's fields (#183/G4): the registry covers
-      // backgrounding, the back handle lets the shell intercept a system back.
-      pendingEdits: _pendingEdits,
-      onInlineEditActive: _renameBack.set,
-      onOpen: () => widget.onOpenTask(t.id),
-      onToggle: () => _toggle(stored),
-      onRename: (v) => ref.read(commandsProvider).renameTask(t.id, v),
-      onSetDue: (m) => _quickMove(t.id, m),
-      onPickDate: () => _openDatePicker(t.id, t.due),
-      onOpenUrl: openUrl,
-      completionProgress: completion,
-      commit: _commits[t.id],
+    // The Builder is here for ONE reason: a context whose render object is this
+    // row, so the open handler can record where the row was before navigating
+    // away (#253). It is the only place that knows both the rect and the task
+    // id. No render object of its own, so it changes neither layout nor paint,
+    // and the surrounding slot is already keyed, so it costs no row identity.
+    return Builder(
+      builder: (rowContext) => TaskRow(
+        key: ValueKey(t.id),
+        title: t.title,
+        notes: t.notes,
+        completed: t.status == TaskStatus.completed,
+        due: t.due,
+        inheritedDue: dueInfo[t.id]?.propagated,
+        pendingSync: stored.syncState == SyncState.dirty,
+        subtaskDone: subDone[t.id] ?? 0,
+        subtaskTotal: subTotal[t.id] ?? 0,
+        listTag: listTag,
+        selected: _selectedIds.contains(t.id),
+        selectionActive: _selectionMode,
+        // Straight from the ROUTER-derived selection (#221), never from a
+        // tap-local field, so the highlight follows the detail through every
+        // entry path — row tap, search jump, detail prev/next, the quick-add
+        // follow, or a bare URL change — all of which move the route.
+        openInDetail: widget.selectedTaskId == t.id,
+        onSelectToggle: () => _toggleSelect(t.id),
+        onContextMenu: (pos) => _showRowActions(stored, pos),
+        editRequested: _editId == t.id,
+        onEditDone: () {
+          if (_editId == t.id) setState(() => _editId = null);
+        },
+        // So a mid-typing inline rename survives a system-back / backgrounding,
+        // like the detail panel's fields (#183/G4): the registry covers
+        // backgrounding, the back handle lets the shell intercept a system back.
+        pendingEdits: _pendingEdits,
+        onInlineEditActive: _renameBack.set,
+        onOpen: () {
+          // Before the navigation, while the row is still laid out: the rect
+          // the compact detail grows out of (#253). An open reached any other
+          // way — search, quick-add follow, a bare URL change — records
+          // nothing, and the detail fades in rather than pretending it came
+          // from a row.
+          DetailOriginScope.maybeOf(rowContext)?.report(t.id, rowContext);
+          widget.onOpenTask(t.id);
+        },
+        onToggle: () => _toggle(stored),
+        onRename: (v) => ref.read(commandsProvider).renameTask(t.id, v),
+        onSetDue: (m) => _quickMove(t.id, m),
+        onPickDate: () => _openDatePicker(t.id, t.due),
+        onOpenUrl: openUrl,
+        completionProgress: completion,
+        commit: _commits[t.id],
+      ),
     );
   }
 }

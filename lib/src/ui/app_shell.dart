@@ -13,6 +13,7 @@ import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'detail_motion.dart';
 import 'guarded_command.dart';
 import 'list_detail_scaffold.dart';
 import 'onboarding.dart';
@@ -95,6 +96,10 @@ class AppShell extends ConsumerWidget {
     // and for anything not in the ordering (a subtask, or a filtered-out task).
     String? prevTaskId;
     String? nextTaskId;
+    // The open task's own place in that ordering (#253): the direction the
+    // detail's prev/next step travels along it. -1 for a task with no place —
+    // a subtask, or one the current filter hides.
+    var detailSlot = -1;
     if (sel.taskId != null) {
       final ordered = visibleTasksForView(
         allTasks: allTasks,
@@ -105,6 +110,7 @@ class AppShell extends ConsumerWidget {
         window: dateWindowNow(),
       );
       final i = ordered.indexWhere((t) => t.task.id == sel.taskId);
+      detailSlot = i;
       if (i >= 0) {
         if (i > 0) prevTaskId = ordered[i - 1].task.id;
         if (i < ordered.length - 1) nextTaskId = ordered[i + 1].task.id;
@@ -183,6 +189,11 @@ class AppShell extends ConsumerWidget {
       sidebar: sidebar,
       scaffoldKey: scaffoldKey,
       title: viewTitle,
+      // What the detail's own motion needs from the router (#253): which task
+      // is open (so a rect recorded by a row is only ever replayed under that
+      // task) and where it sits in the view's ordering.
+      detailTaskId: sel.taskId,
+      detailSlot: detailSlot < 0 ? null : detailSlot,
       // The quiet sync line (#255) on the compact app bar's bottom edge. Its
       // own Consumer, so a sync starting or ending never rebuilds the shell.
       syncLine: const LiveSyncLine(),
@@ -288,22 +299,28 @@ class AppShell extends ConsumerWidget {
     // detail and leaves any Offstage-list rename for the next back.
     final renameActive = ref.watch(renameBackHandleProvider);
     final detailOpen = sel.taskId != null;
-    return PopScope(
-      canPop: !(showOnboarding || selectionActive || renameActive),
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        final scaffoldState = scaffoldKey.currentState;
-        if (scaffoldState?.isDrawerOpen ?? false) {
-          scaffoldState!.closeDrawer();
-        } else if (showOnboarding) {
-          dismissOnboarding();
-        } else if (!detailOpen && renameActive) {
-          ref.read(renameBackHandleProvider.notifier).commit();
-        } else if (!detailOpen && selectionActive) {
-          ref.read(selectionBackHandleProvider.notifier).clear();
-        }
-      },
-      child: shell,
+    // The rect a row records on its way out (#253) is read one navigation later
+    // by the compact detail; the scope spans both, above the scaffold that
+    // holds the list and the detail alike.
+    return DetailOriginScope(
+      controller: ref.watch(detailOriginProvider),
+      child: PopScope(
+        canPop: !(showOnboarding || selectionActive || renameActive),
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          final scaffoldState = scaffoldKey.currentState;
+          if (scaffoldState?.isDrawerOpen ?? false) {
+            scaffoldState!.closeDrawer();
+          } else if (showOnboarding) {
+            dismissOnboarding();
+          } else if (!detailOpen && renameActive) {
+            ref.read(renameBackHandleProvider.notifier).commit();
+          } else if (!detailOpen && selectionActive) {
+            ref.read(selectionBackHandleProvider.notifier).clear();
+          }
+        },
+        child: shell,
+      ),
     );
   }
 

@@ -8,6 +8,7 @@
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/detail_motion.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:clock/clock.dart';
@@ -46,6 +47,7 @@ Future<FakeBackend> pumpList(
   ValueNotifier<String?>? selection,
   bool disableAnimations = false,
   double textScale = 1.0,
+  DetailOriginController? originScope,
 }) async {
   // A unique-id generator by default: the manual-sort list is a
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
@@ -97,12 +99,19 @@ Future<FakeBackend> pumpList(
           home: Scaffold(
             body: ValueListenableBuilder<String?>(
               valueListenable: selected,
-              builder: (context, selectedTaskId, _) => TaskListView(
-                viewId: viewId,
-                selectedTaskId: selectedTaskId,
-                onOpenTask: (opened ?? <String>[]).add,
-                onOpenTaskNotes: (openedNotes ?? <String>[]).add,
-              ),
+              builder: (context, selectedTaskId, _) {
+                final view = TaskListView(
+                  viewId: viewId,
+                  selectedTaskId: selectedTaskId,
+                  onOpenTask: (opened ?? <String>[]).add,
+                  onOpenTaskNotes: (openedNotes ?? <String>[]).add,
+                );
+                // The shell publishes this scope over the list (#253); a suite
+                // that cares where a row said it was passes its own controller.
+                return originScope == null
+                    ? view
+                    : DetailOriginScope(controller: originScope, child: view);
+              },
             ),
           ),
         ),

@@ -136,6 +136,28 @@ abstract final class MotionDurations {
   static const int _syncCheckDrawMs = 200;
   static const int _syncCheckHoldMs = 300;
   static const int _syncCheckFadeMs = 200;
+
+  /// The expanded layout's detail pane arriving, end to end (#253): the pane
+  /// SLIDING in from the end edge while the list eases to its narrower width
+  /// ([long]), then the open-row highlight (#221) FADING in once the pane has
+  /// landed ([short]).
+  ///
+  /// One span on one controller rather than two animations that happen to be
+  /// ordered, so the highlight can never appear before the pane it belongs to —
+  /// and so the reverse costs nothing to define: the highlight leaves first,
+  /// the pane slides out after it.
+  static const Duration detailPane = Duration(
+    milliseconds: _detailPaneSlideMs + _detailHighlightMs,
+  );
+
+  /// Where the pane's slide ends inside [detailPane]. Before it the pane is
+  /// still travelling and the row highlight is not there at all; after it the
+  /// pane has landed and only the highlight is still arriving.
+  static const double detailPaneSlideFraction =
+      _detailPaneSlideMs / (_detailPaneSlideMs + _detailHighlightMs);
+
+  static const int _detailPaneSlideMs = 300;
+  static const int _detailHighlightMs = 100;
 }
 
 /// The easing vocabulary. Material 3's three, and one documented exception.
