@@ -41,6 +41,7 @@ import 'search.dart';
 import 'sort_dropdown.dart';
 import 'task_actions.dart';
 import 'task_row.dart';
+import 'theme.dart';
 import 'toast.dart';
 import 'url_opener.dart';
 import 'views.dart';
@@ -1261,9 +1262,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     await ref.read(commandsProvider).clearCompleted(listId);
   }
 
-  /// The Focus view's "Overdue (N)" section heading — a small, bold, error-toned
-  /// label that names the count of overdue cards below it (F17). Rendered only
-  /// when there is at least one overdue card.
+  /// The Focus view's "Overdue (N)" section heading — a small, bold label in the
+  /// shared overdue tone (#242), naming the count of overdue cards below it
+  /// (F17). Rendered only when there is at least one overdue card.
   Widget _overdueHeading(int count) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
@@ -1272,7 +1273,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       child: Text(
         'Overdue ($count)',
         style: Theme.of(context).textTheme.labelMedium?.copyWith(
-          color: scheme.error,
+          color: dueColor(DueUrgency.overdue, scheme),
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
         ),

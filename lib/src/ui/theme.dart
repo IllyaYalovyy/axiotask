@@ -9,6 +9,8 @@
 
 import 'package:flutter/material.dart';
 
+import 'date_format.dart';
+
 /// The brand seed color both themes are generated from.
 const Color _seed = Colors.deepPurple;
 
@@ -34,4 +36,26 @@ ThemeMode themeModeFromString(String theme) => switch (theme) {
   'light' => ThemeMode.light,
   'dark' => ThemeMode.dark,
   _ => ThemeMode.system,
+};
+
+/// The ONE urgency palette for a due date — the single place a [DueUrgency]
+/// becomes a colour, shared by the task row's due badge, the Focus view's
+/// "Overdue (N)" heading and the detail panel's Due field (#242). Three
+/// surfaces, one vocabulary: a colour only ever means what it means here.
+///
+///   • overdue → [ColorScheme.error]: the only alarm tone in the app,
+///   • today   → [ColorScheme.primary]: attention, NOT alarm. It has to be
+///     told apart from `error` at a glance in BOTH brightnesses, which rules
+///     out `tertiary` — with the deepPurple seed that role generates a
+///     salmon/rose the dark scheme renders a hair from `error` (ΔE ≈ 15) and
+///     the light scheme renders as a soft red, i.e. as a mild warning,
+///   • future / no date → [ColorScheme.onSurfaceVariant]: muted. Nothing that
+///     is not overdue ever carries a red tint.
+///
+/// Every colour here is asserted legible (≥ 4.5:1 on `surface`) and mutually
+/// distinguishable (ΔE ≥ 25) in both themes by `test/ui/due_color_test.dart`.
+Color dueColor(DueUrgency urgency, ColorScheme scheme) => switch (urgency) {
+  DueUrgency.overdue => scheme.error,
+  DueUrgency.today => scheme.primary,
+  DueUrgency.none => scheme.onSurfaceVariant,
 };

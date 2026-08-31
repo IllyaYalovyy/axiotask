@@ -26,6 +26,7 @@ import '../app/pending_edits.dart';
 import '../model/dates.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
+import 'theme.dart';
 import 'url_detect.dart';
 
 /// The background wash a row carries while ITS task is the one the detail panel
@@ -862,11 +863,10 @@ class _TaskRowState extends State<TaskRow> {
     Widget child;
     if (own != null) {
       final urgency = dueUrgency(own);
-      final color = switch (urgency) {
-        DueUrgency.overdue => theme.colorScheme.error,
-        DueUrgency.today => theme.colorScheme.tertiary,
-        DueUrgency.none => theme.colorScheme.onSurfaceVariant,
-      };
+      // The shared urgency palette (#242) — never a colour literal here: the
+      // row, the Focus overdue heading and the detail Due field must say the
+      // same thing with the same tone.
+      final color = dueColor(urgency, theme.colorScheme);
       child = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
