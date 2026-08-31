@@ -20,9 +20,12 @@
 //     lives in its parent's list (#93). Moving lists repoints the panel to the
 //     recreated row.
 //   • clickable links detected in the title/notes.
-//   • the app-bar overflow: Duplicate and "Make subtask of…" (#88's parent
-//     picker) — the two functions the retired per-row "⋮" sheet used to be the
-//     only touch home for (#245).
+//   • the #246 hierarchy: the app bar's direct row is Previous/Next ONLY, and
+//     every action hangs off the one "⋮" — Duplicate, "Make subtask of…"
+//     (#88's parent picker) or Detach, "Open in Google Tasks", then, divided
+//     off and error-toned, Delete. The body reads title → Due + List → notes →
+//     subtasks → links: the two fields the user edits sit directly under the
+//     title, and nothing destructive is a thumb-slip from the navigation pair.
 //   • the empty-subtask discard-on-close rule: closing an untitled, dateless,
 //     childless subtask left untouched removes it — but NEVER one with children
 //     of its own (that would silently take the subtree, with no undo).
@@ -495,18 +498,27 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   ? null
                   : () => _navigate(widget.onNext!),
             ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Delete',
-              onPressed: () => _delete(current),
-            ),
+            // Every non-navigation action lives behind the one "⋮": the app
+            // bar's direct row is Previous/Next only, so the thumb that walks
+            // the list never lands a pixel away from Delete (#246).
             PopupMenuButton<String>(
               key: const Key('detail-overflow'),
               tooltip: 'More actions',
               icon: const Icon(Icons.more_vert),
-              onSelected: (value) => value == 'duplicate'
-                  ? _duplicate(current)
-                  : _demote(current, hosts),
+              onSelected: (value) {
+                switch (value) {
+                  case 'duplicate':
+                    _duplicate(current);
+                  case 'demote':
+                    _demote(current, hosts);
+                  case 'detach':
+                    _detach(task.id, task.parent!);
+                  case 'open-google':
+                    ref.read(urlOpenerProvider)(task.webViewLink!);
+                  case 'delete':
+                    _delete(current);
+                }
+              },
               itemBuilder: (context) => [
                 const PopupMenuItem<String>(
                   key: Key('detail-duplicate'),
@@ -522,8 +534,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   ),
                 ),
                 // Only a childless TOP-LEVEL task with a legal host may be
-                // demoted: a subtask detaches first (the breadcrumb), and a
-                // parent can never become a subtask (invariant #1).
+                // demoted: a subtask goes the other way (Detach), and a parent
+                // can never become a subtask (invariant #1).
                 if (!subtask && hosts.isNotEmpty)
                   const PopupMenuItem<String>(
                     key: Key('detail-demote'),
@@ -536,6 +548,58 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                       ],
                     ),
                   ),
+                if (subtask)
+                  const PopupMenuItem<String>(
+                    key: Key('detail-detach'),
+                    value: 'detach',
+                    child: Row(
+                      children: [
+                        Icon(Icons.subdirectory_arrow_left, size: 20),
+                        SizedBox(width: 12),
+                        Flexible(child: Text('Detach subtask')),
+                      ],
+                    ),
+                  ),
+                // Google assigns the webViewLink on sync; a not-yet-synced task
+                // has none, so the entry appears only once it exists. Opens the
+                // task in the Google Tasks web app (to set a repeat, etc.).
+                if (task.webViewLink != null)
+                  const PopupMenuItem<String>(
+                    key: Key('detail-open-google'),
+                    value: 'open-google',
+                    child: Row(
+                      children: [
+                        Icon(Icons.open_in_new, size: 20),
+                        SizedBox(width: 12),
+                        Flexible(child: Text('Open in Google Tasks')),
+                      ],
+                    ),
+                  ),
+                const PopupMenuDivider(),
+                // Last, divided off and error-toned: the only destructive entry
+                // reads as one before the finger commits. Undo still follows.
+                PopupMenuItem<String>(
+                  key: const Key('detail-delete'),
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.delete_outline,
+                        size: 20,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          'Delete',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ],
@@ -549,9 +613,6 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   parentTitle: parent.task.title,
                   onOpenParent: () =>
                       _navigate(() => widget.onOpenTask(parent.task.id)),
-                  onDetach: () async {
-                    await _detach(task.id, parent.task.id);
-                  },
                 ),
               TextField(
                 controller: _title,
@@ -564,34 +625,31 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                 onChanged: (_) => _scheduleSave(),
                 onSubmitted: (_) => _saveTitle(),
               ),
-              // Google assigns the webViewLink on sync; a not-yet-synced task
-              // has none, so the affordance appears only once it exists. Opens
-              // the task in the Google Tasks web app (to set a repeat, etc.).
-              if (task.webViewLink != null) ...[
-                const SizedBox(height: 12),
-                _OpenInGoogle(
-                  url: task.webViewLink!,
-                  onOpen: ref.read(urlOpenerProvider),
-                ),
-              ],
+              // The two fields the user actually edits sit directly under the
+              // title — nothing prominent comes between (#246).
               const SizedBox(height: 16),
-              _DueField(
-                due: task.due,
-                onPick: () => _pickDue(task.id, task.due),
-                onQuick: (m) => _quickDue(task.id, m),
-              ),
-              if (!subtask) ...[
-                const SizedBox(height: 16),
-                _ListDropdown(
-                  value: current.listId,
-                  lists: lists,
-                  onChanged: (target) => _moveList(
-                    task.id,
-                    target,
-                    lists.firstWhere((l) => l.list.id == target).list.title,
-                  ),
+              _DueAndList(
+                due: _DueField(
+                  due: task.due,
+                  onPick: () => _pickDue(task.id, task.due),
+                  onQuick: (m) => _quickDue(task.id, m),
                 ),
-              ],
+                // #93: a subtask always lives in its parent's list.
+                list: subtask
+                    ? null
+                    : _ListDropdown(
+                        value: current.listId,
+                        lists: lists,
+                        onChanged: (target) => _moveList(
+                          task.id,
+                          target,
+                          lists
+                              .firstWhere((l) => l.list.id == target)
+                              .list
+                              .title,
+                        ),
+                      ),
+              ),
               const SizedBox(height: 16),
               TextField(
                 controller: _notes,
@@ -605,10 +663,6 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   border: OutlineInputBorder(),
                 ),
               ),
-              if (links.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                _Links(urls: links, onOpen: ref.read(urlOpenerProvider)),
-              ],
               // Subtasks are top-level tasks' business only — a subtask's panel
               // shows no checklist and no add input (invariant #1).
               if (!subtask) ...[
@@ -659,6 +713,12 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   onSubmit: () => _addSubtask(current),
                 ),
               ],
+              // Derived reading matter, not an edited field: it trails the
+              // whole panel rather than splitting notes from the subtasks.
+              if (links.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _Links(urls: links, onOpen: ref.read(urlOpenerProvider)),
+              ],
             ],
           ),
         ),
@@ -667,43 +727,29 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   }
 }
 
-/// The subtask breadcrumb ("← Parent") plus the detach action, shown atop a
-/// subtask's own panel.
+/// The subtask breadcrumb ("← Parent") atop a subtask's own panel — the way
+/// back up, and nothing else: detaching is an action, and every action lives in
+/// the app-bar overflow (#246), so no button outranks the title.
 class _Breadcrumb extends StatelessWidget {
-  const _Breadcrumb({
-    required this.parentTitle,
-    required this.onOpenParent,
-    required this.onDetach,
-  });
+  const _Breadcrumb({required this.parentTitle, required this.onOpenParent});
 
   final String parentTitle;
   final VoidCallback onOpenParent;
-  final VoidCallback onDetach;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: onOpenParent,
-              icon: const Icon(Icons.arrow_back, size: 16),
-              label: Text(
-                parentTitle.isEmpty ? 'Parent task' : parentTitle,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: onOpenParent,
+          icon: const Icon(Icons.arrow_back, size: 16),
+          label: Text(
+            parentTitle.isEmpty ? 'Parent task' : parentTitle,
+            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 4),
-          OutlinedButton(
-            onPressed: onDetach,
-            child: const Text('Detach from parent'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -760,6 +806,8 @@ class _DueField extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text(
                 label.isEmpty ? 'No date' : label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 // Semibold on overdue only — the same emphasis the row's badge
                 // carries, so the two surfaces read as one signal.
                 style: TextStyle(
@@ -778,6 +826,51 @@ class _DueField extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The Due-date and List pair. They are the panel's two structured fields and
+/// are edited together, so on a wide panel they share ONE compact line and the
+/// notes stay above the fold; below [_sideBySide] there is no honest room for
+/// two controls, and they stack — Due first.
+class _DueAndList extends StatelessWidget {
+  const _DueAndList({required this.due, required this.list});
+
+  final Widget due;
+
+  /// `null` for a subtask, which has no List field at all (#93) — the Due field
+  /// then simply takes the full width.
+  final Widget? list;
+
+  /// Below this the two controls would each be narrower than a date reads. It
+  /// is scaled by the ambient text scale: at 1.3x the same pixels hold less
+  /// text, so a surface that fits both at 1.0x correctly stacks them instead of
+  /// ellipsising a list name away.
+  static const double _sideBySide = 480;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = this.list;
+    if (list == null) return due;
+    final threshold = MediaQuery.textScalerOf(context).scale(_sideBySide);
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.maxWidth >= threshold
+          ? Row(
+              // The two controls have different intrinsic heights (a button vs
+              // a decorated dropdown); aligning their BOTTOMS keeps the tappable
+              // edges on one line.
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(child: due),
+                const SizedBox(width: 12),
+                Expanded(child: list),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [due, const SizedBox(height: 16), list],
+            ),
     );
   }
 }
@@ -810,38 +903,18 @@ class _ListDropdown extends StatelessWidget {
           isExpanded: true,
           items: [
             for (final l in lists)
-              DropdownMenuItem(value: l.list.id, child: Text(l.list.title)),
+              DropdownMenuItem(
+                value: l.list.id,
+                child: Text(
+                  l.list.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
           ],
           onChanged: (v) {
             if (v != null && v != value) onChanged(v);
           },
-        ),
-      ),
-    );
-  }
-}
-
-/// The "Open in Google Tasks" affordance — opens the task's webViewLink in the
-/// platform browser (via the same [urlOpenerProvider] seam as the link badges).
-class _OpenInGoogle extends StatelessWidget {
-  const _OpenInGoogle({required this.url, required this.onOpen});
-
-  final String url;
-  final UrlOpener onOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Tooltip(
-        message:
-            'Open this task in the Google Tasks web app (to set a '
-            'repeat, etc.)',
-        child: OutlinedButton.icon(
-          key: const Key('open-in-google'),
-          onPressed: () => onOpen(url),
-          icon: const Icon(Icons.open_in_new, size: 16),
-          label: const Text('Open in Google Tasks'),
         ),
       ),
     );
