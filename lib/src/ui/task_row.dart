@@ -30,6 +30,7 @@ import '../model/dates.dart';
 import 'commit_flash.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
+import 'detail_motion.dart';
 import 'quick_date_menu.dart';
 import 'theme.dart';
 import 'url_detect.dart';
@@ -627,8 +628,18 @@ class _TaskRowState extends State<TaskRow> {
         child: content,
       );
     } else if (widget.openInDetail) {
+      // The wash arrives WITH the pane it belongs to (#253): on the expanded
+      // layout [DetailRevealScope] holds it at zero for the whole of the pane's
+      // slide, so the highlight never runs ahead of the panel it is pointing
+      // at. Outside a scope — the compact layout, an isolated test — it is
+      // simply there. The box is drawn at every reveal, transparent included,
+      // so the fade changes no tree shape and therefore no row geometry.
+      final reveal = DetailRevealScope.of(context);
+      final wash = openDetailWash(theme.colorScheme);
       decorated = DecoratedBox(
-        decoration: BoxDecoration(color: openDetailWash(theme.colorScheme)),
+        decoration: BoxDecoration(
+          color: wash.withValues(alpha: wash.a * reveal),
+        ),
         child: content,
       );
     } else {

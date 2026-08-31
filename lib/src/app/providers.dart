@@ -22,6 +22,7 @@ import '../model/task_view.dart';
 import '../store/database.dart';
 import '../store/store.dart';
 import '../store/stored.dart';
+import '../ui/detail_motion.dart';
 import '../ui/router.dart';
 import '../ui/theme.dart';
 import 'app_settings.dart';
@@ -195,6 +196,14 @@ final composerOpenProvider = NotifierProvider<ComposerOpen, bool>(
 /// key rebuilt each frame would detach the Scaffold's state.
 final mobileScaffoldKeyProvider = Provider<GlobalKey<ScaffoldState>>(
   (ref) => GlobalKey<ScaffoldState>(),
+);
+
+/// The one [DetailOriginController] (#253) — where the compact detail's
+/// container transform grows from. A [Provider] so it outlives the shell's own
+/// rebuilds: the rect is written by the row's tap and read one navigation
+/// later, and a controller recreated in between would lose it.
+final detailOriginProvider = Provider<DetailOriginController>(
+  (ref) => DetailOriginController(),
 );
 
 /// The list's active multi-select, surfaced up to the shell's back-precedence

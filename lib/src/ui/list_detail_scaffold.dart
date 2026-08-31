@@ -43,8 +43,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PredictiveBackEvent;
 
 import 'compact_chrome.dart';
+import 'detail_motion.dart';
 import 'ime_inset_guard.dart';
 import 'motion.dart';
 import 'new_task_fab.dart';
@@ -63,6 +65,8 @@ class ListDetailScaffold extends StatelessWidget {
     this.detail,
     this.onCloseDetail,
     this.title = '',
+    this.detailTaskId,
+    this.detailSlot,
     this.syncLine,
     this.onNewTask,
     this.composerOpen = false,
@@ -137,6 +141,17 @@ class ListDetailScaffold extends StatelessWidget {
 
   /// The compact app-bar title (the active view's name). Ignored when expanded.
   final String title;
+
+  /// The open task's id (#253) — the ONE thing the compact container transform
+  /// needs from the router: whether the rect a row last recorded belongs to the
+  /// task now opening. A [detail] with no id (or one that no row reported)
+  /// simply fades in.
+  final String? detailTaskId;
+
+  /// The open task's position in the view's visible ordering (#253), so the
+  /// detail's prev/next step knows which way along that ordering it is going.
+  /// `null` for a task with no place in it — a subtask, or a filtered-out task.
+  final int? detailSlot;
 
   /// The quiet sync line (#255), OVERLAID on the compact app bar's bottom edge.
   /// A widget rather than a bool so this scaffold keeps no provider dependency
@@ -236,38 +251,273 @@ class ListDetailScaffold extends StatelessWidget {
   }
 
   Widget _buildCompact() {
-    // An open detail owns the whole screen — no app bar, drawer, nav, or FAB.
-    // Its own header is wrapped in a SafeArea so it clears the status bar (#166).
-    if (_showingDetail) {
-      return Scaffold(
-        // Force the Stack to fill the screen. Without this it would size to its
-        // only non-positioned child — the [Offstage] list, which collapses to
-        // 0×0 — starving the detail pane of height (a lazy ListView in it would
-        // then build zero rows).
-        body: SizedBox.expand(
-          child: Stack(
-            children: [
-              // The list stays mounted (keeps the ShellRoute Navigator alive);
-              // Offstage hides it from paint/hit-test and from finders.
-              Offstage(offstage: true, child: list),
-              Positioned.fill(child: SafeArea(child: detail!)),
-            ],
-          ),
-        ),
-      );
-    }
+    // An open detail owns the whole screen — no app bar, drawer, nav, or FAB —
+    // but it GETS there by growing out of the row that was tapped (#253), so
+    // the chrome it covers stays mounted underneath for as long as the
+    // transform is running, and comes back under the surface as it shrinks
+    // away. Fully open, the whole shell is [Offstage]: mounted (which keeps the
+    // ShellRoute's Navigator alive and the list's scroll offset with it),
+    // painting nothing, hit-testing nothing, and invisible to finders and to a
+    // screen reader alike.
+    return _CompactDetailLayer(
+      detail: _showingDetail ? detail : null,
+      detailTaskId: detailTaskId,
+      detailSlot: detailSlot,
+      onCloseDetail: onCloseDetail,
+      shell: _CompactShell(
+        scaffoldKey: scaffoldKey,
+        title: title,
+        syncLine: syncLine,
+        sidebar: sidebar,
+        list: list,
+        destinations: destinations,
+        selectedIndex: selectedIndex,
+        onDestinationSelected: onDestinationSelected,
+        onNewTask: onNewTask,
+        composerOpen: composerOpen,
+      ),
+    );
+  }
+}
 
-    return _CompactShell(
-      scaffoldKey: scaffoldKey,
-      title: title,
-      syncLine: syncLine,
-      sidebar: sidebar,
-      list: list,
-      destinations: destinations,
-      selectedIndex: selectedIndex,
-      onDestinationSelected: onDestinationSelected,
-      onNewTask: onNewTask,
-      composerOpen: composerOpen,
+/// The compact layout's two layers (#253): the phone chrome, and the detail
+/// that grows out of one of its rows to cover it.
+///
+/// Stateful because the CLOSE has to outlive the route change that causes it.
+/// The moment the URL drops the task, [detail] is `null` — but the surface the
+/// user is watching still has to shrink back into the row it came from, so the
+/// last panel is held here until the transform reaches zero, over a shell that
+/// is already back on screen underneath it.
+///
+/// It also owns the Android predictive back gesture: with a detail open, a
+/// system back drag drives this transform DIRECTLY, so the surface follows the
+/// finger and snaps back if the gesture is abandoned. Under reduced motion the
+/// gesture is declined outright and the framework performs its ordinary pop —
+/// a user who turned animations off did not ask for a scrubbable one.
+class _CompactDetailLayer extends StatefulWidget {
+  const _CompactDetailLayer({
+    required this.shell,
+    required this.detail,
+    required this.detailTaskId,
+    required this.detailSlot,
+    required this.onCloseDetail,
+  });
+
+  /// The phone chrome — app bar, drawer, list, nav bar, FAB.
+  final Widget shell;
+
+  /// The open detail panel, or `null` when none is open.
+  final Widget? detail;
+
+  final String? detailTaskId;
+  final int? detailSlot;
+
+  /// Closes the detail — the same callback the scaffold's [PopScope] uses. The
+  /// predictive back gesture commits through it, so a gesture-driven close and
+  /// a button-driven close are the same close.
+  final VoidCallback? onCloseDetail;
+
+  @override
+  State<_CompactDetailLayer> createState() => _CompactDetailLayerState();
+}
+
+class _CompactDetailLayerState extends State<_CompactDetailLayer>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  /// 0 = the row, 1 = the whole screen. Seeded AT its end state when a detail
+  /// is already open on mount: a shell that comes up with a task selected (a
+  /// restored URL, a rotation, a golden) is not an event — nothing was opened,
+  /// it simply is open. The same rule the list choreography follows for the
+  /// first contents of a view (#251).
+  late final AnimationController _open = AnimationController(
+    vsync: this,
+    duration: MotionDurations.emphasized,
+    value: widget.detail == null ? 0 : 1,
+  );
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: _open,
+    curve: MotionCurves.standard,
+  );
+
+  /// The panel being drawn — [_CompactDetailLayer.detail] while one is open,
+  /// and the last one for as long as it is still leaving.
+  Widget? _shown;
+
+  /// Its slot in the view's ordering, held with it so a prev/next step measured
+  /// against a panel that is already gone still reads the right direction.
+  int? _shownSlot;
+
+  /// The row rect the transform grows out of, in THIS widget's own coordinate
+  /// space; `null` when the open did not come from a row.
+  Rect? _origin;
+
+  /// Whether a predictive back gesture is currently driving [_open].
+  bool _backGesture = false;
+
+  /// Whether motion travels here at all — cached from the last dependency
+  /// change, because the back-gesture callbacks arrive from the platform
+  /// outside any build and must not go looking up the tree from there.
+  bool _motion = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _shown = widget.detail;
+    _shownSlot = widget.detailSlot;
+    _open.addStatusListener(_onStatus);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final motion = Motion.of(context);
+    _motion = motion.enabled;
+    _open.duration = motion.resolve(MotionDurations.emphasized);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _curved.dispose();
+    _open.dispose();
+    super.dispose();
+  }
+
+  void _onStatus(AnimationStatus status) {
+    // The surface has finished shrinking away: let the panel go. Guarded on the
+    // CURRENT props, so a detail re-opened mid-close (the transform reverses
+    // back up before reaching zero) is never dropped.
+    if (status != AnimationStatus.dismissed) return;
+    if (widget.detail != null || _shown == null) return;
+    setState(() {
+      _shown = null;
+      _shownSlot = null;
+      _origin = null;
+    });
+  }
+
+  @override
+  void didUpdateWidget(_CompactDetailLayer old) {
+    super.didUpdateWidget(old);
+    if (widget.detail != null) {
+      _shown = widget.detail;
+      _shownSlot = widget.detailSlot;
+      if (old.detail == null) {
+        _origin = _resolveOrigin();
+        _open.forward();
+      }
+    } else if (old.detail != null) {
+      _backGesture = false;
+      _open.reverse();
+    }
+  }
+
+  /// The tapped row's rect, converted from the screen coordinates the row
+  /// recorded into this layer's own space. Resolved at OPEN time, off the
+  /// previous frame's layout — the layer has been on screen showing the list,
+  /// so its render object is attached and sized.
+  Rect? _resolveOrigin() {
+    final rect = DetailOriginScope.maybeOf(
+      context,
+    )?.rectFor(widget.detailTaskId);
+    if (rect == null) return null;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+    return rect.shift(-box.localToGlobal(Offset.zero));
+  }
+
+  // ── Android predictive back ──────────────────────────────────────────────
+  // Returning true claims the gesture: this observer, and only this observer,
+  // then hears its updates, and the framework performs no pop of its own — the
+  // commit below closes the detail through the app's own path instead.
+
+  @override
+  bool handleStartBackGesture(PredictiveBackEvent backEvent) {
+    if (!mounted || widget.detail == null || widget.onCloseDetail == null) {
+      return false;
+    }
+    if (!_open.isCompleted || !_motion) return false;
+    _open.stop();
+    _backGesture = true;
+    return true;
+  }
+
+  @override
+  void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) {
+    if (!_backGesture) return;
+    _open.value = 1 - backEvent.progress.clamp(0.0, 1.0);
+  }
+
+  @override
+  void handleCommitBackGesture() {
+    if (!_backGesture) return;
+    _backGesture = false;
+    // The route change lands as a prop update, whose reverse picks the
+    // transform up exactly where the finger left it.
+    widget.onCloseDetail?.call();
+  }
+
+  @override
+  void handleCancelBackGesture() {
+    if (!_backGesture) return;
+    _backGesture = false;
+    _open.forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = _shown;
+    return AnimatedBuilder(
+      animation: _curved,
+      child: widget.shell,
+      builder: (context, shell) {
+        final t = _curved.value.clamp(0.0, 1.0);
+        final covered = detail != null && t >= 1;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // Keyed so the shell keeps its element — and with it the list's
+            // scroll offset and every row's state — as the detail comes and
+            // goes above it. TickerMode stops anything in there animating to
+            // an audience of nobody while it is covered.
+            TickerMode(
+              key: const ValueKey('compact-shell'),
+              enabled: !covered,
+              // Covered, the shell is out of reach in every sense: no paint,
+              // no hit test, no semantics, no focus. Focus matters as much as
+              // the rest — a field left focused down there would keep the
+              // keyboard up over a detail that never asked for one. It also
+              // stops answering taps the moment a detail EXISTS, so a stray
+              // second tap during the 400ms it takes to arrive cannot open
+              // something else underneath it.
+              child: ExcludeFocus(
+                excluding: covered,
+                child: Offstage(
+                  offstage: covered,
+                  child: IgnorePointer(ignoring: detail != null, child: shell),
+                ),
+              ),
+            ),
+            if (detail != null)
+              Positioned.fill(
+                key: const ValueKey('compact-detail'),
+                child: DetailContainerTransform(
+                  progress: t,
+                  origin: _origin,
+                  // The panel's own Scaffold: it owns the keyboard inset for
+                  // the fields inside it, and paints the surface the transform
+                  // grows into. SafeArea so its header clears the status bar
+                  // (#166).
+                  child: Scaffold(
+                    body: SafeArea(
+                      child: DetailSharedAxis(slot: _shownSlot, child: detail),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -540,13 +790,84 @@ class _ResizableExpanded extends StatefulWidget {
   State<_ResizableExpanded> createState() => _ResizableExpandedState();
 }
 
-class _ResizableExpandedState extends State<_ResizableExpanded> {
+class _ResizableExpandedState extends State<_ResizableExpanded>
+    with SingleTickerProviderStateMixin {
   late double _sidebarWidth = widget.sidebarWidth;
   late double _detailFraction = widget.detailFraction;
+
+  /// The detail pane's arrival and departure (#253), as ONE span: the pane
+  /// slides in from the end edge while the list eases to its narrower width,
+  /// and only once it has landed does the #221 open-row highlight fade in.
+  /// Reversed, the highlight goes first and the pane leaves after it.
+  ///
+  /// Seeded at its end state when a detail is already open on mount — a window
+  /// restored with a task selected did not just open it.
+  late final AnimationController _pane = AnimationController(
+    vsync: this,
+    duration: MotionDurations.detailPane,
+    value: widget.detail == null ? 0 : 1,
+  );
+
+  /// The pane's own travel: the first beat of [_pane].
+  late final CurvedAnimation _slide = CurvedAnimation(
+    parent: _pane,
+    curve: const Interval(
+      0,
+      MotionDurations.detailPaneSlideFraction,
+      curve: MotionCurves.standard,
+    ),
+  );
+
+  /// The open-row highlight's arrival: the second beat, which is flat at zero
+  /// for the whole of the first.
+  late final CurvedAnimation _reveal = CurvedAnimation(
+    parent: _pane,
+    curve: const Interval(
+      MotionDurations.detailPaneSlideFraction,
+      1,
+      curve: MotionCurves.enter,
+    ),
+  );
+
+  /// The pane being drawn — [_ResizableExpanded.detail] while one is open, and
+  /// the last one for as long as it is still sliding out.
+  late Widget? _shown = widget.detail;
+
+  @override
+  void initState() {
+    super.initState();
+    _pane.addStatusListener(_onPaneStatus);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pane.duration = Motion.of(context).resolve(MotionDurations.detailPane);
+  }
+
+  @override
+  void dispose() {
+    _slide.dispose();
+    _reveal.dispose();
+    _pane.dispose();
+    super.dispose();
+  }
+
+  void _onPaneStatus(AnimationStatus status) {
+    if (status != AnimationStatus.dismissed) return;
+    if (widget.detail != null || _shown == null) return;
+    setState(() => _shown = null);
+  }
 
   @override
   void didUpdateWidget(_ResizableExpanded old) {
     super.didUpdateWidget(old);
+    if (widget.detail != null) {
+      _shown = widget.detail;
+      if (old.detail == null) _pane.forward();
+    } else if (old.detail != null) {
+      _pane.reverse();
+    }
     // Only adopt a prop change that did NOT originate from our own drag end
     // (where the incoming value already equals the local one). A cross-rebuild
     // with unchanged props leaves the live drag state untouched.
@@ -591,6 +912,7 @@ class _ResizableExpandedState extends State<_ResizableExpanded> {
 
   @override
   Widget build(BuildContext context) {
+    final detail = _shown;
     return Row(
       children: [
         SizedBox(
@@ -606,7 +928,7 @@ class _ResizableExpandedState extends State<_ResizableExpanded> {
           onReset: _resetSidebar,
         ),
         Expanded(
-          child: widget.detail == null
+          child: detail == null
               ? widget.list
               : LayoutBuilder(
                   builder: (context, constraints) {
@@ -615,24 +937,73 @@ class _ResizableExpandedState extends State<_ResizableExpanded> {
                     // list flexes into the remainder, so no configuration
                     // overflows the row (#208 still holds).
                     final detailWidth = _detailFraction * region;
-                    return Row(
-                      children: [
-                        Expanded(child: widget.list),
-                        _ResizeHandle(
-                          key: const Key('detail-resize-handle'),
-                          semanticLabel: 'Resize detail panel',
-                          onDelta: (dx) => _dragDetail(dx, region),
-                          onDragEnd: () => widget.onDetailFractionChanged?.call(
-                            _detailFraction,
-                          ),
-                          onReset: _resetDetail,
-                        ),
-                        SizedBox(
-                          key: const Key('expanded-detail'),
-                          width: detailWidth,
-                          child: widget.detail,
-                        ),
-                      ],
+                    // Handle and pane travel as ONE slot, so the list's edge
+                    // eases the whole way rather than jumping the handle's
+                    // width at the start of the slide.
+                    final slotWidth = detailWidth + _ResizeHandle.hitWidth;
+                    return AnimatedBuilder(
+                      animation: _slide,
+                      builder: (context, _) {
+                        final arrived = _slide.value.clamp(0.0, 1.0);
+                        return Row(
+                          children: [
+                            // The list eases into what the slot leaves it —
+                            // and learns how far the pane has come, so the
+                            // #221 highlight can wait for it to land.
+                            Expanded(
+                              child: DetailRevealScope(
+                                reveal: _reveal,
+                                child: widget.list,
+                              ),
+                            ),
+                            SizedBox(
+                              width: slotWidth * arrived,
+                              child: ClipRect(
+                                clipBehavior: arrived >= 1
+                                    ? Clip.none
+                                    : Clip.hardEdge,
+                                // The pane is LAID OUT at its settled width the
+                                // whole way in and anchored to the slot's
+                                // leading edge, so it slides in from off the
+                                // end edge instead of being squeezed out of a
+                                // growing box — a pane that re-laid-out every
+                                // frame would reflow its text as it travelled.
+                                child: OverflowBox(
+                                  alignment: Alignment.centerLeft,
+                                  minWidth: slotWidth,
+                                  maxWidth: slotWidth,
+                                  // A divider you can grab while it is still
+                                  // flying in is a wobble, not a control.
+                                  child: IgnorePointer(
+                                    ignoring: arrived < 1,
+                                    child: Row(
+                                      children: [
+                                        _ResizeHandle(
+                                          key: const Key(
+                                            'detail-resize-handle',
+                                          ),
+                                          semanticLabel: 'Resize detail panel',
+                                          onDelta: (dx) =>
+                                              _dragDetail(dx, region),
+                                          onDragEnd: () => widget
+                                              .onDetailFractionChanged
+                                              ?.call(_detailFraction),
+                                          onReset: _resetDetail,
+                                        ),
+                                        SizedBox(
+                                          key: const Key('expanded-detail'),
+                                          width: detailWidth,
+                                          child: detail,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     );
                   },
                 ),
