@@ -252,21 +252,23 @@ void main() {
       expect(find.text('Buy milk'), findsOneWidget);
       // … and its sidebar row is reachable and shows as the selected one.
       expect(reachable('E2E-Test'), findsOneWidget);
-      final rowColor = tester
+      // Every Material over the row's label — the row's own coloured one, and
+      // the transparent one the row's state layer paints its ink on (#259).
+      final rowColors = tester
           .widgetList<Material>(
             find.ancestor(
               of: find.descendant(of: sidebar, matching: find.text('E2E-Test')),
               matching: find.byType(Material),
             ),
           )
-          .first
-          .color;
+          .map((m) => m.color)
+          .toList();
       final selected = Theme.of(
         tester.element(find.byType(Scaffold).first),
       ).colorScheme.secondaryContainer;
       expect(
-        rowColor,
-        selected,
+        rowColors,
+        contains(selected),
         reason: 'the open list must render as the selected sidebar row',
       );
     });

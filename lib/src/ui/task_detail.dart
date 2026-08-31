@@ -52,6 +52,7 @@ import 'due_date_picker.dart';
 import 'haptics.dart';
 import 'list_pickers.dart';
 import 'quick_date_menu.dart';
+import 'state_layer.dart';
 import 'task_actions.dart' show demoteCandidates, duplicateTask;
 import 'theme.dart';
 import 'toast.dart';
@@ -999,8 +1000,9 @@ class _SubtaskHeader extends StatelessWidget {
             // The toggle only exists once something can be hidden — an
             // affordance that would do nothing must not render.
             if (completedCount > 0)
-              InkWell(
+              StateLayer(
                 onTap: () => onHideCompleted(!hideCompleted),
+                borderRadius: BorderRadius.circular(8),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
@@ -1088,9 +1090,12 @@ class _SubtaskRow extends StatelessWidget {
           child: Checkbox(value: done, onChanged: (_) => onToggle()),
         ),
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          // The subtask's title is a tap surface of its own (it opens the
+          // subtask), so it wears the same states as every other one (#259) —
+          // it was a bare GestureDetector, silent on hover, press and focus.
+          child: StateLayer(
             onTap: onOpen,
+            borderRadius: BorderRadius.circular(8),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 10),
               // The title is the flexible element of the row (it sits in the

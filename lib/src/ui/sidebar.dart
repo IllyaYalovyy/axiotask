@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 import '../store/stored.dart';
 import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'haptics.dart';
+import 'state_layer.dart';
 import 'task_row.dart' show touchTarget;
 import 'views.dart';
 
@@ -377,7 +378,7 @@ class _NavRow extends StatelessWidget {
       child: Material(
         color: selected ? colors.secondaryContainer : Colors.transparent,
         borderRadius: BorderRadius.circular(24),
-        child: InkWell(
+        child: StateLayer(
           borderRadius: BorderRadius.circular(24),
           onTap: onTap,
           child: Padding(
@@ -449,7 +450,7 @@ class _ListRow extends StatelessWidget {
       child: Material(
         color: selected ? colors.secondaryContainer : Colors.transparent,
         borderRadius: BorderRadius.circular(24),
-        child: InkWell(
+        child: StateLayer(
           borderRadius: BorderRadius.circular(24),
           onTap: onSelect,
           child: Padding(
@@ -462,12 +463,14 @@ class _ListRow extends StatelessWidget {
                   // in the drawer; a finger needs a 48dp target (F19 #198). The
                   // glyph stays 18dp — only the hit area grows, and only on a
                   // coarse pointer so the desktop sidebar stays compact.
-                  child: touchTarget(
-                    Theme.of(context).platform,
-                    Icon(
-                      Icons.drag_indicator,
-                      size: 18,
-                      color: colors.onSurfaceVariant,
+                  child: dragHandleCursor(
+                    child: touchTarget(
+                      Theme.of(context).platform,
+                      Icon(
+                        Icons.drag_indicator,
+                        size: 18,
+                        color: colors.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),

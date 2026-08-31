@@ -18,6 +18,7 @@ import 'package:flutter/services.dart';
 import '../model/task.dart';
 import '../store/stored.dart';
 import 'date_format.dart';
+import 'state_layer.dart';
 
 /// The list to navigate to when [selected] is opened from search: the list
 /// holding its PARENT for a subtask (reached only through its parent — #92),
@@ -269,7 +270,7 @@ class _ResultRow extends StatelessWidget {
       color: selected
           ? theme.colorScheme.primary.withValues(alpha: 0.12)
           : null,
-      child: InkWell(
+      child: StateLayer(
         onTap: onTap,
         // A comfortable full-width, ≥48dp touch target (touch has no hover).
         child: Container(

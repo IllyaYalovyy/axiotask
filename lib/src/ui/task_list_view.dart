@@ -50,6 +50,7 @@ import 'new_task_fab.dart' show ComposerMorph, NewTaskFab;
 import 'quick_date_menu.dart';
 import 'search.dart';
 import 'sort_dropdown.dart';
+import 'state_layer.dart';
 import 'sync_feedback.dart';
 import 'task_actions.dart';
 import 'task_row.dart';
@@ -1501,17 +1502,19 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           return _motion(item, ValueKey('reorder-${stored.task.id}'), (
             completion,
           ) {
-            final handle = SizedBox(
-              key: ValueKey('drag-handle-${stored.task.id}'),
-              // A comfortable drag target for both a mouse and a finger
-              // (touch-drag rides the same handle); the glyph stays small,
-              // the HIT AREA is 48dp tall.
-              width: 36,
-              height: 48,
-              child: Icon(
-                Icons.drag_indicator,
-                size: 18,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            final handle = dragHandleCursor(
+              child: SizedBox(
+                key: ValueKey('drag-handle-${stored.task.id}'),
+                // A comfortable drag target for both a mouse and a finger
+                // (touch-drag rides the same handle); the glyph stays small,
+                // the HIT AREA is 48dp tall.
+                width: 36,
+                height: 48,
+                child: Icon(
+                  Icons.drag_indicator,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             );
             final row = Row(
@@ -2118,7 +2121,7 @@ class _ListToolbar extends StatelessWidget {
                 ),
               // The whole label toggles — a coarse pointer gets a full-size
               // target, not just the checkbox (touch has no hover).
-              InkWell(
+              StateLayer(
                 key: const Key('show-completed-toggle'),
                 borderRadius: BorderRadius.circular(8),
                 onTap: () => onShowCompleted(!showCompleted),
