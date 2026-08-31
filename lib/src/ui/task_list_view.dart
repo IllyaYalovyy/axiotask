@@ -30,6 +30,7 @@ import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'bulk_add.dart';
 import 'bulk_bar.dart';
+import 'completion_motion.dart';
 import 'date_format.dart';
 import 'due_date_picker.dart';
 import 'ime_inset_guard.dart' show ImeInsetGuard;
@@ -163,6 +164,23 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // The one row asked to enter inline rename via the context menu's "Edit
   // title"; cleared when that row leaves edit mode.
   String? _editId;
+
+  // Rows kept on screen ONLY to play their completion collapse (#241): the task
+  // was completed while completed tasks are hidden, so instead of popping out of
+  // the list it renders one last time, folds its height to zero, and the rows
+  // below slide up. Keyed by task id → the completed snapshot to draw and the
+  // row index it held. A row that leaves for any OTHER reason (deleted, moved to
+  // another list, filtered out unfinished) is not a completion and still goes
+  // instantly.
+  final Map<String, _DepartingRow> _departing = {};
+
+  // Ids that came BACK while (or just after) collapsing — an Undo inside the
+  // 30-second toast. Their row starts folded so it expands into place.
+  final Set<String> _returning = {};
+
+  // The visible rows of the previous build, so the next one can tell which ids
+  // just left the filtered list.
+  List<StoredTask> _lastVisible = const [];
 
   // The app-wide pending-edits registry, captured in initState so dispose can
   // unregister the quick-add draft flush without an unsafe `ref` lookup (#183).
@@ -931,6 +949,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         subDone[p] = (subDone[p] ?? 0) + 1;
       }
     }
+    // Hold on to the rows that just left the filtered list because they were
+    // completed, so they can fold away instead of vanishing (#241).
+    final items = _withDepartures(displayTasks, all);
     final openUrl = ref.read(urlOpenerProvider);
     final quickAddFocus = ref.watch(quickAddFocusProvider);
     // ONE creation affordance per pointer class (#216): touch creates through
@@ -996,6 +1017,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           ),
         Expanded(
           child: _listArea(
+            items,
             displayTasks,
             overdueCount,
             dueInfo,
@@ -1020,6 +1042,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// the remaining rows follow after a gap. The heading occupies a list slot, so
   /// both list types offset their row indices by 1 when it is present.
   Widget _listArea(
+    List<_RowItem> items,
     List<StoredTask> tasks,
     int overdueCount,
     Map<String, DueInfo> dueInfo,
@@ -1048,8 +1071,18 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // shifts every row down one slot in the list's index space.
     final headerOffset = overdueCount > 0 ? 1 : 0;
 
+    // Item index → the index the row holds among the LIVE ones. Collapsing rows
+    // occupy a list slot but no place in the task order, so every index the
+    // list hands back (a drag, a bucket boundary) is translated through this.
+    final liveIndex = <int>[];
+    var live = 0;
+    for (final item in items) {
+      liveIndex.add(live);
+      if (!item.departing) live++;
+    }
+
     final Widget content;
-    if (tasks.isEmpty) {
+    if (items.isEmpty) {
       final empty = Center(
         child: Text(
           emptyMessageFor(widget.viewId),
@@ -1077,13 +1110,17 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
         buildDefaultDragHandles: false,
         physics: physics,
         padding: listPadding,
-        itemCount: tasks.length + headerOffset,
-        // Drag indices are in list-item space (the heading is item 0); map them
-        // back to row indices, clamping a drop above the heading to the top row.
+        itemCount: items.length + headerOffset,
+        // Drag indices are in list-item space (the heading is item 0, and a
+        // collapsing row still holds a slot); map them back to indices in the
+        // live task order, clamping a drop above the heading to the top row.
         onReorderItem: (oldIndex, newIndex) => _onReorder(
           tasks,
-          oldIndex - headerOffset,
-          (newIndex - headerOffset).clamp(0, tasks.length - 1),
+          liveIndex[(oldIndex - headerOffset).clamp(0, items.length - 1)],
+          liveIndex[(newIndex - headerOffset).clamp(0, items.length - 1)].clamp(
+            0,
+            tasks.length - 1,
+          ),
         ),
         itemBuilder: (context, i) {
           if (headerOffset == 1 && i == 0) {
@@ -1091,52 +1128,78 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             // stays put while the overdue rows drag around it.
             return _overdueHeading(overdueCount);
           }
-          final ti = i - headerOffset;
-          final stored = tasks[ti];
-          final row = Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              ReorderableDragStartListener(
-                index: i,
-                child: SizedBox(
-                  key: ValueKey('drag-handle-${stored.task.id}'),
-                  // A comfortable drag target for both a mouse and a finger
-                  // (touch-drag rides the same handle); the glyph stays small,
-                  // the HIT AREA is 48dp tall.
-                  width: 36,
-                  height: 48,
-                  child: Icon(
-                    Icons.drag_indicator,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+          final item = items[i - headerOffset];
+          final stored = item.task;
+          return _motion(item, ValueKey('reorder-${stored.task.id}'), (
+            completion,
+          ) {
+            final handle = SizedBox(
+              key: ValueKey('drag-handle-${stored.task.id}'),
+              // A comfortable drag target for both a mouse and a finger
+              // (touch-drag rides the same handle); the glyph stays small,
+              // the HIT AREA is 48dp tall.
+              width: 36,
+              height: 48,
+              child: Icon(
+                Icons.drag_indicator,
+                size: 18,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            );
+            final row = Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // A row that is folding away is no longer a drag target — it is
+                // leaving — but it keeps the handle's WIDTH so its title does
+                // not slide sideways as it goes.
+                if (item.departing)
+                  handle
+                else
+                  ReorderableDragStartListener(index: i, child: handle),
+                Expanded(
+                  child: _taskRow(
+                    stored,
+                    dueInfo,
+                    subDone,
+                    subTotal,
+                    openUrl,
+                    completion,
                   ),
                 ),
-              ),
-              Expanded(
-                child: _taskRow(stored, dueInfo, subDone, subTotal, openUrl),
-              ),
-            ],
-          );
-          return _bucketSpaced(
-            row,
-            ti,
-            overdueCount,
-            key: ValueKey('reorder-${stored.task.id}'),
-          );
+              ],
+            );
+            return _bucketSpaced(
+              row,
+              liveIndex[i - headerOffset],
+              overdueCount,
+            );
+          });
         },
       );
     } else {
       content = ListView.builder(
         physics: physics,
         padding: listPadding,
-        itemCount: tasks.length + headerOffset,
+        itemCount: items.length + headerOffset,
         itemBuilder: (context, i) {
           if (headerOffset == 1 && i == 0) return _overdueHeading(overdueCount);
           final ti = i - headerOffset;
-          return _bucketSpaced(
-            _taskRow(tasks[ti], dueInfo, subDone, subTotal, openUrl),
-            ti,
-            overdueCount,
+          final item = items[ti];
+          return _motion(
+            item,
+            ValueKey('row-${item.task.task.id}'),
+            (completion) => _bucketSpaced(
+              _taskRow(
+                item.task,
+                dueInfo,
+                subDone,
+                subTotal,
+                openUrl,
+                completion,
+              ),
+              liveIndex[ti],
+              overdueCount,
+            ),
           );
         },
       );
@@ -1219,24 +1282,87 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   /// Wrap [row] with the inter-bucket gap when it is the FIRST row after the
   /// overdue bucket (Focus's dated bucket starts at index [overdueCount]), so
-  /// the two buckets read as distinct groups; otherwise return [row] as-is. When
-  /// a [key] is given it is carried on the returned widget (the reorderable list
-  /// requires a stable per-item key).
-  Widget _bucketSpaced(
-    Widget row,
-    int taskIndex,
-    int overdueCount, {
-    Key? key,
-  }) {
+  /// the two buckets read as distinct groups; otherwise return [row] as-is. The
+  /// per-item key the reorderable list requires sits on the enclosing
+  /// [CompletionMotion], so the gap folds away with the row it belongs to.
+  Widget _bucketSpaced(Widget row, int taskIndex, int overdueCount) {
     final firstRest = overdueCount > 0 && taskIndex == overdueCount;
-    if (firstRest) {
-      return Padding(
-        key: key,
-        padding: const EdgeInsets.only(top: 10),
-        child: row,
+    if (!firstRest) return row;
+    return Padding(padding: const EdgeInsets.only(top: 10), child: row);
+  }
+
+  /// The rows to render this build: the visible ones, plus the recently
+  /// completed ones still folding away, re-inserted where they stood (#241).
+  ///
+  /// A row departs only when it left the filtered list WHILE COMPLETED — the
+  /// completion sequence is what the collapse belongs to. A deleted row (gone
+  /// from [all]) or one that merely moved lists keeps its instant removal.
+  List<_RowItem> _withDepartures(
+    List<StoredTask> visible,
+    List<StoredTask> all,
+  ) {
+    // A row that left while scrolled OUT of view is never built, so it never
+    // reports its collapse finished. Drop any hold that has outlived the
+    // sequence rather than let an invisible slot linger in the list for good.
+    final now = WidgetsBinding.instance.currentFrameTimeStamp;
+    _departing.removeWhere(
+      (_, r) => now - r.since > completionSequenceDuration * 2,
+    );
+    final visibleIds = {for (final t in visible) t.task.id};
+    // A folding row whose task is back in the list (an Undo) rejoins the live
+    // rows and expands into place rather than snapping open.
+    for (final id in _departing.keys.toList()) {
+      if (visibleIds.contains(id)) {
+        _departing.remove(id);
+        _returning.add(id);
+      }
+    }
+    for (var i = 0; i < _lastVisible.length; i++) {
+      final id = _lastVisible[i].task.id;
+      if (visibleIds.contains(id) || _departing.containsKey(id)) continue;
+      // The row's CURRENT state decides, not the stale snapshot: the very build
+      // that drops a ticked row is the one that first sees it completed.
+      final current = all.where((t) => t.task.id == id).firstOrNull;
+      if (current == null || current.task.status != TaskStatus.completed) {
+        continue;
+      }
+      _departing[id] = _DepartingRow(current, i, now);
+    }
+    _lastVisible = visible;
+    final items = [for (final t in visible) _RowItem(t, departing: false)];
+    if (_departing.isEmpty) return items;
+    final folding = _departing.values.toList()
+      ..sort((a, b) => a.index.compareTo(b.index));
+    for (final row in folding) {
+      items.insert(
+        row.index.clamp(0, items.length),
+        _RowItem(row.task, departing: true),
       );
     }
-    return key == null ? row : KeyedSubtree(key: key, child: row);
+    return items;
+  }
+
+  /// Wrap one list item in the completion sequence (#241), keyed by [key] so a
+  /// row that folds away and comes back keeps its own animation.
+  Widget _motion(
+    _RowItem item,
+    Key key,
+    Widget Function(Animation<double> completion) builder,
+  ) {
+    final id = item.task.task.id;
+    return CompletionMotion(
+      key: key,
+      completed: item.task.task.status == TaskStatus.completed,
+      departing: item.departing,
+      returning: _returning.contains(id),
+      onDeparted: () {
+        if (_departing.remove(id) != null) setState(() {});
+      },
+      // Clearing the mark changes nothing on screen (it is read only when a row
+      // is first built), so it needs no rebuild.
+      onReturned: () => _returning.remove(id),
+      builder: (context, completion) => builder(completion),
+    );
   }
 
   /// One [TaskRow] for [stored], wired to selection, the action surface, inline
@@ -1247,6 +1373,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     Map<String, int> subDone,
     Map<String, int> subTotal,
     UrlOpener openUrl,
+    Animation<double> completion,
   ) {
     final t = stored.task;
     // In a cross-list view (any smart view aggregates across lists) every row is
@@ -1290,8 +1417,31 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       onSetDue: (m) => _quickMove(t.id, m),
       onPickDate: () => _openDatePicker(t.id, t.due),
       onOpenUrl: openUrl,
+      completionProgress: completion,
     );
   }
+}
+
+/// One rendered list slot: a task, and whether it is only still there to fold
+/// away (#241).
+class _RowItem {
+  const _RowItem(this.task, {required this.departing});
+
+  final StoredTask task;
+  final bool departing;
+}
+
+/// A completed row held for its collapse: the snapshot to draw and the row index
+/// it occupied when it left.
+class _DepartingRow {
+  const _DepartingRow(this.task, this.index, this.since);
+
+  final StoredTask task;
+  final int index;
+
+  /// The frame the row left on, so a hold can be expired even if its row is
+  /// never built (it departed off-screen) and never reports back.
+  final Duration since;
 }
 
 /// The list toolbar: the sort-order dropdown and the show-completed toggle.

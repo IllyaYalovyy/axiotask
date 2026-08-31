@@ -177,17 +177,28 @@ void main() {
     testWidgets('completion fades and shrinks the row; an open task does not', (
       tester,
     ) async {
+      // Standing alone (no CompletionMotion around it — #241) a row simply
+      // wears the resting look for its state.
       await pumpRow(tester, completed: true);
-      final fade = tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity));
-      final scale = tester.widget<AnimatedScale>(find.byType(AnimatedScale));
-      expect(fade.opacity, 0.5, reason: 'completed rows are dimmed');
-      expect(scale.scale, lessThan(1.0), reason: 'completed rows shrink');
+      final fade = tester.widget<FadeTransition>(
+        find.byKey(const Key('row-completion-fade')),
+      );
+      final scale = tester.widget<ScaleTransition>(
+        find
+            .descendant(
+              of: find.byKey(const Key('row-completion-fade')),
+              matching: find.byType(ScaleTransition),
+            )
+            .first,
+      );
+      expect(fade.opacity.value, 0.5, reason: 'completed rows are dimmed');
+      expect(scale.scale.value, lessThan(1.0), reason: 'completed rows shrink');
 
       await pumpRow(tester, completed: false);
-      final fade2 = tester.widget<AnimatedOpacity>(
-        find.byType(AnimatedOpacity),
+      final fade2 = tester.widget<FadeTransition>(
+        find.byKey(const Key('row-completion-fade')),
       );
-      expect(fade2.opacity, 1.0, reason: 'open rows are at full opacity');
+      expect(fade2.opacity.value, 1.0, reason: 'open rows are at full opacity');
     });
   });
 
