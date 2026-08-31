@@ -25,6 +25,7 @@ import 'task_detail.dart';
 import 'task_list_view.dart';
 import 'theme.dart' show coarsePointerPlatform;
 import 'toast.dart';
+import 'view_motion.dart';
 import 'views.dart';
 
 /// The adaptive shell for the current [location], wrapping the list pane [child]
@@ -355,16 +356,25 @@ class ViewListPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TaskListView(
-      key: ValueKey('view-$viewId'),
-      viewId: viewId,
-      selectedTaskId: selectedTaskId,
-      onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
-      onOpenTaskNotes: (id) =>
-          context.go(viewPath(viewId, taskId: id, focusNotes: true)),
-      // Search may land on a DIFFERENT view (a subtask's parent list — #92), so
-      // it navigates by an explicit target view rather than the current one.
-      onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),
+    // The pane the router hands the shell is the ONE place a view change is
+    // visible as a change of widget: go_router keeps the same page (and the
+    // same nested Navigator) across views, so the switch is this keyed subtree
+    // being replaced. [ViewSwitch] carries it across (#254) — a shared axis
+    // along the bottom bar's ordering, a fade-through where there is none.
+    return ViewSwitch(
+      slot: SmartView.byId(viewId)?.index,
+      child: TaskListView(
+        key: ValueKey('view-$viewId'),
+        viewId: viewId,
+        selectedTaskId: selectedTaskId,
+        onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+        onOpenTaskNotes: (id) =>
+            context.go(viewPath(viewId, taskId: id, focusNotes: true)),
+        // Search may land on a DIFFERENT view (a subtask's parent list — #92),
+        // so it navigates by an explicit target view rather than the current
+        // one.
+        onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),
+      ),
     );
   }
 }
