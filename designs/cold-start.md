@@ -39,6 +39,35 @@ Verdict: **within budget with large headroom.** No startup work is deferred or
 skipped to hit this; the detached post-first-frame path (auth restore / sync,
 which do not exist yet) is what must keep it there as Steps 3/5/6 land.
 
+## First snapshot (#260)
+
+Cold start is process → first *frame*; the list on that frame also depends on
+how long the STORE takes to answer. #260 needed that number, because "show
+skeleton rows if the first snapshot is slow" is only honest if someone measured
+what "slow" is.
+
+Measured on this developer machine (Fedora 43, `flutter test` on the Dart VM,
+drift over a **file-backed** DB seeded and then reopened exactly as a launch
+reopens it — timed from `watchAllTasks()` subscription to its first emission):
+
+- **50 tasks** — open 3.2 ms, subscribe → first snapshot **9.8 ms**
+- **200 tasks** — open 1.4 ms, subscribe → first snapshot **7.2 ms**
+- **1000 tasks** — open 0.9 ms, subscribe → first snapshot **12.1 ms**
+- **5000 tasks** — open 0.9 ms, subscribe → first snapshot **31.8 ms**
+
+So at the sizes VISION.md targets ("dozens to hundreds of tasks") the first
+snapshot lands inside one to two frames, and even a 5000-task account lands in
+under 32 ms. `MotionDurations.firstSnapshotGrace` is 300 ms — an order of
+magnitude of headroom — which is why the list shows *nothing* for that long
+instead of a spinner, and why the skeleton rows behind that threshold are a
+safety net (a cold spinning disk, a phone thrashing) rather than a state the app
+expects to render.
+
+Caveats: the numbers are warm-file-cache reopens on an NVMe machine, and the VM
+is JIT rather than AOT. They bound the QUERY cost, not a first-ever read off
+cold storage on a slow phone — which is exactly the case the skeleton exists
+for.
+
 ## Re-measuring
 
 Run `bash tool/measure_cold_start.sh` after any change that could touch startup

@@ -3,6 +3,7 @@
 // to prefs.json, and the detail route opens/closes with a visible back
 // affordance. These are the T2.2 contracts a user (or a restart) can observe.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:axiotask/src/app/app.dart';
@@ -51,6 +52,8 @@ void main() {
     String? instancePrefix,
     GoRouter? router,
     List<StoredTask> tasks = const [],
+    Stream<List<StoredTask>>? tasksStream,
+    bool settle = true,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -61,15 +64,22 @@ void main() {
           windowTitleControllerProvider.overrideWithValue(title),
           // The "all" view (and the detail panel) render off the real store
           // streams; feed them fixed values so the shell wiring under test needs
-          // no database.
-          allTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+          // no database. [tasksStream] hands a suite the timing as well: a store
+          // that has not answered yet is a different state from an empty one.
+          allTasksProvider.overrideWith(
+            (ref) => tasksStream ?? Stream.value(tasks),
+          ),
           listsProvider.overrideWith((ref) => const Stream.empty()),
           if (router != null) routerProvider.overrideWithValue(router),
         ],
         child: const AxiotaskApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
   }
 
   StoredTask storedTask(String id, String title) => StoredTask(
@@ -478,6 +488,50 @@ void main() {
         tasks: [storedTask('T1', 'existing')],
       );
       expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+    });
+
+    testWidgets('is not flashed before the store has answered (#260)', (
+      tester,
+    ) async {
+      // A first launch for a user who ALREADY has tasks: the store has not
+      // emitted yet, so "the workspace is empty" is not yet true of anything.
+      // Showing the welcome on that frame — and tearing it away one frame
+      // later — is a modal the user cannot read and did not ask for.
+      final silent = StreamController<List<StoredTask>>();
+      addTearDown(silent.close);
+      await pumpApp(
+        tester,
+        store: prefs(),
+        title: _FakeTitle(),
+        tasksStream: silent.stream,
+        settle: false,
+      );
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+
+      silent.add([storedTask('T1', 'existing')]);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('onboarding-intro')),
+        findsNothing,
+        reason: 'and the answer, when it comes, is "not empty"',
+      );
+    });
+
+    testWidgets('arrives once the store answers empty', (tester) async {
+      final silent = StreamController<List<StoredTask>>();
+      addTearDown(silent.close);
+      await pumpApp(
+        tester,
+        store: prefs(),
+        title: _FakeTitle(),
+        tasksStream: silent.stream,
+        settle: false,
+      );
+      expect(find.byKey(const Key('onboarding-intro')), findsNothing);
+
+      silent.add(const []);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('onboarding-intro')), findsOneWidget);
     });
 
     testWidgets('does not show once it has been seen', (tester) async {

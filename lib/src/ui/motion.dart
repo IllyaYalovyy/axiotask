@@ -54,6 +54,21 @@ abstract final class MotionDurations {
   /// so the last one it allows waits 280ms before it begins.
   static const Duration rowStagger = Duration(milliseconds: 40);
 
+  /// 300ms — the grace the list gives the store's FIRST snapshot before it
+  /// admits to waiting (#260).
+  ///
+  /// A THRESHOLD, not a span of motion: nothing travels for 300ms, and it is
+  /// never resolved through [Motion] — a user who turned animations off did
+  /// not ask to be shown placeholder rows 300ms sooner. It lives here anyway,
+  /// because this file is where a duration in this app is chosen.
+  ///
+  /// Measured, not guessed: a file-backed first snapshot costs 7–13ms at
+  /// 50–1000 tasks and 32ms at 5000 on this developer machine
+  /// (designs/cold-start.md §"First snapshot"). The skeleton is therefore a
+  /// safety net for a pathological launch — a cold spinning disk, a phone
+  /// thrashing — and not a state the app expects to render.
+  static const Duration firstSnapshotGrace = Duration(milliseconds: 300);
+
   // ── Bespoke spans ────────────────────────────────────────────────────────
   // Each of these shipped before the scale existed and is kept here at its
   // EXACT previous value: #250 defines the vocabulary, it changes no motion
