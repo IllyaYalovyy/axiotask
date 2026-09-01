@@ -97,6 +97,9 @@ class AppShell extends ConsumerWidget {
     // no-op when expanded, where the compact Scaffold (and its key) is unmounted.
     final scaffoldKey = ref.watch(mobileScaffoldKeyProvider);
     void closeDrawer() => scaffoldKey.currentState?.closeDrawer();
+    // …and the same drawer's open state, watched, so the back ladder below can
+    // publish its claim on the gesture BEFORE the gesture happens (#263).
+    final drawerOpen = ref.watch(drawerOpenProvider);
 
     // Panel prev/next: the siblings of the open task in the CURRENT view's
     // visible ordering (the same order the list renders). Null at a boundary,
@@ -226,6 +229,9 @@ class AppShell extends ConsumerWidget {
       onNewTask: coarsePointerPlatform(Theme.of(context).platform)
           ? ref.read(newTaskRequestProvider.notifier).bump
           : null,
+      // Every open and close of the compact drawer, plus the retraction when a
+      // rotation unmounts it still open — the input to [drawerOpen] above.
+      onDrawerChanged: ref.read(drawerOpenProvider.notifier).set,
       // …and while that composer is up there is NO FAB: the two are one surface
       // (#234), so the FAB can never render over the sheet it turned into.
       composerOpen: ref.watch(composerOpenProvider),
@@ -277,26 +283,36 @@ class AppShell extends ConsumerWidget {
     // PopScope that [ListDetailScaffold] already owns. One system back resolves
     // the single highest-priority app-owned mode — one rung per press:
     //
+    //   0. an open drawer            → close it
     //   1. the first-launch welcome  → dismiss it (persist onboardingSeen)
     //   2. an open detail            → close it   (owned by the scaffold below)
     //   3. an active selection       → clear it
     //   4. (nothing left)            → let the OS pop the app
     //
-    // This PopScope owns rungs 1 and 3 only; it deliberately leaves rung 2 to
+    // This PopScope owns rungs 0, 1 and 3 only; it deliberately leaves rung 2 to
     // the scaffold's own PopScope. Both PopScopes register on the same route, so
     // a blocked back fires BOTH callbacks — the `!detailOpen` guard below keeps
     // this one from ALSO clearing the selection on the back that closes a detail
     // (one back is exactly one rung).
     //
-    // The open drawer is the framework's OWN rung, above every app-owned one: it
-    // registers a LocalHistoryEntry, but a route's PopScope entries preempt local
-    // history in `ModalRoute.popDisposition` — so when a selection makes THIS
-    // PopScope `canPop: false`, the framework's drawer-close never runs and this
-    // back would clear the selection while leaving the drawer stacked over it
-    // (F14/#192). So gate the whole ladder on the drawer: if it is open, close it
-    // and stop (one back is one rung). Read `isDrawerOpen` at pop time, never
-    // cached — a cached flag would deaden back after a rotation unmounts the
-    // compact scaffold mid-open (T8.2).
+    // The open drawer is rung 0, above every other app-owned one. The framework
+    // has its own handling for it — the drawer registers a LocalHistoryEntry —
+    // but a route's PopScope entries preempt local history in
+    // `ModalRoute.popDisposition`, so when a selection makes THIS PopScope
+    // `canPop: false`, the framework's drawer-close never runs and this back
+    // would clear the selection while leaving the drawer stacked over it
+    // (F14/#192). So gate the whole ladder on the drawer: if it is open, close
+    // it and stop (one back is one rung). Which rung to RUN is read from the
+    // live [ScaffoldState] at pop time, never from a cached flag — the flag
+    // could outlive the drawer (T8.2).
+    //
+    // The drawer must also make `canPop` false (#263). Android decides a
+    // predictive back BEFORE the gesture, from the value the framework derives
+    // from this route's PopScopes: told `canPop: true`, the OS runs the gesture
+    // itself and FINISHES THE ACTIVITY — the app is gone with the drawer still
+    // open and no callback below ever runs. Hence the watched [drawerOpen],
+    // which the compact layout retracts when it unmounts so the claim can never
+    // outlive the drawer either.
     final selectionActive = ref.watch(selectionBackHandleProvider);
     // An open inline-rename editor is an app-owned back rung too (G4 #183): a
     // system back mid-rename must commit-and-close the editor, not exit the app
@@ -313,7 +329,8 @@ class AppShell extends ConsumerWidget {
     return DetailOriginScope(
       controller: ref.watch(detailOriginProvider),
       child: PopScope(
-        canPop: !(showOnboarding || selectionActive || renameActive),
+        canPop:
+            !(drawerOpen || showOnboarding || selectionActive || renameActive),
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) return;
           final scaffoldState = scaffoldKey.currentState;

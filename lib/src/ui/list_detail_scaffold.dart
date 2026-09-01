@@ -23,10 +23,11 @@
 // and subtask titles ellipsize (task_row / task_detail) so nothing in the
 // narrow band that stays side-by-side (≥ [detailBreakpoint]) overflows.
 //
-// Back handling: an open drawer is dismissed by the framework's own Drawer
-// back-handling; a [PopScope] turns a back with an open detail into
-// [onCloseDetail] instead of popping the whole app. The full back-precedence
-// ladder is T8.3.
+// Back handling: a [PopScope] turns a back with an open detail into
+// [onCloseDetail] instead of popping the whole app, and the compact layout
+// reports its drawer up through [ListDetailScaffold.onDrawerChanged] so the
+// shell's ladder can claim the gesture before Android decides it owns it
+// (#263). The full back-precedence ladder is T8.3.
 //
 // Safe areas (#166/#160): the app bar clears the status bar (Material insets it
 // natively), the drawer content is inset from the top/bottom/left with an
@@ -72,6 +73,7 @@ class ListDetailScaffold extends StatelessWidget {
     this.onNewTask,
     this.composerOpen = false,
     this.scaffoldKey,
+    this.onDrawerChanged,
     this.sidebarWidth = defaultSidebarWidth,
     this.detailFraction = defaultDetailFraction,
     this.onSidebarWidthChanged,
@@ -176,6 +178,13 @@ class ListDetailScaffold extends StatelessWidget {
   /// a navigation. `null` in tests that do not drive the drawer.
   final GlobalKey<ScaffoldState>? scaffoldKey;
 
+  /// Called with the compact drawer's open state — every open, every close, and
+  /// `false` once more when the compact layout unmounts with it still open (a
+  /// rotation past the breakpoint). The shell's back ladder watches it so an
+  /// open drawer is part of the `canPop` Android reads BEFORE a predictive back
+  /// gesture (#263). `null` when nothing above needs to know.
+  final ValueChanged<bool>? onDrawerChanged;
+
   /// Persisted sidebar width for the expanded layout (#210). Clamped internally
   /// to [minSidebarWidth]–[maxSidebarWidth]; ignored by the compact layout.
   final double sidebarWidth;
@@ -209,13 +218,12 @@ class ListDetailScaffold extends StatelessWidget {
     final expanded = MediaQuery.sizeOf(context).width >= effectiveBreakpoint;
     // One PopScope for both layouts: a back gesture with a detail open turns
     // into [onCloseDetail] rather than popping the whole app. An OPEN DRAWER is
-    // handled by the framework's own Drawer back-dismissal (which unmounts with
-    // the compact layout on rotation), so it is deliberately NOT tracked here —
-    // caching "drawer open" would deaden the back button after a phone rotates
-    // into the expanded layout mid-open. Note the [list] is kept mounted in BOTH
-    // layouts (a Row child when expanded, Offstage when compact) so the
-    // ShellRoute's Navigator is never torn down under go_router — unmounting it
-    // crashes go_router's popRoute.
+    // NOT this PopScope's business: it is a rung of the shell's own ladder,
+    // which is why the compact layout reports the drawer up through
+    // [onDrawerChanged] (#263) rather than blocking the pop here. Note the
+    // [list] is kept mounted in BOTH layouts (a Row child when expanded,
+    // Offstage when compact) so the ShellRoute's Navigator is never torn down
+    // under go_router — unmounting it crashes go_router's popRoute.
     // Every layout is wrapped: a bottom inset that outlives the keyboard would
     // otherwise reserve half the screen for a keyboard that is gone, leaving a
     // black region under the body for the rest of the session (#233).
@@ -267,6 +275,7 @@ class ListDetailScaffold extends StatelessWidget {
       onCloseDetail: onCloseDetail,
       shell: _CompactShell(
         scaffoldKey: scaffoldKey,
+        onDrawerChanged: onDrawerChanged,
         title: title,
         syncLine: syncLine,
         sidebar: sidebar,
@@ -548,6 +557,7 @@ class _CompactShell extends StatefulWidget {
     required this.onNewTask,
     required this.composerOpen,
     required this.scaffoldKey,
+    required this.onDrawerChanged,
   });
 
   final String title;
@@ -562,6 +572,9 @@ class _CompactShell extends StatefulWidget {
   final VoidCallback? onNewTask;
   final bool composerOpen;
   final GlobalKey<ScaffoldState>? scaffoldKey;
+
+  /// See [ListDetailScaffold.onDrawerChanged].
+  final ValueChanged<bool>? onDrawerChanged;
 
   /// How far the list must travel in one direction before the chrome reacts.
   /// Big enough that a nudge, a tap-jitter or a settling fling tail does not
@@ -598,6 +611,18 @@ class _CompactShellState extends State<_CompactShell>
   /// The channel the hosted list publishes its toolbar actions into (#244).
   final ListChromeController _chrome = ListChromeController();
 
+  /// What this shell last told the app about its drawer (#263). The drawer is
+  /// THIS Scaffold's: a rotation past the breakpoint unmounts the compact
+  /// layout with the drawer still open and never fires a close, so the claim on
+  /// the back gesture has to be withdrawn here or it would outlive the drawer
+  /// and deaden back on a layout with nothing to close (the T8.2 lesson).
+  bool _drawerOpen = false;
+
+  void _reportDrawer(bool open) {
+    _drawerOpen = open;
+    widget.onDrawerChanged?.call(open);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -613,6 +638,14 @@ class _CompactShellState extends State<_CompactShell>
 
   @override
   void dispose() {
+    if (_drawerOpen) {
+      // Withdrawn a frame LATER, never from inside dispose: what listens to
+      // this sits above the compact layout, and marking an ancestor dirty
+      // while the tree is being torn down is illegal. One frame of an
+      // over-claimed back is invisible — the layout is mid-rebuild anyway.
+      final report = widget.onDrawerChanged;
+      WidgetsBinding.instance.addPostFrameCallback((_) => report?.call(false));
+    }
     _bar.dispose();
     _chrome.dispose();
     super.dispose();
@@ -737,6 +770,7 @@ class _CompactShellState extends State<_CompactShell>
               child: widget.sidebar,
             ),
           ),
+          onDrawerChanged: _reportDrawer,
           body: Padding(
             padding: EdgeInsets.only(top: statusBarFloor),
             child: body!,
