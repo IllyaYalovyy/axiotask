@@ -21,6 +21,8 @@
 // so the mid-width band where an open detail collapses the shell (#208) cannot
 // end up with the actions in neither place.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../model/task_view.dart' show SortMode;
@@ -306,22 +308,39 @@ class CollapsingAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// How much of it is on screen: 1 pinned, 0 fully collapsed.
   final double shown;
 
-  /// The status-bar inset the bar adds to its own preferred height (an [AppBar]
-  /// insets itself past the status bar when it is the [Scaffold]'s primary bar).
+  /// The status-bar inset the bar covers on top of its own toolbar (an [AppBar]
+  /// insets itself past the status bar, through its own [SafeArea], when it is
+  /// the [Scaffold]'s primary bar).
   final double topPadding;
 
   /// The height the bar occupies when fully shown.
   double get fullHeight => bar.preferredSize.height + topPadding;
 
+  /// The height the slot actually occupies at [shown] — where the bar's bottom
+  /// edge, and with it the body's top edge, sits.
+  double get height => fullHeight * shown;
+
+  /// What the hosting [Scaffold] is TOLD to reserve — the slot MINUS the status
+  /// bar, because the Scaffold adds that inset back itself
+  /// (`Scaffold._appBarMaxHeight` = its app bar's preferred height + the top
+  /// padding, for a `primary` Scaffold — the default, and what the compact
+  /// shell mounts). Counting it here too has the phone reserve it twice: the bar's
+  /// top-aligned fill takes the whole over-tall slot, so the toolbar draws
+  /// where it belongs and the surplus becomes a band of bar-coloured nothing
+  /// under it — every row pushed down past it, and a `flexibleSpace` sync line
+  /// left floating at the bottom of the band rather than on the bar's edge
+  /// (#262). Never negative: a slot shorter than the status bar (a bar nearly
+  /// gone) asks for nothing, and the SizedBox below still gives the exact
+  /// height — the Scaffold's is a MAXIMUM, not a demand.
   @override
-  Size get preferredSize => Size.fromHeight(fullHeight * shown);
+  Size get preferredSize => Size.fromHeight(math.max(0, height - topPadding));
 
   @override
   Widget build(BuildContext context) {
     if (shown >= 1) return bar;
     if (shown <= 0) return const SizedBox.shrink();
     return SizedBox(
-      height: fullHeight * shown,
+      height: height,
       // Bottom-aligned and unclipped: the bar keeps its full height and slides
       // up past the top of the screen, which is what clips it.
       child: OverflowBox(
