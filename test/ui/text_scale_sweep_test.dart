@@ -206,9 +206,13 @@ void main() {
       });
 
       // ── The bulk bar ────────────────────────────────────────────────────
-      // Seven actions in one Wrap. It is allowed to grow to several runs; what
-      // it may not do is overflow or bury an action.
-      testWidgets('every bulk action survives the wrap', (tester) async {
+      // ONE row, [BulkBar.height] tall, at every scale (#265): the four
+      // everyday actions on it, the two rarer ones behind its "⋮". It may not
+      // overflow, may not bury an action, and — the thing that made it worth
+      // rebuilding — may not grow a run and eat the list it sits above.
+      testWidgets('every bulk action survives, and the bar stays ONE row', (
+        tester,
+      ) async {
         final fake = await pumpList(
           tester,
           initial: [
@@ -226,15 +230,21 @@ void main() {
         await settleList(tester);
         expect(find.byType(BulkBar), findsOneWidget);
         _expectNoOverflow(tester, 'the bulk bar');
+        expect(
+          tester.getSize(find.byType(BulkBarSlot)).height,
+          BulkBar.height,
+          reason:
+              'at ${scale}x the bar must still take exactly one row from the '
+              'list — the wrap it replaced took four',
+        );
 
         for (final action in const {
           'bulk-complete': 'Complete',
           'bulk-due': 'Due',
           'bulk-move': 'Move',
-          'bulk-duplicate': 'Duplicate',
-          'bulk-demote': 'Make subtasks of…',
           'bulk-delete': 'Delete',
           'bulk-clear-selection': 'Clear selection',
+          'bulk-overflow': 'More bulk actions',
         }.entries) {
           _expectTappable(
             tester,
@@ -242,6 +252,22 @@ void main() {
             'the bulk bar\'s ${action.value}',
           );
         }
+
+        // The two rarer ops keep their own reachable home behind the "⋮".
+        await tester.tap(find.byKey(const Key('bulk-overflow')));
+        await settleList(tester);
+        for (final key in const ['bulk-duplicate', 'bulk-demote']) {
+          expect(
+            find.byKey(Key(key)).hitTestable(),
+            findsOneWidget,
+            reason: '$key is unreachable from the overflow at ${scale}x text',
+          );
+        }
+        _expectNoOverflow(tester, "the bulk bar's overflow menu");
+        Navigator.of(
+          tester.element(find.byKey(const Key('bulk-duplicate'))),
+        ).pop();
+        await settleList(tester);
 
         await tester.tap(find.byKey(const Key('bulk-complete')).hitTestable());
         await settleList(tester);

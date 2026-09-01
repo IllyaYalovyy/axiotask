@@ -34,6 +34,14 @@ void main() {
     await tester.pump();
   }
 
+  /// Open the bar's "⋮" — the home Duplicate and "Make subtasks of…" moved to
+  /// when the bar became one row (#265).
+  Future<void> openBulkOverflow(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('bulk-overflow')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+  }
+
   testWidgets('Ctrl-click selects a task and shows the bulk bar with a count', (
     tester,
   ) async {
@@ -59,6 +67,9 @@ void main() {
     expect(find.byType(BulkBar), findsOneWidget);
     await tester.tap(find.byKey(const Key('bulk-clear-selection')));
     await tester.pump();
+    // The bar folds its height away rather than vanishing (#265) — it is gone
+    // once the collapse finishes, not on the frame the selection cleared.
+    await tester.pump(const Duration(milliseconds: 350));
     expect(find.byType(BulkBar), findsNothing);
   });
 
@@ -325,6 +336,7 @@ void main() {
       );
       await ctrlClick(tester, 'apples');
       await ctrlClick(tester, 'bread');
+      await openBulkOverflow(tester);
       await tester.tap(find.byKey(const Key('bulk-duplicate')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
@@ -349,6 +361,7 @@ void main() {
       );
       await ctrlClick(tester, 'apples');
       await ctrlClick(tester, 'bread');
+      await openBulkOverflow(tester);
       await tester.tap(find.byKey(const Key('bulk-demote')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
@@ -379,6 +392,7 @@ void main() {
         lists: oneList,
       );
       await ctrlClick(tester, 'apples');
+      await openBulkOverflow(tester);
       await tester.tap(find.byKey(const Key('bulk-demote')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
@@ -401,6 +415,7 @@ void main() {
         lists: oneList,
       );
       await ctrlClick(tester, 'parent');
+      await openBulkOverflow(tester);
       expect(find.byKey(const Key('bulk-duplicate')), findsOneWidget);
       expect(find.byKey(const Key('bulk-demote')), findsNothing);
     });
@@ -419,11 +434,13 @@ void main() {
       );
       await ctrlClick(tester, 'apples');
       await ctrlClick(tester, 'elsewhere');
+      await openBulkOverflow(tester);
+      expect(find.byKey(const Key('bulk-duplicate')), findsOneWidget);
       expect(find.byKey(const Key('bulk-demote')), findsNothing);
     });
 
     testWidgets('the bar keeps every action reachable on a 400dp phone at 1.3x '
-        'text — it wraps, it never overflows', (tester) async {
+        'text — one row, nothing buried', (tester) async {
       await pumpList(
         tester,
         initial: [row('A', 'apples'), row('C', 'cheese')],
@@ -438,15 +455,23 @@ void main() {
         'bulk-complete',
         'bulk-due',
         'bulk-move',
-        'bulk-duplicate',
-        'bulk-demote',
         'bulk-delete',
         'bulk-clear-selection',
+        'bulk-overflow',
       ]) {
         expect(
           find.byKey(Key(k)).hitTestable(),
           findsOneWidget,
           reason: '$k must stay tappable on a narrow phone at 1.3x text',
+        );
+      }
+      // …including the two the "⋮" holds (#265).
+      await openBulkOverflow(tester);
+      for (final k in const ['bulk-duplicate', 'bulk-demote']) {
+        expect(
+          find.byKey(Key(k)).hitTestable(),
+          findsOneWidget,
+          reason: '$k must stay reachable from the overflow at 1.3x text',
         );
       }
     });

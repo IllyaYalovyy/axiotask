@@ -459,6 +459,57 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    testWidgets("the bulk bar's ⋮ opens ON TOP of the shell — its entries are "
+        'reachable, not under the FAB or the nav bar', (tester) async {
+      // The bar lives INSIDE the shell's nested navigator (the ShellRoute
+      // shape), and a surface raised from there can render under the FAB and
+      // the bottom NavigationBar the shell draws over it (#234). The two
+      // rarest bulk ops moved behind this menu (#265), so "it opens" is not
+      // enough — a finger has to be able to land on what it opened.
+      final fake = FakeBackend([
+        row('T1', 'oranges'),
+        row('T2', 'lemons', position: '2'),
+      ]);
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      await tester.longPress(find.text('oranges'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('bulk-overflow')));
+      await tester.pumpAndSettle();
+
+      for (final key in const ['bulk-duplicate', 'bulk-demote']) {
+        expect(
+          find.byKey(Key(key)).hitTestable(),
+          findsOneWidget,
+          reason: '$key opened somewhere no finger on a phone can reach it',
+        );
+      }
+      // …and a system back closes the menu ALONE. The menu is a route on the
+      // shell's nested navigator, so it is a back rung of its own: one back is
+      // one step, and the selection behind it survives.
+      expect(await tester.binding.handlePopRoute(), isTrue);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('bulk-duplicate')), findsNothing);
+      expect(
+        find.byType(BulkBar),
+        findsOneWidget,
+        reason:
+            'the back that closed the menu must not also clear the '
+            'selection under it',
+      );
+
+      await tester.tap(find.byKey(const Key('bulk-overflow')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('bulk-duplicate')).hitTestable());
+      await tester.pumpAndSettle();
+      expect(
+        fake.tasks.map((t) => t.task.title),
+        contains('oranges (copy)'),
+        reason: 'the entry a finger reached must actually run',
+      );
+    });
+
     testWidgets('a selection keeps the bulk bar on screen whatever the scroll '
         'is doing', (tester) async {
       final fake = FakeBackend(manyRows());
