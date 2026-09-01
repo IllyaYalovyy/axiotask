@@ -1348,8 +1348,13 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               ),
             ],
           ),
-        if (_selectionMode)
-          BulkBar(
+        // The bar's own slot: it collapses its height in and out (#265), so
+        // the rows below make room for it rather than being shoved a bar's
+        // worth in one frame. Always mounted, zero-height when there is no
+        // selection.
+        BulkBarSlot(
+          shown: _selectionMode,
+          builder: (context) => BulkBar(
             count: _selectedIds.length,
             onComplete: _bulkComplete,
             onSetDue: _bulkSetDue,
@@ -1361,6 +1366,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
             onDelete: _bulkDelete,
             onClear: _clearSelection,
           ),
+        ),
         Expanded(
           child: _listArea(
             items,

@@ -6,6 +6,7 @@
 // action. Keyboard submenu navigation dies with the keyboard layer; the actions
 // all port, and submenus open on CLICK, not hover.
 
+import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
@@ -416,10 +417,19 @@ void main() {
         size: const Size(420, 900),
         platform: TargetPlatform.android,
       );
+      final semantics = tester.ensureSemantics();
       await tester.longPress(find.text('apples'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
-      expect(find.text('1 selected'), findsOneWidget);
+      expect(find.byType(BulkBar), findsOneWidget);
+      // Read through semantics, not through the rendered string: on a narrow
+      // phone the bar shortens the phrase to the bare count (#265), and what
+      // this test is about is that the long-press selected ONE row.
+      expect(
+        tester.getSemantics(find.byKey(const Key('bulk-count'))).label,
+        '1 selected',
+      );
+      semantics.dispose();
     });
 
     testWidgets('the desktop mouse row shows no "⋮" either, and right-click '

@@ -65,6 +65,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pump();
+    // The bulk bar collapses IN over Motion.medium (#265). Let it finish here,
+    // so the frames this suite owns afterwards belong to the ROWS alone.
+    await tester.pump(const Duration(milliseconds: 350));
   }
 
   /// Let a command run and the task stream deliver WITHOUT advancing the clock,

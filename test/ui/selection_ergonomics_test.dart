@@ -108,6 +108,9 @@ void main() {
       await tester.tap(selectItem);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
+      // The selection lands in a post-frame callback (the menu dismisses
+      // first), so the bar's collapse-in starts on the NEXT frame (#265).
+      await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.byType(BulkBar), findsOneWidget);
       expect(find.text('1 selected'), findsOneWidget);
@@ -128,12 +131,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 350));
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
+      // One more frame: the bar collapses IN rather than appearing (#265).
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.text('1 selected'), findsOneWidget);
 
       await rightClick(tester, 'apples');
       expect(find.text('Deselect'), findsOneWidget);
       await tester.tap(find.byKey(const Key('taskmenu-select')));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      // … and it collapses OUT, so it is still on screen for one more frame.
       await tester.pump(const Duration(milliseconds: 350));
 
       expect(find.byType(BulkBar), findsNothing);
@@ -187,7 +194,6 @@ void main() {
         'bulk-complete',
         'bulk-due',
         'bulk-move',
-        'bulk-duplicate',
         'bulk-delete',
       ]) {
         expect(
@@ -196,6 +202,17 @@ void main() {
           reason: '$k must be disabled while nothing is selected',
         );
       }
+      // Duplicate and "Make subtasks of…" moved behind the "⋮" (#265); the
+      // rule is the same, so the menu that holds them cannot be opened at all.
+      expect(
+        tester
+            .widget<PopupMenuButton<String>>(
+              find.byKey(const Key('bulk-overflow')),
+            )
+            .enabled,
+        isFalse,
+        reason: 'the overflow must not open a menu of dead entries',
+      );
 
       // Selecting one row arms them.
       await plainTap(tester, 'apples');
