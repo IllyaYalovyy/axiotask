@@ -75,6 +75,9 @@ const _myTasks = StoredTaskList(
 /// line on the app bar's bottom edge. Every other scenario passes the line in
 /// its idle state — exactly as the real shell always mounts it — so the at-rest
 /// goldens prove the line costs no pixel when nothing is syncing.
+/// [padding] injects the device insets a real phone always has (#262): every
+/// other scenario renders on an inset-free surface, where a status bar counted
+/// twice costs nothing, so the bar's height under a notch needs its own pin.
 Widget _shellAt(
   Size size, {
   TextScaler textScaler = TextScaler.noScaling,
@@ -82,9 +85,10 @@ Widget _shellAt(
   TargetPlatform platform = TargetPlatform.android,
   bool listView = false,
   bool syncing = false,
+  EdgeInsets padding = EdgeInsets.zero,
 }) {
   return MediaQuery(
-    data: MediaQueryData(size: size, textScaler: textScaler),
+    data: MediaQueryData(size: size, textScaler: textScaler, padding: padding),
     child: ProviderScope(
       overrides: [
         prefsProvider.overrideWithValue(const Prefs()),
@@ -187,6 +191,44 @@ void main() {
           name: 'compact — sync line on the app bar edge',
           constraints: BoxConstraints.tight(phone),
           child: _shellAt(phone, syncing: true),
+        ),
+      ],
+    ),
+  );
+
+  // The phone shell UNDER A STATUS BAR (#262). Every other phone golden renders
+  // on a surface with no device insets at all, which is exactly where the bug
+  // hid: the [Scaffold] adds MediaQuery.padding.top to its app bar's declared
+  // height by itself, so a collapsing bar that ALSO folded the inset into that
+  // height reserved it twice — a band of bar-coloured nothing under the
+  // toolbar, every row pushed a status bar further down, and the sync line
+  // floating at the bottom of the band instead of on the bar's edge (#255).
+  // With a zero inset the arithmetic is 0 + 0, which is why not one existing
+  // baseline moved. Both scenarios here are 48dp-inset phones: idle, so the
+  // bar's height stands alone, and mid-sync, so the line's seam does.
+  //
+  // NOT settled, for the same reason as `shell_phone_syncing`: the running line
+  // is indeterminate and never settles. The clock is advanced by a fixed span.
+  goldenTest(
+    'shell — phone form factor under a 48dp status bar',
+    fileName: 'shell_phone_status_bar',
+    pumpBeforeTest: (tester) => tester.pump(const Duration(milliseconds: 500)),
+    builder: () => GoldenTestGroup(
+      columns: 2,
+      children: [
+        GoldenTestScenario(
+          name: 'status bar — one toolbar under the notch',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(phone, padding: const EdgeInsets.only(top: 48)),
+        ),
+        GoldenTestScenario(
+          name: 'status bar — the sync line on the bar edge',
+          constraints: BoxConstraints.tight(phone),
+          child: _shellAt(
+            phone,
+            syncing: true,
+            padding: const EdgeInsets.only(top: 48),
+          ),
         ),
       ],
     ),

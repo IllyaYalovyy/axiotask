@@ -750,10 +750,7 @@ class _CompactShellState extends State<_CompactShell>
         // As the bar collapses its slot shrinks and the body's top rises with
         // it — but never past the status bar: rows must not slide under the
         // notch just because the bar went away.
-        final statusBarFloor = math.max(
-          0.0,
-          topInset - bar.preferredSize.height,
-        );
+        final statusBarFloor = math.max(0.0, topInset - bar.height);
         return Scaffold(
           key: widget.scaffoldKey,
           // Keep inputs visible above the soft keyboard (IME) — the quick-add

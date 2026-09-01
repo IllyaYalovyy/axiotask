@@ -20,12 +20,15 @@
 // gives it), fed by an in-memory [FakeBackend] — no database, no clock, no
 // network.
 
+import 'dart:math' as math;
+
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/search.dart';
+import 'package:axiotask/src/ui/sync_feedback.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
@@ -62,6 +65,7 @@ void main() {
     String viewId = 'all',
     bool showCompleted = false,
     EdgeInsets padding = EdgeInsets.zero,
+    Widget? syncLine,
     ValueNotifier<double>? ime,
     bool disableAnimations = false,
   }) async {
@@ -99,6 +103,7 @@ void main() {
                 selectedIndex: SmartView.all.index,
                 onDestinationSelected: (_) {},
                 title: 'All Tasks',
+                syncLine: syncLine,
                 onNewTask: ref.read(newTaskRequestProvider.notifier).bump,
                 composerOpen: ref.watch(composerOpenProvider),
                 list: Navigator(
@@ -478,6 +483,132 @@ void main() {
       final bulk = tester.getRect(find.byType(BulkBar));
       expect(bulk.top, greaterThanOrEqualTo(0));
       expect(bulk.bottom, lessThanOrEqualTo(800));
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+  });
+
+  // The bar's HEIGHT under a status bar (#262). A [Scaffold] adds
+  // MediaQuery.padding.top to whatever height its app bar declares
+  // (Scaffold._appBarMaxHeight) and an [AppBar] insets ITSELF past the status
+  // bar through its own SafeArea — so a collapsing wrapper that also folds the
+  // inset into its preferred height has the phone reserve it TWICE. Nothing
+  // clips: the AppBar's top-aligned fill takes the whole over-tall slot, so the
+  // toolbar draws where it belongs and the surplus becomes a band of bar-
+  // coloured nothing under it, with every row pushed down past it and the sync
+  // line — bottom-aligned in the bar's flexibleSpace — floating at the bottom
+  // of the band instead of on the bar's edge (#255).
+  group('the bar reserves the status bar ONCE (#262)', () {
+    /// A phone status bar / notch, injected as a real device inset.
+    const statusBar = 48.0;
+
+    /// Where the pinned bar must END: one status bar, one toolbar, nothing
+    /// else. Every row and the sync line hang off this edge.
+    const barBottom = statusBar + barHeight;
+
+    testWidgets('the pinned bar is one toolbar tall under the notch, and the '
+        'rows start at its edge — no empty band between', (tester) async {
+      final fake = FakeBackend(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(
+        tester,
+        fake: fake,
+        lists: [list('L1', 'Groceries')],
+        padding: const EdgeInsets.only(top: statusBar),
+      );
+
+      final bar = tester.getRect(appBar);
+      expect(bar.top, 0, reason: 'the bar still starts at the screen top');
+      expect(
+        bar.bottom,
+        barBottom,
+        reason:
+            'the status bar is reserved ONCE: a second inset in the bar\'s own '
+            'preferred height buys a ${statusBar}dp band of dead bar under the '
+            'toolbar',
+      );
+      expect(
+        tester.getRect(find.byType(TaskListView)).top,
+        barBottom,
+        reason: 'the list starts exactly where the bar ends',
+      );
+      // And the rows with it — a whole row of list is what the band costs.
+      expect(
+        tester.getRect(find.text('Task 0')).top,
+        lessThan(barBottom + 24),
+        reason:
+            'the first row must be reachable under the bar, not a band '
+            'below it',
+      );
+    });
+
+    testWidgets('the sync line rides the bar\'s real bottom edge under the '
+        'notch, not the bottom of an over-tall slot (#255)', (tester) async {
+      final fake = FakeBackend(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(
+        tester,
+        fake: fake,
+        lists: [list('L1', 'Groceries')],
+        padding: const EdgeInsets.only(top: statusBar),
+        syncLine: const SyncProgressLine(running: true),
+      );
+
+      final line = tester.getRect(find.byType(SyncProgressLine));
+      expect(
+        line.bottom,
+        barBottom,
+        reason: 'the line marks the bar/list seam — it must sit ON it',
+      );
+      expect(
+        line.top,
+        barBottom - kSyncLineHeight,
+        reason: 'and it is still the same 2dp line, not a stretched band',
+      );
+      expect(
+        tester.getRect(find.byType(TaskListView)).top,
+        line.bottom,
+        reason: 'the line and the first row share one edge',
+      );
+    });
+
+    testWidgets('the collapse floor survives: through every frame of the slide '
+        'the rows keep the bar\'s edge and stop AT the status bar', (
+      tester,
+    ) async {
+      final fake = FakeBackend(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(
+        tester,
+        fake: fake,
+        lists: [list('L1', 'Groceries')],
+        padding: const EdgeInsets.only(top: statusBar),
+      );
+
+      final gesture = await dragListDown(tester, settle: false);
+      var floored = false;
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 20));
+        // Gone entirely (shown == 0) → the slot it left behind is zero-height.
+        final slot = appBar.evaluate().isEmpty
+            ? 0.0
+            : tester.getRect(appBar).bottom;
+        if (slot < statusBar) floored = true;
+        expect(
+          tester.getRect(find.byType(TaskListView)).top,
+          closeTo(math.max(slot, statusBar), 0.5),
+          reason:
+              'frame $frame: the rows follow the leaving bar (no hole) but '
+              'never past the notch (slot $slot)',
+        );
+      }
+      expect(
+        floored,
+        isTrue,
+        reason:
+            'the slide must actually shrink past the status bar, or this '
+            'proves nothing about the floor',
+      );
       await gesture.up();
       await tester.pumpAndSettle();
     });
