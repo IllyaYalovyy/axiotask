@@ -36,6 +36,7 @@ import 'bulk_bar.dart';
 import 'commit_flash.dart' show CommitTarget, TaskCommit;
 import 'compact_chrome.dart';
 import 'completion_motion.dart';
+import 'composer_draft.dart';
 import 'date_format.dart';
 import 'detail_motion.dart';
 import 'drag_lift.dart' show dragLiftProxyDecorator;
@@ -150,16 +151,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // on a view switch (only the "all" view mounts this widget today).
   String? _newestId;
 
-  // The typed title whose parsed date the user chose to keep as literal text
-  // (the preview chip's ×), so its phrase is not re-read as a due date.
-  String _dateIgnoredFor = '';
-
-  /// A date the user set EXPLICITLY on the draft, from the composer's date
-  /// button (#243), as a bare `YYYY-MM-DD`; `null` when the draft carries no
-  /// explicit pick. An explicit pick OUTRANKS a date phrase parsed out of the
-  /// title — the user said what they meant with a tap, so typing "next week"
-  /// afterwards does not silently overrule it.
-  String? _pickedDue;
+  /// The composer's draft AIM — the picked due date, the silenced date phrase,
+  /// and the destination list. ONE object, observed by BOTH composer surfaces
+  /// (the desktop bar and the phone's sheet), so they can never disagree about
+  /// what the next add will do (#264).
+  final ComposerDraft _draft = ComposerDraft();
 
   // The known lists, kept current by the build's watch so quick-add can resolve
   // its target synchronously at submit time.
@@ -246,13 +242,6 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   // publish/retract its open editor without a `ref` lookup at call time.
   late final RenameBackHandle _renameBack;
 
-  // The list the user aimed the quick-add at (#217), or null while it still
-  // follows the view's own default. Ratified semantics: the pick applies to
-  // this add AND to every subsequent one (it is NOT a one-shot), it is NEVER
-  // persisted as a default (no prefs write), and it resets on a view change
-  // (see [didUpdateWidget]).
-  String? _pickedListId;
-
   bool get _isSmartView => SmartView.byId(widget.viewId) != null;
 
   /// The list a fresh insert targets when the user has picked nothing: the
@@ -268,7 +257,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// composer (a sync deletes it elsewhere) — falling back keeps the add
   /// landing somewhere real instead of against a dead id.
   String? get _quickAddTargetList {
-    final picked = _pickedListId;
+    final picked = _draft.pickedListId;
     if (picked != null && _lists.any((l) => l.list.id == picked)) return picked;
     return _defaultTargetList;
   }
@@ -276,8 +265,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// The natural-language due parsed from the current input, unless the user
   /// dismissed it for this exact text.
   String? get _previewDue =>
-      _pickedDue ??
-      (_quickAdd.text == _dateIgnoredFor
+      _draft.pickedDue ??
+      (_quickAdd.text == _draft.dateIgnoredFor
           ? null
           : parseQuickAddDue(_quickAdd.text));
 
@@ -317,7 +306,11 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     // keys this widget per view (so a switch usually remounts); this covers the
     // in-place update too, so the contract does not depend on the key.
     if (oldWidget.viewId != widget.viewId) {
-      _pickedListId = null;
+      // The aim belongs to the VIEW, not the session (#217/#264): moving to
+      // another view drops it back to that view's own defaults rather than
+      // silently keeping tasks flowing into the list — or onto the date — you
+      // left behind.
+      _draft.release();
       // Another view's rows are not this view's rows arriving and leaving. Start
       // its choreography from nothing, with nothing in flight from before.
       _seenContents = false;
@@ -335,6 +328,7 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   void dispose() {
     _pendingEdits.unregister(PendingEdit.quickAdd, _flushDraft);
     _quickAdd.dispose();
+    _draft.dispose();
     // The FocusNode is owned by quickAddFocusProvider (app-wide) — not disposed
     // here.
     super.dispose();
@@ -438,8 +432,15 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
           animation: ModalRoute.of(sheetContext)!.animation!,
           onDismiss: () => Navigator.of(sheetContext).maybePop(),
           onFoldStart: () => composer.set(false),
-          child: StatefulBuilder(
-            builder: (sheetContext, setSheetState) => Padding(
+          // BOTH composer surfaces render from the ONE draft (#264): this
+          // route is built once and outlives every submit, so a value captured
+          // here would go stale the moment the pane touched it — which is
+          // exactly how the chip came to advertise a date the create no longer
+          // used. Observing the draft instead, the sheet re-renders whenever the
+          // aim moves, from whichever surface moved it.
+          child: ListenableBuilder(
+            listenable: _draft,
+            builder: (sheetContext, _) => Padding(
               // Keep the composer above the keyboard (#166 IME contract), and
               // off the gesture pill when there is no keyboard to clear it (the
               // route's safe area covers the top edge only).
@@ -452,14 +453,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
               child: _QuickAddBar(
                 controller: _quickAdd,
                 focusNode: quickAddFocus,
-                dateIgnoredFor: _dateIgnoredFor,
-                pickedDue: _pickedDue,
+                dateIgnoredFor: _draft.dateIgnoredFor,
+                pickedDue: _draft.pickedDue,
                 lists: _lists,
                 targetListId: _quickAddTargetList,
                 onTargetChanged: (id) {
-                  setState(() => _pickedListId = id);
-                  // The sheet is its own route — re-render its content too.
-                  setSheetState(() {});
+                  _draft.aimAtList(id);
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
                 onSubmit: () {
@@ -469,32 +468,21 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
                 },
                 onAddPastedLines: (raw) {
                   _addPastedLines(raw);
-                  // The sheet is its own route — re-render its content too.
-                  setSheetState(() {});
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
                 onDismissPreview: () {
-                  setState(() {
-                    _dateIgnoredFor = _quickAdd.text;
-                    _pickedDue = null;
-                  });
-                  // The sheet is its own route — re-render its content too.
-                  setSheetState(() {});
+                  _draft.keepAsText(_quickAdd.text);
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
                 onSetDue: (move) {
                   _setDraftDue(move);
-                  // The sheet is its own route — re-render its content too.
-                  setSheetState(() {});
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
                 onPickDue: () async {
                   await _pickDraftDue();
-                  // The sheet is its own route — re-render its content too,
-                  // but only while both this view and that route survive the
+                  // Only while both this view and that route survive the
                   // calendar the user was just in.
                   if (!mounted || !sheetContext.mounted) return;
-                  setSheetState(() {});
                   _refocusComposer(sheetContext, quickAddFocus);
                 },
               ),
@@ -506,6 +494,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       // Whatever ended the sheet — a fold, a hot route swap, a torn-down view —
       // the shell must never be left believing a composer is still up.
       composer.set(false);
+      // The composer session is over: the aim goes back to the view's defaults
+      // (#264). A date the user set for THIS burst of adds must not be waiting,
+      // unannounced, on a composer they open again an hour later.
+      if (mounted) _draft.release();
     }
   }
 
@@ -637,9 +629,10 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     setState(() {
       _newestId = stored.task.id;
       _quickAdd.clear();
-      _dateIgnoredFor = '';
-      _pickedDue = null;
     });
+    // The title became a task; the AIM — the picked date and destination — is
+    // what the user set for the adds that FOLLOW, and stays (#264).
+    _draft.titleConsumed();
     return stored;
   }
 
@@ -648,13 +641,19 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   /// in the title, so "no date" means no date however the date got there —
   /// exactly what the preview chip's × does.
   void _setDraftDue(DateMove move) {
+    // The coarse-pointer path arrives one frame AFTER its sheet popped
+    // (quick_date_menu's post-frame invoke), so a rotation past the compact
+    // breakpoint can take this pane down in between — and the draft goes with
+    // it. Nothing to aim once there is no composer left.
+    if (!mounted) return;
     final n = clock.now();
     final today = DateTime.utc(n.year, n.month, n.day);
     final moved = applyDateMove(today, move);
-    setState(() {
-      _pickedDue = moved == null ? null : _ymd(moved);
-      if (moved == null) _dateIgnoredFor = _quickAdd.text;
-    });
+    if (moved == null) {
+      _draft.keepAsText(_quickAdd.text);
+    } else {
+      _draft.pickDue(_ymd(moved));
+    }
   }
 
   /// The composer's "Pick a date…": the same calendar every other surface
@@ -663,15 +662,12 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _pickDraftDue() async {
     final pick = await showDueDatePicker(context, initial: _previewDue);
     if (pick == null || !mounted) return;
-    setState(() {
-      switch (pick) {
-        case DuePickClear():
-          _pickedDue = null;
-          _dateIgnoredFor = _quickAdd.text;
-        case DuePickDate(:final ymd):
-          _pickedDue = ymd;
-      }
-    });
+    switch (pick) {
+      case DuePickClear():
+        _draft.keepAsText(_quickAdd.text);
+      case DuePickDate(:final ymd):
+        _draft.pickDue(ymd);
+    }
   }
 
   /// The quick-add's entry in the pending-edits registry — commit the draft on
@@ -1163,11 +1159,8 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
   Future<void> _addPastedLines(String raw) async {
     final target = _quickAddTargetList;
     if (target == null) return;
-    setState(() {
-      _quickAdd.clear();
-      _dateIgnoredFor = '';
-      _pickedDue = null;
-    });
+    _quickAdd.clear();
+    _draft.titleConsumed();
     await _commitBulkAdd(
       BulkAddResult(text: raw, mode: BulkAddMode.perLine, listId: target),
     );
@@ -1272,38 +1265,40 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     return Column(
       children: [
         if (!touch) ...[
-          _QuickAddBar(
-            controller: _quickAdd,
-            focusNode: quickAddFocus,
-            dateIgnoredFor: _dateIgnoredFor,
-            pickedDue: _pickedDue,
-            lists: _lists,
-            targetListId: _quickAddTargetList,
-            onTargetChanged: (id) {
-              setState(() => _pickedListId = id);
-              // Aiming is a detour, not a destination: hand the caret straight
-              // back so the next keystroke goes into the draft.
-              quickAddFocus.requestFocus();
-            },
-            onSubmit: _submit,
-            onAddPastedLines: _addPastedLines,
-            onDismissPreview: () {
-              setState(() {
-                _dateIgnoredFor = _quickAdd.text;
-                _pickedDue = null;
-              });
-              quickAddFocus.requestFocus();
-            },
-            onSetDue: (move) {
-              _setDraftDue(move);
-              // Setting a date is a detour, not a destination: the caret comes
-              // straight back to the draft (the #217 target-picker rule).
-              quickAddFocus.requestFocus();
-            },
-            onPickDue: () async {
-              await _pickDraftDue();
-              if (mounted) quickAddFocus.requestFocus();
-            },
+          // The same ONE draft the phone's sheet observes (#264) — and the
+          // aim now moves this bar alone, never the whole list (F20 #199).
+          ListenableBuilder(
+            listenable: _draft,
+            builder: (context, _) => _QuickAddBar(
+              controller: _quickAdd,
+              focusNode: quickAddFocus,
+              dateIgnoredFor: _draft.dateIgnoredFor,
+              pickedDue: _draft.pickedDue,
+              lists: _lists,
+              targetListId: _quickAddTargetList,
+              onTargetChanged: (id) {
+                _draft.aimAtList(id);
+                // Aiming is a detour, not a destination: hand the caret
+                // straight back so the next keystroke goes into the draft.
+                quickAddFocus.requestFocus();
+              },
+              onSubmit: _submit,
+              onAddPastedLines: _addPastedLines,
+              onDismissPreview: () {
+                _draft.keepAsText(_quickAdd.text);
+                quickAddFocus.requestFocus();
+              },
+              onSetDue: (move) {
+                _setDraftDue(move);
+                // Setting a date is a detour, not a destination: the caret
+                // comes straight back to the draft (the #217 rule).
+                quickAddFocus.requestFocus();
+              },
+              onPickDue: () async {
+                await _pickDraftDue();
+                if (mounted) quickAddFocus.requestFocus();
+              },
+            ),
           ),
           const Divider(height: 1),
         ],
@@ -2221,8 +2216,11 @@ String _ymd(DateTime d) =>
 /// preview) — never the enclosing [TaskListView], so typing never re-runs
 /// `visibleTasksForView` or the per-row effective-due/subtask-count sweep (F20
 /// #199). The bar therefore owns the preview computation locally; the parent
-/// keeps [_dateIgnoredFor] (mirrored in via [dateIgnoredFor]) because its submit
-/// path still needs it, and re-reads the live controller text at submit time.
+/// keeps the draft's aim (mirrored in via [dateIgnoredFor] and [pickedDue])
+/// because its submit path still needs it, and re-reads the live controller text
+/// at submit time. Those two come straight off the one [ComposerDraft] both
+/// composer surfaces observe (#264), so the bar is a renderer of the aim and
+/// never a second copy of it.
 class _QuickAddBar extends StatefulWidget {
   const _QuickAddBar({
     required this.controller,
