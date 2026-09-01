@@ -198,6 +198,41 @@ final mobileScaffoldKeyProvider = Provider<GlobalKey<ScaffoldState>>(
   (ref) => GlobalKey<ScaffoldState>(),
 );
 
+/// Whether the compact layout's slide-in drawer is open, watched by the shell's
+/// back-precedence ladder (#263).
+///
+/// The ladder still ASKS the live [ScaffoldState] which rung to run; this only
+/// makes the drawer's rung visible to the `canPop` the shell publishes, and
+/// through it to Android. Predictive back is decided BEFORE the gesture: the OS
+/// reads the last value pushed through `SystemNavigator.setFrameworkHandlesBack`
+/// (which the framework derives from the route's `PopScope`s) and, told the app
+/// does not handle back, finishes the activity itself — no callback ever runs
+/// and the app is gone with the drawer still open. So "the drawer is open" has
+/// to be part of the shell's `canPop`, which means it has to be watchable.
+///
+/// The compact layout OWNS the value: it reports every open and close, and
+/// retracts it when it unmounts — a rotation past the breakpoint takes the
+/// drawer with it without ever closing it, and a claim left standing there
+/// would deaden back on a layout with no drawer to close (the T8.2 lesson).
+class DrawerOpen extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  /// Report the compact drawer opening (`true`) or closing (`false`).
+  ///
+  /// The retraction is sent a frame after the compact layout unmounts, and the
+  /// reason it unmounted may be that the whole app is going away — a teardown,
+  /// a hot restart. Arriving to find no app left is not an error: there is
+  /// nothing to tell, and nobody to tell it to.
+  void set(bool open) {
+    if (!ref.mounted) return;
+    state = open;
+  }
+}
+
+/// See [DrawerOpen]. Held app-wide (only one drawer is ever mounted).
+final drawerOpenProvider = NotifierProvider<DrawerOpen, bool>(DrawerOpen.new);
+
 /// The one [DetailOriginController] (#253) — where the compact detail's
 /// container transform grows from. A [Provider] so it outlives the shell's own
 /// rebuilds: the rect is written by the row's tap and read one navigation
