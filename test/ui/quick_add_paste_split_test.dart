@@ -23,6 +23,7 @@
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
@@ -421,5 +422,40 @@ void main() {
       );
       expect(tester.takeException(), isNull, reason: 'no RenderFlex overflow');
     });
+  });
+
+  testWidgets('a paste split leaves the composer\'s date aim standing — the '
+      'next single add still gets it (#264)', (tester) async {
+    // The chip describes the NEXT add, not the last one: a burst of adds
+    // interrupted by a pasted list must not silently lose the date the user
+    // set for the burst.
+    final fake = await pumpQuickAdd(tester, lists: [list('L1', 'My Tasks')]);
+    await withClock(_clock, () async {
+      await tester.tap(find.byKey(const Key('quick-add-date-button')));
+      await settle(tester);
+      await tester.tap(find.byKey(quickDateKey('tomorrow')));
+      await settle(tester);
+    });
+
+    setClipboard(tester, 'buy milk\ncall bob');
+    await pasteWithKeyboard(tester);
+    await acceptOffer(tester);
+
+    // The split's lines carry their OWN dates and neither had one, so the aim
+    // was not spent on them...
+    expect(stored(fake, 'buy milk').task.due, isNull);
+    expect(stored(fake, 'call bob').task.due, isNull);
+    // ...and it is still on the composer, for the next thing typed into it.
+    expect(
+      find.descendant(of: find.byKey(_barKey), matching: find.text('tomorrow')),
+      findsOneWidget,
+    );
+    await tester.enterText(find.byType(TextField), 'pay rent');
+    await settle(tester);
+    await withClock(_clock, () async {
+      await tester.tap(find.byKey(const Key('quick-add-submit')));
+      await settle(tester);
+    });
+    expect(stored(fake, 'pay rent').task.due, '2026-06-16T00:00:00.000Z');
   });
 }
