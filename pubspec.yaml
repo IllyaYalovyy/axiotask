@@ -47,7 +47,13 @@ dependencies:
   # Android has no usable system libsqlite3 for the plugin to load on API 24+,
   # so without this the store cannot open and the app dies on first launch on
   # device. Must be a runtime dependency so the .so ships in the APK.
-  sqlite3_flutter_libs: ^0.5.24
+  # PINNED EXACTLY, not a caret range (#275): 0.6.0+eol is a published
+  # tombstone ("Not used anymore, update to version 3.x of package:sqlite3")
+  # that ships lib/ and nothing else — no android/ plugin, no bundled .so. A
+  # caret range makes `pub upgrade --major-versions` take it, every Dart test
+  # stays green (host tests link the system sqlite) and the store fails to open
+  # on device. Moving this pin is a deliberate act with an on-device check.
+  sqlite3_flutter_libs: 0.5.42
   # Time discipline — package:clock everywhere; DateTime.now() is banned in
   # product code (RFC-011 testing strategy / RESEARCH §6).
   clock: ^1.1.2

@@ -205,13 +205,21 @@ void main() {
       // The disk frees up. A mutation now has to reach the server, which can
       // only happen if the loop is alive.
       store.failLog = false;
+      // Wait on the scheduler's own end-of-run event, not on wall time. `runs`
+      // is broadcast and non-replaying, so the subscription is taken BEFORE the
+      // trigger. The timeout bounds only the FAILURE path (a loop that died
+      // with the startup task); a live loop completes this as soon as the run
+      // ends, so the test carries no sleep and no polling (#275).
+      final ran = runtime.scheduler.runs.firstWhere((e) => !e.running);
       runtime.scheduler.scheduleSync();
 
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (runtime.scheduler.status.totalSyncs == 0 &&
-          DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await ran.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail(
+          'no sync run finished after a mutation trigger — the background '
+          'loop did not survive the failed startup auto-sync',
+        ),
+      );
       expect(
         runtime.scheduler.status.totalSyncs,
         greaterThan(0),

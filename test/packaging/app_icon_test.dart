@@ -30,6 +30,13 @@
 //     master. The checked-in sha256 manifest plus the generator's --check mode
 //     make that drift a test failure.
 //
+//   - THE SUITE QUIETLY CHECKING NOTHING: five of the assertions below drive
+//     the real renderers (python3 cairosvg, python3 GdkPixbuf). They used to
+//     `markTestSkipped` when a renderer was missing, which meant a machine
+//     without them ran a GREEN icon suite that had verified none of the things
+//     this file exists for. The toolchain is now a PREREQUISITE, checked once
+//     up front with an install hint, and absence is a failure (#275).
+//
 // All of this is checked-in state, so the assertions read the repository files
 // directly — no clock, no network, no async.
 @Tags(['packaging'])
@@ -174,7 +181,39 @@ ProcessResult _gen(List<String> args) =>
 bool _rendererAvailable() =>
     Process.runSync('python3', ['-c', 'import cairosvg']).exitCode == 0;
 
+/// The one install hint, in one place, so a missing renderer says what to do
+/// instead of what is absent.
+const _toolchainHint =
+    'The icon suite drives the real renderers. Install them:\n'
+    '  Fedora: sudo dnf install python3-cairosvg python3-gobject '
+    'gdk-pixbuf2-modules\n'
+    '  Debian/Ubuntu: sudo apt-get install python3-cairosvg python3-gi '
+    'gir1.2-gdkpixbuf-2.0\n'
+    'These assertions must never be skipped: a machine without them would run '
+    'a green icon suite that verified nothing (#275).';
+
 void main() {
+  // Checked FIRST, and once. Every renderer-driven assertion below now runs
+  // unconditionally; this test is what turns "the toolchain is missing" into a
+  // single legible failure with a fix, instead of five confusing ones.
+  group('the icon toolchain is a prerequisite, never a silent skip (#275)', () {
+    test('python3 cairosvg is installed', () {
+      expect(
+        _rendererAvailable(),
+        isTrue,
+        reason: 'python3 cairosvg is missing.\n$_toolchainHint',
+      );
+    });
+
+    test('python3 GdkPixbuf is installed', () {
+      expect(
+        _pixbufAvailable(),
+        isTrue,
+        reason: 'python3 GdkPixbuf is missing.\n$_toolchainHint',
+      );
+    });
+  });
+
   group('SVG master', () {
     test('exists and carries the layer ids the generator derives from', () {
       final f = File(_master);
@@ -223,13 +262,6 @@ void main() {
     test(
       'gdk-pixbuf renders the scalable icon at the sizes GNOME asks for',
       () {
-        if (!_pixbufAvailable()) {
-          markTestSkipped(
-            'python3 gobject-introspection / GdkPixbuf not installed — the '
-            'sniff-window assertion above still guards the committed bytes',
-          );
-          return;
-        }
         for (final size in [96, 192]) {
           final r = _pixbufLoadAt(_scalable, size);
           expect(
@@ -252,10 +284,6 @@ void main() {
     // SAME art past the sniff window and the loader must refuse it — that
     // refusal IS the blank icon #261 reported.
     test('gdk-pixbuf refuses the same art when <svg> falls past the window', () {
-      if (!_pixbufAvailable()) {
-        markTestSkipped('python3 GdkPixbuf not installed');
-        return;
-      }
       final bytes = File(_scalable).readAsBytesSync();
       final offset = _svgTagOffset(_scalable);
       final tmp = Directory.systemTemp.createTempSync('axiotask_sniff');
@@ -488,13 +516,6 @@ void main() {
     );
 
     test('regenerating from the master reproduces the committed bytes', () {
-      if (!_rendererAvailable()) {
-        markTestSkipped(
-          'python3 cairosvg not installed — cannot re-render the master '
-          '(the recorded-hash test above still guards the committed bytes)',
-        );
-        return;
-      }
       final r = _gen(['--check']);
       expect(
         r.exitCode,
@@ -509,10 +530,6 @@ void main() {
     // exits 0 (missing renderer, silent skip, wrong path) would make the test
     // above vacuous, so corrupt a copy of the tree and demand a failure.
     test('--check fails loudly when a generated raster is tampered with', () {
-      if (!_rendererAvailable()) {
-        markTestSkipped('python3 cairosvg not installed');
-        return;
-      }
       final tmp = Directory.systemTemp.createTempSync('axiotask_icons');
       addTearDown(() => tmp.deleteSync(recursive: true));
       for (final path in [_master, _manifest, ...recorded.keys]) {
@@ -538,10 +555,6 @@ void main() {
     // icon, not just report drift. It copies the master verbatim, so it is the
     // one place that can stop #261 from being reintroduced by an edit.
     test('--check refuses a master whose <svg> falls outside the window', () {
-      if (!_rendererAvailable()) {
-        markTestSkipped('python3 cairosvg not installed');
-        return;
-      }
       final tmp = Directory.systemTemp.createTempSync('axiotask_icons');
       addTearDown(() => tmp.deleteSync(recursive: true));
       for (final path in [_master, _manifest, ...recorded.keys]) {

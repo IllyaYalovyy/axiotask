@@ -354,13 +354,23 @@ void main() {
     final container = ProviderContainer(overrides: env.runtime.overrides);
     addTearDown(container.dispose);
 
+    // Wait on the scheduler's own end-of-run event, not on wall time. The
+    // subscription is taken BEFORE the mutation because `runs` is broadcast and
+    // non-replaying — a listener attached afterwards can miss the run it is
+    // waiting for. The timeout bounds only the FAILURE path (a loop that never
+    // fires); a working loop completes this the moment the run ends, so the
+    // test carries no sleep and no polling (#275).
+    final ran = env.runtime.scheduler.runs.firstWhere((e) => !e.running);
+
     await container.read(commandsProvider).createList('local change');
 
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (env.runtime.scheduler.status.totalSyncs == 0 &&
-        DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    }
+    await ran.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail(
+        'no sync run finished after a local mutation — the debounced trigger '
+        'never reached the loop',
+      ),
+    );
     expect(
       env.runtime.scheduler.status.totalSyncs,
       greaterThan(0),

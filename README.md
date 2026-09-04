@@ -1,5 +1,6 @@
 # axiotask (Flutter)
 
+[![gate](https://github.com/IllyaYalovyy/axiotask/actions/workflows/gate.yml/badge.svg?branch=flutter)](https://github.com/IllyaYalovyy/axiotask/actions/workflows/gate.yml)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/IllyaYalovyy)
 
 Ground-up Flutter/Dart implementation of axiotask — a fast, sync-capable task
@@ -156,14 +157,27 @@ was hand-edited or left stale.
 
 ## Test
 
+Every push and pull request runs `.github/workflows/gate.yml` on GitHub:
+format, both analyzers, the source-level time bans, codegen staleness, the full
+suite with coverage, both coverage ratchets, and the Android debug APK build.
+That workflow is the shared gate — a fresh clone gets it for free.
+
+The workflow does NOT pin the Flutter SDK (pinning is ruled out for this
+project). An engine bump that shifts golden bytes will turn it red; the answer
+is a deliberate, separately reviewed golden regeneration, never a pin.
+
+Locally:
+
 - `flutter analyze` and `dart analyze` — must be clean; every diagnostic is
   treated as a failure.
 - `flutter test` — the full unit/widget suite, including the randomized sync
   invariant suite (`AXIOTASK_PROPTEST_CASES` raises its depth for soak runs).
 - `xvfb-run -a flutter test integration_test/` — boots the real Linux engine
   headless: window, database, CRUD round-trip.
+- The icon suite drives the real renderers; they are a prerequisite, not an
+  optional extra: `sudo dnf install python3-cairosvg python3-gobject`.
 - See `TESTING.md` for the testing conventions (test layers, the red-check
-  ritual, the time-source ban, and the golden-regeneration rule).
+  ritual, the time-source bans, and the golden-regeneration rule).
 
 ## Troubleshooting
 

@@ -8,11 +8,21 @@
          drives the back animation and Flutter's Navigator participates, so the
          system back gesture/button is a first-class citizen on modern Android
          instead of the legacy onBackPressed path. -->
+    <!-- The local SQLite store is a CACHE of Google Tasks — Google-issued ids,
+         etags and a per-device sync cursor. Letting the OS back it up and
+         replay it onto another device hands that state to a sync engine that
+         trusts it: rows the user deleted come back and every etag 412s (the
+         hand-fixed failure of #272). A fresh install re-pulls in seconds, so
+         there is nothing to preserve. allowBackup covers cloud backup;
+         dataExtractionRules is required on top for Android 12+ device-to-device
+         transfer, which allowBackup does NOT govern (#275). -->
     <application
         android:label="Axiotask"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
