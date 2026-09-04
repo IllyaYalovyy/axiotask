@@ -79,6 +79,24 @@ void main() {
     expect(find.byKey(const Key('drag-handle-B')), findsOneWidget);
   });
 
+  testWidgets('the drag handle sits on the row\'s TITLE line', (tester) async {
+    // The row's leading controls belong to the title, not to the two-line
+    // block (#276): centred on the row, the handle sat 12dp below the checkbox
+    // beside it and pointed at the gap between the two lines.
+    await pumpList(tester, initial: [row('A', 'a')], lists: oneList);
+    final handle = tester.getRect(find.byKey(const Key('drag-handle-A')));
+    final checkbox = tester.getRect(
+      find.byKey(const Key('row-checkbox-target')),
+    );
+    expect(
+      (handle.center.dy - checkbox.center.dy).abs(),
+      lessThanOrEqualTo(1),
+      reason: 'the handle and the checkbox must share the title line',
+    );
+    // ...without giving up the 48dp drag target.
+    expect(handle.height, greaterThanOrEqualTo(48));
+  });
+
   testWidgets('shows NO drag handles when the sort is not manual', (
     tester,
   ) async {

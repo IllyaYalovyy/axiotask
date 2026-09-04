@@ -38,6 +38,7 @@ import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/properties.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
+import 'package:axiotask/src/ui/task_row_parts.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
@@ -104,7 +105,21 @@ Finder _iconAction(String tooltip) => find.ancestor(
 /// [what] is an action a finger can still land on: on screen, hit-testable at
 /// its centre (nothing is painted over it), and no smaller than [_minTarget] in
 /// either axis.
-void _expectTappable(WidgetTester tester, Finder finder, String what) {
+///
+/// [minHeight] lowers ONLY the vertical bar, and exactly one thing in the app
+/// uses it: the task row's meta badges (#276 — see [kTouchMetaBand]). The row
+/// is an M3 two-line item, 72dp of pitch, and 12 + 24 + 4 + 48 + 12 does not
+/// fit in 72: a 48dp-tall date button would make every phone row 100dp, which
+/// is the sparseness the layout pass was raised to fix. The badge takes the
+/// whole band the pitch leaves it instead — full width, bottom half being the
+/// row's own padding — and a miss lands on the 72dp row, which opens the
+/// detail and its Due field. NEEDS USER RATIFICATION (report of #276).
+void _expectTappable(
+  WidgetTester tester,
+  Finder finder,
+  String what, {
+  double minHeight = _minTarget,
+}) {
   expect(
     finder.hitTestable(),
     findsOneWidget,
@@ -112,9 +127,14 @@ void _expectTappable(WidgetTester tester, Finder finder, String what) {
   );
   final size = tester.getSize(finder.hitTestable().first);
   expect(
-    size.shortestSide,
+    size.width,
     greaterThanOrEqualTo(_minTarget),
-    reason: '$what shrank to $size — too small for a finger',
+    reason: '$what is $size — too narrow for a finger',
+  );
+  expect(
+    size.height,
+    greaterThanOrEqualTo(minHeight),
+    reason: '$what is $size — too short for a finger',
   );
 }
 
@@ -179,6 +199,7 @@ void main() {
             matching: find.byKey(const Key('row-due-segment')),
           ),
           'the row quick-date button',
+          minHeight: kTouchMetaBand,
         );
         _expectTappable(
           tester,
@@ -187,6 +208,7 @@ void main() {
             matching: find.byKey(const Key('link-badge')),
           ),
           'the row link badge',
+          minHeight: kTouchMetaBand,
         );
 
         // …and the checkbox still COMPLETES the task it belongs to.
