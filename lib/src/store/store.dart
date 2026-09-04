@@ -680,6 +680,20 @@ class Store {
     return rows.isEmpty ? null : _taskFromRow(rows.first);
   }
 
+  /// Fetch a single task list by id regardless of sync_state (tombstoned lists
+  /// included); `null` when absent. The list twin of [findTaskAny] — the
+  /// backup restore needs to know whether a local id is TAKEN, and a tombstone
+  /// takes it just as firmly as a live row.
+  Future<StoredTaskList?> findListAny(String id) async {
+    final rows = await _db
+        .customSelect(
+          'SELECT $_listCols FROM task_lists WHERE id = ?',
+          variables: [Variable<String>(id)],
+        )
+        .get();
+    return rows.isEmpty ? null : _listFromRow(rows.first);
+  }
+
   /// Live stream of [listTasks] for [listId], re-emitting on every task write.
   /// [distinct] applies the same pull-storm guard as [watchAllTasks].
   Stream<List<StoredTask>> watchTasks(String listId) => _db
@@ -964,6 +978,53 @@ class Store {
       status:
           (statusStr == null ? null : TaskStatus.parseApi(statusStr)) ??
           TaskStatus.needsAction,
+    );
+  }
+
+  /// Every row's base snapshot, keyed by task id — the bulk form of
+  /// [baseSnapshot] for the backup export, which would otherwise issue one
+  /// query per task. Rows with no base captured (every clean row, §B) are
+  /// absent from the map.
+  Future<Map<String, BaseSnapshot>> allBaseSnapshots() async {
+    final rows = await _db
+        .customSelect(
+          'SELECT id, base_title, base_notes, base_due, base_status '
+          'FROM tasks WHERE base_title IS NOT NULL',
+        )
+        .get();
+    return {
+      for (final r in rows)
+        r.read<String>('id'): BaseSnapshot(
+          title: r.read<String>('base_title'),
+          notes: r.readNullable<String>('base_notes'),
+          due: r.readNullable<String>('base_due'),
+          status:
+              TaskStatus.parseApi(
+                r.readNullable<String>('base_status') ?? '',
+              ) ??
+              TaskStatus.needsAction,
+        ),
+    };
+  }
+
+  /// Write a base snapshot onto a row directly (#272). Only the backup RESTORE
+  /// uses this: every other path captures the base as a side effect of the edit
+  /// that dirties the row ([upsertTask]), which a restore cannot reproduce —
+  /// the row is inserted already dirty, so there is no clean predecessor to
+  /// snapshot. Writing a base onto a CLEAN row would violate schema invariant
+  /// §B, so callers must only use it for a dirty/deleted row.
+  Future<void> setBaseSnapshot(String taskId, BaseSnapshot base) async {
+    await _db.customUpdate(
+      'UPDATE tasks SET base_title = ?2, base_notes = ?3, base_due = ?4, '
+      'base_status = ?5 WHERE id = ?1',
+      variables: [
+        Variable<String>(taskId),
+        Variable<String>(base.title),
+        Variable<String>(base.notes),
+        Variable<String>(base.due),
+        Variable<String>(base.status.apiStr),
+      ],
+      updates: {_db.tasks},
     );
   }
 
@@ -1567,16 +1628,7 @@ class Store {
       _db.transaction(() async {
         final row = await findTaskAny(localId);
         if (row == null) return null;
-        await _db.customInsert(
-          'INSERT OR REPLACE INTO inflight_creates '
-          '(local_id, list_id, base_local_updated) VALUES (?, ?, ?)',
-          variables: [
-            Variable<String>(localId),
-            Variable<String>(listId),
-            Variable<String>(row.localUpdated),
-          ],
-          updates: {_db.inflightCreates},
-        );
+        await writeInflightCreate(localId, listId, row.localUpdated);
         await _db.customUpdate(
           'UPDATE tasks SET base_title = title, base_notes = notes, '
           'base_due = due, base_status = status WHERE id = ?',
@@ -1585,6 +1637,45 @@ class Store {
         );
         return row;
       });
+
+  /// Write an in-flight create marker verbatim, WITHOUT capturing a base from
+  /// the row. [recordInflightCreate] is the one the sync engine wants (it
+  /// snapshots the row it is about to send); this raw form exists for the
+  /// backup restore (#272), which brings both the marker and the base it was
+  /// taken with back from the file and must not re-derive either.
+  Future<void> writeInflightCreate(
+    String localId,
+    String listId,
+    String? baseLocalUpdated,
+  ) async {
+    await _db.customInsert(
+      'INSERT OR REPLACE INTO inflight_creates '
+      '(local_id, list_id, base_local_updated) VALUES (?, ?, ?)',
+      variables: [
+        Variable<String>(localId),
+        Variable<String>(listId),
+        Variable<String>(baseLocalUpdated),
+      ],
+      updates: {_db.inflightCreates},
+    );
+  }
+
+  /// All in-flight create markers with the drain snapshot each was taken at,
+  /// keyed by local id — the bulk form of [inflightCreates] +
+  /// [inflightBaseLocalUpdated] that the backup export needs.
+  Future<Map<String, String?>> allInflightCreateBases() async {
+    final rows = await _db
+        .customSelect(
+          'SELECT local_id, base_local_updated FROM inflight_creates',
+        )
+        .get();
+    return {
+      for (final r in rows)
+        r.read<String>('local_id'): r.readNullable<String>(
+          'base_local_updated',
+        ),
+    };
+  }
 
   /// All in-flight create markers as `(localId, listId)` pairs (non-empty only
   /// after a crash mid-create).

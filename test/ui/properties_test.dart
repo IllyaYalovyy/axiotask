@@ -262,6 +262,121 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets('Restore latest names the rows it updated in place', (
+      tester,
+    ) async {
+      // Restoring onto a device that already holds the account inserts nothing
+      // — the rows are matched by their Google id (#272). Reporting only the
+      // inserts would read as "nothing happened" while content WAS put back.
+      final backup = Backup.build('2026-01-01T00:00:00Z', [
+        (
+          StoredTaskList(
+            list: TaskList(id: 'L9', title: 'Inbox', etag: 'e', updated: 't'),
+            syncState: SyncState.clean,
+            localUpdated: 't',
+            remoteId: 'rL',
+          ),
+          [
+            StoredTask(
+              task: Task(
+                id: 'R1',
+                position: '1',
+                title: 'the title the user wants back',
+                status: TaskStatus.needsAction,
+                etag: 'e1',
+                updated: 't',
+              ),
+              listId: 'L9',
+              syncState: SyncState.dirty,
+              localUpdated: 't9',
+              pendingOp: 'update',
+              remoteId: 'rT',
+            ),
+          ],
+        ),
+      ]);
+      File(
+        p.join(tmp.path, 'axiotask-backup-20260101-000000.json'),
+      ).writeAsStringSync(backup.toJsonPretty());
+
+      // The device already holds the same Google rows, under its OWN local ids
+      // and with older content.
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      final store = Store(db);
+      await store.upsertList(
+        StoredTaskList(
+          list: TaskList(
+            id: 'local-L',
+            title: 'Inbox',
+            etag: 'e',
+            updated: 't',
+          ),
+          syncState: SyncState.clean,
+          localUpdated: 't',
+          remoteId: 'rL',
+        ),
+      );
+      await store.upsertTask(
+        StoredTask(
+          task: Task(
+            id: 'local-T',
+            position: '1',
+            title: 'stale',
+            status: TaskStatus.needsAction,
+            etag: 'e1',
+            updated: 't',
+          ),
+          listId: 'local-L',
+          syncState: SyncState.clean,
+          localUpdated: 't1',
+          remoteId: 'rT',
+        ),
+      );
+
+      await pumpProps(
+        tester,
+        backup: BackupService(store: store, backupsDir: tmp),
+      );
+      await scrollTo(tester, const Key('restore-backup-button'));
+      await tapAsync(tester, const Key('restore-backup-button'));
+
+      expect(
+        find.textContaining(
+          'Restored 0 task(s) in 0 list(s) (1 updated in place)',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        (await store.findTaskAny('local-T'))!.task.title,
+        'the title the user wants back',
+      );
+    });
+
+    testWidgets('Restore latest says so when there was nothing to put back', (
+      tester,
+    ) async {
+      // The common case once rows are matched by their Google id: the device
+      // already holds everything the backup does. "Restored 0 task(s) in 0
+      // list(s)" would read as a failure, so the no-op names itself.
+      final backup = Backup.build('2026-01-01T00:00:00Z', const []);
+      File(
+        p.join(tmp.path, 'axiotask-backup-20260101-000000.json'),
+      ).writeAsStringSync(backup.toJsonPretty());
+
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      await pumpProps(
+        tester,
+        backup: BackupService(store: Store(db), backupsDir: tmp),
+      );
+      await scrollTo(tester, const Key('restore-backup-button'));
+      await tapAsync(tester, const Key('restore-backup-button'));
+
+      expect(find.textContaining('Already up to date'), findsOneWidget);
+      expect(find.textContaining('Restored 0 task(s)'), findsNothing);
+    });
   });
 
   group('Sync tab — last synced (#222)', () {

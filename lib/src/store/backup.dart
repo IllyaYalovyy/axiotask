@@ -3,7 +3,10 @@
 // Produces a complete, human-readable, future-proof snapshot of everything
 // axiotask holds locally — every task list, every task, and ALL of their fields
 // and sync metadata — plus the exact inverse restore. Nothing the app stores is
-// dropped, so a backup is a lossless mirror of the local database.
+// dropped, so a backup is a lossless mirror of the local database. That
+// includes the parts of the push queue that live outside the task row: the base
+// snapshot behind a dirty row, its queued structural move, and its open
+// in-flight create marker (#272), each nested under its task.
 //
 // The document is a single JSON object. Tasks are nested under the list they
 // belong to (mirrors the user's mental model and keeps parent/child obvious).
@@ -18,13 +21,21 @@
 
 import 'dart:convert';
 
+import '../model/base_snapshot.dart';
 import '../model/task.dart';
 import '../model/task_list.dart';
 import 'stored.dart';
 
 /// Current backup schema version. Bump when the shape changes incompatibly;
 /// readers should refuse versions they do not understand.
-const int backupVersion = 1;
+///
+/// * 1 — lists + tasks with their domain fields and per-row sync metadata.
+/// * 2 — adds the rest of the push queue, all nested under the task it belongs
+///   to: its base snapshot (`base_*`), its queued structural move
+///   (`pending_moves`) and its open in-flight create marker
+///   (`inflight_creates`). A version-1 file still restores: every added field
+///   is optional and simply absent there.
+const int backupVersion = 2;
 
 /// Producing application name, embedded so a backup is self-describing.
 const String backupApp = 'axiotask';
@@ -52,10 +63,18 @@ class Backup {
 
   /// Assemble a backup from the store's lists paired with their tasks. Order is
   /// preserved exactly as provided; `exportedAt` should be an RFC 3339 string.
+  /// [bases], [moves] and [inflight] are keyed by TASK id and carry the state
+  /// that lives outside the task row itself: the base snapshot behind a dirty
+  /// row, its queued structural move, and its open in-flight create marker.
+  /// KEY PRESENCE is what [inflight] means — a marker with no recorded drain
+  /// snapshot maps to `null` and is still a marker.
   factory Backup.build(
     String exportedAt,
-    List<(StoredTaskList, List<StoredTask>)> lists,
-  ) {
+    List<(StoredTaskList, List<StoredTask>)> lists, {
+    Map<String, BaseSnapshot> bases = const {},
+    Map<String, PendingMove> moves = const {},
+    Map<String, String?> inflight = const {},
+  }) {
     return Backup(
       version: backupVersion,
       app: backupApp,
@@ -72,7 +91,17 @@ class Backup {
             syncState: list.syncState.asStr,
             localUpdated: list.localUpdated,
             pendingOp: list.pendingOp,
-            tasks: [for (final t in tasks) BackupTask.fromStored(t)],
+            tasks: [
+              for (final t in tasks)
+                BackupTask.fromStored(
+                  t,
+                  base: bases[t.task.id],
+                  move: moves[t.task.id],
+                  inflight: inflight.containsKey(t.task.id)
+                      ? BackupInflight(baseLocalUpdated: inflight[t.task.id])
+                      : null,
+                ),
+            ],
           ),
       ],
     );
@@ -111,8 +140,11 @@ class Backup {
   };
 
   /// Reconstruct store rows (each list paired with its tasks) from a backup —
-  /// the exact inverse of [Backup.build]. Every domain field and all sync
-  /// metadata are restored verbatim; unknown enum strings degrade safely
+  /// the value-level inverse of [Backup.build]. Every domain field and the
+  /// per-row sync metadata come back verbatim; the queue state that is not part
+  /// of a row ([BackupTask.base], [BackupTask.move], [BackupTask.inflight])
+  /// has no place in these types and is applied by the restore itself.
+  /// Unknown enum strings degrade safely
   /// (`sync_state` → clean, `status` → needsAction) rather than failing the
   /// whole restore.
   List<(StoredTaskList, List<StoredTask>)> intoStored() => [
@@ -272,6 +304,9 @@ class BackupTask {
     required this.syncState,
     required this.localUpdated,
     this.pendingOp,
+    this.base,
+    this.move,
+    this.inflight,
   });
 
   /// The task's LOCAL id — immutable for the row's lifetime (#224).
@@ -316,10 +351,27 @@ class BackupTask {
   /// Pending push operation when dirty: `create` | `update` | `delete`.
   final String? pendingOp;
 
+  /// The row's content as of its last agreement with the server (`base_*`),
+  /// present only while the row is dirty (RFC-009 §B). Without it a restored
+  /// row resolves a 412 against the wrong content.
+  final BaseSnapshot? base;
+
+  /// The structural move queued for this row (`pending_moves`), if any.
+  final BackupMove? move;
+
+  /// The open in-flight create marker for this row (`inflight_creates`), if
+  /// any — the record that an insert was issued and its answer never arrived.
+  final BackupInflight? inflight;
+
   /// Build from a stored task. `web_view_link` and `deleted` are output-only /
   /// server-derived and intentionally NOT exported (a restore reconstructs a
   /// fresh, un-tombstoned row that a later pull re-populates).
-  factory BackupTask.fromStored(StoredTask st) => BackupTask(
+  factory BackupTask.fromStored(
+    StoredTask st, {
+    BaseSnapshot? base,
+    PendingMove? move,
+    BackupInflight? inflight,
+  }) => BackupTask(
     id: st.task.id,
     remoteId: st.remoteId,
     parent: st.task.parent,
@@ -334,6 +386,11 @@ class BackupTask {
     syncState: st.syncState.asStr,
     localUpdated: st.localUpdated,
     pendingOp: st.pendingOp,
+    base: base,
+    move: move == null
+        ? null
+        : BackupMove(parent: move.parentId, previous: move.previousId),
+    inflight: inflight,
   );
 
   factory BackupTask._fromJson(Map<String, Object?> json) => BackupTask(
@@ -351,7 +408,31 @@ class BackupTask {
     syncState: json['sync_state'] as String? ?? '',
     localUpdated: json['local_updated'] as String? ?? '',
     pendingOp: json['pending_op'] as String?,
+    base: _baseFromJson(json),
+    move: json['pending_move'] is Map<String, Object?>
+        ? BackupMove._fromJson(json['pending_move']! as Map<String, Object?>)
+        : null,
+    inflight: json['inflight_create'] is Map<String, Object?>
+        ? BackupInflight._fromJson(
+            json['inflight_create']! as Map<String, Object?>,
+          )
+        : null,
   );
+
+  /// The base snapshot from its flat `base_*` fields; `null` when the file
+  /// carries none (`base_title` is the presence sentinel, as in the schema).
+  static BaseSnapshot? _baseFromJson(Map<String, Object?> json) {
+    final title = json['base_title'] as String?;
+    if (title == null) return null;
+    return BaseSnapshot(
+      title: title,
+      notes: json['base_notes'] as String?,
+      due: json['base_due'] as String?,
+      status:
+          TaskStatus.parseApi(json['base_status'] as String? ?? '') ??
+          TaskStatus.needsAction,
+    );
+  }
 
   Map<String, Object?> _toJson() => {
     'id': id,
@@ -368,6 +449,12 @@ class BackupTask {
     'sync_state': syncState,
     'local_updated': localUpdated,
     if (pendingOp != null) 'pending_op': pendingOp,
+    if (base != null) 'base_title': base!.title,
+    if (base?.notes != null) 'base_notes': base!.notes,
+    if (base?.due != null) 'base_due': base!.due,
+    if (base != null) 'base_status': base!.status.apiStr,
+    if (move != null) 'pending_move': move!._toJson(),
+    if (inflight != null) 'inflight_create': inflight!._toJson(),
   };
 
   StoredTask _intoStored(String listId) => StoredTask(
@@ -407,7 +494,10 @@ class BackupTask {
       other.updated == updated &&
       other.syncState == syncState &&
       other.localUpdated == localUpdated &&
-      other.pendingOp == pendingOp;
+      other.pendingOp == pendingOp &&
+      other.base == base &&
+      other.move == move &&
+      other.inflight == inflight;
 
   @override
   int get hashCode => Object.hash(
@@ -425,7 +515,69 @@ class BackupTask {
     syncState,
     localUpdated,
     pendingOp,
+    base,
+    move,
+    inflight,
   );
+}
+
+/// A queued structural move (`pending_moves`) as it appears in a backup,
+/// nested under the task it belongs to. Its `list_id` is not stored: the store
+/// only ever records a move for the list the task itself is in, and the row
+/// cascades with that list.
+class BackupMove {
+  const BackupMove({this.parent, this.previous});
+
+  /// Target parent (a LOCAL id); `null` = top level.
+  final String? parent;
+
+  /// The sibling the task should follow (a LOCAL id); `null` = first.
+  final String? previous;
+
+  factory BackupMove._fromJson(Map<String, Object?> json) => BackupMove(
+    parent: json['parent'] as String?,
+    previous: json['previous'] as String?,
+  );
+
+  Map<String, Object?> _toJson() => {
+    if (parent != null) 'parent': parent,
+    if (previous != null) 'previous': previous,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is BackupMove &&
+      other.parent == parent &&
+      other.previous == previous;
+
+  @override
+  int get hashCode => Object.hash(parent, previous);
+}
+
+/// An open in-flight create marker (`inflight_creates`) as it appears in a
+/// backup. Its presence is the fact that matters; [baseLocalUpdated] is the
+/// row's `local_updated` at the moment the insert was issued, which crash
+/// recovery compares against to tell an untouched row from a re-edited one.
+class BackupInflight {
+  const BackupInflight({this.baseLocalUpdated});
+
+  /// The row's `local_updated` when the insert was sent; `null` for a marker
+  /// written before that was recorded.
+  final String? baseLocalUpdated;
+
+  factory BackupInflight._fromJson(Map<String, Object?> json) =>
+      BackupInflight(baseLocalUpdated: json['base_local_updated'] as String?);
+
+  Map<String, Object?> _toJson() => {
+    if (baseLocalUpdated != null) 'base_local_updated': baseLocalUpdated,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is BackupInflight && other.baseLocalUpdated == baseLocalUpdated;
+
+  @override
+  int get hashCode => baseLocalUpdated.hashCode;
 }
 
 /// Order-sensitive element equality for the value types above (kept private so
