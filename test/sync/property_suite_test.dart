@@ -281,9 +281,21 @@ class Harness {
   }
 
   /// A sync run, threading the panel hold through the engine the way the app's
-  /// scheduler does.
-  Future<SyncOutcome> runSync() =>
-      engine.holdCreateId(commands.heldCreateId).run();
+  /// scheduler does — and asserting the store's structural invariants on the
+  /// way out (#269).
+  ///
+  /// The check runs after EVERY run, failed runs included: a violation is a
+  /// corrupt write, and the run that made it is the only place the sequence
+  /// that caused it is still visible. Left to converge, the same corruption
+  /// surfaces runs later as a duplicate task, a create pushed into a dead list
+  /// id, or an orphaned subtree — with nothing left to point at the write.
+  Future<SyncOutcome> runSync() async {
+    try {
+      return await engine.holdCreateId(commands.heldCreateId).run();
+    } finally {
+      await store.checkInvariants();
+    }
+  }
 
   /// Set (or clear) the panel hold, keeping the harness's mirror in step so a
   /// cross-list move can re-point instead of stranding it.

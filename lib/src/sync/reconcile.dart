@@ -252,6 +252,9 @@ DeleteAction planDelete(ApiError? error) {
 /// Whether a dirty row is a create this pass may attempt at all — the cheap,
 /// id-only half of the gate (§G).
 ///
+/// * [remoteId] — Google's id for the row. A row that has one is already on the
+///   server, so its push is an update however the queue is labelled
+///   ([effectivePendingOp]).
 /// * [attempted] — creates already tried this run. A create whose response
 ///   timed out after the server committed would otherwise be double-inserted
 ///   (orphan recovery only runs at the start of a run, not between passes).
@@ -263,15 +266,31 @@ DeleteAction planDelete(ApiError? error) {
 ///   create waits. Every other create still pushes.
 bool createIsEligible(
   String? pendingOp,
+  String? remoteId,
   String id,
   Set<String> attempted,
   Set<String> unresolvedInflight,
   String? held,
 ) =>
-    pendingOp == 'create' &&
+    effectivePendingOp(pendingOp, remoteId) == 'create' &&
     !attempted.contains(id) &&
     !unresolvedInflight.contains(id) &&
     held != id;
+
+/// The push op a dirty row really needs, read against what the server already
+/// knows about it (#269).
+///
+/// A queued `create` on a row that already carries a `remote_id` is a
+/// contradiction: Google minted that id, so the row EXISTS there and inserting
+/// it again would put a duplicate on the user's account, which the follow-up
+/// patch would then quietly edit. What the queue means in that state is "this
+/// row has unpushed content" — against an acknowledged row, that is a PATCH.
+///
+/// [Store.upsertTask] keeps the state from being written at all; this is the
+/// engine's half of the same invariant, so a row that reaches the push queue in
+/// that shape converges instead of duplicating.
+String? effectivePendingOp(String? pendingOp, String? remoteId) =>
+    (pendingOp == 'create' && remoteId != null) ? 'update' : pendingOp;
 
 /// Whether a pending update or delete may be pushed at all (§B/§D × §G).
 ///

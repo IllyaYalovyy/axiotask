@@ -22,6 +22,15 @@
 //    with a pre-child etag lands and the cascade takes children never pulled.
 //  - attaching an open task to a COMPLETED parent (by `insert` with a `parent`)
 //    completes it: the response body itself already carries `completed`.
+//  - **every task endpoint is addressed by the (list, task) PAIR** — the live
+//    URL is `/lists/{tasklist}/tasks/{task}`. An unknown list is a 404 on
+//    `list_tasks` (never an empty page), and an id that belongs to ANOTHER list
+//    is unaddressable from this one: 404 on get/patch/delete, and the same 400
+//    an unknown SUBJECT id draws on move. `parent` and `previous` are read in
+//    the same scope — `previous` must be a real SIBLING (same list AND same
+//    parent), or it is the verified 404.
+//  - **every mutation moves `updated`**, alongside the fresh etag: patch, move,
+//    a cascaded completion, and a list rename.
 //
 //  - **Soft delete.** Google soft-deletes: a `DELETE` moves the row (and its
 //    cascade subtree) into a `deleted` set instead of dropping it. A direct
@@ -81,6 +90,7 @@ const int _maxNotesChars = 8192;
 const String _completedStamp = '2026-01-01T00:00:00Z';
 
 /// The seeded/created `updated` timestamp — deterministic like the reference.
+/// Mutations advance from here (see [FakeTasksApi._freshUpdated]).
 const String _updatedStamp = '2026-01-01T00:00:00Z';
 
 /// A stored row: which list it belongs to plus the task itself.
@@ -155,6 +165,10 @@ class FakeTasksApi implements TasksApi {
   /// splits it into that-many-item pages with real `next_page_token`s.
   int? _pageSize;
 
+  /// Lists whose deletion the account permanently refuses (see
+  /// [setUndeletableList]).
+  final Set<String> _undeletableLists = {};
+
   /// Per-method invocation counts. A faulted call still counts.
   final Map<Method, int> _calls = {};
 
@@ -165,6 +179,15 @@ class FakeTasksApi implements TasksApi {
     _etagCounter += 1;
     return 'etag-$_etagCounter';
   }
+
+  /// The `updated` stamp of a row the server has just mutated: [_updatedStamp]
+  /// advanced by the etag counter, so it is deterministic AND strictly later
+  /// than the stamp the row carried before. Call [_freshEtag] first — the two
+  /// advance together, exactly as they do live.
+  String _freshUpdated() => DateTime.utc(2026)
+      .add(Duration(seconds: _etagCounter))
+      .toIso8601String()
+      .replaceFirst('.000', '');
 
   // ── Fault / call-count / hook plumbing ──────────────────────────────────
 
@@ -303,7 +326,7 @@ class FakeTasksApi implements TasksApi {
       id: id,
       title: title,
       etag: _freshEtag(),
-      updated: _lists[i].updated,
+      updated: _freshUpdated(),
     );
     _lists[i] = updated;
     return updated;
@@ -315,6 +338,11 @@ class FakeTasksApi implements TasksApi {
     _record(Method.deleteTasklist);
     final fault = _nextFault(Method.deleteTasklist);
     if (fault != null) throw fault;
+    if (_undeletableLists.contains(id)) {
+      // Permanently refused, list and tasks intact — the shape
+      // `reconcile.planListDelete` answers with `revive`.
+      throw const OtherApiError('400: Cannot delete this task list');
+    }
     final before = _lists.length;
     _lists.removeWhere((l) => l.id == id);
     if (_lists.length == before) throw const NotFound();
@@ -348,6 +376,10 @@ class FakeTasksApi implements TasksApi {
     if (fault != null) throw fault;
     final pageFault = _nextFaultForPage(Method.listTasks, pageIndex);
     if (pageFault != null) throw pageFault;
+    // The endpoint is `/lists/{tasklist}/tasks`: a list the account does not
+    // have is a 404, NOT an empty page. The difference is load-bearing — an
+    // empty page reads to the engine as "the server wiped this list's tasks".
+    if (!_lists.any((l) => l.id == listId)) throw const NotFound();
 
     // Google returns a list's tasks ordered by their opaque, lexicographic
     // `position` string; mirror that so ordering tests see a real order.
@@ -377,8 +409,11 @@ class FakeTasksApi implements TasksApi {
     // Live-API strictness: an unknown (or soft-deleted) parent id is a
     // permanent 400 — exactly what pushing a child create before its parent
     // resolved does.
+    // Scoped to THIS list: a parent id that lives in another list is as
+    // unknown to this endpoint as one that exists nowhere.
     final parent = task.parent;
-    if (parent != null && !_tasks.any((r) => r.task.id == parent)) {
+    if (parent != null &&
+        !_tasks.any((r) => r.listId == listId && r.task.id == parent)) {
       throw const OtherApiError('400: Invalid task ID (parent)');
     }
     _validateSizes(task.title, task.notes);
@@ -387,7 +422,7 @@ class FakeTasksApi implements TasksApi {
     // immediately — the insert RESPONSE already carries status=completed.
     final parentCompleted = parent != null && _isCompleted(parent);
     final etag = _freshEtag();
-    final position = _positionAfter(task.previous);
+    final position = _positionAfter(listId, parent, task.previous);
     final id = 'remote-$_etagCounter';
     final status = parentCompleted
         ? TaskStatus.completed
@@ -452,8 +487,11 @@ class FakeTasksApi implements TasksApi {
     _validateSizes(patch.title, patch.notes);
     if (!_lists.any((l) => l.id == listId)) throw const NotFound();
     final newEtag = _freshEtag();
+    final newUpdated = _freshUpdated();
 
-    final idx = _tasks.indexWhere((r) => r.task.id == id);
+    // The (list, task) PAIR addresses the row: an id held by another list is
+    // not reachable from this one.
+    final idx = _tasks.indexWhere((r) => r.listId == listId && r.task.id == id);
     if (idx < 0) {
       // A PATCH to a soft-deleted task returns 200 with a body echoing the
       // requested edit, but the row stays deleted and never returns to
@@ -510,7 +548,8 @@ class FakeTasksApi implements TasksApi {
       due: patch.due != null ? patchedDue : current.due,
       completed: completed,
       etag: newEtag,
-      updated: current.updated,
+      // A mutation moves `updated`, exactly as the live service does.
+      updated: newUpdated,
       webViewLink: current.webViewLink,
     );
     _tasks[idx] = (listId: _tasks[idx].listId, task: updated);
@@ -536,6 +575,11 @@ class FakeTasksApi implements TasksApi {
     final idFault = _nextFaultForId(Method.deleteTask, id);
     if (idFault != null) throw idFault;
     if (!_lists.any((l) => l.id == listId)) throw const NotFound();
+    // Addressed by the pair: an id in another list is a 404 here, and its row
+    // must not be touched.
+    if (!_tasks.any((r) => r.listId == listId && r.task.id == id)) {
+      throw const NotFound();
+    }
     // DELETE soft-deletes; the server cascades to descendants, so the whole
     // subtree goes. Zero rows moved means `id` names no live task → 404.
     if (_softDeleteSubtree(id) == 0) throw const NotFound();
@@ -560,17 +604,19 @@ class FakeTasksApi implements TasksApi {
     final idFault = _nextFaultForId(Method.moveTask, id);
     if (idFault != null) throw idFault;
     if (!_lists.any((l) => l.id == listId)) throw const NotFound();
-    final idx = _tasks.indexWhere((r) => r.task.id == id);
+    final idx = _tasks.indexWhere((r) => r.listId == listId && r.task.id == id);
     if (idx < 0) {
       // Live-API behavior: an unknown SUBJECT id in a move is a permanent 400
-      // "Invalid task ID" — NOT the 404 an unknown `previous` draws.
+      // "Invalid task ID" — NOT the 404 an unknown `previous` draws. An id that
+      // belongs to another list is exactly as unknown to this endpoint.
       throw const OtherApiError('400: Invalid task ID');
     }
     // Same strictness `insert_task` applies to the same field: an unknown parent
     // is a permanent 400. Without it the fake could hold a task whose parent it
     // does not have — a state Google cannot be in, one our pull re-detaches on
     // every run (#113).
-    if (parent != null && !_tasks.any((r) => r.task.id == parent)) {
+    if (parent != null &&
+        !_tasks.any((r) => r.listId == listId && r.task.id == parent)) {
       throw const OtherApiError('400: Invalid task ID (parent)');
     }
     // A task cannot become its own descendant (Google's forest model, #155).
@@ -587,9 +633,10 @@ class FakeTasksApi implements TasksApi {
       }
     }
     final newEtag = _freshEtag();
+    final newUpdated = _freshUpdated();
     // Real lexicographic placement, exactly like `insert`. An unknown
     // `previous` throws NotFound (a 404), the verified asymmetry.
-    final position = _positionAfter(previous);
+    final position = _positionAfter(listId, parent, previous);
     // Moving an open task under a COMPLETED parent completes it: the move
     // RESPONSE already carries status=completed, and the cascade reaches its
     // subtree.
@@ -607,7 +654,7 @@ class FakeTasksApi implements TasksApi {
       due: current.due,
       completed: becomesCompleted ? _completedStamp : current.completed,
       etag: newEtag,
-      updated: current.updated,
+      updated: newUpdated,
       webViewLink: current.webViewLink,
       deleted: current.deleted,
     );
@@ -650,6 +697,20 @@ class FakeTasksApi implements TasksApi {
   /// Insert-only shorthand for [commitThenFailNext] — the same as
   /// `commitThenFailNext(Method.insertTask)`.
   void commitThenFailNextInsert() => commitThenFailNext(Method.insertTask);
+
+  /// Make [id] a list whose deletion the account permanently refuses: a
+  /// `delete_tasklist` against it returns a permanent 400 and leaves the list
+  /// and its tasks untouched.
+  ///
+  /// OPT-IN on purpose. The engine has a `revive` branch for a list delete the
+  /// server refuses forever (`reconcile.planListDelete`), and the account's
+  /// default list is the case it was written for — but "Google refuses to
+  /// delete the default list" is NOT among the semantics probed live (RFC-009's
+  /// eight probes) and is not in the published `tasklists.delete` reference. So
+  /// the fake does not assert it as a universal truth about every account's
+  /// first list; a test that wants that server states it, and the rejection
+  /// itself is modelled exactly.
+  void setUndeletableList(String id) => _undeletableLists.add(id);
 
   /// Disarm every queued fault — untargeted, targeted, and every pending
   /// commit-then-fail lost response — so a test can switch from a chaotic phase
@@ -763,16 +824,25 @@ class FakeTasksApi implements TasksApi {
   /// original successor. With no [previous], go to the very top: `'!'` (0x21)
   /// sorts before any digit, and a descending counter keeps successive top
   /// inserts above one another. Call [_freshEtag] first so the counter advanced.
-  String _positionAfter(String? previous) {
+  ///
+  /// [previous] names a SIBLING: `position` orders a task among the rows that
+  /// share its list and its parent, so an anchor from another list — or from
+  /// another parent in this one — has no meaning to place against. Anything but
+  /// a real sibling is the same 404 an unknown `previous` draws (verified live:
+  /// "Previous task id not found"; the asymmetry with an unknown SUBJECT id,
+  /// which is a 400, is deliberate).
+  String _positionAfter(String listId, String? parent, String? previous) {
     if (previous == null) {
       final descending = _u64Max - BigInt.from(_etagCounter);
       return '!${descending.toString().padLeft(19, '0')}';
     }
     for (final r in _tasks) {
-      if (r.task.id == previous) return '${r.task.position}+';
+      if (r.listId == listId &&
+          r.task.id == previous &&
+          r.task.parent == parent) {
+        return '${r.task.position}+';
+      }
     }
-    // A `previous` that does not exist is a 404 — the asymmetry with an unknown
-    // SUBJECT id (a 400) is verified live.
     throw const NotFound();
   }
 
@@ -810,6 +880,7 @@ class FakeTasksApi implements TasksApi {
         status: TaskStatus.completed,
         completed: _completedStamp,
         etag: _freshEtag(),
+        updated: _freshUpdated(),
       );
       _tasks[i] = (listId: _tasks[i].listId, task: done);
     }
