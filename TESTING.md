@@ -116,6 +116,38 @@ of text into a solid block, so it cannot show a typography or layout regression
 disabled in `flutter_test_config.dart` and `test/packaging/golden_variant_test.dart`
 keeps it that way (#275).
 
+## The suite has prerequisites, not silent skips
+
+A few assertions drive REAL external tools rather than re-reading strings this
+repository wrote itself:
+
+- the icon suite — `python3 cairosvg` (rasters) and `python3 GdkPixbuf` (the
+  loader GNOME actually uses, which needs the librsvg SVG loader module);
+- the distribution suite — `appstreamcli` and `desktop-file-validate`, the only
+  two checks there that ask a freedesktop validator whether the shipped
+  metainfo and `.desktop` entry parse.
+
+None of them may `markTestSkipped` when its tool is absent: that turns a
+machine without the tool into a GREEN packaging run that verified nothing —
+exactly how the #261 blank icon reached a release. Each suite checks its
+toolchain ONCE up front and fails with an install hint, so a missing tool is
+one legible failure instead of five confusing ones (#275):
+
+```bash
+# Fedora
+sudo dnf install python3-cairosvg python3-gobject gdk-pixbuf2-modules \
+                 appstream desktop-file-utils
+# Debian/Ubuntu (what CI installs)
+sudo apt-get install python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0 \
+                     librsvg2-common appstream desktop-file-utils
+```
+
+The one prerequisite the gate cannot yet demand is the sync oracle
+(`AXIOTASK_ORACLE_BIN`): the reference binary does not exist (#181). Rather
+than skip quietly, the local gate prints `BLOCKED (#181)` and names what is
+missing; the moment the binary exists it exports `AXIOTASK_ORACLE=required` and
+absence becomes a failure like every other prerequisite.
+
 ## Reference-toolchain assertions
 
 A handful of expectations are byte-for-byte artifacts of one toolchain, not of

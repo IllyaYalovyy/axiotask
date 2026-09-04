@@ -44,20 +44,29 @@ jobs:
           # history has to be there. A shallow clone has no merge base.
           fetch-depth: 0
 
-      # The icon suite drives the REAL renderers (cairosvg for the rasters,
-      # GdkPixbuf for the loader GNOME uses). Those assertions must never be
-      # skipped for want of a tool — a machine without them runs a green icon
-      # suite that verified nothing (#275) — so the tools are installed here and
-      # the tests fail loudly if they are ever absent. librsvg2-common is the
-      # gdk-pixbuf SVG loader module itself: without it GdkPixbuf imports fine
-      # and then answers "couldn't recognize the image file format" for every
-      # SVG — which is precisely the #261 symptom the suite exists to detect,
-      # so it must come from the environment, never from the icon.
-      - name: Install the icon toolchain
+      # The packaging suites drive REAL external tools: cairosvg for the icon
+      # rasters, GdkPixbuf for the loader GNOME uses, and the two freedesktop
+      # validators for the metainfo and the desktop entry. None of those
+      # assertions may be skipped for want of a tool — a machine without them
+      # runs a green packaging suite that verified nothing (#275) — so the tools
+      # are installed here and the tests fail loudly if they are ever absent.
+      #
+      # librsvg2-common is the gdk-pixbuf SVG loader module itself: without it
+      # GdkPixbuf imports fine and then answers "couldn't recognize the image
+      # file format" for every SVG — precisely the #261 symptom the suite exists
+      # to detect, so it must come from the environment, never from the icon.
+      #
+      # appstreamcli / desktop-file-validate are the same ruling applied to the
+      # distribution suite: they are the ONLY assertions there that ask a real
+      # freedesktop validator whether the shipped metainfo and desktop entry
+      # parse — everything else is a string this repository writes and reads
+      # itself. Absent, that suite used to run green having validated nothing.
+      - name: Install the packaging toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0 librsvg2-common
+            python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0 librsvg2-common \
+            appstream desktop-file-utils
 
       - uses: subosito/flutter-action@v2
         with:
