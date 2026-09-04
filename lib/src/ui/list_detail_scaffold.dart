@@ -303,7 +303,10 @@ class ListDetailScaffold extends StatelessWidget {
 /// system back drag drives this transform DIRECTLY, so the surface follows the
 /// finger and snaps back if the gesture is abandoned. Under reduced motion the
 /// gesture is declined outright and the framework performs its ordinary pop —
-/// a user who turned animations off did not ask for a scrubbable one.
+/// a user who turned animations off did not ask for a scrubbable one. So is a
+/// back arriving while a menu/sheet/dialog covers this route, and so is a back
+/// BUTTON press: both belong to somebody else (#273, see
+/// [_CompactDetailLayerState.handleStartBackGesture]).
 class _CompactDetailLayer extends StatefulWidget {
   const _CompactDetailLayer({
     required this.shell,
@@ -368,6 +371,14 @@ class _CompactDetailLayerState extends State<_CompactDetailLayer>
   /// outside any build and must not go looking up the tree from there.
   bool _motion = true;
 
+  /// The route this layer lives on, captured for the same reason [_motion] is:
+  /// the callbacks below arrive outside any build. The ROUTE is held rather
+  /// than a snapshot of its state, because [ModalRoute.isCurrent] is a live
+  /// getter — asking it at gesture time sees a modal pushed since the last
+  /// frame. Null when there is no route above (a bare-scaffold test), which
+  /// reads as "nothing can be covering us".
+  ModalRoute<dynamic>? _route;
+
   @override
   void initState() {
     super.initState();
@@ -383,6 +394,7 @@ class _CompactDetailLayerState extends State<_CompactDetailLayer>
     final motion = Motion.of(context);
     _motion = motion.enabled;
     _open.duration = motion.resolve(MotionDurations.emphasized);
+    _route = ModalRoute.of(context);
   }
 
   @override
@@ -439,13 +451,27 @@ class _CompactDetailLayerState extends State<_CompactDetailLayer>
   // ── Android predictive back ──────────────────────────────────────────────
   // Returning true claims the gesture: this observer, and only this observer,
   // then hears its updates, and the framework performs no pop of its own — the
-  // commit below closes the detail through the app's own path instead.
+  // commit below closes the detail through the app's own path instead. Which is
+  // exactly why the claim is narrow (#273): an observer is notified whatever is
+  // on top of it, and a claim it has no right to make swallows the back that
+  // belonged to something else.
 
   @override
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
     if (!mounted || widget.detail == null || widget.onCloseDetail == null) {
       return false;
     }
+    // A menu, sheet or dialog raised FROM the detail sits above this route, and
+    // the back is its dismissal, not the detail's. Claiming here would scrub the
+    // detail closed underneath the modal — which then stays, and the entry the
+    // user picks runs against a panel that no longer exists (#273). Declined,
+    // the framework's own pop takes the topmost route away instead.
+    if (!(_route?.isCurrent ?? true)) return false;
+    // A back BUTTON press is not a gesture: there is no finger to follow, and
+    // nothing to scrub. Let it fall through to the shell's PopScope ladder,
+    // which closes the detail through the same path — one rung per press,
+    // with the drawer and the welcome ahead of it.
+    if (backEvent.isButtonEvent) return false;
     if (!_open.isCompleted || !_motion) return false;
     _open.stop();
     _backGesture = true;
