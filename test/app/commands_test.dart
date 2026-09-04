@@ -529,7 +529,7 @@ void main() {
       final commands = Commands(store, newId: () => 'local-1');
       await seedList(store, 'L1');
       await commands.createTask(listId: 'L1', title: 'maybe-on-server');
-      await store.recordInflightCreate('local-1', 'L1', _t0);
+      await store.recordInflightCreate('local-1', 'L1');
 
       final token = await commands.deleteTask('local-1');
       expect(token.hadEtag, isFalse);
@@ -1655,7 +1655,7 @@ void main() {
           'L1',
           'maybe-on-server',
         ); // no etag
-        await store.recordInflightCreate('local-1', 'L1', _t0);
+        await store.recordInflightCreate('local-1', 'L1');
 
         await commands.moveTaskToList('local-1', 'L2');
 

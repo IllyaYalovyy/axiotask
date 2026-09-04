@@ -166,7 +166,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1', title: 'buy milk'));
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       expect(
         await s.baseSnapshot('local-1'),
         isNotNull,
@@ -199,7 +199,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1', title: 'buy milk'));
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       // User keeps typing during the in-flight window.
       await s.upsertTask(
         newTask(
@@ -245,7 +245,7 @@ void main() {
           localUpdated: '2026-01-01T00:00:09Z', // the delete bumped it
         ),
       );
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       await s.finishCreate(
         'local-1',
         'remote-1',
@@ -287,7 +287,7 @@ void main() {
         await s.upsertList(listOf('L1'));
         await s.upsertTask(taskOf('remote-1', 'L1', null, '1')); // holds it
         await s.upsertTask(newTask('local-1', 'L1'));
-        await s.recordInflightCreate('local-1', 'L1', _t0);
+        await s.recordInflightCreate('local-1', 'L1');
 
         await expectLater(
           s.finishCreate(
@@ -324,7 +324,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1'));
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       await s.finishCreate(
         'local-1',
         'remote-1',
@@ -367,7 +367,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(taskOf('T1', 'L1', null, '1'));
-      await s.recordInflightCreate('T1', 'L1', _t0);
+      await s.recordInflightCreate('T1', 'L1');
       expect(await s.inflightCreates(), [('T1', 'L1')]);
     });
 
@@ -375,7 +375,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(taskOf('T1', 'L1', null, '1'));
-      await s.recordInflightCreate('T1', 'L1', _t0);
+      await s.recordInflightCreate('T1', 'L1');
       await s.deleteTaskHard('T1');
       expect(await s.inflightCreates(), isEmpty);
     });
@@ -384,7 +384,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1'));
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       await s.clearInflightCreate('local-1');
       expect(await s.inflightCreates(), isEmpty);
       expect(
@@ -401,7 +401,7 @@ void main() {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
       await s.upsertTask(newTask('local-1', 'L1', title: 'buy milk'));
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       // Edit during the window: the row's content drifts, the base does not.
       await s.upsertTask(
         newTask(
@@ -438,7 +438,7 @@ void main() {
       await s.upsertTask(newTask('local-1', 'L1', position: '2'));
       expect(await s.serverMayHold('local-1'), isFalse);
       // Insert issued, answer unknown: the server MAY hold it.
-      await s.recordInflightCreate('local-1', 'L1', _t0);
+      await s.recordInflightCreate('local-1', 'L1');
       expect(await s.serverMayHold('local-1'), isTrue);
       // A row that isn't there at all is nothing to tombstone.
       expect(await s.serverMayHold('nope'), isFalse);
@@ -559,7 +559,7 @@ void main() {
       );
       await s.upsertTask(newTask('T1', 'local-L'));
       await s.recordMove('T1', 'local-L', null, null);
-      await s.recordInflightCreate('T1', 'local-L', _t0);
+      await s.recordInflightCreate('T1', 'local-L');
 
       await s.finishListCreate(
         'local-L',
@@ -755,7 +755,7 @@ void main() {
       await s.upsertTask(taskOf('T1', 'L1', null, '1'));
       await s.upsertTask(taskOf('T2', 'L1', null, '2'));
       await s.recordMove('T1', 'L1', null, null);
-      await s.recordInflightCreate('T1', 'L1', _t0);
+      await s.recordInflightCreate('T1', 'L1');
       await s.clearAll();
       expect(await s.allLists(), isEmpty);
       expect(await s.listTasks('L1'), isEmpty);

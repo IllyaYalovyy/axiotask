@@ -173,34 +173,42 @@ void main() {
   test(
     'create push interleaved with re-edit keeps edit as update, no dup',
     () async {
-      // The create is in flight — the engine holds its DRAINED snapshot across the
-      // insert await — while the user re-edits the same row. finishCreate must
-      // remap the id AND keep the row dirty as an UPDATE (not clean, not a second
-      // create), so the newer edit pushes against the remote id.
+      // The user re-edits the row WHILE its insert is in the air: after the
+      // payload and the in-flight marker are committed, before the response
+      // lands. finishCreate must learn the remote id AND keep the row dirty as
+      // an UPDATE (not clean, not a second create), so the newer edit pushes
+      // against the remote id instead of inserting a duplicate.
       final (client, eng) = await engine(push: true);
       await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       await eng.run();
 
-      // The dirty create as the push drains it (old content, old timestamp).
       final snapshot = dirtyTask('local-1', 'L1', 'create', title: 'buy milk');
       await eng.store.upsertTask(snapshot);
 
-      // Concurrent re-edit commits: newer content and timestamp, still a dirty
-      // create under the local id (its id is not yet remapped).
-      await eng.store.upsertTask(
-        StoredTask(
-          task: snapshot.task.copyWith(title: 'buy oat milk'),
-          listId: 'L1',
-          syncState: SyncState.dirty,
-          localUpdated: '2026-06-01T00:05:00Z',
-          pendingOp: 'create',
-        ),
-      );
+      // The edit lands inside the insert await — the on-call hook is awaited,
+      // so the interleaving is exact rather than a microtask coin-flip.
+      var raced = false;
+      client.setOnCall((c, m) async {
+        if (m != Method.insertTask || raced) return;
+        raced = true;
+        await eng.store.upsertTask(
+          StoredTask(
+            task: snapshot.task.copyWith(title: 'buy oat milk'),
+            listId: 'L1',
+            syncState: SyncState.dirty,
+            localUpdated: '2026-06-01T00:05:00Z',
+            pendingOp: 'create',
+          ),
+        );
+      });
 
-      // Push the ORIGINAL snapshot, exactly as the engine holds it across the
-      // insert await while the re-edit lands underneath.
+      // Drive the create alone: a whole run would go on to push the queued
+      // update in the same pass, and the state under test is the one BETWEEN
+      // the two — the row the create landing leaves behind.
       final out = SyncOutcome();
       await eng.pushCreate(snapshot, out);
+      client.clearOnCall();
+      expect(raced, isTrue, reason: 'precondition: the insert really raced');
       expect(out.pushed, 1);
 
       // No duplicate: exactly one insert, one task on the server.
@@ -252,7 +260,7 @@ void main() {
     // Server already has the task from the interrupted attempt.
     client.seedTask('L1', 'remote-orphan', 'buy milk', '1');
     // In-flight marker persisted before the (crashed) finish.
-    await eng.store.recordInflightCreate('local-1', 'L1', _t0);
+    await eng.store.recordInflightCreate('local-1', 'L1');
 
     await eng.run();
 
@@ -277,7 +285,7 @@ void main() {
     await eng.store.upsertTask(
       dirtyTask('local-1', 'L1', 'create', title: 'orphan-free'),
     );
-    await eng.store.recordInflightCreate('local-1', 'L1', _t0);
+    await eng.store.recordInflightCreate('local-1', 'L1');
 
     final out = await eng.run();
     expect(out.pushed, 1, reason: 'normal insert happened');
@@ -440,7 +448,7 @@ void main() {
       'remote-orphan',
       const TaskPatch(due: '2026-08-01T00:00:00.000Z'),
     );
-    await eng.store.recordInflightCreate('local-1', 'L1', _t0);
+    await eng.store.recordInflightCreate('local-1', 'L1');
 
     await eng.run();
 

@@ -601,6 +601,99 @@ class Store {
     });
   }
 
+  // ── post-network guarded writes (#268) ────────────────────────────────────
+  //
+  // Every engine write that lands AFTER an `await` on the network is a write
+  // against a snapshot the user may have edited in the meantime. The push paths
+  // above ([markTaskClean], [applyPushedTask], [finishCreate]) arbitrate that
+  // race with the drained `local_updated`; the three primitives below are the
+  // same guard for the repair paths that used to write a raw [upsertTask]. Each
+  // returns how many rows it changed, so the engine can tell "applied" from
+  // "the row moved under me" and leave a moved row dirty for the next run
+  // instead of overwriting the newer edit.
+
+  /// Land the 412 base-merge result on [id] — but only while the row still
+  /// carries [expectedLocalUpdated]. Returns the number of rows changed.
+  ///
+  /// The merge is computed from a row drained at the START of the update pass:
+  /// by the time the 412 and its refetch have come back, dozens of other
+  /// requests may have gone by and the user may have typed into this very row.
+  /// Writing the older merge then reset both the content AND `local_updated`,
+  /// so the newer edit was neither kept nor ever pushed. On a miss (0 rows) the
+  /// row keeps its own content, its dirty flag and its stale etag; the next run
+  /// 412s again and re-merges against the content the user actually has.
+  ///
+  /// Only the fields the merge can change are written — `sync_state`,
+  /// `pending_op` and `base_*` stay exactly as the guard found them, because a
+  /// merged row stays dirty on the base it was captured with.
+  Future<int> mergeConflictIfUnchanged(
+    String id,
+    String expectedLocalUpdated,
+    Task merged,
+  ) => _db.customUpdate(
+    'UPDATE tasks SET title = ?1, notes = ?2, status = ?3, due = ?4, '
+    'completed_at = ?5, etag = ?6, updated = ?7 '
+    'WHERE id = ?8 AND local_updated = ?9',
+    variables: [
+      Variable<String>(merged.title),
+      Variable<String>(merged.notes),
+      Variable<String>(merged.status.apiStr),
+      Variable<String>(merged.due),
+      Variable<String>(merged.completed),
+      Variable<String>(merged.etag),
+      Variable<String>(merged.updated),
+      Variable<String>(id),
+      Variable<String>(expectedLocalUpdated),
+    ],
+    updates: {_db.tasks},
+  );
+
+  /// Undo the optimistic half of a move that will never reach the server, but
+  /// only while [id] is still the CLEAN row carrying [expectedLocalUpdated].
+  /// Returns the number of rows changed.
+  ///
+  /// The revert is exactly "drop the etag": the local placement stays, and the
+  /// missing etag is what makes the next pull re-link the row to the server's
+  /// truth (P6). Under the guard the rest of the pre-call snapshot is
+  /// byte-identical to the row, so there is nothing else to write back — and
+  /// writing it back anyway is precisely the bug: a move ladder can spend four
+  /// backoff retries in the air, and an edit made in that window was reverted
+  /// to old, CLEAN content that never synced.
+  Future<int> revertMoveIfUnchanged(String id, String expectedLocalUpdated) =>
+      _db.customUpdate(
+        'UPDATE tasks SET etag = NULL '
+        "WHERE id = ?1 AND local_updated = ?2 AND sync_state = 'clean'",
+        variables: [
+          Variable<String>(id),
+          Variable<String>(expectedLocalUpdated),
+        ],
+        updates: {_db.tasks},
+      );
+
+  /// Flatten a third-level row to top-level (invariant #1), but only while [id]
+  /// still carries [expectedLocalUpdated] and is still nested. [dropEtag] also
+  /// clears the etag so the next pull re-examines the row. Returns the number of
+  /// rows changed.
+  ///
+  /// A miss leaves the row nested — the next run's D7 sweep re-detects it and
+  /// promotes the content the user now has, rather than this pass restoring the
+  /// content it read before the corrective move went out.
+  Future<int> promoteIfUnchanged(
+    String id,
+    String expectedLocalUpdated, {
+    required bool dropEtag,
+  }) => _db.customUpdate(
+    'UPDATE tasks SET parent_id = NULL, '
+    'etag = CASE WHEN ?3 = 1 THEN NULL ELSE etag END '
+    'WHERE id = ?1 AND local_updated = ?2 AND parent_id IS NOT NULL',
+    variables: [
+      Variable<String>(id),
+      Variable<String>(expectedLocalUpdated),
+      Variable<int>(dropEtag ? 1 : 0),
+    ],
+    updates: {_db.tasks},
+  );
+
   /// The base snapshot for a row (#124), or `null` when the row is clean / has
   /// no base recorded. `base_title` is the presence sentinel: a `NOT NULL`
   /// title column can only be absent when no base was captured.
@@ -1208,38 +1301,44 @@ class Store {
   }
 
   /// Durably mark a create as in-flight before calling the (non-idempotent)
-  /// server insert; cleared by [finishCreate] on success.
+  /// server insert; cleared by [finishCreate] on success. Returns the row the
+  /// marker was based on, or `null` when there is no such row (nothing is
+  /// written then — a marker with no row to adopt for is worse than none).
   ///
-  /// Also captures the base snapshot for the row (#124): [baseLocalUpdated] is
-  /// the drain-time `local_updated`, so crash recovery can pass it to
+  /// Also captures the base snapshot for the row (#124): `base_*` is set to the
+  /// row's content as read INSIDE this transaction and `base_local_updated` to
+  /// that same row's `local_updated`, so crash recovery can pass it to
   /// [finishCreate] and an edit during the in-flight window keeps its dirty
-  /// flag; and `tasks.base_*` is set to the current content — the payload as
-  /// sent — so orphan adoption matches on it, not on drifted local content
-  /// (#122). Both writes commit before the insert, so they survive a crash.
-  Future<void> recordInflightCreate(
-    String localId,
-    String listId,
-    String baseLocalUpdated,
-  ) async {
-    await _db.transaction(() async {
-      await _db.customInsert(
-        'INSERT OR REPLACE INTO inflight_creates '
-        '(local_id, list_id, base_local_updated) VALUES (?, ?, ?)',
-        variables: [
-          Variable<String>(localId),
-          Variable<String>(listId),
-          Variable<String>(baseLocalUpdated),
-        ],
-        updates: {_db.inflightCreates},
-      );
-      await _db.customUpdate(
-        'UPDATE tasks SET base_title = title, base_notes = notes, '
-        'base_due = due, base_status = status WHERE id = ?',
-        variables: [Variable<String>(localId)],
-        updates: {_db.tasks},
-      );
-    });
-  }
+  /// flag. Both writes commit before the insert, so they survive a crash.
+  ///
+  /// The returned snapshot is the ONE the caller must build its insert payload
+  /// from (#268). The base is what orphan adoption matches the committed server
+  /// row against ([findOrphanByBase]); a payload built from an older drained
+  /// row would put DIFFERENT content on the server than the base describes, and
+  /// a lost insert response would then fail to recognize its own orphan and
+  /// insert the task a second time.
+  Future<StoredTask?> recordInflightCreate(String localId, String listId) =>
+      _db.transaction(() async {
+        final row = await findTaskAny(localId);
+        if (row == null) return null;
+        await _db.customInsert(
+          'INSERT OR REPLACE INTO inflight_creates '
+          '(local_id, list_id, base_local_updated) VALUES (?, ?, ?)',
+          variables: [
+            Variable<String>(localId),
+            Variable<String>(listId),
+            Variable<String>(row.localUpdated),
+          ],
+          updates: {_db.inflightCreates},
+        );
+        await _db.customUpdate(
+          'UPDATE tasks SET base_title = title, base_notes = notes, '
+          'base_due = due, base_status = status WHERE id = ?',
+          variables: [Variable<String>(localId)],
+          updates: {_db.tasks},
+        );
+        return row;
+      });
 
   /// All in-flight create markers as `(localId, listId)` pairs (non-empty only
   /// after a crash mid-create).
