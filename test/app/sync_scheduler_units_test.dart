@@ -137,9 +137,12 @@ void main() {
         'sync status (G6 / #204, #187)', () async {
       // The end-to-end status-sanitization case: a captive portal answers 200
       // with an HTML login page, the real client fails to decode it, and the
-      // resulting OtherApiError flows through syncUserMessage into the UI-facing
+      // resulting error flows through syncUserMessage into the UI-facing
       // lastError. The rendered status must carry NONE of the HTML body — no
-      // markup, no secret-bearing login URL — only the decode label.
+      // markup, no secret-bearing login URL — only the decode label. The
+      // failure is also TRANSIENT (#270): nothing in that response came from
+      // Google, so the run retries silently instead of raising a permanent
+      // "needs attention" for a condition that clears itself.
       const captivePortalHtml =
           '<!DOCTYPE html><html><head><title>Wi-Fi Login</title></head>'
           '<body>Please sign in at http://wifi.local/login?token=SECRET'
@@ -157,16 +160,21 @@ void main() {
         maxRetries: 0,
       );
 
-      OtherApiError? decodeError;
+      ApiError? decodeError;
       try {
         await api.listTasklists();
-      } on OtherApiError catch (e) {
+      } on ApiError catch (e) {
         decodeError = e;
       }
       expect(decodeError, isNotNull, reason: 'the HTML body fails to decode');
+      expect(
+        decodeError!.isTransient,
+        isTrue,
+        reason: 'a body Google did not write is a blip, not a rejection (#270)',
+      );
 
       // What the "Sync failed" toast / Properties dialog would render.
-      final shown = syncUserMessage(SyncApiError(decodeError!));
+      final shown = syncUserMessage(SyncApiError(decodeError));
       expect(shown, isNot(contains('<html')));
       expect(shown, isNot(contains('wifi.local')));
       expect(shown, isNot(contains('SECRET')));

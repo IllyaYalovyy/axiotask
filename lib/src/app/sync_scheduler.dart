@@ -18,6 +18,7 @@ import '../api/tasks_api.dart' show TasksApi;
 import '../model/dates.dart' show nowUtcString;
 import '../store/store.dart';
 import '../sync/engine.dart';
+import '../sync/poison.dart';
 import '../sync/sync_error.dart';
 import 'auth_state.dart';
 import 'logging.dart';
@@ -106,6 +107,26 @@ String apiUserText(ApiError e) => switch (e) {
   AuthExpired() ||
   Network() => 'Sync hit an error — the details are in the log.',
 };
+
+/// The status line for the rows the poison cap is holding (#270).
+///
+/// The old "N changes rejected by the server (kept locally, will retry)" was
+/// both a promise the app could not keep — the retry would be refused
+/// identically forever — and unactionable: it never said WHICH change. This
+/// names one (titles are the user's own words, so unlike a request URL or raw
+/// SQL they are safe to show, #187) and asks for the one thing that releases
+/// the row: an edit.
+String quarantineMessage(List<String> titles) {
+  final first = _clipTitle(titles.first);
+  return titles.length == 1
+      ? '1 change could not be synced: “$first” — edit it to try again'
+      : '${titles.length} changes could not be synced (including “$first”) '
+            '— edit them to try again';
+}
+
+/// Keep a very long title from crowding the toast/dialog out of legibility.
+String _clipTitle(String title) =>
+    title.length <= 40 ? title : '${title.substring(0, 39)}…';
 
 /// How to log one permanent sync failure, and what to remember for the next run.
 class PermanentFailureLog {
@@ -263,6 +284,17 @@ class SyncScheduler {
 
   final SyncNotify _notify = SyncNotify();
   final SyncStatus _status = SyncStatus();
+
+  /// Consecutive push-rejection streaks, per row — the poison cap (#270).
+  /// It lives HERE, not in the engine, because the engine is rebuilt for every
+  /// run and "rejected five runs running" is by definition a fact about the
+  /// runs, not about one of them.
+  final PoisonRegistry _poison = PoisonRegistry();
+
+  /// The quarantined set the last run reported, so a set that is merely
+  /// REPEATING is not logged again every cadence tick (the same dedup rule the
+  /// permanent-failure log follows, #131).
+  String? _lastQuarantineKey;
   final StreamController<SyncStatusView> _statusController =
       StreamController<SyncStatusView>.broadcast();
   final StreamController<SyncRunEvent> _runController =
@@ -375,6 +407,7 @@ class SyncScheduler {
       client(),
       store,
       pushEnabled(),
+      poison: _poison,
     ).holdCreateId(heldCreateId);
 
     SyncOutcome? outcome;
@@ -386,8 +419,13 @@ class SyncScheduler {
     try {
       try {
         outcome = await engine.run();
-      } on SyncError catch (e) {
-        error = e;
+      } catch (e) {
+        // Object, not SyncError (#270). A run can fail in ways the typed union
+        // does not describe — a raw SqliteException out of the store, a
+        // TypeError out of a decode — and letting one of those past this guard
+        // meant the failure was never recorded AND the caller (the startup
+        // task) died with it, taking the background loop with it.
+        error = SyncError.coerce(e);
       }
 
       _recordOutcome(outcome, error);
@@ -412,6 +450,21 @@ class SyncScheduler {
     if (!_runController.isClosed) _runController.add(event);
   }
 
+  /// Log a quarantined set ONCE — when it first appears or changes. The status
+  /// line keeps reporting it every run (it is a state the user must act on),
+  /// but the log must not gain a line a minute for a condition that is not
+  /// moving (#131).
+  void _noteQuarantine(List<String> titles) {
+    final key = titles.isEmpty ? null : titles.join('\u0000');
+    if (key != null && key != _lastQuarantineKey) {
+      Log.error(
+        'sync: ${titles.length} change(s) rejected $kPoisonRejectCap runs '
+        'running — held until edited: ${titles.join(', ')}',
+      );
+    }
+    _lastQuarantineKey = key;
+  }
+
   void _recordOutcome(SyncOutcome? outcome, SyncError? error) {
     if (outcome != null) {
       _status.lastSynced = nowUtcString();
@@ -432,11 +485,18 @@ class SyncScheduler {
       _status.lastDeleted = outcome.deleted;
       _status.totalSyncs += 1;
       // A row the server rejected stays dirty and would retry silently forever —
-      // tell the user instead of hiding it behind a green "synced" state.
-      _status.lastError = outcome.errors > 0
-          ? '${outcome.errors} change${outcome.errors == 1 ? '' : 's'} '
-                'rejected by the server (kept locally, will retry)'
-          : null;
+      // tell the user instead of hiding it behind a green "synced" state. A row
+      // that has exhausted its rejection budget gets the stronger line: it is
+      // not being retried at all any more, and only an edit releases it (#270).
+      _noteQuarantine(outcome.quarantined);
+      final parts = [
+        if (outcome.quarantined.isNotEmpty)
+          quarantineMessage(outcome.quarantined),
+        if (outcome.errors > 0)
+          '${outcome.errors} change${outcome.errors == 1 ? '' : 's'} '
+              'rejected by the server (kept locally, will retry)',
+      ];
+      _status.lastError = parts.isEmpty ? null : parts.join(' · ');
       return;
     }
 
