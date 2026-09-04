@@ -591,17 +591,20 @@ class SyncEngine {
       final listRemoteId = await _store.listRemoteId(listId);
       // The list itself has not landed yet, so its tasks cannot have either.
       if (listRemoteId == null) continue;
-      // A PERMANENT failure fetching the marker's list is the answer, not an
-      // error to propagate (#269): the list is gone, so it holds no orphan and
-      // never will, and the create this marker guards cannot have survived in
-      // it. Dropping the marker lets the run continue to the ghost-list path,
-      // which re-homes the row the server never saw (P2/D2). Rethrowing instead
+      // A REJECTION fetching the marker's list is the answer, not an error to
+      // propagate (#269): the list is gone, so it holds no orphan and never
+      // will, and the create this marker guards cannot have survived in it.
+      // Dropping the marker lets the run continue to the ghost-list path, which
+      // re-homes the row the server never saw (P2/D2). Rethrowing instead
       // failed the run at this same line every cadence tick forever — the
       // session never synced again, and the status said only "needs attention".
       //
-      // A TRANSIENT failure is a different thing entirely and must NOT drop the
-      // marker: `_fetchAllTasks` reports it as an incomplete view, and the
-      // insert may well have landed, so recovery waits for a run that can see.
+      // The other two classes are NOT that, and keep the marker. A TRANSIENT
+      // failure is reported by `_fetchAllTasks` as an incomplete view rather
+      // than thrown; an AUTH failure says nothing whatever about the list — on
+      // a phone whose grant dies mid-session it would otherwise drop EVERY
+      // marker at once, and each create would be re-issued after the next
+      // sign-in as a duplicate on the user's account.
       final List<Task> rawRemote;
       final bool complete;
       try {
@@ -609,6 +612,7 @@ class SyncEngine {
         rawRemote = fetched.$1;
         complete = fetched.$2;
       } on ApiError catch (e) {
+        if (reconcile.pushFailure(e) != PushFailure.reject) rethrow;
         Log.warn(
           'inflight recovery: list $listId is gone ($e) — marker dropped',
         );

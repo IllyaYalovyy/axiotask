@@ -19,6 +19,7 @@ import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
+import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'sync_fixture.dart';
@@ -233,6 +234,45 @@ void main() {
 
       // Once the network is healthy the marker resolves and exactly one copy
       // exists.
+      await eng.run();
+      await eng.run();
+      expect(await serverCount(client, 'L1', 'buy milk'), 1);
+      await eng.store.checkInvariants();
+    },
+  );
+
+  test(
+    'a DEAD SESSION fetching the marker list keeps the marker and aborts',
+    () async {
+      // The auth case, which is neither transient nor "the list is gone": a
+      // phone that loses its grant mid-session gets a terminal 401 on every
+      // call. Reading that as "the list must have been deleted" would drop
+      // EVERY in-flight marker, and each create would be re-issued after the
+      // user signs back in — duplicates on their account, from a condition that
+      // says nothing about the list at all.
+      final (client, eng) = await engine();
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+      await eng.run();
+
+      await eng.store.upsertTask(
+        dirtyTask('local-1', 'L1', 'create', title: 'buy milk'),
+      );
+      client.failNext(Method.insertTask, () => const Network('dropped'));
+      await eng.run();
+      expect(await eng.store.inflightCreates(), hasLength(1));
+
+      client.failNext(
+        Method.listTasks,
+        () => const AuthExpired('invalid_grant'),
+      );
+      await expectLater(eng.run(), throwsA(isA<SyncError>()));
+      expect(
+        await eng.store.inflightCreates(),
+        hasLength(1),
+        reason: 'the marker outlives a dead session',
+      );
+
+      // Signed back in, the marker resolves and exactly one copy exists.
       await eng.run();
       await eng.run();
       expect(await serverCount(client, 'L1', 'buy milk'), 1);

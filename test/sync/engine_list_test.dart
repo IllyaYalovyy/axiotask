@@ -700,6 +700,44 @@ void main() {
     expect((out.pushed, out.deleted, out.errors), (0, 0, 0), reason: 'P7');
   });
 
+  test(
+    'a_list_delete_the_account_refuses_revives_the_list_instead_of_nagging',
+    () async {
+      // §I revive (#269). Some lists an account will not let you delete. A
+      // tombstone that can NEVER push would error on every run forever, so the
+      // list comes back — visible, clean, its tasks intact — and the user is told
+      // once via the error count rather than nagged every cadence tick.
+      final (client, eng) = await engine(push: true);
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L2', 'Undeletable');
+      client.seedTask('L2', 'T1', 'still here', '1');
+      await eng.run();
+      client.setUndeletableList('L2');
+
+      await tombstoneList(eng, 'L2');
+      final out = await eng.run();
+
+      expect(out.errors, 1, reason: 'the refusal is surfaced, once');
+      expect(await sidebar(eng), [
+        'My Tasks',
+        'Undeletable',
+      ], reason: 'the list the server kept is visible again');
+      expect(
+        (await eng.store.listTasks('L2')).map((t) => t.task.title).toList(),
+        ['still here'],
+        reason: 'and its tasks re-pulled with it',
+      );
+
+      // No nagging: the revived list is clean, so the next run neither retries
+      // the delete nor reports it again.
+      final deletesBefore = client.callCount(Method.deleteTasklist);
+      final settled = await eng.run();
+      expect(client.callCount(Method.deleteTasklist), deletesBefore);
+      expect((settled.pushed, settled.errors), (0, 0));
+      await eng.store.checkInvariants();
+    },
+  );
+
   test('a_pending_list_delete_hides_the_list_while_the_push_retries', () async {
     // §I × remote added tasks, non-happy path: the delete push hits a transient,
     // so the tombstone survives a whole run in which the pull still sees the list
