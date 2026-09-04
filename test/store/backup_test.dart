@@ -6,6 +6,7 @@
 // failure each prevents is silent data loss on backup/restore.
 import 'dart:convert';
 
+import 'package:axiotask/src/model/base_snapshot.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/backup.dart';
@@ -38,6 +39,19 @@ StoredTask _task(String id, String listId, String title) => StoredTask(
   syncState: SyncState.clean,
   localUpdated: '2026-01-02T00:00:00Z',
 );
+
+/// The one task map inside a produced document, as a human reader (or a
+/// restore on another machine) would see it.
+Map<String, Object?> _taskJson(Backup b) {
+  final list0 = _listJson(b);
+  return (list0['tasks']! as List).first as Map<String, Object?>;
+}
+
+/// The one list map inside a produced document.
+Map<String, Object?> _listJson(Backup b) {
+  final doc = jsonDecode(b.toJsonPretty()) as Map<String, Object?>;
+  return (doc['lists']! as List).first as Map<String, Object?>;
+}
 
 void main() {
   group('Backup.build', () {
@@ -368,5 +382,315 @@ void main() {
         'local_updated',
       ]),
     );
+  });
+
+  // What the SERIALIZER writes. Everything above asserts the parse direction or
+  // in-memory values; these assert the produced document itself, field by
+  // field. The failure they prevent is the worst one this module has: an export
+  // that quietly omits notes, dates or queued push state, restoring EMPTIED
+  // tasks on a new machine while every other test stays green.
+  group('Backup JSON — optional fields', () {
+    test('json_carries_every_optional_field_when_set', () {
+      final st = StoredTask(
+        task: const Task(
+          id: 'T1',
+          parent: 'P0',
+          position: '00000000000099',
+          title: 'Pay rent',
+          notes: 'transfer to landlord',
+          status: TaskStatus.completed,
+          due: '2026-07-01T00:00:00.000Z',
+          completed: '2026-06-30T12:00:00.000Z',
+          etag: 'etag-xyz',
+          updated: '2026-06-30T12:00:00Z',
+        ),
+        listId: 'L1',
+        syncState: SyncState.dirty,
+        localUpdated: '2026-06-30T12:05:00Z',
+        pendingOp: 'update',
+        remoteId: 'g-task-1',
+      );
+      final l = StoredTaskList(
+        list: const TaskList(
+          id: 'L1',
+          title: 'Inbox',
+          etag: 'etag-l',
+          updated: '2026-01-01T00:00:00Z',
+        ),
+        syncState: SyncState.dirty,
+        localUpdated: '2026-01-02T00:00:00Z',
+        pendingOp: 'update',
+        remoteId: 'g-list-1',
+      );
+      final b = Backup.build(
+        'now',
+        [
+          (l, [st]),
+        ],
+        bases: {
+          'T1': const BaseSnapshot(
+            title: 'Pay the rent',
+            notes: 'old note',
+            due: '2026-06-01T00:00:00.000Z',
+            status: TaskStatus.needsAction,
+          ),
+        },
+        moves: {
+          'T1': const PendingMove(
+            taskId: 'T1',
+            listId: 'L1',
+            parentId: 'P0',
+            previousId: 'T0',
+          ),
+        },
+        inflight: {'T1': '2026-06-30T12:04:00Z'},
+      );
+
+      final t = _taskJson(b);
+      expect(t['remote_id'], 'g-task-1');
+      expect(t['parent'], 'P0');
+      expect(t['notes'], 'transfer to landlord');
+      expect(t['due'], '2026-07-01T00:00:00.000Z');
+      expect(t['completed'], '2026-06-30T12:00:00.000Z');
+      expect(t['etag'], 'etag-xyz');
+      expect(t['pending_op'], 'update');
+      // The push queue that lives outside the row (#272), nested under it.
+      expect(t['base_title'], 'Pay the rent');
+      expect(t['base_notes'], 'old note');
+      expect(t['base_due'], '2026-06-01T00:00:00.000Z');
+      expect(t['base_status'], 'needsAction');
+      expect(t['pending_move'], {'parent': 'P0', 'previous': 'T0'});
+      expect(t['inflight_create'], {
+        'base_local_updated': '2026-06-30T12:04:00Z',
+      });
+
+      final lj = _listJson(b);
+      expect(lj['remote_id'], 'g-list-1');
+      expect(lj['etag'], 'etag-l');
+      expect(lj['pending_op'], 'update');
+
+      // And the document reads back as the same value — nothing lost in
+      // either direction.
+      expect(Backup.fromJson(b.toJsonPretty()), b);
+    });
+
+    test('json_omits_every_optional_field_when_null', () {
+      // Non-happy path: a clean, local, never-synced row with nothing set.
+      // Optional fields are ABSENT, not present-and-null: absence is what the
+      // readers use as a sentinel (`base_title` means "this row has a base")
+      // and what keeps an old document loadable in a new reader.
+      const bareTask = StoredTask(
+        task: Task(
+          id: 'T1',
+          position: '00000000000001',
+          title: 'Buy milk',
+          status: TaskStatus.needsAction,
+          updated: '2026-01-01T00:00:00Z',
+        ),
+        listId: 'L1',
+        syncState: SyncState.clean,
+        localUpdated: '2026-01-02T00:00:00Z',
+      );
+      const bareList = StoredTaskList(
+        list: TaskList(
+          id: 'L1',
+          title: 'Inbox',
+          updated: '2026-01-01T00:00:00Z',
+        ),
+        syncState: SyncState.clean,
+        localUpdated: '2026-01-02T00:00:00Z',
+      );
+      final b = Backup.build('now', [
+        (bareList, [bareTask]),
+      ]);
+
+      final t = _taskJson(b);
+      for (final key in const [
+        'remote_id',
+        'parent',
+        'notes',
+        'due',
+        'completed',
+        'etag',
+        'pending_op',
+        'base_title',
+        'base_notes',
+        'base_due',
+        'base_status',
+        'pending_move',
+        'inflight_create',
+      ]) {
+        expect(t.containsKey(key), isFalse, reason: 'task carries "$key"');
+      }
+      // The required fields are of course still there.
+      expect(t['id'], 'T1');
+      expect(t['title'], 'Buy milk');
+
+      final lj = _listJson(b);
+      for (final key in const ['remote_id', 'etag', 'pending_op']) {
+        expect(lj.containsKey(key), isFalse, reason: 'list carries "$key"');
+      }
+      // Visible to a human reading the file: no null-valued keys at all.
+      expect(b.toJsonPretty(), isNot(contains('": null')));
+
+      // Restoring keeps them empty rather than inventing values.
+      final rt = Backup.fromJson(b.toJsonPretty()).lists[0].tasks[0];
+      expect(rt.notes, isNull);
+      expect(rt.due, isNull);
+      expect(rt.base, isNull);
+      expect(rt.move, isNull);
+      expect(rt.inflight, isNull);
+    });
+
+    test('json_keeps_empty_queue_records_but_drops_their_null_fields', () {
+      // Non-happy path: the queue records exist but carry nothing — a base
+      // with neither notes nor due, a move to the top of the top level, an
+      // in-flight marker written before the drain snapshot was recorded. Their
+      // PRESENCE is the fact that must survive a round-trip; their empty
+      // fields must not be written as nulls.
+      final st = _task('T1', 'L1', 'Buy milk');
+      final b = Backup.build(
+        'now',
+        [
+          (_list('L1', 'Inbox'), [st]),
+        ],
+        bases: {
+          'T1': const BaseSnapshot(
+            title: 'Buy milk',
+            status: TaskStatus.needsAction,
+          ),
+        },
+        moves: {'T1': const PendingMove(taskId: 'T1', listId: 'L1')},
+        inflight: {'T1': null},
+      );
+
+      final t = _taskJson(b);
+      expect(t['base_title'], 'Buy milk');
+      expect(t['base_status'], 'needsAction');
+      expect(t.containsKey('base_notes'), isFalse);
+      expect(t.containsKey('base_due'), isFalse);
+      expect(t['pending_move'], isEmpty);
+      expect(t['inflight_create'], isEmpty);
+
+      final rt = Backup.fromJson(b.toJsonPretty()).lists[0].tasks[0];
+      expect(
+        rt.base,
+        const BaseSnapshot(title: 'Buy milk', status: TaskStatus.needsAction),
+      );
+      expect(rt.move, isNotNull);
+      expect(rt.move!.parent, isNull);
+      expect(rt.move!.previous, isNull);
+      expect(rt.inflight, isNotNull);
+      expect(rt.inflight!.baseLocalUpdated, isNull);
+    });
+  });
+
+  // Value equality is what the round-trip assertions above rest on: if two
+  // DIFFERENT backups compared equal, every `expect(parsed, original)` in this
+  // file would pass against a serializer that lost data.
+  group('value equality', () {
+    Backup backupOf(List<StoredTask> tasks, {String title = 'Inbox'}) =>
+        Backup.build('now', [(_list('L1', title), tasks)]);
+
+    test('backups differing in one task are not equal', () {
+      final same = backupOf([_task('T1', 'L1', 'Buy milk')]);
+      expect(backupOf([_task('T1', 'L1', 'Buy milk')]), same);
+      // Same length, one element different — at the level the difference
+      // lives on (the list's tasks) and at the root that contains it.
+      expect(
+        backupOf([_task('T1', 'L1', 'Buy bread')]).lists[0],
+        isNot(same.lists[0]),
+      );
+      expect(backupOf([_task('T1', 'L1', 'Buy bread')]), isNot(same));
+      // Same first element, different length.
+      expect(
+        backupOf([
+          _task('T1', 'L1', 'Buy milk'),
+          _task('T2', 'L1', 'Buy milk'),
+        ]),
+        isNot(same),
+      );
+      // Empty vs non-empty.
+      expect(backupOf(const []), isNot(same));
+      // A difference above the list level is caught too.
+      expect(
+        backupOf([_task('T1', 'L1', 'Buy milk')], title: 'Work'),
+        isNot(same),
+      );
+    });
+
+    test('a task differing in one optional field is not equal', () {
+      const base = BackupTask(
+        id: 'T1',
+        position: 'p',
+        title: 'Buy milk',
+        status: 'needsAction',
+        updated: 'u',
+        syncState: 'clean',
+        localUpdated: 'lu',
+      );
+      expect(
+        const BackupTask(
+          id: 'T1',
+          position: 'p',
+          title: 'Buy milk',
+          status: 'needsAction',
+          updated: 'u',
+          syncState: 'clean',
+          localUpdated: 'lu',
+        ),
+        base,
+      );
+      expect(
+        const BackupTask(
+          id: 'T1',
+          position: 'p',
+          title: 'Buy milk',
+          notes: 'and bread',
+          status: 'needsAction',
+          updated: 'u',
+          syncState: 'clean',
+          localUpdated: 'lu',
+        ),
+        isNot(base),
+      );
+      // The queue records participate in equality, so a lost move or marker
+      // fails a round-trip assertion instead of passing silently.
+      expect(
+        const BackupTask(
+          id: 'T1',
+          position: 'p',
+          title: 'Buy milk',
+          status: 'needsAction',
+          updated: 'u',
+          syncState: 'clean',
+          localUpdated: 'lu',
+          move: BackupMove(parent: 'P0'),
+        ),
+        isNot(base),
+      );
+      expect(
+        const BackupTask(
+          id: 'T1',
+          position: 'p',
+          title: 'Buy milk',
+          status: 'needsAction',
+          updated: 'u',
+          syncState: 'clean',
+          localUpdated: 'lu',
+          inflight: BackupInflight(),
+        ),
+        isNot(base),
+      );
+      // Different values inside a queue record are different too.
+      expect(
+        const BackupMove(parent: 'P0', previous: 'T0'),
+        isNot(const BackupMove(parent: 'P0')),
+      );
+      expect(
+        const BackupInflight(baseLocalUpdated: 'x'),
+        isNot(const BackupInflight()),
+      );
+    });
   });
 }
