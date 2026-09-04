@@ -1,0 +1,200 @@
+# The shared quality gate — the first thing in this repository that runs on a
+# push or a pull request (#275).
+#
+# Until now every "Merge #2xx" was gated only by a script on one machine. A
+# fresh clone had no gate at all, and nothing on GitHub could tell a red branch
+# from a green one. This workflow is the gate that everyone can see.
+#
+# It mirrors the local gate's Dart stages exactly — format, analyze (both the
+# SDK analyzer and the riverpod_lint analyzer plugin), the source-level time
+# bans, codegen staleness, the full test suite with coverage, and both coverage
+# ratchets — and adds the debug APK build, because a green Dart run does not
+# prove the Android pipeline still assembles (RFC-010, learned the hard way).
+#
+# NOT pinned to a Flutter version, deliberately: pinning the SDK is ruled out
+# for this project (new releases are wanted). An engine bump that shifts golden
+# bytes is expected to turn this red — that is the signal, and it is answered by
+# a human-ratified golden regeneration in its own commit (the #230 procedure),
+# never by pinning the toolchain or lowering a floor here.
+name: gate
+
+on:
+  push:
+    branches: [flutter, main]
+  pull_request:
+    branches: [flutter, main]
+
+# A new push to the same branch/PR supersedes the run in flight.
+concurrency:
+  group: gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dart:
+    name: format · analyze · test · coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scope detection below compares against the merge base, so the
+          # history has to be there. A shallow clone has no merge base.
+          fetch-depth: 0
+
+      # The icon suite drives the REAL renderers (cairosvg for the rasters,
+      # GdkPixbuf for the loader GNOME uses). Those assertions must never be
+      # skipped for want of a tool — a machine without them runs a green icon
+      # suite that verified nothing (#275) — so the tools are installed here and
+      # the tests fail loudly if they are ever absent.
+      - name: Install the icon toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Record the toolchain this run used
+        run: flutter --version
+
+      - run: flutter pub get
+
+      - name: dart format --set-exit-if-changed
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: flutter analyze --fatal-infos
+        run: flutter analyze --fatal-infos
+
+      # `flutter analyze` does NOT load analyzer plugins. riverpod_lint is a
+      # native analysis_server_plugin, so only `dart analyze` runs it, and only
+      # --fatal-warnings makes its rules (e.g. missing_provider_scope) fail.
+      - name: dart analyze --fatal-infos --fatal-warnings (riverpod_lint plugin)
+        run: dart analyze --fatal-infos --fatal-warnings
+
+      # Product code takes wall time through package:clock's ambient `clock` and
+      # schedules through injectable abstractions. A raw DateTime.now() or
+      # dart:async Timer below lib/ is uncontrollable under test and a proven
+      # flake source (the Dart port of the reference repo's timestamp_audit.rs).
+      - name: Time-source ban below lib/
+        run: |
+          hits=$(grep -rnE 'DateTime\.now\(|(^|[^A-Za-z0-9_])Timer(\.periodic)?\(' \
+            lib --include='*.dart' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::use clock.now() and an injectable timer below lib/ — see TESTING.md"
+            exit 1
+          fi
+
+      # The same ban, pointed at the suite (#275). A test that sleeps on the
+      # wall clock is a flake waiting for a loaded runner: it either wastes the
+      # time it sleeps or fails when the machine is slower than the author's.
+      # Wait on the thing you are testing (a stream event, a completer), or drive
+      # time with fake_async.
+      #
+      # The allowlist is one file: test/ui/properties_test.dart drains REAL file
+      # IO inside tester.runAsync(), where fake timers would starve the IO and
+      # there is no completer to wait on.
+      - name: Wall-clock ban below test/
+        run: |
+          hits=$(grep -rnE 'Future(<[^>]*>)?\.delayed|DateTime\.now\(' \
+            test integration_test --include='*.dart' \
+            | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' \
+            | grep -vE '^test/ui/properties_test\.dart:' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::a test may not sleep on the wall clock — await the outcome or use fake_async (#275)"
+            exit 1
+          fi
+
+      # A .drift schema change that is not regenerated leaves database.g.dart
+      # describing the OLD schema. Every Dart test keeps passing (they run
+      # against the generated class), and the mismatch only shows up as a
+      # runtime SQL error on a real device.
+      # Removed first, then regenerated: build_runner treats an output whose
+      # inputs are unchanged as up to date, so a HAND-EDITED database.g.dart
+      # would otherwise survive the rebuild and compare clean against itself.
+      - name: build_runner staleness (database.g.dart is not hand-maintained)
+        run: |
+          rm -f lib/src/store/database.g.dart
+          dart run build_runner build --delete-conflicting-outputs
+          if ! git diff --exit-code -- lib/src/store/database.g.dart; then
+            echo "::error::lib/src/store/database.g.dart is stale — run: dart run build_runner build --delete-conflicting-outputs"
+            exit 1
+          fi
+
+      - name: flutter test --coverage
+        run: flutter test --coverage
+
+      # Two ratchets, both printed, either one a failure. They only ever move
+      # UP: a drop means new lib/ code arrived without the test the TDD mandate
+      # requires. Raise a floor when coverage legitimately rises; never lower
+      # one to make a run pass.
+      - name: Coverage ratchets
+        env:
+          # Hand-written core: model + store + sync. Measured 93.10% when the
+          # floor was set; the sliver of headroom absorbs line-count churn.
+          COVERAGE_FLOOR_CORE: '92.6'
+          # The layers above it: app + auth + api + ui — roughly four times the
+          # instrumented lines of the core, and until #275 they had no floor at
+          # all. Measured 94.95% when the floor was set.
+          COVERAGE_FLOOR_APP: '94.5'
+        run: |
+          pct() {
+            awk -v re="$1" '
+              /^SF:/ { f=substr($0,4); inc=(f ~ re)&&(f !~ /\.g\.dart$/) }
+              /^DA:/ && inc { split(substr($0,4),a,","); tot++; if (a[2]+0>0) cov++ }
+              END { if (tot>0) printf "%.2f", 100*cov/tot; else print "0" }
+            ' coverage/lcov.info
+          }
+          fail=0
+          for pair in "core:lib/src/(model|store|sync)/:$COVERAGE_FLOOR_CORE" \
+                      "app:lib/src/(app|auth|api|ui)/:$COVERAGE_FLOOR_APP"; do
+            name=${pair%%:*}; rest=${pair#*:}; re=${rest%:*}; floor=${rest##*:}
+            got=$(pct "$re")
+            echo "$name line coverage: ${got}%  (floor ${floor}%)"
+            if awk "BEGIN{exit !($got < $floor)}"; then
+              echo "::error::$name coverage ${got}% fell below the ${floor}% floor — add the missing test; do NOT lower the floor"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+
+  android:
+    name: android debug apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # A green Dart suite does not prove the Android pipeline still assembles:
+      # a manifest edit, a plugin bump or a Gradle/AGP change breaks here and
+      # nowhere else. Debug only — no signing secrets are needed, and release
+      # signing (#196) is still an operator step.
+      - name: flutter build apk --debug
+        run: flutter build apk --debug

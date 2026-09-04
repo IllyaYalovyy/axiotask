@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nothing this app stores locally may leave the device by way of the OS.
+
+     The SQLite store is a CACHE of Google Tasks, not a document: every row
+     carries a Google id and an etag, and the sync cursor records how far this
+     device has read. Android's cloud backup and device-to-device transfer copy
+     that state onto a *different* device and hand it to a sync engine that
+     believes it. The result is the failure #272 had to be fixed by hand —
+     resurrected rows, duplicated lists, etags that 412 forever. Google is the
+     source of truth; a fresh install must re-pull, which takes seconds.
+
+     `android:allowBackup="false"` in the manifest covers cloud backup on all
+     versions. This file is the Android 12+ (API 31) half: <device-transfer>
+     defaults to including everything, and allowBackup does not govern it.
+     Both sections exclude every data domain the app can write to. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

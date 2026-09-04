@@ -88,7 +88,7 @@ void main() {
       haptics.tick();
       haptics.confirm();
       haptics.warn();
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
 
       expect(sent, <String>[
         'HapticFeedbackType.lightImpact',
@@ -102,7 +102,7 @@ void main() {
       haptics.tick();
       haptics.confirm();
       haptics.warn();
-      await Future<void>.delayed(Duration.zero);
+      await pumpEventQueue();
 
       expect(sent, isEmpty);
     });

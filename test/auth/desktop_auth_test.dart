@@ -340,7 +340,10 @@ void main() {
           exchange: (client, config, code, redirectUri, codeVerifier) async {
             expect(code, 'the-code');
             // Yield so a teardown scheduled too early gets its chance to run…
-            await Future<void>.delayed(const Duration(milliseconds: 50));
+            // pumpEventQueue drains the queue rather than sleeping on it: the
+            // wall-clock 50ms it replaced was both slower and, on a loaded
+            // machine, not necessarily long enough (#275).
+            await pumpEventQueue();
             // …then prove the flow's client is still usable.
             await client.get(Uri.parse('http://127.0.0.1:${probe.port}/'));
             return const StoredTokens(

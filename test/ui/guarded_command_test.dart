@@ -6,6 +6,8 @@
 // Asserts the OBSERVABLE outcome: what the toast controller holds after the
 // command runs (the user-visible toast), not that some method fired.
 
+import 'dart:async';
+
 import 'package:axiotask/src/ui/guarded_command.dart';
 import 'package:axiotask/src/ui/toast.dart';
 import 'package:fake_async/fake_async.dart';
@@ -56,12 +58,12 @@ void main() {
     test('a hung command trips the watchdog and toasts "taking too long"', () {
       fakeAsync((async) {
         final toasts = ToastController();
-        // Never completes → the watchdog must return control.
-        guardCommand(
-          toasts,
-          'sync_now',
-          () => Future<void>.delayed(const Duration(hours: 1)),
-        );
+        // Never completes → the watchdog must return control. A completer
+        // that is never completed says exactly that, with no duration to be
+        // mistaken for a deadline the test depends on (#275).
+        final hung = Completer<void>();
+        addTearDown(() => hung.complete());
+        guardCommand(toasts, 'sync_now', () => hung.future);
         // Just past sync's 5-minute budget — far enough to trip the watchdog,
         // not so far the freshly-shown toast auto-dismisses (5s life).
         async.elapse(const Duration(minutes: 5, seconds: 1));

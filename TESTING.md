@@ -7,15 +7,26 @@ quality gate holds you to. It is short on purpose — the living examples under
 
 ## The one gate
 
+Every push and pull request is gated on GitHub by `.github/workflows/gate.yml`
+— format, both analyzers, the two source-level time bans, codegen staleness,
+the full suite with coverage, both coverage ratchets, and the Android debug APK
+build. That is the shared gate; nothing merges past a red one.
+
+Locally, the same ground plus the Linux build and the integration smoke:
+
 ```bash
-bash .ktask/verify.sh
+bash .ktask/verify.sh          # scope-aware
+bash .ktask/verify.sh --full   # force every build stage (e.g. on a clean mainline)
 ```
 
 Never retype its contents from memory. It runs, in order: TDD-evidence,
 `dart format`, `flutter analyze --fatal-infos`, `dart analyze --fatal-infos
---fatal-warnings` (the riverpod_lint plugin), the time-source ban, `flutter
-test --coverage`, and — when product code changed — the Android APK build, the
-Linux build, and the xvfb integration smoke. Non-zero exit = not done.
+--fatal-warnings` (the riverpod_lint plugin), the time-source ban below `lib/`,
+the wall-clock ban below `test/`, codegen staleness, `flutter test --coverage`,
+both coverage ratchets, and — when product code changed — the Android APK
+build, the Linux build, and the xvfb integration smoke. Non-zero exit = not
+done. Any honoured `AXIOTASK_VERIFY_SKIP_*` prints `SKIPPED (env override)`, so
+a run that checked less than it looks like says so.
 
 ## Tests assert what the user sees
 
@@ -76,6 +87,15 @@ greps for them (the port of the reference repo's `timestamp_audit.rs`).
 Uncontrollable time is the top flake source; this ban keeps every date/timer
 test deterministic under `withClock` / `fake_async`.
 
+**Tests may not sleep either.** `Future.delayed` and `DateTime.now()` are banned
+below `test/` too, and the gate greps for them. A test that polls a wall-clock
+deadline is a flake waiting for a loaded runner — it either burns the time it
+sleeps or fails on a machine slower than yours. Wait on the outcome instead:
+`await scheduler.runs.firstWhere(...)`, a `Completer`, or `pumpEventQueue()`;
+drive scheduled time with `fakeAsync`. Bound only the FAILURE path, with
+`.timeout(...)`. One file is allowlisted — `test/ui/properties_test.dart` drains
+real file IO inside `tester.runAsync()`, where fake timers starve the IO.
+
 ## Golden discipline
 
 Goldens are byte-compared on every `flutter test`. A golden that changed is a
@@ -89,8 +109,12 @@ is its own reviewed commit with the before/after called out; a feature task
 must never silently rewrite a baseline. Goldens are generated on the reference
 toolchain (this repo's pinned Flutter) so they reproduce across the fleet.
 
-alchemist writes two variants per golden: `goldens/<platform>/` (real platform
-rendering) and `goldens/ci/` (host-independent). Commit both.
+alchemist can write two variants per golden. This suite runs **one**:
+`goldens/<platform>/`, the real rendering. The `ci` variant obscures every run
+of text into a solid block, so it cannot show a typography or layout regression
+— all it added was a second baseline to regenerate on every engine bump. It is
+disabled in `flutter_test_config.dart` and `test/packaging/golden_variant_test.dart`
+keeps it that way (#275).
 
 ## Flakes are failures
 
