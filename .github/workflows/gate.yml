@@ -48,12 +48,16 @@ jobs:
       # GdkPixbuf for the loader GNOME uses). Those assertions must never be
       # skipped for want of a tool — a machine without them runs a green icon
       # suite that verified nothing (#275) — so the tools are installed here and
-      # the tests fail loudly if they are ever absent.
+      # the tests fail loudly if they are ever absent. librsvg2-common is the
+      # gdk-pixbuf SVG loader module itself: without it GdkPixbuf imports fine
+      # and then answers "couldn't recognize the image file format" for every
+      # SVG — which is precisely the #261 symptom the suite exists to detect,
+      # so it must come from the environment, never from the icon.
       - name: Install the icon toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0
+            python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0 librsvg2-common
 
       - uses: subosito/flutter-action@v2
         with:
@@ -128,8 +132,15 @@ jobs:
             exit 1
           fi
 
+      # --exclude-tags reference-toolchain: one icon assertion compares a FRESH
+      # cairosvg render against the committed PNGs, and those bytes reproduce
+      # only on the toolchain the icons were generated with — on another distro
+      # it reports the runner's libcairo version, not a defect. The committed
+      # bytes are still guarded here by the renderer-free recorded-sha256
+      # assertion; the re-render claim is checked by the local gate on the
+      # reference machine. See dart_test.yaml.
       - name: flutter test --coverage
-        run: flutter test --coverage
+        run: flutter test --coverage --exclude-tags reference-toolchain
 
       # Two ratchets, both printed, either one a failure. They only ever move
       # UP: a drop means new lib/ code arrived without the test the TDD mandate

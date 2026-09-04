@@ -4,3 +4,14 @@
 # `--exclude-tags golden` when iterating.
 tags:
   golden:
+  # Tests whose expected value is a BYTE-FOR-BYTE artifact of one specific
+  # renderer version — the icon re-render check, which compares a fresh
+  # cairosvg/cairo rasterization against the committed PNGs. Those bytes
+  # reproduce only on the toolchain the icons were generated with (exactly as
+  # goldens reproduce only on one Flutter engine). Running it elsewhere reports
+  # the renderer's version, not a defect, so CI excludes this tag; the local
+  # gate on the reference machine runs it. What still guards the committed
+  # bytes everywhere is the recorded-sha256 assertion, which is renderer-free.
+  reference-toolchain:
+  # Build-config assertions that read checked-in packaging files.
+  packaging:
