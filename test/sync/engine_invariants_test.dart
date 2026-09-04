@@ -11,6 +11,7 @@
 // Assertions read what the run leaves behind: the rows the store holds, the
 // tasks and lists the fake server holds, the insert call count.
 
+import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/fake_tasks_api.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
@@ -49,6 +50,22 @@ StoredTask dirtyTask(
   localUpdated: _t0,
   pendingOp: op,
 );
+
+/// `(listId, parentId)` of the row [id] holds, or `null` when it is gone.
+Future<(String, String?)?> placement(Store store, String id) async {
+  final row = await store.findTaskAny(id);
+  return row == null ? null : (row.listId, row.task.parent);
+}
+
+/// How many tasks titled [title] the server holds in [listId].
+Future<int> serverCount(
+  FakeTasksApi client,
+  String listId,
+  String title,
+) async {
+  final page = await client.listTasks(listId);
+  return page.items.where((t) => t.title == title).length;
+}
 
 void main() {
   test('a dirty row that already carries a remote id is patched, never inserted '
@@ -131,6 +148,97 @@ void main() {
     expect(row.syncState, SyncState.clean);
     await eng.store.checkInvariants();
   });
+
+  test(
+    'an in-flight create marker whose list was deleted remotely does not wedge '
+    'the session',
+    () async {
+      // The permanent wedge (#269). A create fails transiently, so its in-flight
+      // marker is kept — "this insert may already have landed". Before the next
+      // run the user deletes that list on the web. Recovery runs FIRST in the
+      // push, fetches the marker's list to look for the orphan, and meets a 404
+      // it used to rethrow: the run failed at the same line every time, forever,
+      // showing "needs attention" with nothing the user could do about it.
+      //
+      // A list the server does not have holds no orphan, and never will. The
+      // marker is dropped and the run carries on to the ghost-list path, which
+      // is what re-homes the row.
+      final (client, eng) = await engine();
+      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+      await seedSyncedList(client, eng.store, 'L2', 'Work');
+      await eng.run();
+
+      await eng.store.upsertTask(
+        dirtyTask('local-1', 'L2', 'create', title: 'buy milk'),
+      );
+      client.failNext(Method.insertTask, () => const Network('dropped'));
+      await eng.run();
+      expect(
+        await eng.store.inflightCreates(),
+        hasLength(1),
+        reason: 'precondition: the marker survives the transient',
+      );
+
+      // The list is deleted on another device.
+      client.deleteListFromState('L2');
+
+      final out = await eng.run(); // must not throw
+      expect(
+        await eng.store.inflightCreates(),
+        isEmpty,
+        reason: 'a list the server does not have can hold no orphan',
+      );
+      expect((await eng.store.allLists()).map((l) => l.list.title).toList(), [
+        'My Tasks',
+      ], reason: 'the ghost list is removed in the same run');
+      expect(await placement(eng.store, 'local-1'), (
+        'L1',
+        null,
+      ), reason: 'and the row the server never saw re-homed (P2/D2)');
+      expect(out.errors, lessThanOrEqualTo(1));
+
+      // It converges, and exactly one copy reaches Google.
+      await eng.run();
+      expect(await serverCount(client, 'L1', 'buy milk'), 1);
+      final settled = await eng.run();
+      expect((settled.pushed, settled.errors), (0, 0), reason: 'P7');
+      await eng.store.checkInvariants();
+    },
+  );
+
+  test(
+    'a TRANSIENT failure fetching the marker list keeps the marker',
+    () async {
+      // The other half of the same decision: only a PERMANENT answer proves the
+      // list is gone. A flaky network must not drop a marker whose insert may
+      // have committed — dropping it re-issues the create and duplicates it.
+      final (client, eng) = await engine();
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+      await eng.run();
+
+      await eng.store.upsertTask(
+        dirtyTask('local-1', 'L1', 'create', title: 'buy milk'),
+      );
+      client.failNext(Method.insertTask, () => const Network('dropped'));
+      await eng.run();
+      expect(await eng.store.inflightCreates(), hasLength(1));
+
+      client.failNext(Method.listTasks, () => const ServerError(503));
+      await eng.run();
+      expect(
+        await eng.store.inflightCreates(),
+        hasLength(1),
+        reason: 'the marker outlives a transient — the insert may have landed',
+      );
+
+      // Once the network is healthy the marker resolves and exactly one copy
+      // exists.
+      await eng.run();
+      await eng.run();
+      expect(await serverCount(client, 'L1', 'buy milk'), 1);
+      await eng.store.checkInvariants();
+    },
+  );
 
   test(
     'a list 404ing on rename is revived without the dead remote id',

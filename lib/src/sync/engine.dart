@@ -591,7 +591,30 @@ class SyncEngine {
       final listRemoteId = await _store.listRemoteId(listId);
       // The list itself has not landed yet, so its tasks cannot have either.
       if (listRemoteId == null) continue;
-      final (rawRemote, complete) = await _fetchAllTasks(listRemoteId);
+      // A PERMANENT failure fetching the marker's list is the answer, not an
+      // error to propagate (#269): the list is gone, so it holds no orphan and
+      // never will, and the create this marker guards cannot have survived in
+      // it. Dropping the marker lets the run continue to the ghost-list path,
+      // which re-homes the row the server never saw (P2/D2). Rethrowing instead
+      // failed the run at this same line every cadence tick forever — the
+      // session never synced again, and the status said only "needs attention".
+      //
+      // A TRANSIENT failure is a different thing entirely and must NOT drop the
+      // marker: `_fetchAllTasks` reports it as an incomplete view, and the
+      // insert may well have landed, so recovery waits for a run that can see.
+      final List<Task> rawRemote;
+      final bool complete;
+      try {
+        final fetched = await _fetchAllTasks(listRemoteId);
+        rawRemote = fetched.$1;
+        complete = fetched.$2;
+      } on ApiError catch (e) {
+        Log.warn(
+          'inflight recovery: list $listId is gone ($e) — marker dropped',
+        );
+        await _store.clearInflightCreate(localId);
+        continue;
+      }
       if (!complete) continue; // incomplete view; retry recovery next run
       // Translate into local-id space so the orphan match compares like with
       // like: a remote row we already track resolves to ITS local id (and is
