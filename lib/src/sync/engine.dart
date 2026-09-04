@@ -310,6 +310,7 @@ class SyncEngine {
       for (final row in await _store.drainDirty()) {
         if (!reconcile.createIsEligible(
           row.pendingOp,
+          row.remoteId,
           row.task.id,
           attempted,
           unresolvedCreates,
@@ -335,7 +336,10 @@ class SyncEngine {
         continue;
       }
       if (_isQuarantined(_taskRef(row), out)) continue;
-      switch (row.pendingOp) {
+      // A queued `create` on a row Google already acknowledged is a PATCH, not
+      // a second insert (#269) — the create pass above skipped it for exactly
+      // that reason, so this pass has to be the one that pushes it.
+      switch (reconcile.effectivePendingOp(row.pendingOp, row.remoteId)) {
         case 'update':
           // No remote id and no in-flight marker: the server has never seen
           // this row, so there is nothing to patch. It stays dirty; its own
@@ -511,16 +515,11 @@ class SyncEngine {
                   await _store.deleteListHard(l.list.id);
                 } else {
                   // Nowhere to put them: keep the list as an unpushed create so
-                  // it is re-created on the server and the rows land in it.
-                  await _store.upsertList(
-                    StoredTaskList(
-                      list: _listAsCreate(l.list),
-                      syncState: SyncState.dirty,
-                      localUpdated: l.localUpdated,
-                      pendingOp: 'create',
-                      localOnly: l.localOnly,
-                    ),
-                  );
+                  // it is re-created on the server and the rows land in it. The
+                  // dead remote id goes with it (#269) — a create that still
+                  // named it would push into the id Google just 404'd, and the
+                  // marker recovery would fetch that id every run forever.
+                  await _store.resetListToUnpushedCreate(l);
                 }
                 out.listsChanged = true;
               case ListRenameFailed(:final failure):
@@ -804,6 +803,11 @@ class SyncEngine {
   /// walk straight past by pushing the resulting update in the same pass;
   /// production callers reach it through [run].
   Future<void> pushCreate(StoredTask row, SyncOutcome out) async {
+    // A row Google has already named is never inserted again (#269): the insert
+    // would duplicate it on the user's account. Its unpushed content goes out as
+    // a patch in the mutation pass instead. [reconcile.createIsEligible] keeps
+    // `run` from getting here; this guard holds for the direct callers too.
+    if (row.remoteId != null) return;
     // Wire ids: the list's, and (for a subtask) the parent's. The create pass
     // only reaches a row whose parent is already acknowledged
     // ([reconcile.parentIsPushable]), so a missing one means the LIST create
@@ -1136,15 +1140,10 @@ class SyncEngine {
           }
         }
         if (revived != null) {
-          await _store.upsertList(
-            StoredTaskList(
-              list: _listAsCreate(revived.list),
-              syncState: SyncState.dirty,
-              localUpdated: revived.localUpdated,
-              pendingOp: 'create',
-              localOnly: revived.localOnly,
-            ),
-          );
+          // Unlearn the remote id with it (#269): the server says this list is
+          // gone, so a row that still named it would push creates into a dead
+          // id run after run.
+          await _store.resetListToUnpushedCreate(revived);
         }
         out.listsChanged = true;
         continue;
@@ -1479,10 +1478,6 @@ Task _withIds(Task t, String id, String? parent) => Task(
 // Neither [Task.copyWith] nor [TaskList] can express clearing `etag`/`parent` to
 // null (copyWith uses `?? this.x`), and the reference does these as in-place field
 // mutations. Rebuild the value explicitly instead.
-
-/// A list rebuilt as an unpushed create: same id/title/updated, no etag.
-TaskList _listAsCreate(TaskList l) =>
-    TaskList(id: l.id, title: l.title, updated: l.updated);
 
 /// [t] promoted to top-level (parent cleared), dropping the etag when [dropEtag]
 /// — the D7 flatten / pull detach shape.

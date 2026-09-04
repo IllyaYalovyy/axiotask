@@ -113,8 +113,54 @@ class Store {
       'remote_id = COALESCE(excluded.remote_id, task_lists.remote_id), '
       'title = excluded.title, etag = excluded.etag, updated = excluded.updated, '
       'local_updated = excluded.local_updated, sync_state = excluded.sync_state, '
-      'pending_op = excluded.pending_op, local_only = excluded.local_only',
+      // Same invariant as [upsertTask]: a list Google has acknowledged is
+      // patched, never inserted again (#269). `renameList` carries the pending
+      // op forward from a snapshot read a round-trip earlier, so a
+      // `finishListCreate` landing in between would otherwise re-queue an
+      // acknowledged list as a create — a second list on the user's account.
+      // The one path that deliberately UNLEARNS a remote id (the ghost-list
+      // revive) goes through [resetListToUnpushedCreate], not through here.
+      'pending_op = CASE WHEN task_lists.remote_id IS NOT NULL '
+      "                  AND excluded.pending_op = 'create' THEN 'update' "
+      '                  ELSE excluded.pending_op END, '
+      'local_only = excluded.local_only',
       variables: _listVars(list),
+      updates: {_db.taskLists},
+    );
+  }
+
+  /// Re-queue [list] as a create the server has NEVER seen: its `remote_id` and
+  /// `etag` are cleared outright, not COALESCE-preserved (#269).
+  ///
+  /// The one legitimate un-learning of a remote id. The server said the list is
+  /// gone (a 404 on rename, or ghost detection on the pull) while the list still
+  /// holds rows Google has never seen, so the list is re-created rather than
+  /// dropped (P2/D2). Keeping the dead `remote_id` would leave a row that both
+  /// names a list Google does not have and is queued as a create — the create
+  /// would push into the tombstone's id and 404 forever.
+  Future<void> resetListToUnpushedCreate(StoredTaskList list) async {
+    await _db.customInsert(
+      'INSERT INTO task_lists ($_listCols) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      'ON CONFLICT(id) DO UPDATE SET '
+      'remote_id = NULL, title = excluded.title, etag = NULL, '
+      'updated = excluded.updated, local_updated = excluded.local_updated, '
+      "sync_state = 'dirty', pending_op = 'create', "
+      'local_only = excluded.local_only',
+      variables: _listVars(
+        StoredTaskList(
+          // No etag and no remote id, on the INSERT path as much as the
+          // conflict path: this row is one the server has never seen.
+          list: TaskList(
+            id: list.list.id,
+            title: list.list.title,
+            updated: list.list.updated,
+          ),
+          syncState: SyncState.dirty,
+          localUpdated: list.localUpdated,
+          pendingOp: 'create',
+          localOnly: list.localOnly,
+        ),
+      ),
       updates: {_db.taskLists},
     );
   }
@@ -282,7 +328,19 @@ class Store {
       'status = excluded.status, due = excluded.due, '
       'completed_at = excluded.completed_at, etag = excluded.etag, '
       'updated = excluded.updated, local_updated = excluded.local_updated, '
-      'sync_state = excluded.sync_state, pending_op = excluded.pending_op, '
+      'sync_state = excluded.sync_state, '
+      // INVARIANT: `remote_id IS NOT NULL ⇒ pending_op != 'create'` (#269).
+      // Callers write WHOLE rows built from a snapshot read a round-trip
+      // earlier, and `pending_op` comes from that snapshot. A `finishCreate`
+      // landing in between would otherwise restore `create` onto a row Google
+      // has already acknowledged — and the next push would INSERT the task a
+      // second time (a duplicate on the user's account), then patch it. What
+      // the caller means is "this row has unpushed content"; against an
+      // acknowledged row that is a PATCH, so the op is rewritten here rather
+      // than trusted from the stale read.
+      'pending_op = CASE WHEN tasks.remote_id IS NOT NULL '
+      "                  AND excluded.pending_op = 'create' THEN 'update' "
+      '                  ELSE excluded.pending_op END, '
       'web_view_link = excluded.web_view_link',
       variables: _taskVars(t),
       updates: {_db.tasks},
@@ -424,6 +482,113 @@ class Store {
       .watch()
       .map((rows) => rows.map(_taskFromRow).toList())
       .distinct(_sameTaskList);
+
+  // ── Invariants ────────────────────────────────────────────────────────────
+
+  /// Remote ids this store has already seen for a task id — the history half of
+  /// the write-once check, which a single state cannot see. Only ever grows, and
+  /// only [checkInvariants] touches it, so it costs a production run nothing.
+  final Map<String, String> _seenTaskRemoteIds = {};
+
+  /// Assert the store's structural invariants and throw a [StateError] naming
+  /// EVERY violation found (#269). A test/diagnostic entry point: the property
+  /// and dual-device suites call it after every sync run, so a corrupt write is
+  /// caught in the run that caused it rather than surfacing runs later as a
+  /// duplicate task or an orphaned subtree.
+  ///
+  /// The invariants, all of them previously carried only in comments:
+  ///
+  /// 1. **A row the server acknowledged is never queued as a create.**
+  ///    `remote_id IS NOT NULL ⇒ pending_op != 'create'`, for tasks and lists.
+  ///    Violated, the push inserts a SECOND copy on the user's account.
+  /// 2. **A clean row carries no base snapshot.** The base is the content as of
+  ///    the last server agreement, captured when a clean row goes dirty; a clean
+  ///    row that kept one would have a 412 diffed against stale content.
+  /// 3. **Subtasks are strictly one level, in their parent's list.** A third
+  ///    level is a shape Google's forest model does not have (invariant #1), and
+  ///    a subtask parked in a different list from its parent is unaddressable on
+  ///    the wire — the insert names a `(listId, parent)` pair the server rejects.
+  /// 4. **A task's `remote_id` is write-once.** Once Google has named a row, that
+  ///    name never changes and is never forgotten: unlearning it strands the
+  ///    server's copy and re-creates the task. (Lists are exempt by design —
+  ///    [resetListToUnpushedCreate] unlearns one deliberately when the server
+  ///    says the list is gone.)
+  Future<void> checkInvariants() async {
+    final bad = <String>[];
+
+    final ackedCreates = await _db
+        .customSelect(
+          "SELECT 'task' AS kind, id, remote_id FROM tasks "
+          "WHERE remote_id IS NOT NULL AND pending_op = 'create' "
+          'UNION ALL '
+          "SELECT 'list' AS kind, id, remote_id FROM task_lists "
+          "WHERE remote_id IS NOT NULL AND pending_op = 'create'",
+        )
+        .get();
+    for (final r in ackedCreates) {
+      bad.add(
+        '${r.read<String>('kind')} ${r.read<String>('id')} has remote_id '
+        "${r.read<String>('remote_id')} but is queued as a 'create'",
+      );
+    }
+
+    final cleanWithBase = await _db
+        .customSelect(
+          'SELECT id FROM tasks '
+          "WHERE sync_state = 'clean' AND (base_title IS NOT NULL "
+          'OR base_notes IS NOT NULL OR base_due IS NOT NULL '
+          'OR base_status IS NOT NULL)',
+        )
+        .get();
+    for (final r in cleanWithBase) {
+      bad.add('task ${r.read<String>('id')} is clean but kept a base snapshot');
+    }
+
+    final thirdLevel = await _db
+        .customSelect(
+          'SELECT c.id AS id FROM tasks c JOIN tasks p ON p.id = c.parent_id '
+          'WHERE p.parent_id IS NOT NULL',
+        )
+        .get();
+    for (final r in thirdLevel) {
+      bad.add('task ${r.read<String>('id')} is a third level of nesting');
+    }
+
+    final splitParents = await _db
+        .customSelect(
+          'SELECT c.id AS id, c.list_id AS child_list, p.list_id AS parent_list '
+          'FROM tasks c JOIN tasks p ON p.id = c.parent_id '
+          'WHERE c.list_id != p.list_id',
+        )
+        .get();
+    for (final r in splitParents) {
+      bad.add(
+        'task ${r.read<String>('id')} is in list '
+        '${r.read<String>('child_list')} but its parent is in list '
+        '${r.read<String>('parent_list')}',
+      );
+    }
+
+    final tasks = await _db
+        .customSelect('SELECT id, remote_id FROM tasks')
+        .get();
+    for (final r in tasks) {
+      final id = r.read<String>('id');
+      final remoteId = r.readNullable<String>('remote_id');
+      final seen = _seenTaskRemoteIds[id];
+      if (seen == null) {
+        if (remoteId != null) _seenTaskRemoteIds[id] = remoteId;
+      } else if (remoteId == null) {
+        bad.add('task $id unlearned its remote_id $seen');
+      } else if (remoteId != seen) {
+        bad.add('task $id changed remote_id from $seen to $remoteId');
+      }
+    }
+
+    if (bad.isNotEmpty) {
+      throw StateError('store invariants violated:\n  ${bad.join('\n  ')}');
+    }
+  }
 
   /// Fetch a single task by id regardless of sync_state (tombstones included);
   /// `null` when absent.

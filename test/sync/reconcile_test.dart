@@ -354,23 +354,44 @@ void main() {
   group('§G create', () {
     test('create eligibility gate', () {
       final none = <String>{};
-      expect(createIsEligible('create', 'a', none, none, null), isTrue);
+      expect(createIsEligible('create', null, 'a', none, none, null), isTrue);
       // Not a create.
-      expect(createIsEligible('update', 'a', none, none, null), isFalse);
-      expect(createIsEligible(null, 'a', none, none, null), isFalse);
+      expect(createIsEligible('update', null, 'a', none, none, null), isFalse);
+      expect(createIsEligible(null, null, 'a', none, none, null), isFalse);
       // Already attempted this run — never twice (duplicate insert).
       expect(
-        createIsEligible('create', 'a', idSet(['a']), none, null),
+        createIsEligible('create', null, 'a', idSet(['a']), none, null),
         isFalse,
       );
       // Unresolved in-flight marker — waits for a complete remote view.
       expect(
-        createIsEligible('create', 'a', none, idSet(['a']), null),
+        createIsEligible('create', null, 'a', none, idSet(['a']), null),
         isFalse,
       );
       // The one id the UI holds waits; every other create still pushes.
-      expect(createIsEligible('create', 'a', none, none, 'a'), isFalse);
-      expect(createIsEligible('create', 'b', none, none, 'a'), isTrue);
+      expect(createIsEligible('create', null, 'a', none, none, 'a'), isFalse);
+      expect(createIsEligible('create', null, 'b', none, none, 'a'), isTrue);
+    });
+
+    test('a row Google already named is patched, never inserted again', () {
+      // #269. A stale-snapshot write can label an acknowledged row a `create`;
+      // pushing that insert would put a SECOND copy on the user's account.
+      final none = <String>{};
+      expect(
+        createIsEligible('create', 'remote-1', 'a', none, none, null),
+        isFalse,
+        reason: 'the create pass leaves it alone',
+      );
+      expect(
+        effectivePendingOp('create', 'remote-1'),
+        'update',
+        reason: 'and the mutation pass patches it instead',
+      );
+      // Everything else passes through untouched.
+      expect(effectivePendingOp('create', null), 'create');
+      expect(effectivePendingOp('update', 'remote-1'), 'update');
+      expect(effectivePendingOp('delete', 'remote-1'), 'delete');
+      expect(effectivePendingOp(null, 'remote-1'), isNull);
     });
 
     test('a mutation waits while its own create is unresolved in-flight', () {
