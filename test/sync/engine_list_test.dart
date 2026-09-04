@@ -682,10 +682,12 @@ void main() {
       isTrue,
       reason: 'and gone on the server',
     );
-    expect(
-      (await client.listTasks('L2')).items,
-      isEmpty,
-      reason: 'the server cascaded its tasks, including the one added late',
+    await expectLater(
+      client.listTasks('L2'),
+      throwsA(isA<NotFound>()),
+      reason:
+          'the list itself is gone server-side, so its tasks — including the '
+          'one added late — went with it in the cascade',
     );
     expect(
       await eng.store.findTaskAny('T2'),

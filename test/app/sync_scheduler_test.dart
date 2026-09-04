@@ -14,6 +14,8 @@ import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/app/logging.dart';
 import 'package:axiotask/src/app/sync_scheduler.dart';
 import 'package:axiotask/src/app/sync_status.dart';
+import 'package:axiotask/src/model/page.dart';
+import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
@@ -97,7 +99,16 @@ Future<bool> remoteHasTitle(
   String listId,
   String title,
 ) async {
-  final page = await client.listTasks(listId);
+  // A list the server does not have is a 404 (#269) — and a server with no such
+  // list certainly holds no task by that title in it, which is the question
+  // every caller is asking. The offline cases seed a LOCAL-ONLY list, so this is
+  // their expected answer, not an error.
+  final Page<Task> page;
+  try {
+    page = await client.listTasks(listId);
+  } on NotFound {
+    return false;
+  }
   return page.items.any((t) => t.title == title);
 }
 
