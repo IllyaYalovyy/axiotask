@@ -35,6 +35,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, row;
 
 void _noop(String _) {}
@@ -108,11 +109,8 @@ void main() {
                 composerOpen: ref.watch(composerOpenProvider),
                 list: Navigator(
                   onGenerateRoute: (settings) => MaterialPageRoute<void>(
-                    builder: (_) => TaskListView(
-                      viewId: viewId,
-                      selectedTaskId: null,
-                      onOpenTask: _noop,
-                    ),
+                    builder: (_) =>
+                        composedList(viewId: viewId, onOpenTask: _noop),
                   ),
                 ),
               ),

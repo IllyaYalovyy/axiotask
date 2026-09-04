@@ -28,11 +28,11 @@ import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
 import 'package:axiotask/src/ui/sync_feedback.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'composed_list.dart';
 
 /// A clean top-level task with no due date (keeps the golden clock-free).
 StoredTask _task(String id, String title, String position) => StoredTask(
@@ -129,9 +129,8 @@ Widget _shellAt(
           title: listView ? _myTasks.list.title : SmartView.all.label,
           syncLine: SyncProgressLine(running: syncing),
           onNewTask: () {},
-          list: TaskListView(
+          list: composedList(
             viewId: listView ? _myTasks.list.id : SmartView.all.id,
-            selectedTaskId: null,
             onOpenTask: (_) {},
           ),
         ),

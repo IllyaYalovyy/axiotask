@@ -19,7 +19,6 @@ import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/date_format.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:clock/clock.dart';
@@ -28,6 +27,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/color_metrics.dart';
+import 'composed_list.dart';
 import 'detail_harness.dart';
 
 /// A fixed "today" every date fixture below is written against.
@@ -211,12 +211,8 @@ void main() {
             ],
             child: MaterialApp(
               theme: theme,
-              home: const Scaffold(
-                body: TaskListView(
-                  viewId: 'focus',
-                  selectedTaskId: null,
-                  onOpenTask: _noop,
-                ),
+              home: Scaffold(
+                body: composedList(viewId: 'focus', onOpenTask: _noop),
               ),
             ),
           ),

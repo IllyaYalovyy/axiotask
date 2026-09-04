@@ -25,13 +25,13 @@ import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/ui/list_motion.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'toast_harness.dart' show wrapWithToast;
 
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
@@ -103,9 +103,8 @@ void main() {
           child: MaterialApp(
             builder: (context, child) => wrapWithToast(context, child),
             home: Scaffold(
-              body: TaskListView(
+              body: composedList(
                 viewId: listId,
-                selectedTaskId: null,
                 onOpenTask: (_) {},
                 onOpenTaskNotes: (_) {},
               ),

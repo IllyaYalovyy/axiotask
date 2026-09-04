@@ -27,6 +27,7 @@ import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fake_commands.dart';
+import 'composed_list.dart';
 import 'toast_harness.dart' show wrapWithToast;
 
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
@@ -112,7 +113,7 @@ void main() {
             // chrome is pinned in touch_interactions_test.
             theme: ThemeData(platform: platform),
             home: Scaffold(
-              body: TaskListView(
+              body: composedList(
                 viewId: viewId,
                 selectedTaskId: selectedTaskId,
                 onOpenTask: (opened ?? <String>[]).add,
@@ -571,11 +572,7 @@ void main() {
                 child: MaterialApp(
                   builder: wrapWithToast,
                   home: Scaffold(
-                    body: TaskListView(
-                      viewId: 'all',
-                      selectedTaskId: null,
-                      onOpenTask: (_) {},
-                    ),
+                    body: composedList(viewId: 'all', onOpenTask: (_) {}),
                   ),
                 ),
               ),

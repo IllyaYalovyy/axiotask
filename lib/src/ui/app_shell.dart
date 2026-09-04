@@ -13,6 +13,7 @@ import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'composer_controller.dart';
 import 'detail_motion.dart';
 import 'guarded_command.dart';
 import 'haptics.dart';
@@ -385,19 +386,28 @@ class ViewListPane extends StatelessWidget {
     // same nested Navigator) across views, so the switch is this keyed subtree
     // being replaced. [ViewSwitch] carries it across (#254) — a shared axis
     // along the bottom bar's ordering, a fade-through where there is none.
-    return ViewSwitch(
-      slot: SmartView.byId(viewId)?.index,
-      child: TaskListView(
-        key: ValueKey('view-$viewId'),
-        viewId: viewId,
-        selectedTaskId: selectedTaskId,
-        onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
-        onOpenTaskNotes: (id) =>
-            context.go(viewPath(viewId, taskId: id, focusNotes: true)),
-        // Search may land on a DIFFERENT view (a subtask's parent list — #92),
-        // so it navigates by an explicit target view rather than the current
-        // one.
-        onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),
+    return ComposerHost(
+      // ABOVE the switch (#274): a view change mounts two panes for the length
+      // of the transition, and the composer must stay ONE — one FAB listener,
+      // one draft, one live list set — through it.
+      viewId: viewId,
+      selectedTaskId: selectedTaskId,
+      onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+      onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),
+      child: ViewSwitch(
+        slot: SmartView.byId(viewId)?.index,
+        child: TaskListView(
+          key: ValueKey('view-$viewId'),
+          viewId: viewId,
+          selectedTaskId: selectedTaskId,
+          onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+          onOpenTaskNotes: (id) =>
+              context.go(viewPath(viewId, taskId: id, focusNotes: true)),
+          // Search may land on a DIFFERENT view (a subtask's parent list —
+          // #92), so it navigates by an explicit target view rather than the
+          // current one.
+          onOpenInView: (v, id) => context.go(viewPath(v, taskId: id)),
+        ),
       ),
     );
   }

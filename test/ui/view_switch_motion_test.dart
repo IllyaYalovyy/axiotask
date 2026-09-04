@@ -343,14 +343,19 @@ void main() {
   testWidgets('the desktop quick-add still takes typing across a switch', (
     tester,
   ) async {
-    // The non-happy path two panes on screen at once could break: the quick-add
-    // FocusNode is APP-WIDE (the desktop bar and the touch composer are one
-    // input, #233), so for the length of a fade-through TWO fields hold the one
-    // node — the arriving field attaching it while the departing field still
-    // has it, and the departing field detaching it 200ms later. Get that order
-    // wrong and the bar the user is looking at is left with a node that has
-    // been detached (or disposed) under it, and the view they just opened
-    // cannot be typed into at all.
+    // The non-happy path two panes on screen at once used to break: the
+    // quick-add FocusNode is APP-WIDE (the desktop bar and the touch composer
+    // are one input, #233), and while the panes cross-faded TWO fields held the
+    // one node — the arriving field attaching it while the departing field
+    // still had it. Get that order wrong and the bar the user is looking at is
+    // left with a node detached under it, and the view they just opened cannot
+    // be typed into at all.
+    //
+    // #274 removed the hazard rather than sequencing it: the composer lives
+    // ABOVE the view switch, so there is exactly ONE bar however many panes are
+    // mounted. That is what this now pins — one field throughout the switch,
+    // holding its caret and its draft across it, and the arriving view typable
+    // the moment it lands.
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     await pumpApp(tester, size: _desktop);
     final field = find.descendant(
@@ -370,14 +375,22 @@ void main() {
     // a focused field keeps a caret blinking forever.
     await tester.pump();
     expect(
+      find.byKey(const ValueKey('view-focus')),
+      findsOneWidget,
+      reason: 'the switch really is mid-flight — both panes are mounted',
+    );
+    expect(find.byKey(const ValueKey('view-upcoming')), findsOneWidget);
+    expect(
       field,
-      findsNWidgets(2),
-      reason: 'mid-fade both panes are mounted, sharing the one focus node',
+      findsOneWidget,
+      reason: 'and there is still exactly ONE composer over the two of them',
     );
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(field, findsOneWidget, reason: 'one bar, in the view now open');
+    // A tab tap is not a decision to throw away what you were writing (#274).
+    expect(find.widgetWithText(TextField, 'before'), findsOneWidget);
     await tester.enterText(field, 'after');
     await tester.pump();
     expect(find.widgetWithText(TextField, 'after'), findsOneWidget);

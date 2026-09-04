@@ -90,3 +90,23 @@ DateTime nextMonthClamped(DateTime today) {
   final day = today.day < lastDayOfTarget ? today.day : lastDayOfTarget;
   return DateTime.utc(year, month, day);
 }
+
+/// A calendar day as the bare `YYYY-MM-DD` every composer, chip and picker in
+/// the app passes around (the same shape [normalizeDue] parses and
+/// `parseQuickAddDue` returns), so no surface has to invent its own formatting.
+String ymd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}'
+    '-${d.month.toString().padLeft(2, '0')}'
+    '-${d.day.toString().padLeft(2, '0')}';
+
+/// The bare `YYYY-MM-DD` [move] resolves to against TODAY, or `null` for
+/// [DateMove.clear]. The one place the quick-date vocabulary is turned into a
+/// date for a surface that has no task to write it to yet — the composer's
+/// draft — so the date a chip advertises and the date a create lands with are
+/// resolved by the same arithmetic the command layer uses.
+String? ymdForMove(DateMove move) {
+  final n = clock.now();
+  final today = DateTime.utc(n.year, n.month, n.day);
+  final moved = applyDateMove(today, move);
+  return moved == null ? null : ymd(moved);
+}

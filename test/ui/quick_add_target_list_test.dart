@@ -32,6 +32,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list;
 import 'toast_harness.dart' show wrapWithToast;
 
@@ -112,11 +113,8 @@ void main() {
             home: Scaffold(
               body: ValueListenableBuilder<String>(
                 valueListenable: viewIds,
-                builder: (context, id, _) => TaskListView(
-                  viewId: id,
-                  selectedTaskId: null,
-                  onOpenTask: (_) {},
-                ),
+                builder: (context, id, _) =>
+                    composedList(viewId: id, onOpenTask: (_) {}),
               ),
             ),
           ),

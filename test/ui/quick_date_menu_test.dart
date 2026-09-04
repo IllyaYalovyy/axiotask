@@ -36,6 +36,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, pumpDetail, row;
 import 'list_harness.dart';
 
@@ -304,11 +305,8 @@ void main() {
                 composerOpen: ref.watch(composerOpenProvider),
                 list: Navigator(
                   onGenerateRoute: (settings) => MaterialPageRoute<void>(
-                    builder: (_) => const TaskListView(
-                      viewId: 'all',
-                      selectedTaskId: null,
-                      onOpenTask: _noop,
-                    ),
+                    builder: (_) =>
+                        composedList(viewId: 'all', onOpenTask: _noop),
                   ),
                 ),
               ),
@@ -541,12 +539,8 @@ void main() {
             ],
             child: MaterialApp(
               theme: ThemeData(platform: TargetPlatform.android),
-              home: const Scaffold(
-                body: TaskListView(
-                  viewId: 'all',
-                  selectedTaskId: null,
-                  onOpenTask: _noop,
-                ),
+              home: Scaffold(
+                body: composedList(viewId: 'all', onOpenTask: _noop),
               ),
             ),
           ),

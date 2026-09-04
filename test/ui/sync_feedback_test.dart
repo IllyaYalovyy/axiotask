@@ -33,13 +33,13 @@ import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/motion.dart';
 import 'package:axiotask/src/ui/sync_feedback.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/pump_motion.dart';
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, row;
 
 const _destinations = [
@@ -443,11 +443,7 @@ void main() {
                 onDestinationSelected: (_) {},
                 title: 'All Tasks',
                 syncLine: const LiveSyncLine(),
-                list: const TaskListView(
-                  viewId: 'all',
-                  selectedTaskId: null,
-                  onOpenTask: _noop,
-                ),
+                list: composedList(viewId: 'all', onOpenTask: _noop),
               ),
             ),
           ),
