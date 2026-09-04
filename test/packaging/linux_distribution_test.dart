@@ -12,6 +12,15 @@
 //     the running window with a generic icon in the dash and alt-tab.
 //   - MENU DUPLICATES: two main freedesktop categories can list the app twice.
 //     desktop-file-validate must be clean of errors, warnings AND hints.
+//   - THE VALIDATORS QUIETLY CHECKING NOTHING: the two assertions above are the
+//     only ones here that ask a real freedesktop validator whether the shipped
+//     files are correct — everything else is a string match this repository
+//     writes and reads itself. They used to `markTestSkipped` when the tool was
+//     absent, so a machine without appstreamcli/desktop-file-validate ran a
+//     GREEN distribution suite in which the metainfo and the desktop entry had
+//     never been validated at all. Both are PREREQUISITES now, checked once up
+//     front with an install hint, and absence is a failure (#275) — the same
+//     ruling the icon suite's renderers got.
 //   - NOTHING TO RUN FOR A NON-RPM INSTALL: tool/install.sh is the user-local
 //     path. It must lay out bundle/launcher/desktop/icons/metainfo so the entry
 //     resolves, upgrade in place on re-run, reverse itself on --uninstall, and
@@ -41,6 +50,21 @@ const _appName = 'axiotask';
 const _metainfoPath = 'linux/packaging/$_appId.metainfo.xml';
 const _desktopPath = 'linux/packaging/$_appId.desktop';
 const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
+
+/// Is [tool] on PATH? The two freedesktop validators below are prerequisites,
+/// never a silent skip, so this answers a test — it never guards one.
+bool _installed(String tool) => Process.runSync('which', [tool]).exitCode == 0;
+
+/// The one install hint, in one place, so a missing validator says what to do
+/// instead of only what is absent.
+const _validatorHint =
+    'The distribution suite asks the REAL freedesktop validators whether the\n'
+    'shipped metainfo and desktop entry are correct. Install them:\n'
+    '  Fedora: sudo dnf install appstream desktop-file-utils\n'
+    '  Debian/Ubuntu: sudo apt-get install appstream desktop-file-utils\n'
+    'These assertions must never be skipped: without them this suite only\n'
+    'matches strings this repository wrote itself, and would run green while\n'
+    'shipping metadata no software centre can parse (#275).';
 
 /// The GTK application id the runner actually applies: my_application.cc calls
 /// `g_set_prgname(APPLICATION_ID)` and passes it as GtkApplication's
@@ -82,6 +106,28 @@ String? _desktopValue(String key) {
 }
 
 void main() {
+  // Checked FIRST, and once. The two validator assertions below now run
+  // unconditionally; these two tests are what turn "the toolchain is missing"
+  // into one legible failure with a fix, instead of a green run that verified
+  // nothing (#275).
+  group('the packaging validators are a prerequisite, never a silent skip', () {
+    test('appstreamcli is installed', () {
+      expect(
+        _installed('appstreamcli'),
+        isTrue,
+        reason: 'appstreamcli is missing.\n$_validatorHint',
+      );
+    });
+
+    test('desktop-file-validate is installed', () {
+      expect(
+        _installed('desktop-file-validate'),
+        isTrue,
+        reason: 'desktop-file-validate is missing.\n$_validatorHint',
+      );
+    });
+  });
+
   // #227: the app shipped with its identity split three ways — GTK app id
   // `com.axiotask.axiotask`, desktop entry `axiotask.desktop`, metainfo id
   // `io.github.illyayalovyy.axiotask`. GNOME on Wayland resolves a window's
@@ -137,13 +183,6 @@ void main() {
     });
 
     test('appstreamcli validate passes', () {
-      if (Process.runSync('which', ['appstreamcli']).exitCode != 0) {
-        markTestSkipped(
-          'appstreamcli missing on this host — OPERATOR CHECK REQUIRED: '
-          'run `appstreamcli validate --no-net $_metainfoPath`',
-        );
-        return;
-      }
       final r = Process.runSync('appstreamcli', [
         'validate',
         '--no-net',
@@ -189,13 +228,6 @@ void main() {
 
   group('.desktop hygiene', () {
     test('desktop-file-validate is clean (no errors, warnings or hints)', () {
-      if (Process.runSync('which', ['desktop-file-validate']).exitCode != 0) {
-        markTestSkipped(
-          'desktop-file-validate missing — OPERATOR CHECK REQUIRED: '
-          'run `desktop-file-validate $_desktopPath`',
-        );
-        return;
-      }
       final r = Process.runSync('desktop-file-validate', [_desktopPath]);
       expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
       expect(
