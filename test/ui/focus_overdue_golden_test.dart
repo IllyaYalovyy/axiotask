@@ -15,11 +15,11 @@ import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'composed_list.dart';
 
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 
@@ -69,12 +69,8 @@ Widget _focusList(Size size) => MediaQuery(
       // A mouse platform (no per-row "⋯" overflow — F16); the Focus overdue
       // heading is what this golden pins.
       data: buildLightTheme().copyWith(platform: TargetPlatform.linux),
-      child: const Scaffold(
-        body: TaskListView(
-          viewId: 'focus',
-          selectedTaskId: null,
-          onOpenTask: _noop,
-        ),
+      child: Scaffold(
+        body: composedList(viewId: 'focus', onOpenTask: _noop),
       ),
     ),
   ),

@@ -20,7 +20,7 @@ import '../store/stored.dart';
 import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'haptics.dart';
 import 'state_layer.dart';
-import 'task_row.dart' show touchTarget;
+import 'task_row_parts.dart' show touchTarget;
 import 'views.dart';
 
 /// What exclusion means, in the one wording the row's glyph, its tooltip, its

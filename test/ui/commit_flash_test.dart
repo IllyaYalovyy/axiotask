@@ -34,7 +34,6 @@ import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/ui/commit_flash.dart';
 import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/task_detail.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
@@ -42,6 +41,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, row;
 import 'list_harness.dart';
 import 'toast_harness.dart' show wrapWithToast;
@@ -428,11 +428,7 @@ void main() {
               theme: ThemeData(platform: TargetPlatform.linux),
               builder: (context, child) => wrapWithToast(context, child),
               home: Scaffold(
-                body: TaskListView(
-                  viewId: listId,
-                  selectedTaskId: null,
-                  onOpenTask: _ignore,
-                ),
+                body: composedList(viewId: listId, onOpenTask: _ignore),
               ),
             ),
           ),
@@ -644,13 +640,9 @@ void main() {
               home: Scaffold(
                 body: Row(
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 800,
-                      child: TaskListView(
-                        viewId: 'all',
-                        selectedTaskId: null,
-                        onOpenTask: _ignore,
-                      ),
+                      child: composedList(viewId: 'all', onOpenTask: _ignore),
                     ),
                     SizedBox(
                       width: 800,

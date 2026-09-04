@@ -265,6 +265,68 @@ void main() {
     expect(find.text('2 tasks rescheduled'), findsOneWidget);
   });
 
+  // A bulk reschedule runs the SAME #164 consistency rule every other date
+  // surface does: setting a parent later pulls its earlier-dated subtasks up
+  // with it. Until #274 the bulk path threw that away — it reported "N tasks
+  // rescheduled" as a bare info toast and dropped every SetDueResult on the
+  // floor, so a selection of two parents silently moved four rows with no way
+  // back. The row surface and the detail panel had offered the cascade Undo
+  // since #164; bulk was the one date surface that did not.
+  testWidgets('a bulk reschedule that cascades offers ONE Undo for all of it', (
+    tester,
+  ) async {
+    final fake = await pumpList(
+      tester,
+      initial: [
+        row('P', 'plan the trip', due: '2026-06-20T00:00:00.000Z'),
+        row(
+          'p1',
+          'book flights',
+          parent: 'P',
+          position: '2',
+          due: '2026-06-18T00:00:00.000Z',
+        ),
+        row('Q', 'quarterly review', position: '3', due: '2026-06-21'),
+        row(
+          'q1',
+          'gather numbers',
+          parent: 'Q',
+          position: '4',
+          due: '2026-06-19T00:00:00.000Z',
+        ),
+      ],
+      lists: oneList,
+    );
+    await ctrlClick(tester, 'plan the trip');
+    await ctrlClick(tester, 'quarterly review');
+    await withClock(testClock, () async {
+      await tester.tap(find.byKey(const Key('bulk-due')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(quickDateKey('week')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
+    String? due(String id) =>
+        fake.tasks.firstWhere((t) => t.task.id == id).task.due;
+    // testClock is 2026-06-15 → next week is the 22nd. Both parents move, and
+    // both subtasks are dragged along because they sat before their parent.
+    for (final id in ['P', 'p1', 'Q', 'q1']) {
+      expect(due(id), '2026-06-22T00:00:00.000Z', reason: '$id moved');
+    }
+
+    // ONE Undo for the whole op — the edited rows AND everything the cascade
+    // dragged with them.
+    await tester.tap(find.text('Undo'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(due('P'), '2026-06-20T00:00:00.000Z');
+    expect(due('p1'), '2026-06-18T00:00:00.000Z');
+    expect(due('Q'), '2026-06-21');
+    expect(due('q1'), '2026-06-19T00:00:00.000Z');
+  });
+
   testWidgets('bulk Clear date removes dates and toasts "cleared"', (
     tester,
   ) async {

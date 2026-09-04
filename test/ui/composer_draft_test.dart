@@ -25,13 +25,13 @@ import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/quick_date_menu.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list;
 import 'list_harness.dart' show pumpList, settleList;
 
@@ -110,11 +110,8 @@ void main() {
                 composerOpen: ref.watch(composerOpenProvider),
                 list: Navigator(
                   onGenerateRoute: (settings) => MaterialPageRoute<void>(
-                    builder: (_) => const TaskListView(
-                      viewId: 'all',
-                      selectedTaskId: null,
-                      onOpenTask: _noop,
-                    ),
+                    builder: (_) =>
+                        composedList(viewId: 'all', onOpenTask: _noop),
                   ),
                 ),
               ),

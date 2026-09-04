@@ -8,6 +8,7 @@
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:axiotask/src/ui/composer_controller.dart';
 import 'package:axiotask/src/ui/detail_motion.dart';
 import 'package:axiotask/src/ui/haptics.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
@@ -23,6 +24,12 @@ import 'toast_harness.dart' show wrapWithToast;
 /// A fixed clock so the quick-date bulk ops resolve deterministically.
 final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 
+/// The device insets a modern phone actually has: a status bar / notch at the
+/// top, the gesture pill at the bottom, and a cutout down one side. The shape
+/// every phone-sized surface must render inside — nothing may hide under the
+/// notch, and nothing tappable may sit under the pill (#166/#160).
+const phoneInsets = EdgeInsets.only(top: 48, bottom: 34, left: 20, right: 16);
+
 /// Pump [TaskListView] on a desktop-width surface (or [size]) over a
 /// [FakeCommands] seeded with [initial] and [lists]. Navigation callbacks are
 /// captured into [opened] / [openedNotes] so a test can assert the intent.
@@ -35,6 +42,13 @@ final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 /// ViewListPane passes down: pushing a new value into it and pumping is exactly
 /// what a route change (row tap, search jump, detail prev/next) does to this
 /// widget, without needing a router in the test. Omit it for a closed detail.
+///
+/// [padding] injects the DEVICE INSETS a real phone always has — a status bar
+/// at the top, a gesture pill at the bottom, and on some devices a cutout down
+/// one side. Every other scenario renders on an inset-free surface, which is
+/// exactly where an inset bug hides: with a zero inset, counting one twice
+/// costs nothing. Pass [phoneInsets] for the shape a modern phone actually
+/// has.
 Future<FakeCommands> pumpList(
   WidgetTester tester, {
   required List<StoredTask> initial,
@@ -55,6 +69,7 @@ Future<FakeCommands> pumpList(
   DetailOriginController? originScope,
   Haptics? hapticsDevice,
   bool haptics = true,
+  EdgeInsets padding = EdgeInsets.zero,
 }) async {
   // A unique-id generator by default: the manual-sort list is a
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
@@ -106,6 +121,8 @@ Future<FakeCommands> pumpList(
             data: MediaQuery.of(context).copyWith(
               disableAnimations: disableAnimations,
               textScaler: TextScaler.linear(textScale),
+              padding: padding,
+              viewPadding: padding,
             ),
             child: wrapWithToast(context, child),
           ),
@@ -113,11 +130,21 @@ Future<FakeCommands> pumpList(
             body: ValueListenableBuilder<String?>(
               valueListenable: selected,
               builder: (context, selectedTaskId, _) {
-                final view = TaskListView(
+                // The composer lives ABOVE the view switch in the app
+                // (#274), so the harness mounts it above the pane too — the
+                // quick-add bar, the FAB's sheet and the bulk-add dialog all
+                // come from it.
+                final view = ComposerHost(
                   viewId: viewId,
                   selectedTaskId: selectedTaskId,
                   onOpenTask: (opened ?? <String>[]).add,
-                  onOpenTaskNotes: (openedNotes ?? <String>[]).add,
+                  onOpenInView: (_, id) => (opened ?? <String>[]).add(id),
+                  child: TaskListView(
+                    viewId: viewId,
+                    selectedTaskId: selectedTaskId,
+                    onOpenTask: (opened ?? <String>[]).add,
+                    onOpenTaskNotes: (openedNotes ?? <String>[]).add,
+                  ),
                 );
                 // The shell publishes this scope over the list (#253); a suite
                 // that cares where a row said it was passes its own controller.

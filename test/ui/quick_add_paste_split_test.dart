@@ -31,6 +31,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list;
 import 'toast_harness.dart' show wrapWithToast;
 
@@ -101,11 +102,7 @@ void main() {
               child: wrapWithToast(context, child),
             ),
             home: Scaffold(
-              body: TaskListView(
-                viewId: viewId,
-                selectedTaskId: null,
-                onOpenTask: (_) {},
-              ),
+              body: composedList(viewId: viewId, onOpenTask: (_) {}),
             ),
           ),
         ),

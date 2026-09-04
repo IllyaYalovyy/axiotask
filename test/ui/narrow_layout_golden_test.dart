@@ -22,11 +22,11 @@ import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
 import 'package:axiotask/src/ui/task_detail.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'composed_list.dart';
 
 StoredTask _task(String id, String title, String position, {String? parent}) =>
     StoredTask(
@@ -102,7 +102,7 @@ Widget _shellWithDetail(Size size, {ThemeData? theme}) => MediaQuery(
         selectedIndex: SmartView.all.index,
         onDestinationSelected: (_) {},
         title: 'All Tasks',
-        list: TaskListView(
+        list: composedList(
           viewId: SmartView.all.id,
           selectedTaskId: 'A',
           onOpenTask: (_) {},

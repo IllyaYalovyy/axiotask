@@ -323,20 +323,19 @@ class FakeCommands implements Commands {
     setDueCalls.add('$id=$move');
     final i = _tasks.indexWhere((t) => t.task.id == id);
     if (i < 0) return _noCascade(id, null);
-    final prior = _tasks[i].task.due;
     final n = clock.now().toUtc();
     final today = DateTime.utc(n.year, n.month, n.day);
     final d = applyDateMove(today, move);
-    final due = d == null
-        ? null
-        : normalizeDue(
-            '${d.year.toString().padLeft(4, '0')}-'
-            '${d.month.toString().padLeft(2, '0')}-'
-            '${d.day.toString().padLeft(2, '0')}',
-          );
-    _tasks[i] = _rebuild(_tasks[i], _tasks[i].task.copyWith(due: due));
-    _emit();
-    return _noCascade(id, prior);
+    return _writeDue(
+      i,
+      d == null
+          ? null
+          : normalizeDue(
+              '${d.year.toString().padLeft(4, '0')}-'
+              '${d.month.toString().padLeft(2, '0')}-'
+              '${d.day.toString().padLeft(2, '0')}',
+            ),
+    );
   }
 
   @override
@@ -344,18 +343,72 @@ class FakeCommands implements Commands {
     setDueCalls.add('$id=raw:$rawDate');
     final i = _tasks.indexWhere((t) => t.task.id == id);
     if (i < 0) return _noCascade(id, null);
-    final prior = _tasks[i].task.due;
-    _tasks[i] = _rebuild(
-      _tasks[i],
-      _tasks[i].task.copyWith(due: normalizeDue(rawDate)),
-    );
+    return _writeDue(i, normalizeDue(rawDate));
+  }
+
+  /// Write [due] onto the row at [i] and run the #164 consistency cascade
+  /// exactly as `TaskEditCommands._setDue` does — a subtask's explicit date is
+  /// never before its parent's, with the editor's intent winning. The fake
+  /// mirrors it rather than reporting a bare no-cascade result so a surface
+  /// that must SURVIVE a cascade (the bulk Undo, #274) is exercised against
+  /// the real shape of one: the edited row's prior date first, then one entry
+  /// per row the cascade moved.
+  SetDueResult _writeDue(int i, String? due) {
+    final edited = _tasks[i];
+    final undo = <DueUndoEntry>[
+      DueUndoEntry(id: edited.task.id, due: edited.task.due),
+    ];
+    _tasks[i] = _rebuild(edited, edited.task.copyWith(due: due));
+    var cascadedParent = false;
+    if (due != null) {
+      final parentId = edited.task.parent;
+      for (var j = 0; j < _tasks.length; j++) {
+        final other = _tasks[j];
+        if (other.listId != edited.listId) continue;
+        final od = other.task.due;
+        if (od == null) continue;
+        if (parentId != null) {
+          // Editing a CHILD: a parent sitting later is pulled DOWN to match.
+          if (other.task.id != parentId || !_dueBefore(due, od)) continue;
+          cascadedParent = true;
+        } else {
+          // Editing a PARENT: every child sitting earlier is pulled UP.
+          if (other.task.parent != edited.task.id || !_dueBefore(od, due)) {
+            continue;
+          }
+        }
+        undo.add(DueUndoEntry(id: other.task.id, due: od));
+        _tasks[j] = _rebuild(other, other.task.copyWith(due: due));
+      }
+    }
     _emit();
-    return _noCascade(id, prior);
+    return nextDueResult ??
+        SetDueResult(
+          undo: undo,
+          cascaded: undo.length - 1,
+          cascadedParent: cascadedParent,
+        );
+  }
+
+  /// Date-only comparison over the canonical `YYYY-MM-DD...` due form. A value
+  /// too short to carry a date compares as-is rather than throwing — a fixture
+  /// with a malformed due must fail its own assertion, not the fake.
+  static bool _dueBefore(String a, String b) {
+    String day(String s) => s.length < 10 ? s : s.substring(0, 10);
+    return day(a).compareTo(day(b)) < 0;
   }
 
   @override
   Future<void> undoSetDue(List<DueUndoEntry> entries) async {
     undoneWith = entries;
+    // Actually RESTORE, so a suite can assert the rows the user sees go back
+    // to their pre-edit dates rather than merely that the call was wired.
+    for (final e in entries) {
+      final i = _tasks.indexWhere((t) => t.task.id == e.id);
+      if (i < 0) continue;
+      _tasks[i] = _rebuild(_tasks[i], _tasks[i].task.copyWith(due: e.due));
+    }
+    _emit();
   }
 
   @override

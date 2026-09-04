@@ -33,6 +33,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/pump_motion.dart';
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, row;
 
 const _phone = Size(400, 800);
@@ -72,12 +73,8 @@ Future<void Function(List<StoredTask>)> _pumpWaiting(
           ).copyWith(disableAnimations: reducedMotion),
           child: child!,
         ),
-        home: const Scaffold(
-          body: TaskListView(
-            viewId: 'all',
-            selectedTaskId: null,
-            onOpenTask: _noop,
-          ),
+        home: Scaffold(
+          body: composedList(viewId: 'all', onOpenTask: _noop),
         ),
       ),
     ),

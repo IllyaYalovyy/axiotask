@@ -45,6 +45,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, pumpDetail, row;
 import 'list_harness.dart';
 import 'toast_harness.dart' show wrapWithToast;
@@ -389,11 +390,7 @@ void main() {
                   child: wrapWithToast(context, child),
                 ),
                 home: Scaffold(
-                  body: TaskListView(
-                    viewId: 'all',
-                    selectedTaskId: null,
-                    onOpenTask: (_) {},
-                  ),
+                  body: composedList(viewId: 'all', onOpenTask: (_) {}),
                 ),
               ),
             ),

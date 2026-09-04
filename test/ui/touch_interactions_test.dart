@@ -18,12 +18,12 @@ import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
-import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'composed_list.dart';
 import 'detail_harness.dart' show FakeCommands, list, row;
 
 void main() {
@@ -76,11 +76,7 @@ void main() {
                 onDestinationSelected: (_) {},
                 title: 'All Tasks',
                 onNewTask: ref.read(newTaskRequestProvider.notifier).bump,
-                list: const TaskListView(
-                  viewId: 'all',
-                  selectedTaskId: null,
-                  onOpenTask: _noop,
-                ),
+                list: composedList(viewId: 'all', onOpenTask: _noop),
               ),
             ),
           ),
