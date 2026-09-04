@@ -475,14 +475,20 @@ void main() {
       );
     });
 
-    test('a captive-portal HTML 200 fails to decode WITHOUT leaking the body '
-        '(G6 / #204, #187)', () async {
+    test('a captive-portal HTML 200 is TRANSIENT and does not leak the body '
+        '(#270; G6 / #204, #187)', () async {
       // A hotel/airport captive portal answers 200 with an HTML login page
-      // instead of JSON. The decode fails — but the error message must NOT carry
-      // the HTML body: OtherApiError.message rides verbatim onto the public sync
-      // status (apiUserText → lastError), so a leaked body would surface a
-      // secret-bearing URL to the user. The FormatException's toString() appends
-      // an excerpt of the offending source (the body); only its message may ride.
+      // instead of JSON. Nothing in that response came from Google, so it says
+      // nothing about the request: it is a transport interception, and the run
+      // must retry it silently on the next cadence tick (#270). Classifying it
+      // as a permanent OtherApiError instead marked the user's pending changes
+      // "rejected by the server" and drove the needs-attention backoff for a
+      // condition that clears itself when they walk out of the lobby.
+      //
+      // The message must still NOT carry the HTML body: it rides into the log,
+      // and a leaked body would carry a secret-bearing URL (the
+      // FormatException's toString() appends an excerpt of the source; only its
+      // message may ride).
       const captivePortalHtml =
           '<!DOCTYPE html><html><head><title>Wi-Fi Login</title></head>'
           '<body>Please sign in at http://wifi.local/login?token=SECRET'
@@ -496,8 +502,13 @@ void main() {
       );
 
       final err = await _caught(() => api.listTasklists());
-      expect(err, isA<OtherApiError>());
-      final message = (err! as OtherApiError).message;
+      expect(err, isA<ApiError>());
+      expect(
+        (err! as ApiError).isTransient,
+        isTrue,
+        reason: 'a body Google did not write is a blip, not a rejection',
+      );
+      final message = (err as Network).message;
       expect(message, isNot(contains('<html')));
       expect(message, isNot(contains('wifi.local')));
       expect(message, isNot(contains('SECRET')));
@@ -506,6 +517,42 @@ void main() {
         contains('decode'),
         reason: 'still names the failing step for the log',
       );
+    });
+
+    test('a NON-JSON error-status body is TRANSIENT; a JSON one stays '
+        'permanent (#270)', () async {
+      // The same interception can answer an error status with its own markup.
+      // A 400 whose body is HTML did not come from the Tasks API — every real
+      // Google error body is JSON — so it must not permanently reject the row.
+      final (auth: _, api: htmlApi) = _build(
+        (req, i) => http.Response(
+          '<html><body>Network authentication required</body></html>',
+          400,
+          headers: const {'content-type': 'text/html'},
+        ),
+        maxRetries: 0,
+      );
+      final htmlErr = await _caught(() => htmlApi.listTasklists());
+      expect((htmlErr! as ApiError).isTransient, isTrue);
+      expect(
+        (htmlErr as Network).message,
+        isNot(contains('Network authentication required')),
+        reason: 'the body never rides on the error (#187)',
+      );
+
+      // A real Google 400 — JSON body — is still a permanent rejection, or a
+      // genuinely bad request would retry forever.
+      final (auth: _, api: jsonApi) = _build(
+        (req, i) => http.Response(
+          '{"error":{"code":400,"message":"Invalid value"}}',
+          400,
+          headers: const {'content-type': 'application/json'},
+        ),
+        maxRetries: 0,
+      );
+      final jsonErr = await _caught(() => jsonApi.listTasklists());
+      expect(jsonErr, isA<OtherApiError>());
+      expect((jsonErr! as ApiError).isTransient, isFalse);
     });
 
     test('patch_task_sends_if_match_etag', () async {
@@ -724,6 +771,59 @@ void main() {
 
       expect((result! as Task).id, 'remote-1');
       expect(auth.requests.length, 2, reason: '503 then the successful retry');
+    });
+
+    test('insert_task_is_not_replayed_after a non-JSON error body (#270 vs '
+        '#266)', () {
+      // A status whose body is not JSON did not come from Google (#270), so it
+      // is transient — but it is transient for the SAME reason a dead socket
+      // is: we never got Google's answer, and the POST may already have
+      // committed behind the interception. Retrying it in-loop would duplicate
+      // the task exactly the way #266 forbade. The create raises on the first
+      // one and the in-flight marker adopts the orphan next run.
+      final (:auth, :api) = _build(
+        (req, i) => http.Response(
+          '<html><body>Network authentication required</body></html>',
+          400,
+          headers: const {'content-type': 'text/html'},
+        ),
+        maxRetries: 4,
+      );
+
+      final err = _settle(
+        () => api.insertTask('L1', const NewTask(title: 'buy milk')),
+      );
+
+      expect(
+        auth.requests.length,
+        1,
+        reason:
+            'a create must never be re-POSTed when the response did not come '
+            'from Google — the first POST may already have committed',
+      );
+      expect(err, isA<Network>());
+      expect((err! as ApiError).isTransient, isTrue);
+    });
+
+    test('a GET still retries a non-JSON error body (#270)', () {
+      // The other half of the split: a read is safe to repeat, so the portal
+      // interception is retried and the call recovers once the user is through
+      // the login page.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? http.Response(
+                '<html><body>Wi-Fi login</body></html>',
+                400,
+                headers: const {'content-type': 'text/html'},
+              )
+            : jsonReply({'items': const <Object?>[]}),
+        maxRetries: 4,
+      );
+
+      final result = _settle(() => api.listTasklists());
+
+      expect(result, isA<List<TaskList>>());
+      expect(auth.requests.length, 2, reason: 'portal page, then the retry');
     });
 
     test('insert_task_is_replayed_once_after_a_401_refresh', () {

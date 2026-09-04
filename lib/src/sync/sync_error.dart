@@ -16,6 +16,23 @@ import '../store/store_error.dart';
 sealed class SyncError implements Exception {
   const SyncError();
 
+  /// Coerce ANY thrown object into a [SyncError] (mirrors the reference's
+  /// `From<ApiError>`/`From<StoreError>` conversions on `?`).
+  ///
+  /// Every layer that guards a sync run funnels through this, because the ONLY
+  /// errors a run can raise are not the only errors it can HIT: a store write
+  /// can throw a raw `SqliteException`, a decode can throw a `TypeError`, and
+  /// before #270 those escaped the `on SyncError` guards uncaught — killing the
+  /// startup task before it ever launched the background loop, and leaving the
+  /// status with nothing to show. An unrecognized failure is still a failure:
+  /// it classifies as [SyncInternalError] (permanent) and is reported like one.
+  static SyncError coerce(Object e) => switch (e) {
+    SyncError() => e,
+    ApiError() => SyncApiError(e),
+    StoreError() => SyncStoreError(e),
+    _ => SyncInternalError(e.toString()),
+  };
+
   /// Whether this run failure is expected to clear itself on a later run with
   /// no user action (a network blip, a 5xx, a rate-limit). The scheduler
   /// retries these silently at the base cadence; everything else is permanent

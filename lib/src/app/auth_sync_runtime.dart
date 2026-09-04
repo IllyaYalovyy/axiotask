@@ -35,7 +35,6 @@ import '../api/tasks_api.dart' show TasksApi;
 import '../auth/auth_controller.dart';
 import '../auth/token_provider.dart';
 import '../store/store.dart';
-import '../sync/sync_error.dart';
 import '../ui/auth/sidebar_auth_sync_footer.dart';
 import '../ui/toast.dart';
 import '../ui/user_message.dart';
@@ -196,9 +195,24 @@ class AuthSyncRuntime {
 
   /// The ONE detached startup task: restore → (auto-sync) → loop. Spawn after
   /// the first frame; never awaited on the render path.
+  ///
+  /// The prefix is BEST-EFFORT and the loop is not (#270). Whatever restore or
+  /// the startup auto-sync hits — a client that cannot be built, a store write
+  /// that throws a raw exception — the background loop must still come up, or
+  /// the session has no sync at all until the app is restarted. The failure is
+  /// swallowed rather than merely re-thrown past the `finally`, because the
+  /// entry point spawns this detached: a rejection here has no catcher and
+  /// surfaces as an unhandled zone error instead of a log line.
   Future<void> start() async {
-    await restoreAndAutoSync();
-    startLoop();
+    try {
+      await restoreAndAutoSync();
+    } catch (e) {
+      Log.warn(
+        'startup restore/auto-sync failed; starting the loop anyway: $e',
+      );
+    } finally {
+      startLoop();
+    }
   }
 
   // ── The UI action seams ─────────────────────────────────────────────────────
@@ -259,9 +273,13 @@ class AuthSyncRuntime {
     if (!auth.isAuthenticated || _client == null) return;
     try {
       await scheduler.runSyncIfAuthed();
-    } on SyncError catch (e) {
-      // The scheduler already recorded/sanitized the failure into its status
-      // (which the UI renders); a rethrow here would only crash the gesture.
+    } catch (e) {
+      // Object, not SyncError (#270): this is reached from a pull-to-refresh,
+      // a "Sync now" button AND the detached startup task, none of which have
+      // anywhere to put a rejection. The scheduler already recorded and
+      // sanitized the failure into the status the UI renders, so the log line
+      // is all that is left to do — but it must happen for EVERY failure, not
+      // only the ones the typed union describes.
       Log.debug('manual sync failed: $e');
     }
   }

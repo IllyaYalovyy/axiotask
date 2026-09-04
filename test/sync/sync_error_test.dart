@@ -113,4 +113,41 @@ void main() {
       }
     });
   });
+
+  group('SyncError.coerce — nothing escapes the union (#270)', () {
+    test('typed failures keep their identity', () {
+      expect(
+        SyncError.coerce(const ServerError(503)),
+        const SyncApiError(ServerError(503)),
+      );
+      expect(
+        SyncError.coerce(const StoreSqlError('no such column: foo')),
+        const SyncStoreError(StoreSqlError('no such column: foo')),
+      );
+      // Already coerced: idempotent, and never double-wrapped.
+      const already = SyncInternalError('boom');
+      expect(identical(SyncError.coerce(already), already), isTrue);
+    });
+
+    test(
+      'an UNTYPED throw still classifies as a permanent internal failure',
+      () {
+        // The whole point: a raw SqliteException out of a store write, a
+        // TypeError out of a decode. Before #270 these slipped past every
+        // `on SyncError` guard, killing the startup task and the background loop
+        // with it, and leaving the status with nothing to report.
+        final coerced = SyncError.coerce(
+          Exception('SqliteException(13): database or disk is full'),
+        );
+        expect(coerced, isA<SyncInternalError>());
+        expect(
+          coerced.isTransient,
+          isFalse,
+          reason: 'an unrecognized failure repeats until something changes',
+        );
+        expect(coerced.isAuthExpired, isFalse);
+        expect(coerced.failureKind, SyncFailureKind.internal);
+      },
+    );
+  });
 }

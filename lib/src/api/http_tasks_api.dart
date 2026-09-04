@@ -115,12 +115,23 @@ class HttpTasksApi implements TasksApi {
       }
       // Read the Retry-After hint before the body decision.
       final retryAfter = _retryAfterFrom(resp.headers);
-      // 403 needs the body to tell quota exhaustion (transient) from a real
-      // permission failure (permanent); other statuses map without it.
-      final err = resp.statusCode == 403
-          ? mapStatusWithBody(resp.statusCode, _bodyText(resp))
-          : mapStatus(resp.statusCode);
-      if (!err.isTransient || attempt >= maxRetries) {
+      // The body is load-bearing on the error path: it tells a quota 403
+      // (transient) from a permission 403 (permanent), and — since every real
+      // Tasks API error body is JSON — it tells a Google rejection from an
+      // interception proxy answering in its place (#270).
+      final err = mapStatusWithBody(resp.statusCode, _bodyText(resp));
+      // A non-JSON body classifies as [Network] (#270), and it is transient for
+      // exactly the reason a dead socket is: Google's answer never reached us,
+      // so we cannot know whether the REQUEST reached Google. That makes it a
+      // lost response, not a declined one — and a create must not be replayed
+      // on a lost response (#266) or the user gets a duplicate under an id this
+      // device never learns. It raises here instead, so the in-flight marker
+      // survives and the next run adopts the orphan. A 429/5xx stays a genuine
+      // "the server declined" and keeps retrying, inserts included.
+      final lostResponse = err is Network;
+      if (!err.isTransient ||
+          attempt >= maxRetries ||
+          (lostResponse && !idempotent)) {
         throw err;
       }
       attempt += 1;
@@ -145,8 +156,9 @@ class HttpTasksApi implements TasksApi {
       case 401:
         return const Unauthorized();
       case 403:
-        return _isRateLimitBody(body)
-            ? const RateLimited()
+        if (_isRateLimitBody(body)) return const RateLimited();
+        return _notJson(body)
+            ? const Network('403 with a non-JSON body')
             : OtherApiError('403 forbidden: ${_bodyReason(body)}');
       case 404:
         return const NotFound();
@@ -159,7 +171,14 @@ class HttpTasksApi implements TasksApi {
         if (status >= 500 && status <= 599) {
           return ServerError(status);
         }
-        return OtherApiError('unexpected status $status');
+        // A status Google would answer with a JSON error body, answered with
+        // something else: nothing here came from the Tasks API, so it says
+        // nothing about the request and must NOT permanently reject the row
+        // (#270). Only the classification differs — the body still never rides
+        // on the message (#187).
+        return _notJson(body)
+            ? Network('$status with a non-JSON body')
+            : OtherApiError('unexpected status $status');
     }
   }
 
@@ -168,6 +187,20 @@ class HttpTasksApi implements TasksApi {
     final shift = attempt < 6 ? attempt : 6;
     final ms = 100 * (1 << shift);
     return Duration(milliseconds: ms > 5000 ? 5000 : ms);
+  }
+
+  /// Whether [body] is present but is not JSON at all — the signature of a
+  /// captive portal or interception proxy answering for Google with an HTML
+  /// login page. Every real Tasks API response body, success or error, is JSON.
+  /// An EMPTY body is not evidence of anything and stays classified by status.
+  static bool _notJson(String body) {
+    if (body.trim().isEmpty) return false;
+    try {
+      jsonDecode(body);
+      return false;
+    } on FormatException {
+      return true;
+    }
   }
 
   static bool _isRateLimitBody(String body) => const [
@@ -223,13 +256,19 @@ class HttpTasksApi implements TasksApi {
     try {
       decoded = jsonDecode(_bodyText(resp));
     } on FormatException catch (e) {
-      // Use the FormatException MESSAGE, never its toString(): toString() appends
-      // an excerpt of the offending SOURCE — for an HTML captive-portal
-      // interstitial or any non-JSON 200, that excerpt IS the response body, and
-      // OtherApiError.message rides verbatim onto the public sync status
-      // (apiUserText → lastError). The message alone ("Unexpected character")
-      // carries no body (G6 / #204, #187). Mirrors _taskFromWire below.
-      throw OtherApiError('decode $label: ${e.message}');
+      // A 200 whose body is not JSON did not come from the Tasks API — it came
+      // from whatever is between us and Google (a captive portal's login page).
+      // That is a TRANSPORT fault, transient: it clears itself when the user
+      // signs in to the network, and classifying it as a permanent rejection
+      // marked their pending changes "rejected by the server" and drove the
+      // needs-attention backoff for a condition no user action here can fix
+      // (#270). A body that IS json but the wrong shape is a real API contract
+      // break and stays permanent — see _taskFromWire below.
+      //
+      // Use the FormatException MESSAGE, never its toString(): toString()
+      // appends an excerpt of the offending SOURCE — here that excerpt IS the
+      // response body, and the message rides into the log (G6 / #204, #187).
+      throw Network('decode $label: ${e.message}');
     }
     return (decoded as Map?)?.cast<String, Object?>() ??
         const <String, Object?>{};

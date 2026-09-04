@@ -28,6 +28,7 @@
 import '../api/api_error.dart';
 import '../api/tasks_api.dart';
 import '../app/ids.dart' show newLocalId;
+import '../app/logging.dart';
 import '../model/base_snapshot.dart';
 import '../model/page.dart';
 import '../model/task.dart';
@@ -35,6 +36,7 @@ import '../model/task_list.dart';
 import '../store/store.dart';
 import '../store/store_error.dart';
 import '../store/stored.dart';
+import 'poison.dart';
 import 'reconcile.dart' as reconcile;
 import 'reconcile.dart'
     show
@@ -83,8 +85,20 @@ class SyncOutcome {
 
   /// Rows whose push was rejected by the server (e.g. a 400). The row stays
   /// dirty and the run continues — one poisoned row must not stop the other
-  /// pushes, or the pull.
+  /// pushes, or the pull. A row that has exhausted its rejection budget is
+  /// counted in [quarantined] instead: it is no longer "will retry".
   int errors = 0;
+
+  /// Titles of the rows whose push is now HELD because the server rejected
+  /// them [kPoisonRejectCap] runs running (#270). Unlike [errors] this is a
+  /// STATE, not an event: it is re-reported every run for as long as the rows
+  /// stay quarantined, because only the user editing them can release them.
+  final List<String> quarantined = [];
+
+  /// Dedup-append a quarantined row's title.
+  void noteQuarantined(String title) {
+    if (!quarantined.contains(title)) quarantined.add(title);
+  }
 
   /// Task lists whose task rows changed locally during this run.
   final List<String> changedListIds = [];
@@ -120,27 +134,54 @@ class SyncConfig {
   final String? heldCreateId;
 }
 
-/// The sync engine. Stateless — each [run] is independent.
+/// Identity of a row whose push failed: what a rejection is counted against
+/// ([id] plus [localUpdated], the streak's base — an edit moves it and voids
+/// the streak) and what to name in the status if the row is quarantined
+/// ([title]).
+typedef PushRowRef = ({String id, String title, String localUpdated});
+
+/// The sync engine. Stateless per [run] — the ONE thing that outlives a run is
+/// the caller's [PoisonRegistry], which is what makes "rejected five runs
+/// running" observable at all.
 class SyncEngine {
   /// Create a new sync engine with the default config (push off).
-  SyncEngine(this._client, this._store, {String Function()? newId})
-    : _config = const SyncConfig(),
-      _newId = newId ?? newLocalId;
+  SyncEngine(
+    this._client,
+    this._store, {
+    String Function()? newId,
+    PoisonRegistry? poison,
+  }) : _config = const SyncConfig(),
+       _newId = newId ?? newLocalId,
+       _poison = poison ?? PoisonRegistry();
 
-  /// Create with an explicit push flag.
+  /// Create with an explicit push flag. [poison] carries the rejection streaks
+  /// ACROSS runs; omitting it gives this engine a private, empty registry (a
+  /// row can never be rejected twice within one run, so nothing quarantines).
   SyncEngine.withPush(
     this._client,
     this._store,
     bool pushEnabled, {
     String Function()? newId,
+    PoisonRegistry? poison,
   }) : _config = SyncConfig(pushEnabled: pushEnabled),
-       _newId = newId ?? newLocalId;
+       _newId = newId ?? newLocalId,
+       _poison = poison ?? PoisonRegistry();
 
-  SyncEngine._(this._client, this._store, this._config, this._newId);
+  SyncEngine._(
+    this._client,
+    this._store,
+    this._config,
+    this._newId,
+    this._poison,
+  );
 
   final TasksApi _client;
   final Store _store;
   final SyncConfig _config;
+
+  /// Consecutive push rejections per row (#270) — owned by the caller so it
+  /// survives between runs.
+  final PoisonRegistry _poison;
 
   /// Fresh id generator for conflicted copies (injectable for deterministic
   /// tests; defaults to a v4 UUID).
@@ -157,9 +198,21 @@ class SyncEngine {
     _store,
     SyncConfig(pushEnabled: _config.pushEnabled, heldCreateId: id),
     _newId,
+    _poison,
   );
 
   /// Execute a full sync cycle: push then pull. Always writes to sync_log.
+  ///
+  /// EVERYTHING that can throw is inside the coercion, the bookkeeping write
+  /// included (#270). `writeSyncLog` used to sit outside it, so a full or
+  /// locked database threw a raw `SqliteException` straight past every
+  /// `on SyncError` guard above — which took down the startup task before it
+  /// launched the background loop, and left the status with nothing to show for
+  /// a session that would never sync again.
+  ///
+  /// When both halves fail, the RUN's failure is the one that reaches the
+  /// caller: it is the one that explains why nothing synced. The log-write
+  /// failure is still reported, at WARN, so a dying disk is not silent.
   Future<SyncOutcome> run() async {
     final started = Stopwatch()..start();
     final out = SyncOutcome();
@@ -170,25 +223,30 @@ class SyncEngine {
       error = e;
     }
     started.stop();
-    await _store.writeSyncLog(
-      pulled: out.pulled,
-      pushed: out.pushed,
-      conflicts: out.conflicts,
-      durationMs: started.elapsedMilliseconds,
-      failure: error == null ? null : _asSyncError(error).failureKind,
-    );
-    if (error != null) throw _asSyncError(error);
+    final runError = error == null ? null : SyncError.coerce(error);
+    SyncError? logError;
+    try {
+      await _store.writeSyncLog(
+        pulled: out.pulled,
+        pushed: out.pushed,
+        conflicts: out.conflicts,
+        durationMs: started.elapsedMilliseconds,
+        failure: runError?.failureKind,
+      );
+    } catch (e) {
+      // Whatever the underlying exception type, a failed write to the store IS
+      // a store failure — that is what the user needs told, and what the
+      // scheduler's sanitized message says.
+      logError = e is SyncError ? e : SyncStoreError(_asStoreError(e));
+      Log.warn('sync log write failed: $logError');
+    }
+    if (runError != null) throw runError;
+    if (logError != null) throw logError;
     return out;
   }
 
-  /// Coerce any thrown error into a [SyncError] (mirrors the reference's
-  /// `From<ApiError>`/`From<StoreError>` conversions on `?`).
-  SyncError _asSyncError(Object e) => switch (e) {
-    SyncError() => e,
-    ApiError() => SyncApiError(e),
-    StoreError() => SyncStoreError(e),
-    _ => SyncInternalError(e.toString()),
-  };
+  static StoreError _asStoreError(Object e) =>
+      e is StoreError ? e : StoreSqlError(e.toString());
 
   Future<void> _execute(SyncOutcome out) async {
     if (_config.pushEnabled) {
@@ -212,6 +270,13 @@ class SyncEngine {
 
   /// Push all dirty rows: creates (parents first), then remaining ops.
   Future<void> _pushAll(SyncOutcome out) async {
+    // Forget the rejection streaks of rows that are no longer waiting to push
+    // (pushed, deleted, or cleaned by a pull), so the registry cannot grow
+    // without bound over a long session (#270).
+    _poison.retainAll({
+      for (final r in await _store.drainDirty()) r.task.id,
+      for (final l in await _store.drainDirtyLists()) l.list.id,
+    });
     // Recover any creates interrupted by a crash before pushing new ones.
     await _recoverInflightCreates(out);
     // A marker recovery that could NOT resolve (its list fetch died
@@ -255,6 +320,7 @@ class SyncEngine {
         if (!reconcile.parentIsPushable(await _refStateOf(row.task.parent))) {
           continue;
         }
+        if (_isQuarantined(_taskRef(row), out)) continue;
         attempted.add(row.task.id);
         await pushCreate(row, out);
         progressed = true;
@@ -268,6 +334,7 @@ class SyncEngine {
       if (!reconcile.mutationIsPushable(row.task.id, unresolvedCreates)) {
         continue;
       }
+      if (_isQuarantined(_taskRef(row), out)) continue;
       switch (row.pendingOp) {
         case 'update':
           // No remote id and no in-flight marker: the server has never seen
@@ -289,16 +356,25 @@ class SyncEngine {
   }
 
   /// Apply the decision [reconcile.pushFailure] made for one row's push failure.
-  void _rowPushFailure(ApiError e, SyncOutcome out, String id, String op) =>
-      _applyPushFailure(reconcile.pushFailure(e), e, out, id, op);
+  void _rowPushFailure(
+    ApiError e,
+    SyncOutcome out,
+    PushRowRef row,
+    String op,
+  ) => _applyPushFailure(reconcile.pushFailure(e), e, out, row, op);
 
   /// Apply an already-classified push failure (used where the decision came
   /// from an op-specific reconciler that had already inspected the error).
+  ///
+  /// [row] is the identity a REJECTION is counted against (#270). It is null
+  /// only where the failed intent is dropped rather than left to retry — a
+  /// refused move — because a streak can only exist for something that would
+  /// otherwise be sent again on the next run.
   void _applyPushFailure(
     PushFailure failure,
     ApiError e,
     SyncOutcome out,
-    String id,
+    PushRowRef? row,
     String op,
   ) {
     switch (failure) {
@@ -308,10 +384,40 @@ class SyncEngine {
       case PushFailure.abort:
         throw SyncApiError(e);
       case PushFailure.reject:
-        // Server rejected it; the row stays dirty and the run continues.
-        out.errors += 1;
+        // Server rejected it; the row stays dirty and the run continues. Once
+        // the same row+content has been rejected kPoisonRejectCap runs running,
+        // stop spending a request on it every cadence tick and tell the user
+        // which change is stuck — "will retry" stopped being true (#270).
+        if (row == null) {
+          out.errors += 1;
+          return;
+        }
+        final runs = _poison.recordRejection(row.id, row.localUpdated);
+        if (runs >= kPoisonRejectCap) {
+          Log.warn(
+            'push of $op ${row.id} rejected $runs runs running '
+            '($e) — quarantined until it is edited',
+          );
+          out.noteQuarantined(row.title);
+        } else {
+          out.errors += 1;
+        }
     }
   }
+
+  /// Whether this row's push is held by the poison cap. Records it on the
+  /// outcome so the status keeps naming it for as long as it is held.
+  bool _isQuarantined(PushRowRef row, SyncOutcome out) {
+    if (!_poison.isQuarantined(row.id, row.localUpdated)) return false;
+    out.noteQuarantined(row.title);
+    return true;
+  }
+
+  static PushRowRef _taskRef(StoredTask r) =>
+      (id: r.task.id, title: r.task.title, localUpdated: r.localUpdated);
+
+  static PushRowRef _listRef(StoredTaskList l) =>
+      (id: l.list.id, title: l.list.title, localUpdated: l.localUpdated);
 
   /// Push locally-created lists so their tasks can reference real ids. Adopts an
   /// existing remote list with the same title instead of creating a duplicate.
@@ -335,6 +441,7 @@ class SyncEngine {
     };
 
     for (final l in creates) {
+      if (_isQuarantined(_listRef(l), out)) continue;
       // Adopt a remote list with the same title we don't already track.
       final existing = reconcile.adoptableList(
         l.list.title,
@@ -366,7 +473,7 @@ class SyncEngine {
         out.pushed += 1;
         out.listsChanged = true;
       } on ApiError catch (e) {
-        _rowPushFailure(e, out, l.list.id, 'list create');
+        _rowPushFailure(e, out, _listRef(l), 'list create');
       }
     }
   }
@@ -374,6 +481,7 @@ class SyncEngine {
   /// Push list renames (update) and deletions.
   Future<void> _pushListMutations(SyncOutcome out) async {
     for (final l in await _store.drainDirtyLists()) {
+      if (_isQuarantined(_listRef(l), out)) continue;
       // Both branches name Google's id for the list. A dirty list without one
       // has never been acknowledged: its rename folds into its still-pending
       // create (see `Commands.renameList`), and its delete is purely local.
@@ -416,7 +524,7 @@ class SyncEngine {
                 }
                 out.listsChanged = true;
               case ListRenameFailed(:final failure):
-                _applyPushFailure(failure, e, out, l.list.id, 'list rename');
+                _applyPushFailure(failure, e, out, _listRef(l), 'list rename');
             }
           }
         case 'delete':
@@ -674,13 +782,9 @@ class SyncEngine {
           case MoveFailure.abort:
             throw SyncApiError(error);
           case MoveFailure.rejectAndDrop:
-            _applyPushFailure(
-              PushFailure.reject,
-              error,
-              out,
-              mv.taskId,
-              'move',
-            );
+            // No row ref: the intent is dropped right below, so there is
+            // nothing that would be re-sent for a streak to count (#270).
+            _applyPushFailure(PushFailure.reject, error, out, null, 'move');
             await _store.clearMove(mv.taskId);
             await _revertLocalMove(before);
           case MoveFailure.dropPreviousAndRetry:
@@ -760,7 +864,7 @@ class SyncEngine {
         break;
       case ClearInflight(:final failure):
         await _store.clearInflightCreate(row.task.id);
-        _applyPushFailure(failure, error, out, row.task.id, 'create');
+        _applyPushFailure(failure, error, out, _taskRef(row), 'create');
     }
   }
 
@@ -805,7 +909,7 @@ class SyncEngine {
         await _store.deleteTaskHard(row.task.id);
         out.markListChanged(row.listId);
       case UpdateFailed(:final failure):
-        _applyPushFailure(failure, error, out, row.task.id, 'update');
+        _applyPushFailure(failure, error, out, _taskRef(row), 'update');
     }
   }
 
@@ -937,7 +1041,7 @@ class SyncEngine {
           out.markListChanged(row.listId);
         }
       case final DeleteFailed f:
-        _applyPushFailure(f.failure, error!, out, row.task.id, 'delete');
+        _applyPushFailure(f.failure, error!, out, _taskRef(row), 'delete');
     }
   }
 
