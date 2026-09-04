@@ -193,4 +193,83 @@ void main() {
     expect(info['a']!.effective, isNull);
     expect(info['b']!.effective, isNull);
   });
+
+  // The value contract of the result type. Every assertion above reads one
+  // field at a time, so `DueInfo.==` and `hashCode` — exported model API — were
+  // carried by no test at all (mutation testing could not even reach them: no
+  // line of the suite executes them). They are what a WHOLE-value expectation
+  // rests on: `expect(info['p'], DueInfo(...))` says "these three dates and
+  // nothing else" only if `==` looks at all three. The failure this prevents is
+  // an equality that ignores a field, under which such an expectation would
+  // pass against a propagation that silently dropped `propagated`.
+  group('DueInfo value equality', () {
+    DueInfo dated({String? explicit, String? propagated, String? effective}) =>
+        DueInfo(
+          explicit: explicit,
+          propagated: propagated,
+          effective: effective,
+        );
+
+    final info = dated(
+      explicit: '2026-08-02',
+      propagated: '2026-08-01',
+      effective: '2026-08-01',
+    );
+
+    test('same three dates means equal, and the hashes agree', () {
+      expect(
+        dated(
+          explicit: '2026-08-02',
+          propagated: '2026-08-01',
+          effective: '2026-08-01',
+        ),
+        info,
+      );
+      expect(
+        dated(
+          explicit: '2026-08-02',
+          propagated: '2026-08-01',
+          effective: '2026-08-01',
+        ).hashCode,
+        info.hashCode,
+      );
+      // The all-null case the map is mostly full of: two undated tasks.
+      expect(dated(), dated());
+      expect(dated().hashCode, dated().hashCode);
+    });
+
+    test('a difference in any single field breaks equality', () {
+      expect(
+        dated(
+          explicit: '2026-08-03',
+          propagated: '2026-08-01',
+          effective: '2026-08-01',
+        ),
+        isNot(info),
+      );
+      expect(
+        dated(
+          explicit: '2026-08-02',
+          propagated: '2026-08-09',
+          effective: '2026-08-01',
+        ),
+        isNot(info),
+      );
+      expect(
+        dated(
+          explicit: '2026-08-02',
+          propagated: '2026-08-01',
+          effective: '2026-08-02',
+        ),
+        isNot(info),
+      );
+      // Non-happy path: a DROPPED field is a difference, not a match — the
+      // exact shape a broken propagation produces.
+      expect(
+        dated(explicit: '2026-08-02', effective: '2026-08-01'),
+        isNot(info),
+      );
+      expect(dated(), isNot(info));
+    });
+  });
 }
