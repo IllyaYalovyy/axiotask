@@ -7,7 +7,9 @@
 //  - request/response (de)serialization,
 //  - mapping HTTP status → [ApiError] (incl. the load-bearing 403 body split),
 //  - pagination to completion on both list endpoints,
-//  - exponential backoff (honoring `Retry-After`) on 5xx / 429 / network.
+//  - exponential backoff (honoring `Retry-After`) on 5xx / 429, and on a
+//    transport failure for the idempotent calls only — a create is never
+//    replayed at the transport level (#266).
 //
 // The wire rules below are verified-live invariants (RFC-009); each is pinned
 // by a named test in `http_tasks_api_test.dart`. Loosening any of them silently
@@ -49,16 +51,24 @@ class HttpTasksApi implements TasksApi {
   /// sync engine's abort signal — and the original call is NOT replayed; a
   /// transient refresh failure becomes [Network] so the next run retries.
   ///
+  /// A 401 is a RESPONSE, and one refused before the server acted on the
+  /// request, so replaying it after a refresh is safe even for a create —
+  /// unlike a transport failure, which [idempotent] governs (see
+  /// [_sendWithRetry]).
+  ///
   /// [build] must produce a FRESH [http.Request] on each call: a request body
   /// is single-shot, and rebuilding lets the post-refresh retry pick up the new
   /// token.
-  Future<http.Response> _sendAuthed(http.Request Function() build) async {
+  Future<http.Response> _sendAuthed(
+    http.Request Function() build, {
+    required bool idempotent,
+  }) async {
     try {
-      return await _sendWithRetry(build);
+      return await _sendWithRetry(build, idempotent: idempotent);
     } on Unauthorized {
       final outcome = await _auth.refreshNow();
       return switch (outcome) {
-        RefreshOk() => await _sendWithRetry(build),
+        RefreshOk() => await _sendWithRetry(build, idempotent: idempotent),
         RefreshDenied(:final message) => throw AuthExpired(message),
         RefreshTransient(:final message) => throw Network(
           'token refresh: $message',
@@ -67,17 +77,33 @@ class HttpTasksApi implements TasksApi {
     }
   }
 
-  /// Retry loop: retry transient errors and transport failures up to
-  /// [maxRetries] extra attempts; honor a server `Retry-After` else
-  /// exponential backoff. Non-transient errors return (throw) immediately.
-  Future<http.Response> _sendWithRetry(http.Request Function() build) async {
+  /// Retry loop: retry transient STATUSES up to [maxRetries] extra attempts,
+  /// honoring a server `Retry-After` else exponential backoff. Non-transient
+  /// errors return (throw) immediately.
+  ///
+  /// Transport failures — no response at all — are retried only when
+  /// [idempotent] is true. A lost response is NOT a lost request: when the
+  /// socket dies after Google read a create, the insert may already be
+  /// committed, and replaying it makes a SECOND task/list under an id we never
+  /// learn — a duplicate the in-flight marker can never see, because the call
+  /// ends up "succeeding" (#266). So a create raises [Network] on the first
+  /// transport failure; that transient is what the engine turns into
+  /// `KeepInflight`, which adopts the orphan on the next run (§G). GET, PATCH,
+  /// DELETE and move are safe to repeat and keep retrying.
+  ///
+  /// [idempotent] is deliberately required, with no default: a new endpoint
+  /// must state its replay policy rather than inherit a duplicating one.
+  Future<http.Response> _sendWithRetry(
+    http.Request Function() build, {
+    required bool idempotent,
+  }) async {
     var attempt = 0;
     while (true) {
       late final http.Response resp;
       try {
         resp = await _auth.send(build());
       } on Exception catch (e) {
-        if (attempt >= maxRetries) {
+        if (!idempotent || attempt >= maxRetries) {
           throw Network(e.toString());
         }
         attempt += 1;
@@ -232,7 +258,7 @@ class HttpTasksApi implements TasksApi {
         buffer.write('&pageToken=${_enc(pageToken)}');
       }
       final url = Uri.parse(buffer.toString());
-      final resp = await _sendAuthed(() => _get(url));
+      final resp = await _sendAuthed(() => _get(url), idempotent: true);
       final map = _decodeMap(resp, 'lists');
       final items = (map['items'] as List?) ?? const [];
       for (final item in items) {
@@ -250,7 +276,12 @@ class HttpTasksApi implements TasksApi {
   @override
   Future<TaskList> insertTasklist(String title) async {
     final url = Uri.parse('$baseUrl/users/@me/lists');
-    final resp = await _sendAuthed(() => _json('POST', url, {'title': title}));
+    // NOT idempotent: a replayed list create leaves the user with two lists of
+    // the same name and no way to tell which one the app adopted (#266).
+    final resp = await _sendAuthed(
+      () => _json('POST', url, {'title': title}),
+      idempotent: false,
+    );
     return TaskList.fromJson(_decodeMap(resp, 'list insert'));
   }
 
@@ -262,14 +293,17 @@ class HttpTasksApi implements TasksApi {
   @override
   Future<TaskList> patchTasklist(String id, String title) async {
     final url = Uri.parse('$baseUrl/users/@me/lists/${_enc(id)}');
-    final resp = await _sendAuthed(() => _json('PATCH', url, {'title': title}));
+    final resp = await _sendAuthed(
+      () => _json('PATCH', url, {'title': title}),
+      idempotent: true,
+    );
     return TaskList.fromJson(_decodeMap(resp, 'list patch'));
   }
 
   @override
   Future<void> deleteTasklist(String id) async {
     final url = Uri.parse('$baseUrl/users/@me/lists/${_enc(id)}');
-    await _sendAuthed(() => _delete(url));
+    await _sendAuthed(() => _delete(url), idempotent: true);
   }
 
   @override
@@ -285,7 +319,7 @@ class HttpTasksApi implements TasksApi {
       buffer.write('&pageToken=${_enc(pageToken)}');
     }
     final url = Uri.parse(buffer.toString());
-    final resp = await _sendAuthed(() => _get(url));
+    final resp = await _sendAuthed(() => _get(url), idempotent: true);
     final map = _decodeMap(resp, 'tasks');
     final rawItems = (map['items'] as List?) ?? const [];
     final items = <Task>[];
@@ -318,14 +352,20 @@ class HttpTasksApi implements TasksApi {
       'due': task.due,
       'status': (task.status ?? TaskStatus.needsAction).apiStr,
     };
-    final resp = await _sendAuthed(() => _json('POST', url, body));
+    // NOT idempotent: the create is the one call a transport retry can
+    // duplicate server-side. A lost response leaves the engine's in-flight
+    // marker to adopt the orphan on the next run (#266).
+    final resp = await _sendAuthed(
+      () => _json('POST', url, body),
+      idempotent: false,
+    );
     return _taskFromWire(_decodeMap(resp, 'insert'), 'insert');
   }
 
   @override
   Future<Task> getTask(String listId, String id) async {
     final url = Uri.parse('$baseUrl/lists/${_enc(listId)}/tasks/${_enc(id)}');
-    final resp = await _sendAuthed(() => _get(url));
+    final resp = await _sendAuthed(() => _get(url), idempotent: true);
     return _taskFromWire(_decodeMap(resp, 'get'), 'get');
   }
 
@@ -337,13 +377,16 @@ class HttpTasksApi implements TasksApi {
     String? etag,
   }) async {
     final url = Uri.parse('$baseUrl/lists/$listId/tasks/$id');
+    // Idempotent: re-applying the same field set lands the same state, and
+    // with If-Match a replay that raced a committed first attempt answers 412
+    // rather than writing twice.
     final resp = await _sendAuthed(() {
       final req = _json('PATCH', url, patch.toJson());
       if (etag != null) {
         req.headers['if-match'] = etag;
       }
       return req;
-    });
+    }, idempotent: true);
     return _taskFromWire(_decodeMap(resp, 'patch'), 'patch');
   }
 
@@ -353,7 +396,7 @@ class HttpTasksApi implements TasksApi {
     // honor If-Match (a stale etag → 412), but we send none so a concurrent
     // remote edit can never block a delete the user asked for.
     final url = Uri.parse('$baseUrl/lists/$listId/tasks/$id');
-    await _sendAuthed(() => _delete(url));
+    await _sendAuthed(() => _delete(url), idempotent: true);
   }
 
   @override
@@ -378,7 +421,12 @@ class HttpTasksApi implements TasksApi {
     // Content-Length; package:http emits Content-Length: 0 for an empty body
     // natively (unlike reqwest, which omits it — the reference had to set it by
     // hand). The empty body is the contract; the move_task test pins it.
-    final resp = await _sendAuthed(() => http.Request('POST', url));
+    // A POST, but idempotent: move is a placement, not a creation — repeating
+    // it puts the same task in the same slot.
+    final resp = await _sendAuthed(
+      () => http.Request('POST', url),
+      idempotent: true,
+    );
     return _taskFromWire(_decodeMap(resp, 'move'), 'move');
   }
 
