@@ -8,10 +8,14 @@
 // showCompleted+showHidden requirement, pagination-to-completion, the bodyless
 // move, and URL-encoding of page tokens.
 
+import 'dart:io';
+
 import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/authed_client.dart';
 import 'package:axiotask/src/api/http_tasks_api.dart';
 import 'package:axiotask/src/model/task.dart';
+import 'package:axiotask/src/model/task_list.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
@@ -23,12 +27,39 @@ const String _base = 'https://mock.test/tasks/v1';
   ReplyHandler handler, {
   RefreshOutcome Function()? refresh,
   String token = 'token',
+  int maxRetries = 0,
 }) {
   final auth = FakeAuthedClient(handler, refresh: refresh, token: token);
-  // maxRetries: 0 disables the backoff sleeps — every wire test runs instantly
-  // and deterministically (parity with the reference's with_max_retries(0)).
-  final api = HttpTasksApi(auth, baseUrl: _base, maxRetries: 0);
+  // maxRetries defaults to 0, which disables the backoff sleeps — every wire
+  // test runs instantly and deterministically (parity with the reference's
+  // with_max_retries(0)). The retry-policy tests raise it and run the call
+  // under a fake clock ([_settle]) so the backoff still costs no wall time.
+  final api = HttpTasksApi(auth, baseUrl: _base, maxRetries: maxRetries);
   return (auth: auth, api: api);
+}
+
+/// Run [action] to completion under a FAKE clock and return its value, or the
+/// error it threw. The retry loop sleeps between attempts; a fake clock keeps
+/// the retry tests free of real timers (and therefore of timing flakes) while
+/// still letting every scheduled backoff elapse.
+Object? _settle(Future<Object?> Function() action) {
+  Object? outcome;
+  var done = false;
+  fakeAsync((async) {
+    action().then(
+      (value) {
+        outcome = value;
+        done = true;
+      },
+      onError: (Object e) {
+        outcome = e;
+        done = true;
+      },
+    );
+    async.flushTimers();
+  });
+  expect(done, isTrue, reason: 'the call never completed under the fake clock');
+  return outcome;
 }
 
 /// Run [action] and return whatever it throws (or null on success) — used where
@@ -599,5 +630,244 @@ void main() {
     final err = await _caught(api.listTasklists);
     expect(err, isA<Network>());
     expect((err! as ApiError).isTransient, isTrue);
+  });
+
+  // ─── Transport retry is per-request (#266) ─────────────────────────────────
+  //
+  // A lost RESPONSE is not a lost REQUEST: when the socket dies after the
+  // server read the POST, Google may already have committed the create. Any
+  // replay of that POST creates a SECOND task/list under an id we never learn —
+  // a duplicate no in-flight marker can see, because the call ultimately
+  // "succeeded". So transport retry is reserved for requests that are safe to
+  // repeat (GET / PATCH / DELETE / move); a create surfaces Network on the
+  // FIRST transport failure, which is the transient the engine turns into
+  // KeepInflight and recovers by adopting the orphan on the next run.
+  //
+  // Retries driven by a STATUS are untouched: a 429/5xx is a response, and it
+  // says the server declined the request rather than committing it.
+  group('transport retry is per-request', () {
+    // Both are real transport failures: package:http's IOClient wraps a socket
+    // reset as ClientException, and a raw SocketException reaches the loop from
+    // clients that do not. Neither may replay a create.
+    final transportFailures = <String, Exception Function(Uri url)>{
+      'ClientException': (url) => http.ClientException('connection reset', url),
+      'SocketException': (url) =>
+          const SocketException('Connection reset by peer'),
+    };
+
+    transportFailures.forEach((label, failure) {
+      test('insert_task_is_not_replayed_after_a_transport_failure '
+          '($label)', () {
+        // The server ACCEPTS the POST (it is recorded — i.e. committed) and
+        // then the connection dies before the response arrives.
+        final (:auth, :api) = _build(
+          (req, i) => throw failure(req.url),
+          maxRetries: 4,
+        );
+
+        final err = _settle(
+          () => api.insertTask('L1', const NewTask(title: 'buy milk')),
+        );
+
+        expect(
+          auth.requests.length,
+          1,
+          reason:
+              'a create must never be re-POSTed: the first one may have '
+              'committed, and a replay duplicates it server-side',
+        );
+        expect(auth.requests.single.method, 'POST');
+        expect(err, isA<Network>());
+        expect(
+          (err! as ApiError).isTransient,
+          isTrue,
+          reason: 'transient is what the engine turns into KeepInflight',
+        );
+      });
+    });
+
+    test('insert_tasklist_is_not_replayed_after_a_transport_failure', () {
+      final (:auth, :api) = _build(
+        (req, i) => throw http.ClientException('connection reset', req.url),
+        maxRetries: 4,
+      );
+
+      final err = _settle(() => api.insertTasklist('Work'));
+
+      expect(
+        auth.requests.length,
+        1,
+        reason: 'a replayed list create leaves the user with two "Work" lists',
+      );
+      expect(err, isA<Network>());
+    });
+
+    test('insert_task_still_retries_a_transient_STATUS', () {
+      // Pinning the other half of the split: a 503 is a RESPONSE saying the
+      // server declined the insert, so retrying it cannot duplicate anything.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? emptyReply(503)
+            : jsonReply({
+                'id': 'remote-1',
+                'title': 'buy milk',
+                'status': 'needsAction',
+                'position': '00001',
+                'updated': '2026-01-01T00:00:00Z',
+              }),
+        maxRetries: 4,
+      );
+
+      final result = _settle(
+        () => api.insertTask('L1', const NewTask(title: 'buy milk')),
+      );
+
+      expect((result! as Task).id, 'remote-1');
+      expect(auth.requests.length, 2, reason: '503 then the successful retry');
+    });
+
+    test('insert_task_is_replayed_once_after_a_401_refresh', () {
+      // A 401 is a response too, and it is refused BEFORE the server commits —
+      // the refresh-once seam stays exactly as it was.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? emptyReply(401)
+            : jsonReply({
+                'id': 'remote-1',
+                'title': 'buy milk',
+                'status': 'needsAction',
+                'position': '00001',
+                'updated': '2026-01-01T00:00:00Z',
+              }),
+        maxRetries: 4,
+      );
+
+      final result = _settle(
+        () => api.insertTask('L1', const NewTask(title: 'buy milk')),
+      );
+
+      expect((result! as Task).id, 'remote-1');
+      expect(auth.refreshCount, 1);
+      expect(
+        auth.requests.length,
+        2,
+        reason: 'the rejected POST plus exactly one post-refresh replay',
+      );
+      expect(
+        auth.requests[1].headers['authorization'],
+        'Bearer refreshed-token',
+      );
+    });
+
+    test('get_retries_a_transport_failure_up_to_max_retries', () {
+      final (:auth, :api) = _build(
+        (req, i) => i < 2
+            ? throw http.ClientException('connection reset', req.url)
+            : jsonReply({
+                'items': [
+                  {
+                    'id': 'L1',
+                    'title': 'Inbox',
+                    'updated': '2026-01-01T00:00:00Z',
+                  },
+                ],
+              }),
+        maxRetries: 2,
+      );
+
+      final result = _settle(api.listTasklists);
+
+      expect((result! as List<TaskList>).single.title, 'Inbox');
+      expect(
+        auth.requests.length,
+        3,
+        reason: 'a read is safe to repeat: two failures then the success',
+      );
+    });
+
+    test('get_gives_up_with_network_after_max_retries', () {
+      final (:auth, :api) = _build(
+        (req, i) => throw http.ClientException('connection reset', req.url),
+        maxRetries: 2,
+      );
+
+      final err = _settle(api.listTasklists);
+
+      expect(err, isA<Network>());
+      expect(auth.requests.length, 3, reason: 'original + maxRetries attempts');
+    });
+
+    test('patch_task_retries_a_transport_failure', () {
+      // Re-applying the same patch lands the same state; with If-Match a replay
+      // that raced a committed first attempt answers 412, never a duplicate.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? throw http.ClientException('connection reset', req.url)
+            : jsonReply({
+                'id': 'T1',
+                'title': 'renamed',
+                'status': 'needsAction',
+                'position': '00001',
+                'updated': '2026-01-01T00:00:00Z',
+              }),
+        maxRetries: 2,
+      );
+
+      final result = _settle(
+        () => api.patchTask(
+          'L1',
+          'T1',
+          const TaskPatch(title: 'renamed'),
+          etag: 'etag-1',
+        ),
+      );
+
+      expect((result! as Task).title, 'renamed');
+      expect(auth.requests.length, 2);
+      expect(auth.requests[1].headers['if-match'], 'etag-1');
+    });
+
+    test('delete_task_retries_a_transport_failure', () {
+      // Deleting an already-deleted task is a 404 the engine treats as done —
+      // repeating a DELETE can never create anything.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? throw http.ClientException('connection reset', req.url)
+            : emptyReply(204),
+        maxRetries: 2,
+      );
+
+      final err = _settle(() => api.deleteTask('L1', 'T1'));
+
+      expect(
+        err,
+        isNull,
+        reason: 'the retried DELETE succeeded — a failure surfaces as ApiError',
+      );
+      expect(auth.requests.length, 2);
+      expect(auth.requests[1].method, 'DELETE');
+    });
+
+    test('move_task_retries_a_transport_failure', () {
+      // move is a POST but it is a placement, not a creation: repeating it puts
+      // the same task in the same slot.
+      final (:auth, :api) = _build(
+        (req, i) => i == 0
+            ? throw http.ClientException('connection reset', req.url)
+            : jsonReply({
+                'id': 'T1',
+                'title': 'moved',
+                'status': 'needsAction',
+                'position': '00002',
+                'updated': '2026-01-01T00:00:00Z',
+              }),
+        maxRetries: 2,
+      );
+
+      final result = _settle(() => api.moveTask('L1', 'T1', previous: 'T0'));
+
+      expect((result! as Task).position, '00002');
+      expect(auth.requests.length, 2);
+    });
   });
 }
