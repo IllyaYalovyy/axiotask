@@ -142,6 +142,48 @@ void main() {
     expect(info['p']!.propagated, '2026-08-03');
   });
 
+  test('a deep tree propagates each branch minimum up through every level', () {
+    // Deeper and wider than any other fixture here: two levels of siblings,
+    // each branch carrying its own date. The failure this prevents is a
+    // propagation that stops at the first branch or leaks one branch's date
+    // into its sibling — `root` must see the earliest date in the WHOLE
+    // subtree, while `b` keeps only what its own subtree holds.
+    final info = computeEffectiveDue([
+      task('root'),
+      task('mid', parent: 'root'),
+      task('a', parent: 'mid', due: at('2026-08-02')),
+      task('b', parent: 'mid'),
+      task('b1', parent: 'b', due: at('2026-08-05')),
+    ]);
+    expect(info['root']!.effective, '2026-08-02');
+    expect(info['root']!.explicit, isNull);
+    expect(info['mid']!.effective, '2026-08-02');
+    // The `b` branch inherits its own leaf only — not its sibling's earlier
+    // date, which lives on a branch it does not contain.
+    expect(info['b']!.effective, '2026-08-05');
+    expect(info['b']!.propagated, '2026-08-05');
+    expect(info['a']!.propagated, isNull);
+    expect(info['b1']!.explicit, '2026-08-05');
+  });
+
+  test('a truncated due string is kept whole, not cropped past its end', () {
+    // Non-happy path: malformed stored data. A due shorter than YYYY-MM-DD
+    // (a truncated row, a hand-edited backup) is passed through as-is; the
+    // length guard is what stops `substring(0, 10)` from throwing a
+    // RangeError and taking the whole list view down with it.
+    final info = computeEffectiveDue([
+      task('short', due: '2026'),
+      task('exact', due: '2026-08-02'),
+      task('empty', due: ''),
+    ]);
+    expect(info['short']!.explicit, '2026');
+    expect(info['short']!.effective, '2026');
+    // A bare YYYY-MM-DD (exactly 10 chars) is already in canonical form.
+    expect(info['exact']!.explicit, '2026-08-02');
+    // An empty due is no due at all.
+    expect(info['empty']!.explicit, isNull);
+  });
+
   test('a cyclic parent chain does not loop and yields no effective date', () {
     // Non-happy path: malformed data (a → b → a) must terminate, not hang.
     final info = computeEffectiveDue([
