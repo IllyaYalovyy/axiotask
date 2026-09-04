@@ -29,7 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/pump_motion.dart';
-import 'detail_harness.dart' show FakeBackend, list;
+import 'detail_harness.dart' show FakeCommands, list;
 
 const _phone = Size(400, 800);
 
@@ -39,7 +39,7 @@ const _phone = Size(400, 800);
 class _EmptyHarness {
   _EmptyHarness(this.fake, this.view, this.rebuilds);
 
-  final FakeBackend fake;
+  final FakeCommands fake;
   final ValueNotifier<String> view;
   final ValueNotifier<int> rebuilds;
 
@@ -58,7 +58,7 @@ Future<_EmptyHarness> _pumpEmpty(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
-  final fake = FakeBackend(const []);
+  final fake = FakeCommands(const []);
   addTearDown(fake.dispose);
   final view = ValueNotifier<String>(viewId);
   addTearDown(view.dispose);
@@ -340,7 +340,7 @@ void main() {
         ProviderScope(
           overrides: [
             prefsProvider.overrideWithValue(const Prefs()),
-            commandsProvider.overrideWithValue(FakeBackend(const [])),
+            commandsProvider.overrideWithValue(FakeCommands(const [])),
             allTasksProvider.overrideWith((ref) => silent.stream),
             listsProvider.overrideWith((ref) => const Stream.empty()),
           ],

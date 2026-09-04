@@ -13,8 +13,6 @@ import 'dart:io';
 import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
-import 'package:axiotask/src/model/dates.dart'
-    show DateMove, applyDateMove, normalizeDue;
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
@@ -28,6 +26,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
+import '../support/fake_commands.dart';
 import 'toast_harness.dart' show wrapWithToast;
 
 final _clock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
@@ -57,213 +56,6 @@ StoredTask row(
   localUpdated: 't',
 );
 
-/// An in-memory stand-in for [Commands] that mutates a task list and re-emits it
-/// on the stream the view watches — enough to exercise the widget's create /
-/// pin / follow / toggle behavior without a database.
-class FakeBackend implements Commands {
-  FakeBackend(List<StoredTask> initial, {String Function()? newId})
-    : _tasks = [...initial],
-      _newId = newId ?? (() => 'gen');
-
-  final List<StoredTask> _tasks;
-  final String Function() _newId;
-  final _controller = StreamController<List<StoredTask>>.broadcast();
-
-  /// When set, the next [setDue]/[setDueRaw] reports this cascade instead of the
-  /// default no-cascade result — lets a test drive the #164 toast surface.
-  SetDueResult? nextDueResult;
-
-  /// The entries the last [undoSetDue] was handed (the Undo-was-wired probe).
-  List<DueUndoEntry>? undoneWith;
-
-  Stream<List<StoredTask>> get tasksStream async* {
-    yield List.of(_tasks);
-    yield* _controller.stream;
-  }
-
-  void dispose() => _controller.close();
-  void _emit() => _controller.add(List.of(_tasks));
-
-  @override
-  Future<StoredTask> createTask({
-    required String listId,
-    String? parentId,
-    required String title,
-    String? due,
-  }) async {
-    final t = StoredTask(
-      task: Task(
-        id: _newId(),
-        parent: parentId,
-        position: '!new',
-        title: title,
-        status: TaskStatus.needsAction,
-        due: due == null ? null : normalizeDue(due),
-        updated: 't',
-      ),
-      listId: listId,
-      syncState: SyncState.dirty,
-      localUpdated: 't',
-      pendingOp: 'create',
-    );
-    _tasks.insert(0, t);
-    _emit();
-    return t;
-  }
-
-  @override
-  Future<void> renameTask(String id, String title) async {
-    final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return;
-    _tasks[i] = StoredTask(
-      task: _tasks[i].task.copyWith(title: title),
-      listId: _tasks[i].listId,
-      syncState: SyncState.dirty,
-      localUpdated: 't',
-      pendingOp: 'update',
-    );
-    _emit();
-  }
-
-  @override
-  Future<CompleteToken> toggleComplete(String id) async {
-    final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) return CompleteToken(id: id, wasCompleting: false);
-    final completing = _tasks[i].task.status == TaskStatus.needsAction;
-    _tasks[i] = StoredTask(
-      task: _tasks[i].task.copyWith(
-        status: completing ? TaskStatus.completed : TaskStatus.needsAction,
-      ),
-      listId: _tasks[i].listId,
-      syncState: SyncState.dirty,
-      localUpdated: 't',
-    );
-    _emit();
-    return CompleteToken(id: id, wasCompleting: completing);
-  }
-
-  @override
-  Future<void> undoToggleComplete(CompleteToken token) async {
-    final i = _tasks.indexWhere((t) => t.task.id == token.id);
-    if (i < 0) return;
-    _tasks[i] = StoredTask(
-      task: _tasks[i].task.copyWith(
-        status: token.wasCompleting
-            ? TaskStatus.needsAction
-            : TaskStatus.completed,
-      ),
-      listId: _tasks[i].listId,
-      syncState: SyncState.dirty,
-      localUpdated: 't',
-    );
-    _emit();
-  }
-
-  // The list slice never drives these (detail-panel / delete paths, T2.4); the
-  // stubs only satisfy the [Commands] surface this double stands in for.
-  @override
-  Future<void> setNotes(String id, String notes) async {}
-
-  @override
-  Future<DeleteToken> deleteTask(String id) async => throw UnimplementedError();
-
-  @override
-  Future<void> undoDelete(DeleteToken token) async {}
-
-  @override
-  Future<SetDueResult> setDue(String id, DateMove move) async {
-    String? computed() {
-      if (move == DateMove.clear) return null;
-      final n = clock.now();
-      final today = DateTime.utc(n.year, n.month, n.day);
-      final d = applyDateMove(today, move)!;
-      final ymd =
-          '${d.year.toString().padLeft(4, '0')}'
-          '-${d.month.toString().padLeft(2, '0')}'
-          '-${d.day.toString().padLeft(2, '0')}';
-      return normalizeDue(ymd);
-    }
-
-    return _applyDue(id, computed());
-  }
-
-  @override
-  Future<SetDueResult> setDueRaw(String id, String rawDate) async =>
-      _applyDue(id, normalizeDue(rawDate));
-
-  /// Write [due] onto the row and re-emit, returning either the configured
-  /// cascade or a plain no-cascade result over the row's prior date.
-  Future<SetDueResult> _applyDue(String id, String? due) async {
-    final i = _tasks.indexWhere((t) => t.task.id == id);
-    if (i < 0) throw StateError('no task $id');
-    final prev = _tasks[i].task.due;
-    _tasks[i] = StoredTask(
-      task: _tasks[i].task.copyWith(due: due),
-      listId: _tasks[i].listId,
-      syncState: SyncState.dirty,
-      localUpdated: 't',
-      pendingOp: 'update',
-    );
-    _emit();
-    return nextDueResult ??
-        SetDueResult(
-          undo: [DueUndoEntry(id: id, due: prev)],
-          cascaded: 0,
-          cascadedParent: false,
-        );
-  }
-
-  @override
-  Future<void> undoSetDue(List<DueUndoEntry> entries) async {
-    undoneWith = entries;
-  }
-
-  @override
-  Future<int> clearCompleted(String listId) async => throw UnimplementedError();
-
-  // T5.2 structural moves — the list slice does not drive these yet.
-  @override
-  Future<void> moveTask(
-    String id, {
-    String? parentId,
-    String? previousId,
-  }) async => throw UnimplementedError();
-
-  @override
-  Future<void> reorderTaskAfter(String id, String? previousId) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<MoveToListToken?> moveTaskToList(
-    String id,
-    String targetListId,
-  ) async => throw UnimplementedError();
-
-  @override
-  Future<void> undoMoveToList(MoveToListToken token) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<void> freshSync() async => throw UnimplementedError();
-
-  @override
-  Future<StoredTaskList> createList(String title, {bool localOnly = false}) =>
-      throw UnimplementedError();
-
-  @override
-  Future<void> renameList(String id, String title) async =>
-      throw UnimplementedError();
-
-  @override
-  Future<void> deleteList(String id) async => throw UnimplementedError();
-
-  @override
-  void setEditing(String? id) {}
-
-  @override
-  String? get heldCreateId => null;
-}
-
 void main() {
   /// Bounded pump — pumpAndSettle hangs on a focused TextField's cursor timer.
   Future<void> settle(WidgetTester tester) async {
@@ -271,7 +63,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
   }
 
-  Future<FakeBackend> pumpView(
+  Future<FakeCommands> pumpView(
     WidgetTester tester, {
     List<StoredTask> initial = const [],
     String? selectedTaskId,
@@ -284,7 +76,7 @@ void main() {
     List<Override> extraOverrides = const [],
     TargetPlatform platform = TargetPlatform.linux,
   }) async {
-    final fake = FakeBackend(initial, newId: newId);
+    final fake = FakeCommands(initial, newId: newId, newestFirst: true);
     addTearDown(fake.dispose);
     await withClock(_clock, () async {
       await tester.pumpWidget(
@@ -751,7 +543,7 @@ void main() {
 
         // A fresh tree seeded from [prefs], persisting through [store].
         Future<void> pumpApp(Prefs prefs) async {
-          final fake = FakeBackend(seedRows);
+          final fake = FakeCommands(seedRows);
           addTearDown(fake.dispose);
           await withClock(_clock, () async {
             await tester.pumpWidget(

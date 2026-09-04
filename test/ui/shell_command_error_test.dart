@@ -15,7 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'detail_harness.dart' show FakeBackend;
+import 'detail_harness.dart' show FakeCommands;
 
 void main() {
   late Directory tmp;
@@ -31,8 +31,8 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      // FakeBackend.createList throws — the failure path under test.
-      final fake = FakeBackend(const <StoredTask>[]);
+      // FakeCommands.createList throws — the failure path under test.
+      final fake = FakeCommands(const <StoredTask>[]);
       addTearDown(fake.dispose);
       final store = PrefsStore(File(p.join(tmp.path, 'prefs.json')))
         ..save(const Prefs(onboardingSeen: true));

@@ -354,23 +354,20 @@ void main() {
   group('§G create', () {
     test('create eligibility gate', () {
       final none = <String>{};
-      expect(createIsEligible('create', null, 'a', none, none, null), isTrue);
+      expect(createIsEligible('create', null, 'a', none, none), isTrue);
       // Not a create.
-      expect(createIsEligible('update', null, 'a', none, none, null), isFalse);
-      expect(createIsEligible(null, null, 'a', none, none, null), isFalse);
+      expect(createIsEligible('update', null, 'a', none, none), isFalse);
+      expect(createIsEligible(null, null, 'a', none, none), isFalse);
       // Already attempted this run — never twice (duplicate insert).
       expect(
-        createIsEligible('create', null, 'a', idSet(['a']), none, null),
+        createIsEligible('create', null, 'a', idSet(['a']), none),
         isFalse,
       );
       // Unresolved in-flight marker — waits for a complete remote view.
       expect(
-        createIsEligible('create', null, 'a', none, idSet(['a']), null),
+        createIsEligible('create', null, 'a', none, idSet(['a'])),
         isFalse,
       );
-      // The one id the UI holds waits; every other create still pushes.
-      expect(createIsEligible('create', null, 'a', none, none, 'a'), isFalse);
-      expect(createIsEligible('create', null, 'b', none, none, 'a'), isTrue);
     });
 
     test('a row Google already named is patched, never inserted again', () {
@@ -378,7 +375,7 @@ void main() {
       // pushing that insert would put a SECOND copy on the user's account.
       final none = <String>{};
       expect(
-        createIsEligible('create', 'remote-1', 'a', none, none, null),
+        createIsEligible('create', 'remote-1', 'a', none, none),
         isFalse,
         reason: 'the create pass leaves it alone',
       );

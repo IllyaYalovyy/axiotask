@@ -153,7 +153,16 @@ class BackupService {
 
   // The non-destructive merge. Existing ids (list or task) are left alone;
   // missing rows are inserted as fresh creates so a later sync pushes them.
-  Future<ImportResult> _restore(Backup backup, String path) async {
+  //
+  // The whole merge is ONE transaction (#271). Row by row, a fault — or the
+  // process dying, which on Android can happen at any await — leaves the user
+  // with a list holding only some of its tasks and no way to tell which are
+  // missing; worse, the retry is non-destructive, so it SKIPS the rows that did
+  // land and the gap becomes permanent. All or nothing.
+  Future<ImportResult> _restore(Backup backup, String path) =>
+      store.transaction(() => _restoreInTransaction(backup, path));
+
+  Future<ImportResult> _restoreInTransaction(Backup backup, String path) async {
     final now = nowUtcString();
     final existingListIds = {for (final l in await store.allLists()) l.list.id};
 

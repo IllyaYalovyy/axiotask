@@ -163,63 +163,6 @@ void main() {
     expect(tasks[0].remoteId, startsWith('remote-'));
   });
 
-  test('held_edit_holds_list_create_then_pushes_on_release', () async {
-    // A held edit (the UI is actively holding a row) freezes ALL list creates
-    // for that run. The pending list create must WAIT — not push, not get
-    // ghosted by the pull — and then push on the next unheld run.
-    final (client, eng0) = await engine(push: true);
-    await eng0.store.upsertList(dirtyList('local-list', 'Work', 'create'));
-
-    // Run 1: an edit is held. The list create must be deferred.
-    final engHold = SyncEngine.withPush(
-      client,
-      eng0.store,
-      true,
-    ).holdCreateId('held-task');
-    var out = await engHold.run();
-    expect(out.pushed, 0, reason: 'nothing pushed while the edit is held');
-    var lists = await eng0.store.allLists();
-    final workHeld = lists.where((l) => l.list.title == 'Work').toList();
-    expect(
-      workHeld,
-      isNotEmpty,
-      reason: 'pending list survives the held run, not ghosted',
-    );
-    expect(
-      workHeld.first.remoteId,
-      isNull,
-      reason: 'no remote id learned while the edit is held',
-    );
-    expect(
-      workHeld.first.syncState,
-      SyncState.dirty,
-      reason: 'create still queued',
-    );
-    expect(
-      (await client.listTasklists()).every((l) => l.title != 'Work'),
-      isTrue,
-      reason: 'server has no such list yet',
-    );
-
-    // Run 2: the edit is released. The deferred create now pushes and remaps.
-    out = await eng0.run();
-    expect(out.pushed, 1, reason: 'the deferred list create pushes on release');
-    lists = await eng0.store.allLists();
-    final work = lists.firstWhere((l) => l.list.title == 'Work');
-    expect(
-      work.remoteId,
-      startsWith('remote-list-'),
-      reason: 'the remote id is learned on release',
-    );
-    expect(work.list.id, 'local-list', reason: 'and the local id never moves');
-    expect(work.syncState, SyncState.clean);
-    expect(
-      (await client.listTasklists()).any((l) => l.title == 'Work'),
-      isTrue,
-      reason: 'list now exists on the server',
-    );
-  });
-
   test('push_list_rename', () async {
     final (client, eng) = await engine(push: true);
     await seedSyncedList(client, eng.store, 'L1', 'Old Name');

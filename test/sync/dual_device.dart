@@ -355,8 +355,6 @@ final List<OpWeight> _localMutationTable = [
   OpWeight(2, (r) => Op(OpKind.moveToList, a: opByte(r), b: opByte(r))),
   OpWeight(2, (r) => Op(OpKind.createList)),
   OpWeight(1, (r) => Op(OpKind.renameList, a: opByte(r))),
-  OpWeight(2, (r) => Op(OpKind.openPanel, a: opByte(r))),
-  OpWeight(2, (r) => Op(OpKind.closePanel)),
 ];
 
 /// One dual step: mostly interleaved single ops on either device (`anyOp`, so

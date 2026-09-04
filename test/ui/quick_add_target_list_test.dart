@@ -13,7 +13,7 @@
 //   • a picked list that disappears falls back to the view default;
 //   • on a phone the composer stays ONE line and every target stays ≥48dp.
 //
-// Everything runs over the in-memory [FakeBackend], so the assertions are about
+// Everything runs over the in-memory [FakeCommands], so the assertions are about
 // what the user sees (the picker's label, the rendered rows, the toast) and
 // what the backend HOLDS (the created task's listId) — never that a callback
 // fired.
@@ -32,7 +32,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list;
+import 'detail_harness.dart' show FakeCommands, list;
 import 'toast_harness.dart' show wrapWithToast;
 
 /// Fixed clock — the smart views' auto-dates and the landing rules must not
@@ -57,10 +57,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
   }
 
-  /// Pump the real [TaskListView] over a [FakeBackend]. [view] lets a test
+  /// Pump the real [TaskListView] over a [FakeCommands]. [view] lets a test
   /// switch views IN PLACE (no remount) so the reset-on-view-change contract is
   /// tested on the widget itself, not on the shell's per-view key.
-  Future<FakeBackend> pumpQuickAdd(
+  Future<FakeCommands> pumpQuickAdd(
     WidgetTester tester, {
     List<StoredTask> initial = const [],
     List<StoredTaskList> lists = const [],
@@ -76,7 +76,7 @@ void main() {
     String Function()? newId,
   }) async {
     var seq = 0;
-    final fake = FakeBackend(initial, newId: newId ?? (() => 'gen-${seq++}'));
+    final fake = FakeCommands(initial, newId: newId ?? (() => 'gen-${seq++}'));
     addTearDown(fake.dispose);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -152,7 +152,7 @@ void main() {
   }
 
   /// The list the fake actually stored [title] in.
-  String landedIn(FakeBackend fake, String title) =>
+  String landedIn(FakeCommands fake, String title) =>
       fake.tasks.firstWhere((t) => t.task.title == title).listId;
 
   /// The label the picker button currently shows.

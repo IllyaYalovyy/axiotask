@@ -40,7 +40,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/pump_motion.dart';
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 
 const _destinations = [
   ShellDestination(
@@ -411,7 +411,7 @@ void main() {
     /// stream both the app bar's line and the gesture read.
     Future<void> pumpChrome(
       WidgetTester tester, {
-      required FakeBackend fake,
+      required FakeCommands fake,
       required Future<void> Function() onRefresh,
       required Stream<SyncRunEvent> events,
     }) async {
@@ -468,7 +468,7 @@ void main() {
 
     testWidgets('the gesture hands its spinner off to the line — one '
         'indicator for one sync, never two', (tester) async {
-      final fake = FakeBackend([row('T1', 'a'), row('T2', 'b')]);
+      final fake = FakeCommands([row('T1', 'a'), row('T2', 'b')]);
       addTearDown(fake.dispose);
       final events = StreamController<SyncRunEvent>.broadcast();
       addTearDown(() => unawaited(events.close()));
@@ -526,7 +526,7 @@ void main() {
       // Signed out (the runtime's refresh is a documented no-op) or no runtime
       // mounted at all: nothing ever emits a started event. The hand-off must
       // not be the ONLY way out, or the spinner turns forever.
-      final fake = FakeBackend([row('T1', 'a'), row('T2', 'b')]);
+      final fake = FakeCommands([row('T1', 'a'), row('T2', 'b')]);
       addTearDown(fake.dispose);
       final refresh = Completer<void>();
       await pumpChrome(
@@ -556,7 +556,7 @@ void main() {
       // The gesture's own indicator and the line it hands off to are ONE piece
       // of feedback, so they are one colour: whatever the theme calls primary,
       // never whatever a future Material default happens to pick.
-      final fake = FakeBackend([row('T1', 'a'), row('T2', 'b')]);
+      final fake = FakeCommands([row('T1', 'a'), row('T2', 'b')]);
       addTearDown(fake.dispose);
       final refresh = Completer<void>();
       addTearDown(refresh.complete);
@@ -590,7 +590,7 @@ void main() {
       // a task / switches view, and the list that started the gesture is gone
       // while the sync is still going. The hand-off holds a live provider
       // subscription and an unresolved future across that unmount.
-      final fake = FakeBackend([row('T1', 'a'), row('T2', 'b')]);
+      final fake = FakeCommands([row('T1', 'a'), row('T2', 'b')]);
       addTearDown(fake.dispose);
       final events = StreamController<SyncRunEvent>.broadcast();
       addTearDown(() => unawaited(events.close()));

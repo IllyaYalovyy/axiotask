@@ -18,7 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 import 'list_harness.dart';
 
 void main() {
@@ -40,7 +40,7 @@ void main() {
     await tester.pump();
   }
 
-  bool isDone(FakeBackend fake, String id) =>
+  bool isDone(FakeCommands fake, String id) =>
       fake.tasks.firstWhere((t) => t.task.id == id).task.status ==
       TaskStatus.completed;
 

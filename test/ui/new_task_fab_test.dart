@@ -14,7 +14,7 @@
 // row's date button clears the FAB — never about which route object the sheet
 // landed on.
 //
-// Determinism: static provider streams over the in-memory FakeBackend (no
+// Determinism: static provider streams over the in-memory FakeCommands (no
 // database, no clock, no network). Animations are driven by explicit
 // `pump(duration)` where a frame in the MIDDLE of the morph is the thing under
 // test.
@@ -31,7 +31,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 
 void _noop(String _) {}
 
@@ -52,7 +52,7 @@ void main() {
   /// the reason the composer used to render under the FAB.
   Future<void> pumpChrome(
     WidgetTester tester, {
-    required FakeBackend fake,
+    required FakeCommands fake,
     required List<StoredTaskList> lists,
     double viewInsetsBottom = 0,
   }) async {
@@ -106,7 +106,7 @@ void main() {
 
   testWidgets('the composer layers ABOVE the shell — its submit button is '
       'reachable and no FAB is left on screen (#234)', (tester) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -137,7 +137,7 @@ void main() {
 
   testWidgets('open is ONE morph: mid-flight the composer is still unfolding '
       'from the FAB corner (#234)', (tester) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -175,7 +175,7 @@ void main() {
   testWidgets('the FAB is gone while the keyboard is up (#234)', (
     tester,
   ) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(
       tester,
@@ -195,7 +195,7 @@ void main() {
 
   testWidgets('the FAB slides out while the list scrolls down and comes back '
       'when the scroll stops (#234)', (tester) async {
-    final fake = FakeBackend([
+    final fake = FakeCommands([
       for (var i = 0; i < 30; i++) row('T$i', 'Task $i', position: '$i'),
     ]);
     addTearDown(fake.dispose);
@@ -230,7 +230,7 @@ void main() {
 
   testWidgets('the last row keeps its date button out from under the FAB at '
       'rest (#234)', (tester) async {
-    final fake = FakeBackend([
+    final fake = FakeCommands([
       for (var i = 0; i < 30; i++) row('T$i', 'Task $i', position: '$i'),
     ]);
     addTearDown(fake.dispose);
@@ -265,7 +265,7 @@ void main() {
 
   testWidgets('a row quick-date sheet covers the FAB — it can never swallow a '
       'tap meant for an action (#234)', (tester) async {
-    final fake = FakeBackend([
+    final fake = FakeCommands([
       for (var i = 0; i < 12; i++) row('T$i', 'Task $i', position: '$i'),
     ]);
     addTearDown(fake.dispose);
@@ -291,7 +291,7 @@ void main() {
       'submit creates nothing (#234)', (tester) async {
     // Unique ids: two adds in a row must not collide in the list's key space.
     var minted = 0;
-    final fake = FakeBackend([], newId: () => 'new-${minted++}');
+    final fake = FakeCommands([], newId: () => 'new-${minted++}');
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 

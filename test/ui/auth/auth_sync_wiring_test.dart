@@ -34,7 +34,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import '../detail_harness.dart' show FakeBackend, list, row;
+import '../detail_harness.dart' show FakeCommands, list, row;
 import '../toast_harness.dart' show wrapWithToast;
 
 void main() {
@@ -295,7 +295,7 @@ void main() {
     await runtime.restoreAndAutoSync(); // live session, nothing synced yet
     expect(runtime.scheduler.status.totalSyncs, 0);
 
-    final fake = FakeBackend([row('T1', 'a'), row('T2', 'b'), row('T3', 'c')]);
+    final fake = FakeCommands([row('T1', 'a'), row('T2', 'b'), row('T3', 'c')]);
     addTearDown(fake.dispose);
 
     final destinations = [

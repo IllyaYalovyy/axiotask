@@ -36,7 +36,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, pumpDetail, row;
+import 'detail_harness.dart' show FakeCommands, list, pumpDetail, row;
 import 'list_harness.dart';
 
 /// The exact wording, in the exact order, the FROZEN option set must show
@@ -89,7 +89,7 @@ void main() {
     await tester.pump();
   }
 
-  String? dueOf(FakeBackend fake, String id) =>
+  String? dueOf(FakeCommands fake, String id) =>
       fake.tasks.firstWhere((t) => t.task.id == id).task.due;
 
   group('the frozen option set', () {
@@ -270,7 +270,7 @@ void main() {
       // navigator renders inside the compact Scaffold's body — under the FAB
       // and the navigation bar — so the finger aiming at "Clear" hits the FAB.
       const phone = Size(400, 800);
-      final fake = FakeBackend([row('T', 'plan trip')]);
+      final fake = FakeCommands([row('T', 'plan trip')]);
       addTearDown(fake.dispose);
       tester.view.physicalSize = phone;
       tester.view.devicePixelRatio = 1.0;
@@ -518,14 +518,14 @@ void main() {
   group('the composer creates WITH a date, in one tap', () {
     const phone = Size(400, 800);
 
-    Future<FakeBackend> pumpComposer(
+    Future<FakeCommands> pumpComposer(
       WidgetTester tester, {
       List<StoredTask> initial = const [],
       List<StoredTaskList> lists = const [],
       Size size = phone,
       String Function()? newId,
     }) async {
-      final fake = FakeBackend(initial, newId: newId ?? () => 'NEW');
+      final fake = FakeCommands(initial, newId: newId ?? () => 'NEW');
       addTearDown(fake.dispose);
       tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1.0;

@@ -4,7 +4,7 @@
 // LANDS is invisible. "Tomorrow" from the quick-date menu only swaps one small
 // grey label; a move to another list changes nothing the eye is drawn to; a
 // bulk action rewrites N rows with no sign of which. Each test below drives a
-// REAL user path through the real [TaskListView] over the mutating FakeBackend
+// REAL user path through the real [TaskListView] over the mutating FakeCommands
 // and reads the colour actually being painted over the element in that frame —
 // the wash a user sees, not a controller, a callback or a flag.
 //
@@ -42,7 +42,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 import 'list_harness.dart';
 import 'toast_harness.dart' show wrapWithToast;
 
@@ -624,7 +624,7 @@ void main() {
         // Two panes over ONE Commands double — the desktop layout, where the
         // list is watching while the detail is edited. The rename never touches
         // the list's own code path: the store confirms it, and the row reacts.
-        final fake = FakeBackend([row('A', 'apples')]);
+        final fake = FakeCommands([row('A', 'apples')]);
         addTearDown(fake.dispose);
         tester.view.physicalSize = const Size(1600, 1200);
         tester.view.devicePixelRatio = 1.0;

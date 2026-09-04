@@ -1,5 +1,5 @@
 // SubtaskReorder suite — the hidden-aware reorder of a parent's subtasks from
-// the detail panel (#90). The [FakeBackend] actually reassigns sibling positions
+// the detail panel (#90). The [FakeCommands] actually reassigns sibling positions
 // on each `reorderTaskAfter`, so these assert the USER-VISIBLE order the panel
 // renders, not merely that a command fired. The move buttons are the touch path
 // (they work with a mouse too); the key non-happy case is reordering across a

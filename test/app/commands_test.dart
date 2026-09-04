@@ -1159,7 +1159,7 @@ void main() {
     });
   });
 
-  // --- T5.2: structural moves — move/reorder + move-to-list + held create ----
+  // --- T5.2: structural moves — move/reorder + move-to-list ----
   //
   // These are the command-layer halves of the reference's move/reorder,
   // move_to_list and set_editing groups. The parent/position mutation and the
@@ -1788,49 +1788,6 @@ void main() {
     });
   });
 
-  group('setEditing / held create', () {
-    // The held-create id names the one create whose push is deferred while its
-    // row is being edited (prevents an id remap mid-edit). The deferral itself
-    // is exercised against the sync engine in T5.5; here we pin the seam.
-    test('records the held create id and clears it', () async {
-      final store = await freshStore();
-      final commands = Commands(store);
-      expect(commands.heldCreateId, isNull, reason: 'nothing held at start');
-
-      commands.setEditing('local-1');
-      expect(commands.heldCreateId, 'local-1');
-
-      commands.setEditing(null);
-      expect(commands.heldCreateId, isNull, reason: 'editing finished');
-    });
-
-    // The hold is pure process state: it must not dirty or otherwise persist the
-    // row it holds (that would defeat the point of deferring only the push).
-    test('never touches the store — the held row stays clean', () async {
-      final store = await freshStore();
-      final commands = Commands(store);
-      await seedList(store, 'L1');
-      await seedTask(store, 'T1', 'L1', 'held'); // clean
-
-      commands.setEditing('T1');
-
-      expect((await store.findTaskAny('T1'))!.syncState, SyncState.clean);
-      expect(await store.drainDirty(), isEmpty);
-    });
-
-    // Process memory only: a relaunch (a fresh Commands over the same store)
-    // starts with nothing held, so a create the panel was holding is released
-    // and pushes on the next sync (restart_drops_the_held_create).
-    test('a fresh Commands (restart) starts with no held create', () async {
-      final store = await freshStore();
-      final before = Commands(store);
-      before.setEditing('local-1');
-
-      final afterRestart = Commands(store);
-      expect(afterRestart.heldCreateId, isNull);
-    });
-  });
-
   // #209: every successful mutating command must fire the onMutation seam —
   // the composition root points it at the sync scheduler's trigger, which is
   // what makes a local change sync within seconds instead of waiting out the
@@ -1845,13 +1802,14 @@ void main() {
       var fired = 0;
       final commands = Commands(store, onMutation: () => fired++);
 
-      // At-least-once per command: composed undos (undoMoveToList replays a
-      // delete + restore) legitimately notify per inner command, and the
-      // scheduler's notify coalesces them into one trigger anyway.
+      // EXACTLY once per public command (#271). Composed commands
+      // (undoMoveToList replays a delete + a restore) are still ONE user
+      // action, so they fire once too: the trigger belongs to the public
+      // method, not to each inner write.
       Future<void> expectFires(String label, Future<void> Function() op) async {
         final before = fired;
         await op();
-        expect(fired, greaterThan(before), reason: '$label must notify');
+        expect(fired, before + 1, reason: '$label must notify exactly once');
       }
 
       late StoredTask created;
@@ -1957,6 +1915,32 @@ void main() {
         );
       },
     );
+
+    // The trigger must fire AFTER the write it announces. It used to be raised
+    // from `_snapshotSubtree` — a pure READ that runs BEFORE the delete —, so a
+    // sync woken by it could drain the store before the tombstone was even in
+    // it. The store's executor is serialized, so a read issued from the
+    // callback answers with everything issued before it: if the notify came
+    // first, this read sees the row still alive.
+    test('the trigger fires after the store holds the write', () async {
+      final store = await freshStore();
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'server-backed');
+      final observed = <Future<StoredTask?>>[];
+      final commands = Commands(
+        store,
+        onMutation: () => observed.add(store.findTaskAny('T1')),
+      );
+
+      await commands.deleteTask('T1');
+
+      expect(observed, hasLength(1));
+      expect(
+        (await observed.single)!.syncState,
+        SyncState.deleted,
+        reason: 'the tombstone must already be readable when the sync wakes',
+      );
+    });
 
     test('a refused command does not notify', () async {
       final store = await freshStore();

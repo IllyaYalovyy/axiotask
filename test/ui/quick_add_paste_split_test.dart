@@ -15,7 +15,7 @@
 //   • the offer reaches the phone through the long-press Paste toolbar inside
 //     the bottom-sheet composer, and keeps that composer to ONE line.
 //
-// Everything runs over the in-memory [FakeBackend] with a MOCKED CLIPBOARD, so
+// Everything runs over the in-memory [FakeCommands] with a MOCKED CLIPBOARD, so
 // the assertions are about what the user sees (the chip, the draft text, the
 // toast) and what the backend HOLDS (titles and dues) — never that a callback
 // fired.
@@ -31,7 +31,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list;
+import 'detail_harness.dart' show FakeCommands, list;
 import 'toast_harness.dart' show wrapWithToast;
 
 /// Fixed clock — "tomorrow" on a pasted line must not read the wall clock.
@@ -68,7 +68,7 @@ void main() {
     );
   }
 
-  Future<FakeBackend> pumpQuickAdd(
+  Future<FakeCommands> pumpQuickAdd(
     WidgetTester tester, {
     List<StoredTaskList> lists = const [],
     String viewId = 'all',
@@ -77,7 +77,7 @@ void main() {
     double textScale = 1.0,
   }) async {
     var seq = 0;
-    final fake = FakeBackend(const [], newId: () => 'gen-${seq++}');
+    final fake = FakeCommands(const [], newId: () => 'gen-${seq++}');
     addTearDown(fake.dispose);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -170,7 +170,7 @@ void main() {
 
   /// The stored task with [title] — the fake is the source of truth for what
   /// the create actually persisted.
-  StoredTask stored(FakeBackend fake, String title) =>
+  StoredTask stored(FakeCommands fake, String title) =>
       fake.tasks.firstWhere((t) => t.task.title == title);
 
   testWidgets('a multi-line paste collapses to one draft line and offers '

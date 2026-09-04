@@ -1,32 +1,29 @@
 // Property / invariant tests for sync over RANDOM operation orderings — the
 // Dart port of `sync_property_test.rs` (MIGRATION-PLAN §3, §5 T5.10, single-
 // device layer). The rest of the sync suite is example-based: it proves a
-// specific, chosen interleaving behaves. The bug class that shipped (a held
-// create that never synced) lives in the interleavings nobody thought to write
-// down. These tests generate random sequences of real user operations — the
+// specific, chosen interleaving behaves. The bug class that shipped (a create
+// that never synced) lives in the interleavings nobody thought to write down. These tests generate random sequences of real user operations — the
 // same [Commands] methods the UI calls — against the real store and the real
 // sync engine, and assert INVARIANTS ON STATE (local store rows and fake-server
 // rows), never "a call happened".
 //
-// The six invariants, one test each:
+// The five invariants, one test each:
 //  * eventual push   — pending work drains to zero under repeated healthy runs
 //  * convergence     — local == server field-for-field after push + pull
 //  * idempotency     — a run after the fixpoint changes nothing
-//  * deferral safety — everything held by an open panel completes once it closes
 //  * crash safety    — nested creates + in-flight markers yield no duplicates
 //  * parent integrity— no child ever points at a parent that isn't there
 //
-// Plus the two RESTART invariants (the held create dies with the process; the
-// undo token dies but the tombstone pushes exactly once) and the #145 orphan-
-// adoption pin. The dual-device layer + oracle corpus are T5.11.
+// Plus the RESTART invariant (the undo token dies with the process but the
+// tombstone pushes exactly once) and the #145 orphan-adoption pin. The dual-device layer + oracle corpus are T5.11.
 //
 // ## Operation vocabulary (RFC-009 §J)
 //
 // The generator covers the whole conflict matrix on both sides of the wire:
 // §B/§C edits + completes and their remote twins (which manufacture the 412
 // path), §D deletes + remote cascade, §E/§F reorder/demote/promote, §G creates
-// + §A pull mirrors, §H cross-list move, §I list ops + their remote twins, the
-// panel hold, and the fault-injecting syncs (Flaky/Interleave/Crash/Abort) plus
+// + §A pull mirrors, §H cross-list move, §I list ops + their remote twins,
+// and the fault-injecting syncs (Flaky/Interleave/Crash/Abort) plus
 // process Restart. The harness is MULTI-LIST: tasks are addressed by unique
 // TITLE across every list, so the same op sequence touches the same logical
 // tasks on every run regardless of the ids the store/server assign.
@@ -128,8 +125,6 @@ enum OpKind {
   remoteDemote,
   remoteRenameList,
   remoteDeleteList,
-  openPanel,
-  closePanel,
   sync,
   flakySync,
   interleaveSync,
@@ -155,7 +150,6 @@ class Op {
     OpKind.moveToList => 'moveToList($a, $b)',
     OpKind.setDue => 'setDue($a, $b)',
     OpKind.createList => 'createList',
-    OpKind.closePanel => 'closePanel',
     OpKind.sync => 'sync',
     OpKind.restart => 'restart',
     _ => '${kind.name}($a)',
@@ -226,7 +220,6 @@ class Harness {
 
   /// The task id the detail panel currently holds, mirrored so a cross-list
   /// move can re-point it the way the UI does.
-  String? held;
 
   int _idCounter = 0;
   String _newId() => 'local-${++_idCounter}';
@@ -280,9 +273,8 @@ class Harness {
     return '${namespace}L${_nextName.toString().padLeft(3, '0')}';
   }
 
-  /// A sync run, threading the panel hold through the engine the way the app's
-  /// scheduler does — and asserting the store's structural invariants on the
-  /// way out (#269).
+  /// A sync run — asserting the store's structural invariants on the way out
+  /// (#269).
   ///
   /// The check runs after EVERY run, failed runs included: a violation is a
   /// corrupt write, and the run that made it is the only place the sequence
@@ -291,17 +283,10 @@ class Harness {
   /// id, or an orphaned subtree — with nothing left to point at the write.
   Future<SyncOutcome> runSync() async {
     try {
-      return await engine.holdCreateId(commands.heldCreateId).run();
+      return await engine.run();
     } finally {
       await store.checkInvariants();
     }
-  }
-
-  /// Set (or clear) the panel hold, keeping the harness's mirror in step so a
-  /// cross-list move can re-point instead of stranding it.
-  void hold(String? id) {
-    commands.setEditing(id);
-    held = id;
   }
 
   /// Lists an op may target, in a deterministic order (sorted by TITLE — a list
@@ -419,8 +404,6 @@ class Harness {
       case OpKind.delete:
         final t = _pick(await live(), op.a);
         if (t == null) return;
-        // Deleting the held row would strand the hold; the UI closes the panel.
-        hold(null);
         await commands.deleteTask(t.task.id);
       case OpKind.reorder:
         final t = _pick(await live(), op.a);
@@ -490,18 +473,7 @@ class Harness {
         ];
         final target = _pick(targets, op.b);
         if (target == null) return;
-        final moveToken = await commands.moveTaskToList(
-          t.task.id,
-          target.list.id,
-        );
-        // The move re-creates every id in the subtree (invariant #4). The UI
-        // re-points the open panel at the new root and closes it if the held row
-        // was a descendant; mirror both.
-        if (held == t.task.id) {
-          hold(moveToken?.newRootId);
-        } else if (held != null && await store.findTaskAny(held!) == null) {
-          hold(null);
-        }
+        await commands.moveTaskToList(t.task.id, target.list.id);
       case OpKind.createList:
         await commands.createList(_freshListName());
       case OpKind.renameList:
@@ -515,7 +487,6 @@ class Harness {
         if (ls.length < 2) return;
         final l = _pick(ls, op.a);
         if (l == null) return;
-        hold(null); // the panel cannot survive a list that took its row.
         await commands.deleteList(l.list.id);
       case OpKind.remoteEdit:
         final t = _pick(await pushed(), op.a);
@@ -625,12 +596,6 @@ class Harness {
         } on ApiError {
           // ignore.
         }
-      case OpKind.openPanel:
-        final t = _pick(await live(), op.a);
-        if (t == null) return;
-        hold(t.task.id);
-      case OpKind.closePanel:
-        hold(null);
       case OpKind.sync:
         await runSync();
       case OpKind.flakySync:
@@ -658,10 +623,9 @@ class Harness {
         }
         client.clearFaults();
       case OpKind.restart:
-        // Relaunch over the same store: the held create and any undo token die
-        // with the process; the store's pending work is all that survives.
+        // Relaunch over the same store: any undo token dies with the process;
+        // the store's pending work is all that survives.
         _buildEngine();
-        held = null;
     }
   }
 
@@ -718,12 +682,11 @@ class Harness {
     }
   }
 
-  /// Drop every hold and fault, then sync until nothing changes. Returns the
-  /// number of runs the fixpoint took.
+  /// Drop every fault, then sync until nothing changes. Returns the number of
+  /// runs the fixpoint took.
   Future<int> heal() async {
     client.clearFaults();
     client.clearOnCall();
-    hold(null);
     for (var run = 1; run <= kMaxHealRuns; run++) {
       final out = await runSync();
       if (isNoop(out)) return run;
@@ -1047,8 +1010,6 @@ final List<_W> _anyOpTable = [
   _W(2, (r) => Op(OpKind.remoteDemote, a: _b(r))),
   _W(1, (r) => Op(OpKind.remoteRenameList, a: _b(r))),
   _W(1, (r) => Op(OpKind.remoteDeleteList, a: _b(r))),
-  _W(2, (r) => Op(OpKind.openPanel, a: _b(r))),
-  _W(2, (r) => Op(OpKind.closePanel)),
   _W(5, (r) => Op(OpKind.sync)),
   _W(3, (r) => Op(OpKind.flakySync, a: _b(r))),
   _W(2, (r) => Op(OpKind.interleaveSync, a: _b(r))),
@@ -1164,84 +1125,6 @@ void main() {
     });
   });
 
-  test('held work completes once the hold clears', () async {
-    await check(cases, _anyOps, (h, ops) async {
-      await h.applyAll(ops);
-
-      // End the sequence mid-edit: open the panel on a live TOP-LEVEL row (a
-      // subtask can legitimately vanish mid-hold when its parent's pending
-      // delete cascades), add work behind it, and sync with the hold up.
-      StoredTask? heldRow;
-      for (final t in await h.live()) {
-        if (t.task.parent == null) {
-          heldRow = t;
-          break;
-        }
-      }
-      if (heldRow != null) h.hold(heldRow.task.id);
-      h.client.clearFaults();
-
-      // A brand-new TOP-LEVEL task in a list the server ALREADY knows: not the
-      // held row, no parent to delay it, no unpushed list in front of it.
-      final pushedList = (await h.pushedLists()).firstOrNull;
-      if (pushedList == null) return;
-      final behindHold = await h.createTopIn(pushedList.list.id);
-      // Plus a subtask, which may land under the held row and then legitimately
-      // waits for its parent's id.
-      await h.apply(const Op(OpKind.createSub, a: 0));
-      for (var i = 0; i < 3; i++) {
-        await h.runSync();
-      }
-
-      final serverTitles = {for (final r in await h.serverRows()) r.title};
-      // The hold defers exactly ONE create, never the rest — unless the row's
-      // own LIST is still unpushed, which parks it behind the same hold for a
-      // legitimate reason (a list create is held too). A remote list delete can
-      // demote a pushed list back to an unpushed create mid-run, so re-check.
-      final listsNow = await h.lists();
-      final behind = (await h.live())
-          .where((t) => t.task.title == behindHold)
-          .firstOrNull;
-      final blockedByItsList =
-          behind != null &&
-          listsNow.any(
-            (l) => l.list.id == behind.listId && l.list.etag == null,
-          );
-      expect(
-        blockedByItsList || serverTitles.contains(behindHold),
-        isTrue,
-        reason:
-            'a create behind the hold never pushed ($behindHold) for $ops\n'
-            '${await h.dump()}',
-      );
-
-      // ...and it really does defer that one: a held row whose create has not
-      // completed still carries its ORIGINAL local id and its pending create.
-      // Only a genuinely UNPUSHED create is subject to the hold.
-      if (heldRow != null &&
-          heldRow.syncState == SyncState.dirty &&
-          heldRow.pendingOp == 'create') {
-        final now = await h.store.findTaskAny(heldRow.task.id);
-        expect(
-          now != null && now.task.etag == null && now.pendingOp == 'create',
-          isTrue,
-          reason:
-              'the held create was completed/remapped mid-edit '
-              '(${heldRow.task.title}) for $ops\n${await h.dump()}',
-        );
-      }
-
-      // Release: everything the hold deferred must complete.
-      await h.heal();
-      expect(
-        await h.store.pendingPushCount(),
-        0,
-        reason: 'held work never completed for $ops\n${await h.dump()}',
-      );
-      await assertConverged(h, 'after releasing hold, $ops');
-    });
-  });
-
   test('crashed creates never duplicate', () async {
     await check(cases, _crashOps, (h, ops) async {
       await h.applyAll(ops);
@@ -1340,62 +1223,6 @@ void main() {
   });
 
   // ─── Restart (deterministic) ───────────────────────────────────────────────
-
-  test('restart drops the held create which then pushes', () async {
-    await withClock(advancingClock(), () async {
-      final h = await Harness.create();
-      try {
-        await h.apply(
-          const Op(OpKind.createTop, a: 0),
-        ); // t001: unpushed create
-        await h.apply(const Op(OpKind.openPanel, a: 0)); // the panel HOLDS it
-
-        // A sync with the panel open leaves the held create unpushed.
-        await h.runSync();
-        final held = (await h.live()).firstWhere((t) => t.task.title == 't001');
-        expect(
-          held.task.etag,
-          isNull,
-          reason:
-              'the held create must stay unpushed while the panel holds it\n'
-              '${await h.dump()}',
-        );
-        expect(
-          (await h.serverRows()).any((r) => r.title == 't001'),
-          isFalse,
-          reason:
-              'the held create must not reach the server while the panel holds '
-              'it\n${await h.dump()}',
-        );
-
-        // Process death: the panel and its hold vanish with the window.
-        await h.apply(const Op(OpKind.restart));
-
-        // Drive sync DIRECTLY — not heal(), which would itself drop the hold —
-        // so the ONLY thing that can release this create is the restart.
-        for (var i = 0; i < 3; i++) {
-          await h.runSync();
-        }
-        expect(
-          (await h.serverRows()).any((r) => r.title == 't001'),
-          isTrue,
-          reason:
-              'the once-held create must push after the restart drops the hold\n'
-              '${await h.dump()}',
-        );
-        expect(
-          await h.store.pendingPushCount(),
-          0,
-          reason:
-              'restart must leave no create parked behind a dead hold\n'
-              '${await h.dump()}',
-        );
-        await assertConverged(h, 'after restart releases the held create');
-      } finally {
-        await h.dispose();
-      }
-    });
-  });
 
   test(
     'restart kills the undo token and pushes the delete exactly once',

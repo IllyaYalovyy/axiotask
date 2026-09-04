@@ -1,5 +1,5 @@
 // F18 (#197) Selection ergonomics + list orientation. WIDGET tests over the real
-// [TaskListView] on the mutating [FakeBackend]:
+// [TaskListView] on the mutating [FakeCommands]:
 //
 //   • touch selection mode — once a selection is active (a long-press entered
 //     it), a PLAIN tap toggles a row's membership instead of opening the detail;

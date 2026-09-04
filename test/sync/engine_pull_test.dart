@@ -903,10 +903,10 @@ void main() {
   });
 
   test('d7 promotes a still-unpushed subtask create locally', () async {
-    // §G before the create pushes: the subtask create is HELD (editor open), so
-    // it stays queued while the pull lands its parent's remote demote. There is
-    // no server id to move — D7 must promote the create LOCALLY so the tree is
-    // one level immediately; it then pushes as a top-level create.
+    // §G before the create pushes: the subtask create is still QUEUED when the
+    // pull lands its parent's remote demote. There is no server id to move — D7
+    // must promote the create LOCALLY so the tree is one level immediately; it
+    // then pushes as a top-level create.
     final (client, eng) = await engine(push: true);
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '00000000000001');
@@ -914,14 +914,14 @@ void main() {
     await eng.run();
     await client.moveTask('L1', 'T', parent: 'P');
 
-    // A queued subtask create under T, held so its create push is deferred.
+    // A queued subtask create under T.
     await eng.store.upsertTask(
       StoredTask(
         task: Task(
-          id: 'held-c',
+          id: 'queued-c',
           parent: await localIdOf(eng.store, 'T'),
           position: '1',
-          title: 'held grandchild',
+          title: 'queued grandchild two',
           status: TaskStatus.needsAction,
           updated: _t0,
         ),
@@ -932,13 +932,11 @@ void main() {
       ),
     );
 
-    final held = SyncEngine.withPush(
-      client,
-      eng.store,
-      true,
-    ).holdCreateId('held-c');
+    // A pull-only run: the demote lands while the create is still unpushed, so
+    // the local promotion is observable before the create reaches the server.
+    final pullOnly = SyncEngine.withPush(client, eng.store, false);
     final movesBefore = client.callCount(Method.moveTask);
-    final out = await held.run();
+    final out = await pullOnly.run();
 
     expect(
       client.callCount(Method.moveTask),
@@ -947,26 +945,26 @@ void main() {
           'no corrective move: an un-pushed create has no server id to move',
     );
     expect(out.conflicts, 1, reason: 'promoting the queued third level counts');
-    final c = (await findByAnyId(eng.store, 'held-c'))!;
+    final c = (await findByAnyId(eng.store, 'queued-c'))!;
     expect(
       c.task.parent,
       isNull,
-      reason: 'the held create is promoted locally',
+      reason: 'the unpushed create is promoted locally',
     );
     expect(c.syncState, SyncState.dirty, reason: 'still a queued create');
     expect(c.pendingOp, 'create');
     await assertAtMostOneLevel(eng, 'L1');
 
-    // Release the hold: the create pushes as a TOP-LEVEL task and converges.
+    // It then pushes as a TOP-LEVEL task and converges.
     await eng.run();
     final rows = await eng.store.listTasks('L1');
-    final landed = rows.firstWhere((r) => r.task.title == 'held grandchild');
+    final landed = rows.firstWhere(
+      (r) => r.task.title == 'queued grandchild two',
+    );
     expect(
       landed.task.parent,
       isNull,
-      reason:
-          'it landed top-level on the '
-          'server too',
+      reason: 'it landed top-level on the server too',
     );
     expect(landed.syncState, SyncState.clean);
     expect(await remoteParent(client, 'L1', landed.remoteId!), isNull);
