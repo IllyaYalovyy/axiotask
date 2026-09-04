@@ -116,6 +116,17 @@ of text into a solid block, so it cannot show a typography or layout regression
 disabled in `flutter_test_config.dart` and `test/packaging/golden_variant_test.dart`
 keeps it that way (#275).
 
+## Reference-toolchain assertions
+
+A handful of expectations are byte-for-byte artifacts of one toolchain, not of
+the code: goldens (one Flutter engine) and the icon re-render check (one
+cairosvg/libcairo). Elsewhere they report the other machine's version, not a
+defect. The icon one carries the `reference-toolchain` tag and CI excludes it;
+the local gate on the reference machine runs it, and the renderer-free
+recorded-sha256 assertion guards the committed bytes everywhere. Goldens are
+NOT excluded — they are expected to be identical on the runner, and a
+difference is the engine-bump signal.
+
 ## Flakes are failures
 
 A flake is a gate failure, full stop. Find the nondeterminism (real timer, wall
