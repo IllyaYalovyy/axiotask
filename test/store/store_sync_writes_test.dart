@@ -954,6 +954,253 @@ void main() {
       },
     );
   });
+
+  group('post-network guarded writes (#268)', () {
+    // Each primitive replaces a raw upsert_task the sync engine used to do
+    // AFTER a network await, against a snapshot the user could have edited in
+    // the meantime. The invariant is the same for all three: on a hit the write
+    // lands, on a miss NOTHING is written and the caller can tell (0 rows), so
+    // it leaves the row dirty for the next run instead of overwriting a newer
+    // edit and resetting local_updated so the loss cannot even be detected.
+
+    Task merged(String title) => Task(
+      id: 'T1',
+      position: '1',
+      title: title,
+      status: TaskStatus.needsAction,
+      etag: 'e-fresh',
+      updated: '2026-01-02T00:00:00Z',
+    );
+
+    test(
+      'merge_conflict_if_unchanged lands the merge on the drained row',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+        await s.upsertTask(dirtyTask('T1', 'L1', 'update', localUpdated: _t0));
+
+        expect(
+          await s.mergeConflictIfUnchanged('T1', _t0, merged('merged title')),
+          1,
+        );
+        final row = (await s.findTaskAny('T1'))!;
+        expect(row.task.title, 'merged title');
+        expect(row.task.etag, 'e-fresh', reason: 'the fresh etag is adopted');
+        expect(
+          row.syncState,
+          SyncState.dirty,
+          reason: 'a merge keeps the row queued: our edit still has to go out',
+        );
+        expect(row.pendingOp, 'update');
+        expect(
+          row.localUpdated,
+          _t0,
+          reason: 'the merge is not an edit — the drain marker is unchanged',
+        );
+      },
+    );
+
+    test(
+      'merge_conflict_if_unchanged leaves a re-edited row untouched',
+      () async {
+        // Non-happy path: the user typed while the 412 + refetch were in flight.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+        await s.upsertTask(
+          dirtyTask('T1', 'L1', 'update', localUpdated: '2026-01-01T00:00:09Z'),
+        );
+
+        expect(
+          await s.mergeConflictIfUnchanged('T1', _t0, merged('stale merge')),
+          0,
+          reason: 'the row moved under the merge — nothing may be written',
+        );
+        final row = (await s.findTaskAny('T1'))!;
+        expect(row.task.title, 'task T1', reason: 'the newer edit is kept');
+        expect(row.task.etag, 'e1', reason: 'not even the etag is touched');
+        expect(row.localUpdated, '2026-01-01T00:00:09Z');
+        expect(
+          row.syncState,
+          SyncState.dirty,
+          reason: 'still queued: the next run re-resolves against this content',
+        );
+      },
+    );
+
+    test(
+      'revert_move_if_unchanged drops the etag of the clean row it read',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+
+        expect(await s.revertMoveIfUnchanged('T1', _t0), 1);
+        final row = (await s.findTaskAny('T1'))!;
+        expect(
+          row.task.etag,
+          isNull,
+          reason:
+              'the missing etag is what makes the next pull re-link the row',
+        );
+        expect(row.syncState, SyncState.clean);
+      },
+    );
+
+    test(
+      'revert_move_if_unchanged skips a row edited during the move',
+      () async {
+        // Non-happy path: the move ladder can spend several backoff retries in
+        // the air; an edit that landed in that window governs from now on.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+        await s.upsertTask(
+          dirtyTask('T1', 'L1', 'update', localUpdated: '2026-01-01T00:00:09Z'),
+        );
+
+        expect(await s.revertMoveIfUnchanged('T1', _t0), 0);
+        final row = (await s.findTaskAny('T1'))!;
+        expect(
+          row.task.etag,
+          'e1',
+          reason:
+              'a dirty row keeps its etag so its own push stays If-Match-ed',
+        );
+        expect(row.syncState, SyncState.dirty);
+      },
+    );
+
+    test(
+      'promote_if_unchanged flattens the row it read, optionally detaching',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('P1', 'L1', null, '1'));
+        await s.upsertTask(taskOf('T1', 'L1', 'P1', '2'));
+
+        expect(await s.promoteIfUnchanged('T1', _t0, dropEtag: true), 1);
+        final row = (await s.findTaskAny('T1'))!;
+        expect(row.task.parent, isNull, reason: 'invariant #1: no third level');
+        expect(
+          row.task.etag,
+          isNull,
+          reason: 'dropped so the next pull re-reads',
+        );
+
+        // A second call is a no-op: the row is no longer nested.
+        expect(await s.promoteIfUnchanged('T1', _t0, dropEtag: true), 0);
+      },
+    );
+
+    test(
+      'promote_if_unchanged keeps the etag when asked not to drop it',
+      () async {
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('P1', 'L1', null, '1'));
+        await s.upsertTask(dirtyTask('T1', 'L1', 'update', parent: 'P1'));
+
+        expect(await s.promoteIfUnchanged('T1', _t0, dropEtag: false), 1);
+        final row = (await s.findTaskAny('T1'))!;
+        expect(row.task.parent, isNull);
+        expect(
+          row.task.etag,
+          'e1',
+          reason:
+              'a dirty grandchild keeps its etag so its retry stays guarded',
+        );
+        expect(
+          row.pendingOp,
+          'update',
+          reason: 'its pending edit is preserved',
+        );
+      },
+    );
+
+    test(
+      'promote_if_unchanged leaves a row edited since the read nested',
+      () async {
+        // Non-happy path: a miss keeps the third level for one more run rather
+        // than restoring the content the flatten read beforehand. The next D7
+        // sweep flattens what the user now has.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(taskOf('P1', 'L1', null, '1'));
+        await s.upsertTask(taskOf('T1', 'L1', 'P1', '2'));
+        await s.upsertTask(
+          dirtyTask(
+            'T1',
+            'L1',
+            'update',
+            parent: 'P1',
+            localUpdated: '2026-01-01T00:00:09Z',
+          ),
+        );
+
+        expect(await s.promoteIfUnchanged('T1', _t0, dropEtag: true), 0);
+        final row = (await s.findTaskAny('T1'))!;
+        expect(row.task.parent, 'P1', reason: 'not flattened this run');
+        expect(row.task.etag, 'e1', reason: 'and its etag was not stripped');
+        expect(row.localUpdated, '2026-01-01T00:00:09Z');
+      },
+    );
+
+    test(
+      'record_inflight_create returns the row the payload must be built from',
+      () async {
+        // The marker's base_* IS this snapshot, and orphan adoption matches the
+        // committed server row against it — so the caller has to send exactly
+        // what came back here, not the row it drained earlier (#268).
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+        await s.upsertTask(
+          StoredTask(
+            task: Task(
+              id: 'T1',
+              position: '1',
+              title: 'buy oat milk',
+              status: TaskStatus.needsAction,
+              updated: _t0,
+            ),
+            listId: 'L1',
+            syncState: SyncState.dirty,
+            localUpdated: '2026-01-01T00:00:09Z',
+            pendingOp: 'create',
+          ),
+        );
+
+        final snapshot = await s.recordInflightCreate('T1', 'L1');
+        expect(snapshot!.task.title, 'buy oat milk');
+        expect(
+          snapshot.localUpdated,
+          '2026-01-01T00:00:09Z',
+          reason:
+              'the same read backs base_local_updated, so finish_create '
+              'arbitrates against exactly what was sent',
+        );
+        expect(
+          (await s.baseSnapshot('T1'))!.title,
+          'buy oat milk',
+          reason: 'the base records the payload the caller is told to send',
+        );
+      },
+    );
+
+    test(
+      'record_inflight_create writes nothing when the row is gone',
+      () async {
+        // Non-happy path: the row was hard-deleted between drain and marker. A
+        // marker with no row to adopt for is worse than no marker.
+        final s = await freshStore();
+        await s.upsertList(listOf('L1'));
+
+        expect(await s.recordInflightCreate('ghost', 'L1'), isNull);
+        expect(await s.inflightCreates(), isEmpty);
+      },
+    );
+  });
 }
 
 /// A store whose [refreshTaskMeta] always faults — stands in for the process

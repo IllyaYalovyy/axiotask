@@ -46,6 +46,8 @@
 // uniformly (fire the hook, record the call, check faults) so the fake behaves
 // exactly like the reference no matter which operation a test exercises.
 
+import 'dart:async';
+
 import '../model/dates.dart';
 import '../model/page.dart';
 import '../model/task.dart';
@@ -107,14 +109,19 @@ class _TargetedFault {
 /// The per-call interleave hook installed via [FakeTasksApi.setOnCall]: it fires
 /// at the START of every [TasksApi] call on this fake, receiving the fake itself
 /// and the [Method] about to run, BEFORE that call does any work. It exists to
-/// interleave a server-side mutation (another device racing us) at a precise
-/// point inside one sync run — the engine makes many calls per run, and the
-/// fault/`*FromState` helpers only mutate at op boundaries. The hook is
-/// synchronous, so it drives the synchronous helpers ([FakeTasksApi.seedTaskIfListExists],
-/// [FakeTasksApi.deleteTaskFromState], [FakeTasksApi.deleteListFromState]), not
-/// the async trait methods. It fires with its own slot emptied, so a re-entrant
-/// call from inside the hook does NOT re-fire it.
-typedef OnCall = void Function(FakeTasksApi client, Method method);
+/// interleave a mutation at a precise point inside one sync run — the engine
+/// makes many calls per run, and the fault/`*FromState` helpers only mutate at
+/// op boundaries. It fires with its own slot emptied, so a re-entrant call from
+/// inside the hook does NOT re-fire it.
+///
+/// A synchronous hook drives the synchronous server-side helpers
+/// ([FakeTasksApi.seedTaskIfListExists], [FakeTasksApi.deleteTaskFromState],
+/// [FakeTasksApi.deleteListFromState]) — another device racing us. An ASYNC
+/// hook is AWAITED before the call proceeds, which is what it takes to model
+/// the other race: a LOCAL store edit (drift is async) landing while the app's
+/// own request is in the air (#268). Awaiting it is what makes that
+/// interleaving deterministic instead of a microtask coin-flip.
+typedef OnCall = FutureOr<void> Function(FakeTasksApi client, Method method);
 
 /// Deterministic in-memory [TasksApi] test double. Mirrors verified Google
 /// Tasks semantics exactly (see the file header); never loosen it to make a
@@ -202,12 +209,13 @@ class FakeTasksApi implements TasksApi {
   /// Fire the on_call hook (if armed) for [m], with the hook taken out of its
   /// slot while running so a re-entrant trait call from inside it neither
   /// recurses nor re-fires. Restored afterwards unless the hook itself replaced
-  /// or cleared it.
-  void _fireOnCall(Method m) {
+  /// or cleared it. An async hook is awaited, so whatever it does has finished
+  /// before the call it interleaves with does any work.
+  Future<void> _fireOnCall(Method m) async {
     final hook = _onCall;
     if (hook == null) return;
     _onCall = null;
-    hook(this, m);
+    await hook(this, m);
     _onCall ??= hook;
   }
 
@@ -259,7 +267,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<List<TaskList>> listTasklists() async {
-    _fireOnCall(Method.listTasklists);
+    await _fireOnCall(Method.listTasklists);
     _record(Method.listTasklists);
     final fault = _nextFault(Method.listTasklists);
     if (fault != null) throw fault;
@@ -268,7 +276,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<TaskList> insertTasklist(String title) async {
-    _fireOnCall(Method.insertTasklist);
+    await _fireOnCall(Method.insertTasklist);
     _record(Method.insertTasklist);
     final fault = _nextFault(Method.insertTasklist);
     if (fault != null) throw fault;
@@ -285,7 +293,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<TaskList> patchTasklist(String id, String title) async {
-    _fireOnCall(Method.patchTasklist);
+    await _fireOnCall(Method.patchTasklist);
     _record(Method.patchTasklist);
     final fault = _nextFault(Method.patchTasklist);
     if (fault != null) throw fault;
@@ -303,7 +311,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<void> deleteTasklist(String id) async {
-    _fireOnCall(Method.deleteTasklist);
+    await _fireOnCall(Method.deleteTasklist);
     _record(Method.deleteTasklist);
     final fault = _nextFault(Method.deleteTasklist);
     if (fault != null) throw fault;
@@ -319,7 +327,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<Page<Task>> listTasks(String listId, {String? pageToken}) async {
-    _fireOnCall(Method.listTasks);
+    await _fireOnCall(Method.listTasks);
     _record(Method.listTasks);
     // Decode the page cursor first — it identifies which page a per-page fault
     // targets. Tokens are our own opaque `page-N` strings; anything else is a
@@ -361,7 +369,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<Task> insertTask(String listId, NewTask task) async {
-    _fireOnCall(Method.insertTask);
+    await _fireOnCall(Method.insertTask);
     _record(Method.insertTask);
     final fault = _nextFault(Method.insertTask);
     if (fault != null) throw fault;
@@ -408,7 +416,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<Task> getTask(String listId, String id) async {
-    _fireOnCall(Method.getTask);
+    await _fireOnCall(Method.getTask);
     _record(Method.getTask);
     final fault = _nextFault(Method.getTask);
     if (fault != null) throw fault;
@@ -433,7 +441,7 @@ class FakeTasksApi implements TasksApi {
     TaskPatch patch, {
     String? etag,
   }) async {
-    _fireOnCall(Method.patchTask);
+    await _fireOnCall(Method.patchTask);
     _record(Method.patchTask);
     final fault = _nextFault(Method.patchTask);
     if (fault != null) throw fault;
@@ -521,7 +529,7 @@ class FakeTasksApi implements TasksApi {
 
   @override
   Future<void> deleteTask(String listId, String id) async {
-    _fireOnCall(Method.deleteTask);
+    await _fireOnCall(Method.deleteTask);
     _record(Method.deleteTask);
     final fault = _nextFault(Method.deleteTask);
     if (fault != null) throw fault;
@@ -545,7 +553,7 @@ class FakeTasksApi implements TasksApi {
     String? parent,
     String? previous,
   }) async {
-    _fireOnCall(Method.moveTask);
+    await _fireOnCall(Method.moveTask);
     _record(Method.moveTask);
     final fault = _nextFault(Method.moveTask);
     if (fault != null) throw fault;

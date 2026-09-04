@@ -91,7 +91,7 @@ Future<Env> loadedStore() async {
     ),
   );
   await s.recordMove('T-clean', 'S1', null, null);
-  await s.recordInflightCreate('T-dirty', 'S1', _t0);
+  await s.recordInflightCreate('T-dirty', 'S1');
   await s.writeSyncLog(pulled: 3, pushed: 1, conflicts: 0, durationMs: 12);
   return env;
 }

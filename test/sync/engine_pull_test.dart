@@ -443,7 +443,7 @@ void main() {
         pendingOp: 'create',
       ),
     );
-    await eng.store.recordInflightCreate('local-p', 'L1', _t0);
+    await eng.store.recordInflightCreate('local-p', 'L1');
     // …its committed orphan on the server, plus a child under the orphan.
     client.seedTask('L1', 'remote-orphan', 'buy milk', '1');
     client.seedTaskWithParent(

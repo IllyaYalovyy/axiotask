@@ -658,17 +658,15 @@ class SyncEngine {
   /// for CLEAN rows: a dirty row's own content push governs its etag, and
   /// clearing it there would turn a guarded If-Match patch into an unconditional
   /// one. Its response body carries the true parent anyway (P6).
+  ///
+  /// [before] was read before the move call, and the move ladder can spend
+  /// several backoff retries in the air — so the write is guarded on that
+  /// snapshot's `local_updated` (#268). An edit that landed in the window keeps
+  /// the row dirty with the user's content; the revert simply does not happen,
+  /// and the row's own update push (which carries its etag) governs from there.
   Future<void> _revertLocalMove(StoredTask? before) async {
     if (before != null && before.syncState == SyncState.clean) {
-      await _store.upsertTask(
-        StoredTask(
-          task: _droppedEtag(before.task),
-          listId: before.listId,
-          syncState: before.syncState,
-          localUpdated: before.localUpdated,
-          pendingOp: before.pendingOp,
-        ),
-      );
+      await _store.revertMoveIfUnchanged(before.task.id, before.localUpdated);
     }
   }
 
@@ -801,9 +799,10 @@ class SyncEngine {
   /// (keeping a mid-flight re-edit dirty as an update); on error KeepInflight
   /// (transient) or ClearInflight + classified failure.
   ///
-  /// Public so a test can drive one create while holding the drained snapshot
-  /// across the insert await (the mid-flight re-edit case); production callers
-  /// reach it through [run].
+  /// Public so a test can drive ONE create and inspect the state the landing
+  /// leaves behind (the mid-flight re-edit case), which a whole [run] would
+  /// walk straight past by pushing the resulting update in the same pass;
+  /// production callers reach it through [run].
   Future<void> pushCreate(StoredTask row, SyncOutcome out) async {
     // Wire ids: the list's, and (for a subtask) the parent's. The create pass
     // only reaches a row whose parent is already acknowledged
@@ -811,27 +810,36 @@ class SyncEngine {
     // has not landed yet — the row waits for the run that lands it.
     final listRemoteId = await _store.listRemoteId(row.listId);
     if (listRemoteId == null) return;
-    final parentRemoteId = row.task.parent == null
+    // Durably mark in-flight BEFORE the non-idempotent insert, and build the
+    // payload from the snapshot the marker recorded (#268) — NOT from [row],
+    // which was drained before this pass's earlier inserts and their awaits.
+    // The marker's `base_*` IS that snapshot, and orphan adoption matches the
+    // committed server row against it: sending older content would put on the
+    // server something the base cannot recognize, so a lost insert response
+    // would re-insert instead of adopting — a duplicate on the user's account.
+    // `base_local_updated` comes from the same read, so `finishCreate`'s guard
+    // arbitrates against exactly what was sent.
+    final sent = await _store.recordInflightCreate(row.task.id, row.listId);
+    if (sent == null) return; // row vanished between drain and marker
+    final parentRemoteId = sent.task.parent == null
         ? null
-        : (await _store.findTaskAny(row.task.parent!))?.remoteId;
-    if (row.task.parent != null && parentRemoteId == null) return;
+        : (await _store.findTaskAny(sent.task.parent!))?.remoteId;
+    if (sent.task.parent != null && parentRemoteId == null) {
+      // The parent is not acknowledged after all — nothing was sent, so the
+      // marker must not outlive this attempt (a stale one holds back the
+      // mutation pass on the next run).
+      await _store.clearInflightCreate(sent.task.id);
+      return;
+    }
     // A subtask insert is anchored after its last already-synced sibling; a
     // top-level create needs no list read at all.
-    final previous = row.task.parent == null
+    final previous = sent.task.parent == null
         ? null
         : reconcile.createPreviousAnchor(
-            row,
-            await _store.listTasks(row.listId),
+            sent,
+            await _store.listTasks(sent.listId),
           );
-    final payload = reconcile.createPayload(row, previous, parentRemoteId);
-    // Durably mark in-flight BEFORE the non-idempotent insert. The drained
-    // local_updated is the base snapshot's drain marker (#124): a mid-flight
-    // re-edit changes the row's local_updated, so recovery can tell it apart.
-    await _store.recordInflightCreate(
-      row.task.id,
-      row.listId,
-      row.localUpdated,
-    );
+    final payload = reconcile.createPayload(sent, previous, parentRemoteId);
     Task? remote;
     ApiError? error;
     try {
@@ -846,15 +854,15 @@ class SyncEngine {
       // re-edit dirty (as an update against the learned remote id). The
       // server-assigned position is adopted.
       await _store.finishCreate(
-        row.task.id,
+        sent.task.id,
         remote!.id,
         remote.etag,
         remote.updated,
-        row.localUpdated,
+        sent.localUpdated,
         remote.position,
       );
       out.pushed += 1;
-      out.markListChanged(row.listId);
+      out.markListChanged(sent.listId);
       return;
     }
     switch (reconcile.onCreateError(error)) {
@@ -874,6 +882,18 @@ class SyncEngine {
   Future<void> _pushUpdate(StoredTask row, SyncOutcome out) async {
     final listRemoteId = await _store.listRemoteId(row.listId);
     if (listRemoteId == null) return;
+    if (row.task.etag == null) {
+      // A server-backed row with NO etag (#268). The etag is dropped on purpose
+      // by the D7 flatten, the pull detach and the move revert, and the HTTP
+      // client omits `If-Match` when it is null — so patching here would be an
+      // UNCONDITIONAL overwrite: another device's edit would be replaced with
+      // no 412, no conflicted copy, and "Google is the source of truth"
+      // silently violated. Read the canonical row first and go through the same
+      // resolver a 412 does: base-merge when only we diverged, otherwise remote
+      // wins and the local edit survives as a conflicted copy.
+      await _resolveConflict(row, out);
+      return;
+    }
     final patch = reconcile.updatePatch(row);
     Task? remote;
     ApiError? error;
@@ -959,19 +979,19 @@ class SyncEngine {
         );
       }
       if (!reconcile.sameContent(mergedTask, remote)) {
-        await _store.upsertTask(
-          StoredTask(
-            task: mergedTask.copyWith(
-              etag: remote.etag,
-              updated: remote.updated,
-            ),
-            listId: local.listId,
-            syncState: local.syncState,
-            localUpdated: local.localUpdated,
-            pendingOp: local.pendingOp,
-          ),
+        // Guarded on the drained snapshot (#268): `local` was read at the START
+        // of the update pass, and a 412 plus its refetch is many requests
+        // later. If the user has typed into this row since, the merge is stale
+        // — landing it would restore the older text AND reset `local_updated`,
+        // so the newer edit would be neither kept nor ever pushed. A miss
+        // leaves the row dirty on its stale etag; the next run 412s again and
+        // re-merges against what the user actually has.
+        final applied = await _store.mergeConflictIfUnchanged(
+          local.task.id,
+          local.localUpdated,
+          mergedTask.copyWith(etag: remote.etag, updated: remote.updated),
         );
-        out.markListChanged(local.listId);
+        if (applied > 0) out.markListChanged(local.listId);
         return;
       }
     }
@@ -1282,15 +1302,7 @@ class SyncEngine {
   Future<void> _promoteLocalIfNested(String id) async {
     final row = await _store.findTaskAny(id);
     if (row != null && row.task.parent != null) {
-      await _store.upsertTask(
-        StoredTask(
-          task: _promoted(row.task, dropEtag: false),
-          listId: row.listId,
-          syncState: row.syncState,
-          localUpdated: row.localUpdated,
-          pendingOp: row.pendingOp,
-        ),
-      );
+      await _store.promoteIfUnchanged(id, row.localUpdated, dropEtag: false);
     }
   }
 
@@ -1299,14 +1311,10 @@ class SyncEngine {
   Future<void> _promoteAndDetach(String id) async {
     final row = await _store.findTaskAny(id);
     if (row != null && row.task.parent != null) {
-      await _store.upsertTask(
-        StoredTask(
-          task: _promoted(row.task, dropEtag: row.syncState == SyncState.clean),
-          listId: row.listId,
-          syncState: row.syncState,
-          localUpdated: row.localUpdated,
-          pendingOp: row.pendingOp,
-        ),
+      await _store.promoteIfUnchanged(
+        id,
+        row.localUpdated,
+        dropEtag: row.syncState == SyncState.clean,
       );
     }
   }
@@ -1475,21 +1483,6 @@ Task _withIds(Task t, String id, String? parent) => Task(
 /// A list rebuilt as an unpushed create: same id/title/updated, no etag.
 TaskList _listAsCreate(TaskList l) =>
     TaskList(id: l.id, title: l.title, updated: l.updated);
-
-/// [t] with its etag dropped, parent kept — the optimistic-move revert (P6).
-Task _droppedEtag(Task t) => Task(
-  id: t.id,
-  parent: t.parent,
-  position: t.position,
-  title: t.title,
-  notes: t.notes,
-  status: t.status,
-  due: t.due,
-  completed: t.completed,
-  updated: t.updated,
-  webViewLink: t.webViewLink,
-  deleted: t.deleted,
-);
 
 /// [t] promoted to top-level (parent cleared), dropping the etag when [dropEtag]
 /// — the D7 flatten / pull detach shape.
