@@ -292,33 +292,18 @@ void main() {
           final page = _rowBackground(tester, scheme);
 
           // Metadata text (WCAG 1.4.3): the due label, the subtask count, the
-          // link badge's "+N".
-          for (final label in ['today', '2/5', '+1']) {
+          // link badge's "+N" — and the list label, which since #276 is plain
+          // trailing text on the title line. It used to carry its own opaque
+          // pill and was measured against THAT; with the pill gone it has to
+          // clear the bar on whatever the row itself is painting, wash
+          // included, like every other quiet label in the row.
+          for (final label in ['today', '2/5', '+1', 'Groceries']) {
             expect(
               _ratioOn(_textColor(tester, label), page),
               greaterThanOrEqualTo(_aaText),
               reason: '$name: "$label" is unreadable on ${background.key}',
             );
           }
-
-          // The list tag paints its OWN opaque pill, so it is measured against
-          // that pill and not against the wash behind it.
-          final pill =
-              (tester
-                          .widget<DecoratedBox>(
-                            find.descendant(
-                              of: find.byKey(const Key('list-tag')),
-                              matching: find.byType(DecoratedBox),
-                            ),
-                          )
-                          .decoration
-                      as BoxDecoration)
-                  .color!;
-          expect(
-            _ratioOn(_textColor(tester, 'Groceries'), pill),
-            greaterThanOrEqualTo(_aaText),
-            reason: '$name: the list tag is unreadable in its own pill',
-          );
 
           // Icon badges and the progress bar (WCAG 1.4.11).
           expect(

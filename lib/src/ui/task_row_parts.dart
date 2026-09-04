@@ -12,6 +12,30 @@ import 'package:flutter/material.dart';
 import 'state_layer.dart';
 import 'theme.dart' show coarsePointerPlatform;
 
+/// The vertical space the meta line occupies on a COARSE pointer.
+///
+/// The desktop meta line is exactly as tall as its text (20dp). A finger needs
+/// more than that to hit the date button, and 48dp — the target the row carried
+/// before #276 — cannot coexist with the 72dp pitch (12 + 24 + 4 + 48 + 12 =
+/// 100dp, a row half again as tall as the M3 two-line item). So the touch meta
+/// line takes every dp the pitch has left: it runs from the 4dp gap to the
+/// row's bottom edge, absorbing the bottom padding as HIT AREA while its text
+/// stays top-aligned 4dp under the title. 32dp tall and ~110dp wide, with the
+/// whole 72dp row as the forgiving target behind it (a miss opens the detail,
+/// which carries the same Due field) and swipe-left as the shortcut that needs
+/// no aim at all.
+const double kTouchMetaBand = 32;
+
+/// The height of ONE meta item's content — the meta text line. Every badge in
+/// the meta [Wrap] occupies exactly this, so the notes icon, the link badge and
+/// the date all sit on one optical line whether or not the band around them is
+/// taller (the touch date target).
+const double kMetaLineHeight = 20;
+
+/// The size of a meta-line icon: paired with the 14sp meta text, so the glyph
+/// reads at the text's weight rather than as a speck beside it.
+const double kMetaIconSize = 16;
+
 /// A [HorizontalDragGestureRecognizer] that refuses pointers whose down-event
 /// lands in the drawer-edge / system-gesture gutter (F15 #193). Rejecting the
 /// pointer here means the recognizer never enters the gesture arena for it, so
@@ -60,18 +84,20 @@ class LinkBadge extends StatelessWidget {
         key: const Key('link-badge'),
         onTap: () => onOpen(url),
         borderRadius: BorderRadius.circular(4),
-        // A finger gets the full 48dp target; the mouse keeps it compact
-        // (F19 #198's 48dp audit — see [touchTarget]).
-        child: touchTarget(
+        // A finger gets the whole meta band as a target; the mouse keeps it
+        // compact (F19 #198's 48dp audit — see [metaTouchTarget]). No padding
+        // of its own: every meta item is exactly one [kMetaLineHeight] text
+        // line, flush with the line's leading edge (#276).
+        child: metaTouchTarget(
           theme.platform,
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          SizedBox(
+            height: kMetaLineHeight,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
                   Icons.open_in_new,
-                  size: 14,
+                  size: kMetaIconSize,
                   color: theme.colorScheme.primary,
                   semanticLabel: 'Open link',
                 ),
@@ -79,7 +105,7 @@ class LinkBadge extends StatelessWidget {
                   const SizedBox(width: 2),
                   Text(
                     '+$extra',
-                    style: theme.textTheme.bodySmall?.copyWith(
+                    style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -113,35 +139,38 @@ class SubtaskProgress extends StatelessWidget {
     final fraction = total == 0 ? 0.0 : (done / total).clamp(0.0, 1.0);
     return Tooltip(
       message: '$done/$total subtasks',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 56,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(
-                value: fraction,
-                minHeight: 6,
-                backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                color: theme.colorScheme.primary,
+      child: SizedBox(
+        height: kMetaLineHeight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 56,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: fraction,
+                  minHeight: 6,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  color: theme.colorScheme.primary,
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 6),
-          // The count ellipsizes so the bar+count never overflows a narrow meta
-          // column (G9 #208); the bar keeps its fixed width.
-          Flexible(
-            child: Text(
-              '$done/$total',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            const SizedBox(width: 6),
+            // The count ellipsizes so the bar+count never overflows a narrow
+            // meta column (G9 #208); the bar keeps its fixed width.
+            Flexible(
+              child: Text(
+                '$done/$total',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -149,18 +178,47 @@ class SubtaskProgress extends StatelessWidget {
 
 /// Enlarge [child] to a ≥48dp hit area on a coarse (touch) pointer, leaving it
 /// compact on a mouse. The glyph is unchanged — only the tappable region grows
-/// (F19 #198's 48dp audit). Shared by the metadata badges (the due segment and
-/// the link badge) that would otherwise be sub-48dp touch targets.
+/// (F19 #198's 48dp audit). Used by the sidebar's list drag handle; the task
+/// row's own meta badges use [metaTouchTarget], whose height is the row's
+/// pitch to keep.
 ///
 /// The box is exactly 48dp tall and at least 48dp wide, but shrink-wraps its
-/// width to the content (`widthFactor: 1`) so it does NOT expand to fill the
-/// metadata [Wrap] and shove the following badges onto a second run — it sits
-/// inline, vertically centered, beside the subtask progress and list tag.
+/// width to the content (`widthFactor: 1`) so it does NOT expand to fill its
+/// row and shove what follows aside — it sits inline, vertically centered.
 Widget touchTarget(TargetPlatform platform, Widget child) {
   if (!coarsePointerPlatform(platform)) return child;
   return SizedBox(
     height: 48,
     child: Center(
+      widthFactor: 1,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48),
+        child: child,
+      ),
+    ),
+  );
+}
+
+/// The task row's meta-line hit target: [touchTarget]'s rule, sized to the
+/// row's 72dp pitch instead of to 48dp.
+///
+/// A finger cannot reliably land on a 20dp line of text, and the row's meta
+/// badges (the date button above all) are the one thing there the user acts on.
+/// But a 48dp target cannot coexist with the two-line pitch — see
+/// [kTouchMetaBand] — so the badge takes the whole band the pitch leaves it:
+/// 32dp, its bottom half being the row's own bottom padding.
+///
+/// Content is TOP-START aligned inside it (#276), for two reasons: the visible
+/// badge has to stay 4dp under the title (centring it in the band would push it
+/// down into the row's whitespace), and its leading glyph has to line up with
+/// the title's first glyph (centring it horizontally would inset a narrow badge
+/// by a few dp). The extra height below is pure hit area.
+Widget metaTouchTarget(TargetPlatform platform, Widget child) {
+  if (!coarsePointerPlatform(platform)) return child;
+  return SizedBox(
+    height: kTouchMetaBand,
+    child: Align(
+      alignment: AlignmentDirectional.topStart,
       widthFactor: 1,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 48),

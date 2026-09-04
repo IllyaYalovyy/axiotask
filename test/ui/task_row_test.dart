@@ -4,8 +4,14 @@
 // pending-sync dot, due / inherited / "no date" segment, subtask progress) and
 // the completion fade. Every assertion is on the rendered tree / the callback a
 // gesture actually fires — never "a method was called".
+//
+// The row's MEASURED geometry — the pitch, the title→meta gap, where the
+// checkbox and the list label sit — lives in `task_row_layout_test.dart`
+// (#276), which superseded the "touch row density" group that used to close
+// this file (its ≤76dp touch row / ≤68dp desktop row are now one 72dp pitch).
 
 import 'package:axiotask/src/ui/task_row.dart';
+import 'package:axiotask/src/ui/task_row_parts.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -330,15 +336,18 @@ void main() {
     });
   });
 
-  group('metadata badge 48dp touch targets (F19 #198)', () {
+  group('metadata badge touch targets (F19 #198, resized by #276)', () {
     // The tap target for the metadata badges (the due segment, the link badge)
-    // is the tap surface wrapping the glyph. On a touch pointer it must be
-    // ≥48dp so a finger can land on it; on a mouse it stays compact (the
-    // desktop row is dense — the vision's standard).
+    // is the tap surface wrapping the glyph. On a touch pointer it must be big
+    // enough for a finger — the whole meta band, [kTouchMetaBand] tall and
+    // ≥48dp wide, which is every dp the row's 72dp two-line pitch leaves under
+    // the title (a 48dp-tall badge would make the row 100dp — see
+    // [metaTouchTarget]). On a mouse it stays compact (the desktop row is
+    // dense — the vision's standard).
     double dueSegmentHeight(WidgetTester tester) =>
         tester.getSize(find.byKey(const Key('row-due-segment'))).height;
 
-    testWidgets('the due segment is a ≥48dp target on a touch pointer', (
+    testWidgets('the due segment fills the meta band on a touch pointer', (
       tester,
     ) async {
       await pumpRow(
@@ -346,7 +355,11 @@ void main() {
         picked: <String>[],
         platform: TargetPlatform.android,
       );
-      expect(dueSegmentHeight(tester), greaterThanOrEqualTo(48));
+      expect(dueSegmentHeight(tester), greaterThanOrEqualTo(kTouchMetaBand));
+      expect(
+        tester.getSize(find.byKey(const Key('row-due-segment'))).width,
+        greaterThanOrEqualTo(48),
+      );
     });
 
     testWidgets('the due segment stays compact (<48dp) on a mouse pointer', (
@@ -360,7 +373,7 @@ void main() {
       );
     });
 
-    testWidgets('the link badge is a ≥48dp target on a touch pointer', (
+    testWidgets('the link badge fills the meta band on a touch pointer', (
       tester,
     ) async {
       await pumpRow(
@@ -371,7 +384,7 @@ void main() {
       );
       final badge = tester.getSize(find.byKey(const Key('link-badge')));
       expect(badge.width, greaterThanOrEqualTo(48));
-      expect(badge.height, greaterThanOrEqualTo(48));
+      expect(badge.height, greaterThanOrEqualTo(kTouchMetaBand));
     });
   });
 
@@ -446,84 +459,6 @@ void main() {
         'buy milk',
         'buy milk',
       ], reason: 'every non-control tap on the row opens the detail');
-    });
-  });
-
-  group('touch row density', () {
-    // On a phone the row's height is dominated by the 48dp metadata tap boxes,
-    // which already carry generous internal whitespace — stacking the desktop
-    // row's decorative paddings ON TOP of them made the mobile list read as
-    // sparse (user directive 2026-08-18). The contract: a full-featured row
-    // stays compact on a touch platform WITHOUT shrinking any tap target (the
-    // 48dp contracts above must hold inside the same compact row).
-    //
-    // Rows are measured under the app's real constraints — inside a ListView,
-    // where the main axis is unbounded and the row shrink-wraps. (The shared
-    // pumpRow harness mounts the row as the Scaffold body, whose bounded
-    // height stretches the row's column — useless for geometry.)
-    Future<void> pumpListedRow(
-      WidgetTester tester, {
-      required TargetPlatform platform,
-    }) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(platform: platform),
-          home: Scaffold(
-            body: ListView(
-              children: [
-                TaskRow(
-                  title: 'buy milk',
-                  completed: false,
-                  due: '2026-08-01',
-                  listTag: 'My Tasks',
-                  subtaskDone: 0,
-                  subtaskTotal: 0,
-                  onOpen: () {},
-                  onToggle: () {},
-                  onRename: (_) {},
-                  onPickDate: () {},
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    testWidgets('a full row stays ≤80dp tall on a touch platform, tap targets '
-        'intact', (tester) async {
-      await withClock(Clock.fixed(DateTime(2026, 6, 15)), () async {
-        await pumpListedRow(tester, platform: TargetPlatform.android);
-      });
-
-      // The row's content box (the swipe-follow layer wraps exactly the
-      // checkbox + text column + badges; TaskRow itself fills its parent).
-      final row = tester.getSize(find.byKey(const Key('swipe-content')));
-      expect(
-        row.height,
-        lessThanOrEqualTo(76),
-        reason:
-            'mobile rows must not stack decorative padding on top of the '
-            '48dp metadata tap boxes',
-      );
-      // Density must come out of whitespace, never out of the hit areas.
-      final checkbox = tester.getSize(
-        find.byKey(const Key('row-checkbox-target')),
-      );
-      expect(checkbox.height, greaterThanOrEqualTo(48));
-      final dueTarget = tester.getSize(
-        find.byKey(const Key('row-due-segment')),
-      );
-      expect(dueTarget.height, greaterThanOrEqualTo(48));
-    });
-
-    testWidgets('the desktop row keeps its ratified spacing', (tester) async {
-      await pumpListedRow(tester, platform: TargetPlatform.linux);
-      // The desktop metadata line is compact (no 48dp boxes), so the desktop
-      // row was never the sparse one — its geometry is unchanged by the mobile
-      // density pass: title padding (12+2) + line + gap + meta + padding (8).
-      final row = tester.getSize(find.byKey(const Key('swipe-content')));
-      expect(row.height, lessThanOrEqualTo(68));
     });
   });
 }

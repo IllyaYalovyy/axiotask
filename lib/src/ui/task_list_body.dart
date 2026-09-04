@@ -459,7 +459,11 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
               ),
             );
             final row = Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+              // Top-aligned, so the 48dp handle box centres on the row's TITLE
+              // line exactly as the checkbox beside it does (#276). Centred on
+              // the two-line row it pointed at the gap between the lines and
+              // sat 12dp below the checkbox it shares a column with.
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // A row that is folding away is no longer a drag target — it is
                 // leaving — but it keeps the handle's WIDTH so its title does

@@ -1,7 +1,9 @@
 // A single top-level task row — the T7.2 "complete" fresh TaskRow: the main
-// line (checkbox, title/inline-rename, pending-sync dot) plus a metadata line
-// (notes badge, link badge, due/no-date/inherited-date segment, subtask
-// progress, optional list tag) and a completion fade/shrink animation.
+// line (checkbox, title/inline-rename, pending-sync dot, and in a cross-list
+// view the list label) plus a metadata line (notes badge, link badge,
+// due/no-date/inherited-date segment, subtask progress) and a completion
+// fade/shrink animation. Its geometry is the M3 two-line list item — see
+// [kTaskRowHeight] for the numbers and why they are what they are (#276).
 //
 // Subtasks are never rows (invariant #1) — the caller only ever hands this
 // widget a top-level task; there is no indent, connector, or expand toggle.
@@ -37,6 +39,30 @@ import 'state_layer.dart';
 import 'task_row_parts.dart';
 import 'theme.dart';
 import 'url_detect.dart';
+
+/// The row's geometry (#276) — the ONE place these numbers live, because they
+/// only work together.
+///
+/// A row is an M3 two-line list item: 72dp of pitch, 12dp of padding above the
+/// title and below the meta line, and just 4dp BETWEEN the two lines. That
+/// ratio is the whole point — the previous row put ~16dp between a title and
+/// its own meta line and ~24dp between rows, so the meta line floated between
+/// two titles instead of belonging to one. Now the inter-row whitespace
+/// (12 + 12 = 24dp of padding) is four times the intra-row gap, and proximity
+/// does the grouping a divider would otherwise have to.
+///
+/// [kTaskRowHeight] is a MINIMUM, never a fixed height: at a larger text scale
+/// the lines grow and the row grows with them.
+const double kTaskRowHeight = 72;
+const double _rowPaddingV = 12;
+const double _titleToMeta = 4;
+
+/// The leading column the checkbox owns — 48dp wide on every pointer so the
+/// title's left edge never moves, and 48dp tall from the row's TOP edge, which
+/// puts its centre exactly on the title line's centre (12 + 24/2 = 24 = 48/2).
+/// The checkbox belongs to the title, not to the two-line block: centred on the
+/// row it sat in the gap between the lines, attached to neither (#276).
+const double _checkboxColumn = 48;
 
 /// The background wash a row carries while ITS task is the one the detail panel
 /// currently shows (#221). Deliberately a SECONDARY tonal tint — the same
@@ -554,7 +580,11 @@ class _TaskRowState extends State<TaskRow> {
       child: ScaleTransition(
         scale: completion.drive(Tween<double>(begin: 1.0, end: 0.98)),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          // Horizontal gutter only: the row's own 12dp top/bottom padding is
+          // what separates it from its neighbours (#276), and stacking a
+          // decorative outer margin on top of that would push the pitch past
+          // 72dp for no gain.
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           // The content follows the finger during a left drag (T8.1).
           // Transform.translate is paint-only, so the row's size — and the
           // #168 no-reflow geometry — is unchanged whatever the offset.
@@ -579,67 +609,75 @@ class _TaskRowState extends State<TaskRow> {
             child: StateLayer(
               onTap: _onBodyTap,
               borderRadius: BorderRadius.circular(8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // The completion target. On touch it is the full 48dp
-                  // box (#167, CheckboxTapTarget). On a mouse it shrinks
-                  // to a compact box around the glyph — same rule as the
-                  // metadata badges ("compact on a mouse") — because the
-                  // invisible 48×48 area spanned ~75% of the desktop
-                  // row's height and completed tasks from clicks that
-                  // read as "the row" (#214). The 48dp-wide column stays
-                  // either way, so the title never shifts.
-                  SizedBox(
-                    width: 48,
-                    height: 48,
-                    child: coarsePointerPlatform(theme.platform)
-                        ? SizedBox(
-                            key: const Key('row-checkbox-target'),
-                            width: 48,
-                            height: 48,
-                            child: Checkbox(
-                              value: widget.completed,
-                              onChanged: (_) => widget.onToggle(),
-                            ),
-                          )
-                        : Center(
-                            child: SizedBox(
+              // The M3 two-line pitch as a FLOOR (#276): every row is 72dp,
+              // whether it carries a date, a list label, both or neither, so a
+              // list reads as an even column instead of a ragged one. Larger
+              // text scales grow past it.
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: kTaskRowHeight),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // The completion target, top-aligned so its centre lands
+                    // on the TITLE line (#276). On touch it is the full 48dp
+                    // box (#167, CheckboxTapTarget). On a mouse it shrinks
+                    // to a compact box around the glyph — same rule as the
+                    // metadata badges ("compact on a mouse") — because the
+                    // invisible 48×48 area spanned ~75% of the desktop
+                    // row's height and completed tasks from clicks that
+                    // read as "the row" (#214). The 48dp-wide column stays
+                    // either way, so the title never shifts.
+                    SizedBox(
+                      width: _checkboxColumn,
+                      height: _checkboxColumn,
+                      child: coarsePointerPlatform(theme.platform)
+                          ? SizedBox(
                               key: const Key('row-checkbox-target'),
-                              width: 28,
-                              height: 28,
+                              width: _checkboxColumn,
+                              height: _checkboxColumn,
                               child: Checkbox(
                                 value: widget.completed,
                                 onChanged: (_) => widget.onToggle(),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            )
+                          : Center(
+                              child: SizedBox(
+                                key: const Key('row-checkbox-target'),
+                                width: 28,
+                                height: 28,
+                                child: Checkbox(
+                                  value: widget.completed,
+                                  onChanged: (_) => widget.onToggle(),
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
                               ),
                             ),
-                          ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // A rename that LANDS washes the title line, wherever
-                        // it was typed — this row's inline editor, the detail
-                        // panel's Title field, a sync pull (#252). OUTSIDE
-                        // [_mainLine] because the inline editor replaces the
-                        // whole line while it is open: a wrapper inside would
-                        // be torn down by the very rename it exists to report,
-                        // and would come back with nothing left to play.
-                        CommitFlash(
-                          commit: widget.commit,
-                          target: CommitTarget.title,
-                          child: _mainLine(theme, completion),
-                        ),
-                        if (!coarsePointerPlatform(theme.platform))
-                          const SizedBox(height: 2),
-                        _metaLine(theme),
-                      ],
                     ),
-                  ),
-                ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // A rename that LANDS washes the title line, wherever
+                          // it was typed — this row's inline editor, the detail
+                          // panel's Title field, a sync pull (#252). OUTSIDE
+                          // [_mainLine] because the inline editor replaces the
+                          // whole line while it is open: a wrapper inside would
+                          // be torn down by the very rename it exists to report,
+                          // and would come back with nothing left to play.
+                          CommitFlash(
+                            commit: widget.commit,
+                            target: CommitTarget.title,
+                            child: _mainLine(theme, completion),
+                          ),
+                          const SizedBox(height: _titleToMeta),
+                          _metaLine(theme),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -712,20 +750,27 @@ class _TaskRowState extends State<TaskRow> {
     return _wrapTouchGestures(withContext);
   }
 
-  /// The main line: title (or inline editor) and the pending-sync dot.
+  /// The main line: title (or inline editor), the pending-sync dot, and — in a
+  /// cross-list view — the list label at the trailing edge.
   /// [completion] drives the title's strike sweep (#241).
   Widget _mainLine(ThemeData theme, Animation<double> completion) {
     if (_editing) {
-      return TextField(
-        controller: _editor,
-        focusNode: _focus,
-        autofocus: true,
-        decoration: const InputDecoration(
-          isDense: true,
-          border: InputBorder.none,
+      return Padding(
+        // The same top padding the title wears, so entering rename does not
+        // shift the line the user is about to type on (#276).
+        padding: const EdgeInsets.only(top: _rowPaddingV),
+        child: TextField(
+          controller: _editor,
+          focusNode: _focus,
+          autofocus: true,
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.zero,
+            border: InputBorder.none,
+          ),
+          onSubmitted: (_) => _commit(),
+          onTapOutside: (_) => _commit(),
         ),
-        onSubmitted: (_) => _commit(),
-        onTapOutside: (_) => _commit(),
       );
     }
     // Double-tap-to-rename is a DESKTOP affordance only. On a touch platform an
@@ -736,37 +781,86 @@ class _TaskRowState extends State<TaskRow> {
     final doubleTapToRename = coarsePointerPlatform(theme.platform)
         ? null
         : _startEdit;
-    // On touch the title's decorative padding shrinks: the 48dp metadata tap
-    // boxes below already hold generous whitespace, and stacking the desktop
-    // paddings on top of them made the mobile list sparse (density directive
-    // 2026-08-18 — the 'touch row density' contract).
-    final compact = coarsePointerPlatform(theme.platform);
+    // ONE padding on both pointers (#276): the touch row used to shave the
+    // title's padding to 4dp to pay for a 48dp meta band, which is exactly what
+    // pulled the title away from its own meta line and towards the row above.
+    // The band is now the pitch's business, not the title's.
+    final listTag = widget.listTag ?? '';
     final line = Padding(
-      padding: EdgeInsets.only(top: compact ? 4 : 12, bottom: compact ? 0 : 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: StrikeSweep(
-              title: widget.title.isEmpty ? 'Untitled' : widget.title,
-              progress: completion,
-              completedColor: completedTitleColor(theme.colorScheme),
-            ),
-          ),
-          if (widget.pendingSync)
-            Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Tooltip(
-                key: const Key('pending-dot'),
-                message: 'Not synced to Google yet',
-                child: Icon(
-                  Icons.circle,
-                  size: 8,
-                  color: theme.colorScheme.tertiary,
-                  semanticLabel: 'Pending sync',
+      padding: const EdgeInsets.only(top: _rowPaddingV),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            Expanded(
+              child: DefaultTextStyle.merge(
+                // The M3 two-line list item's headline role. It is also the
+                // style the inline-rename TextField already used, so entering
+                // and leaving rename no longer resizes the line (#276).
+                style: theme.textTheme.bodyLarge,
+                child: StrikeSweep(
+                  title: widget.title.isEmpty ? 'Untitled' : widget.title,
+                  progress: completion,
+                  completedColor: completedTitleColor(theme.colorScheme),
                 ),
               ),
             ),
-        ],
+            if (widget.pendingSync)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: Tooltip(
+                  key: const Key('pending-dot'),
+                  message: 'Not synced to Google yet',
+                  child: Icon(
+                    Icons.circle,
+                    size: 8,
+                    color: theme.colorScheme.tertiary,
+                    semanticLabel: 'Pending sync',
+                  ),
+                ),
+              ),
+            // The list label — only in a cross-list view; on a concrete list
+            // the caller passes none and this slot simply stays empty (#276).
+            //
+            // It rides the TITLE line at the trailing edge, as quiet text: the
+            // filled pill it used to be was the heaviest element in the row and
+            // read as a control beside the title rather than a label of it, and
+            // down on the meta line it competed with the date — the one thing
+            // there the user acts on. Capped at 40% of the line so a long list
+            // name ellipsises instead of eating the title, and a
+            // [CommitFlash] because a move to another list washes the label
+            // that names the new one (#252) — in a cross-list view the row
+            // stays put, and the label is the only thing about it that changed.
+            if (listTag.isNotEmpty)
+              Padding(
+                // Keyed so the label keeps its element — and with it the
+                // [CommitFlash]'s "already played" memory — when the
+                // pending-sync dot appears or goes in the SAME rebuild.
+                // Unkeyed, the children shift by one and the label's state is
+                // rebuilt from scratch, swallowing the wash it was about to
+                // play (#252, caught by the re-homed-row test).
+                key: const Key('list-tag-slot'),
+                padding: const EdgeInsets.only(left: 8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: constraints.maxWidth * 0.4,
+                  ),
+                  child: CommitFlash(
+                    commit: widget.commit,
+                    target: CommitTarget.listTag,
+                    child: Text(
+                      listTag,
+                      key: const Key('list-tag'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
     // The row's ONE tap surface is the body's [StateLayer] (#259), so this
@@ -785,77 +879,63 @@ class _TaskRowState extends State<TaskRow> {
     );
   }
 
-  /// The metadata line: notes/link badges, the due segment, subtask progress,
-  /// and the optional list tag.
+  /// The metadata line: notes/link badges, the due segment and subtask
+  /// progress. Its leading edge is flush with the title's first glyph, and its
+  /// text sits exactly [_titleToMeta] under the title (#276) — the list label
+  /// moved up to the title line, leaving this line to the things the user acts
+  /// on.
   Widget _metaLine(ThemeData theme) {
-    final small = theme.textTheme.bodySmall;
-    final muted = small?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    final muted = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
     final urls = urlsForTask(title: widget.title, notes: widget.notes);
     final hasNotes = (widget.notes ?? '').isNotEmpty;
+    final coarse = coarsePointerPlatform(theme.platform);
 
     return Padding(
-      // Touch: the 48dp tap boxes in this line carry the whitespace; the
-      // decorative bottom padding is desktop-only (see _mainLine's note).
-      padding: EdgeInsets.only(
-        bottom: coarsePointerPlatform(theme.platform) ? 0 : 8,
-      ),
-      child: Wrap(
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 10,
-        runSpacing: 4,
-        children: [
-          if (hasNotes)
-            Tooltip(
-              key: const Key('notes-badge'),
-              message: 'Has notes',
-              child: Icon(
-                Icons.notes,
-                size: 14,
-                color: theme.colorScheme.onSurfaceVariant,
-                semanticLabel: 'Has notes',
-              ),
-            ),
-          if (urls.isNotEmpty && widget.onOpenUrl != null)
-            LinkBadge(
-              url: urls.first,
-              extra: urls.length - 1,
-              onOpen: widget.onOpenUrl!,
-              theme: theme,
-            ),
-          _dueSegment(theme, muted),
-          if (widget.subtaskTotal > 0)
-            SubtaskProgress(
-              done: widget.subtaskDone,
-              total: widget.subtaskTotal,
-              theme: theme,
-            ),
-          if ((widget.listTag ?? '').isNotEmpty)
-            // A move to another list washes the tag that names the new one
-            // (#252) — in a cross-list view the row stays put, and the tag is
-            // the only thing about it that changed.
-            CommitFlash(
-              commit: widget.commit,
-              target: CommitTarget.listTag,
-              child: Container(
-                key: const Key('list-tag'),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                // A long list name ellipsizes rather than pushing the tag past
-                // the (narrow) meta column and overflowing it (G9 #208). Each
-                // Wrap child is constrained to the column width, so an un-capped
-                // tag is the one meta item that can exceed it.
-                child: Text(
-                  widget.listTag!,
-                  style: muted,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+      // On touch the bottom padding IS the date button's lower half (see
+      // [kTouchMetaBand]); on a mouse it is plain whitespace.
+      padding: EdgeInsets.only(bottom: coarse ? 0 : _rowPaddingV),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: coarse ? kTouchMetaBand : 0),
+        child: Wrap(
+          // Items are TOP-aligned: a touch date target is taller than the text
+          // line it holds, and centring it would push the date away from the
+          // title it belongs under.
+          crossAxisAlignment: WrapCrossAlignment.start,
+          spacing: 10,
+          runSpacing: 4,
+          children: [
+            if (hasNotes)
+              Tooltip(
+                key: const Key('notes-badge'),
+                message: 'Has notes',
+                child: SizedBox(
+                  height: kMetaLineHeight,
+                  child: Icon(
+                    Icons.notes,
+                    size: kMetaIconSize,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    semanticLabel: 'Has notes',
+                  ),
                 ),
               ),
-            ),
-        ],
+            if (urls.isNotEmpty && widget.onOpenUrl != null)
+              LinkBadge(
+                url: urls.first,
+                extra: urls.length - 1,
+                onOpen: widget.onOpenUrl!,
+                theme: theme,
+              ),
+            _dueSegment(theme, muted),
+            if (widget.subtaskTotal > 0)
+              SubtaskProgress(
+                done: widget.subtaskDone,
+                total: widget.subtaskTotal,
+                theme: theme,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -885,8 +965,8 @@ class _TaskRowState extends State<TaskRow> {
       child = Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.event, size: 13, color: color),
-          const SizedBox(width: 3),
+          Icon(Icons.event, size: kMetaIconSize, color: color),
+          const SizedBox(width: 4),
           // The date label is the flexible element: it ellipsizes before the
           // due chip can overflow the (narrow) meta column; the icon is fixed
           // (G9 #208).
@@ -930,18 +1010,17 @@ class _TaskRowState extends State<TaskRow> {
       target: CommitTarget.due,
       child: child,
     );
+    // Always exactly one meta text line tall, so the date sits on the same
+    // optical line as the notes and link badges beside it (#276).
+    child = SizedBox(height: kMetaLineHeight, child: child);
     if (widget.onPickDate == null) return child;
-    // A touch pointer gets a full 48dp hit target on this small date segment
-    // (F19 #198 — a finger can't reliably land on ~20dp of text); the mouse
-    // keeps the compact desktop segment (it's precise, and the row stays dense
-    // — the desktop UX standard).
-    final target = touchTarget(
-      theme.platform,
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        child: child,
-      ),
-    );
+    // A touch pointer gets the whole meta band as its hit target (F19 #198 — a
+    // finger can't reliably land on ~20dp of text; see [metaTouchTarget] for why
+    // it is 32dp and not 48dp); the mouse keeps the compact desktop segment
+    // (it's precise, and the row stays dense — the desktop UX standard). No
+    // padding around the content on either: the segment's leading glyph is the
+    // meta line's leading edge, and it lines up with the title's first glyph.
+    final target = metaTouchTarget(theme.platform, child);
     if (!_dateMenuWired) {
       return StateLayer(
         key: const Key('row-due-segment'),
