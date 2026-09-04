@@ -164,3 +164,12 @@ difference is the engine-bump signal.
 A flake is a gate failure, full stop. Find the nondeterminism (real timer, wall
 clock, network, uncontrolled async), fix it, re-run enough to prove it gone,
 and record the root cause. Never land a task with a known flake.
+
+The commonest shape here is **waiting a fixed amount of real time for work that
+publishes no signal** — it passes on the author's machine and fails on a loaded
+runner. `test/ui/properties_test.dart` waited `6 x 60ms` for the local-data
+reset and went red on CI with `Expected: empty / Actual: [StoredTaskList]`: the
+budget expired mid-chain and the test asserted against a store still being
+emptied. Wait on the OUTCOME instead — the reset's notice is rendered only after
+its future returns, so the loop leaves the moment the notice appears and the
+round cap bounds only the failure path.

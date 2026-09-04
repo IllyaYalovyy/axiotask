@@ -632,6 +632,40 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// Wait for the reset to FINISH — by its outcome, never by a fixed budget
+    /// of real time.
+    ///
+    /// The reset does REAL file IO (the durable recovery dump) with store
+    /// writes chained after it, so only `runAsync` lets those futures complete
+    /// (fake timers starve real IO) and each stage needs a pump to hand control
+    /// back. What this must not do is guess how long that takes: a fixed
+    /// `6 x 60ms` here passed on this machine and failed on a loaded GitHub
+    /// runner with `Expected: empty / Actual: [StoredTaskList]`, because the
+    /// budget ran out mid-chain and the test then asserted against a store that
+    /// was still being emptied (run 33890224543).
+    ///
+    /// `_resetNotice` is assigned only AFTER `LocalDataReset.run()` returns or
+    /// throws (properties.dart `_resetLocalData`), so the notice appearing IS
+    /// the completion signal — for the erase, the dump, and the refusal path
+    /// alike. Each round costs 5ms and the loop leaves on the first round that
+    /// sees it; the cap bounds only the FAILURE path, where it buys a legible
+    /// message instead of a 30-minute suite timeout.
+    Future<void> settleReset(WidgetTester tester) async {
+      final notice = find.byKey(const Key('account-reset-notice'));
+      for (var round = 0; round < 400; round++) {
+        if (notice.evaluate().isNotEmpty) return;
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump();
+      }
+      fail(
+        'the reset never reported: no account-reset-notice after ~2s of real '
+        'time. The dialog is still awaiting LocalDataReset.run() — the dump '
+        'or the store writes never completed.',
+      );
+    }
+
     /// Walk the whole gate: open the confirm, type the word, confirm. Bounded
     /// pumps only — the focused field's caret animation never settles.
     Future<void> runResetGate(WidgetTester tester) async {
@@ -654,16 +688,7 @@ void main() {
       await tester.tap(find.byKey(const Key('reset-data-confirm-button')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
-      // The reset does REAL file IO (the durable recovery dump) with store
-      // writes chained after it; only runAsync lets those futures complete
-      // (fake timers starve them), and each stage needs a pump to hand control
-      // back. A few alternating rounds settle the whole chain deterministically.
-      for (var i = 0; i < 6; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 60)),
-        );
-        await tester.pump();
-      }
+      await settleReset(tester);
     }
 
     testWidgets('the confirmed reset empties the store and reports it', (

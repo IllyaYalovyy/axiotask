@@ -111,8 +111,11 @@ jobs:
       # time with fake_async.
       #
       # The allowlist is one file: test/ui/properties_test.dart drains REAL file
-      # IO inside tester.runAsync(), where fake timers would starve the IO and
-      # there is no completer to wait on.
+      # IO inside tester.runAsync(), where fake timers would starve the IO. What
+      # it may NOT do is sleep a fixed budget and assume the work finished — a
+      # `6 x 60ms` wait there passed here and failed on the runner (33890224543).
+      # Its remaining delays only pace a loop that leaves the moment the outcome
+      # the user sees appears; the cap bounds the failure path alone.
       - name: Wall-clock ban below test/
         run: |
           hits=$(grep -rnE 'Future(<[^>]*>)?\.delayed|DateTime\.now\(' \
