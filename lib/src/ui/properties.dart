@@ -633,8 +633,19 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
     });
     try {
       final r = await ref.read(backupServiceProvider).importFrom();
+      // Rows already here are matched by their Google id and kept (#272), so
+      // restoring onto a device that is already in sync legitimately writes
+      // NOTHING. Reported as "Restored 0 task(s)" that reads like a failure, so
+      // the no-op says what actually happened — and content put back onto rows
+      // that were already here is counted rather than hidden behind the
+      // inserts.
+      final updated = r.tasksUpdated + r.listsUpdated;
       _notify(
-        'Restored ${r.tasks} task(s) in ${r.lists} list(s) ← ${r.path}',
+        r.tasks == 0 && r.lists == 0 && updated == 0
+            ? 'Already up to date — every row in the backup is here ← ${r.path}'
+            : 'Restored ${r.tasks} task(s) in ${r.lists} list(s)'
+                  '${updated > 0 ? ' ($updated updated in place)' : ''}'
+                  ' ← ${r.path}',
         isError: false,
       );
     } on BackupError catch (e) {

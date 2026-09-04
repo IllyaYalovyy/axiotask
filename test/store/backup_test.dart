@@ -164,7 +164,7 @@ void main() {
       expect(json, contains('\n'));
       expect(json, contains('  '));
       // Self-describing envelope is visible to a human reader.
-      expect(json, contains('"version": 1'));
+      expect(json, contains('"version": 2'));
       expect(json, contains('"app": "axiotask"'));
       // Lossless: deserializing yields the same structure.
       expect(Backup.fromJson(json), b);
