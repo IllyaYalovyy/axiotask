@@ -731,6 +731,69 @@ void main() {
     await assertAtMostOneLevel(eng, 'L1');
   });
 
+  test("d7's corrective move must not swallow the grandchild's pending "
+      'edit', () async {
+    // D7 × a DIRTY grandchild. The repair pushes a corrective move, and the
+    // response body is the row as the SERVER has it — i.e. WITHOUT the edit the
+    // user has typed but this device has not managed to push yet. A clean row
+    // adopts that body (P6); a dirty one must take the meta only, or the repair
+    // silently overwrites the user's unsent text and marks the row clean, so
+    // the edit is never pushed either — lost on both sides.
+    final (client, eng) = await engine(push: true);
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    client.seedTask('L1', 'P', 'parent', '00000000000001');
+    client.seedTask('L1', 'T', 'subtask-to-be', '00000000000002');
+    client.seedTaskWithParent('L1', 'C', 'grandchild', '00000000000003', 'T');
+    await eng.run();
+
+    // The user edits C offline; the push drops on the network, so C is STILL
+    // dirty when the repair runs later in the same run.
+    final c0 = await localRow(eng, 'L1', 'C');
+    await eng.store.upsertTask(
+      StoredTask(
+        task: c0.task.copyWith(title: 'my unsent edit'),
+        listId: c0.listId,
+        syncState: SyncState.dirty,
+        localUpdated: '2026-06-03T00:00:00Z',
+        pendingOp: 'update',
+        remoteId: c0.remoteId,
+      ),
+    );
+    client.failNext(Method.patchTask, () => const ServerError(503));
+    // Another device demotes T under P. The pull adopts that, and C — which the
+    // pull skips, being dirty — is suddenly a third level.
+    await client.moveTask('L1', 'T', parent: 'P');
+
+    final out = await eng.run();
+
+    expect(out.conflicts, 1, reason: 'the third level was repaired');
+    final c = await localRow(eng, 'L1', 'C');
+    expect(
+      c.task.title,
+      'my unsent edit',
+      reason: "the repair adopted the move's meta only — the edit survives",
+    );
+    expect(
+      c.syncState,
+      SyncState.dirty,
+      reason: 'and the row is still queued to push it',
+    );
+    expect(c.pendingOp, 'update');
+    expect(c.task.parent, isNull, reason: 'C is top-level (invariant #1)');
+    expect(await remoteParent(client, 'L1', 'C'), isNull);
+    await assertAtMostOneLevel(eng, 'L1');
+
+    // Convergence: the next run finally pushes the edit the repair preserved.
+    final out2 = await eng.run();
+    expect(out2.pushed, 1);
+    expect(
+      (await client.getTask('L1', 'C')).title,
+      'my unsent edit',
+      reason: "the user's edit reached the server after all",
+    );
+    expect((await localRow(eng, 'L1', 'C')).syncState, SyncState.clean);
+  });
+
   test('d7 flattens a pulled third level locally even with push '
       'disabled', () async {
     // #137: invariant #1 is ABSOLUTE — it does not depend on whether this sync

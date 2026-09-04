@@ -69,7 +69,7 @@ import 'reconcile.dart'
         UpdateResolveConflict;
 import 'sync_error.dart';
 
-/// Counters and changed-data scope from a single sync run.
+/// Counters and the list-metadata flag from a single sync run.
 class SyncOutcome {
   /// Tasks pulled from the server (new or updated locally).
   int pulled = 0;
@@ -100,17 +100,9 @@ class SyncOutcome {
     if (!quarantined.contains(title)) quarantined.add(title);
   }
 
-  /// Task lists whose task rows changed locally during this run.
-  final List<String> changedListIds = [];
-
   /// The task-list collection or list metadata changed, so callers must
   /// refresh list metadata before replacing task rows.
   bool listsChanged = false;
-
-  /// Dedup-append a list id to [changedListIds].
-  void markListChanged(String listId) {
-    if (!changedListIds.contains(listId)) changedListIds.add(listId);
-  }
 }
 
 /// Configuration for a sync engine instance.
@@ -626,7 +618,6 @@ class SyncEngine {
         // is no remote id to name in a DELETE, so drop the tombstone outright.
         await _store.clearInflightCreate(localId);
         await _store.deleteTaskHard(localId);
-        out.markListChanged(listId);
       } else {
         // Insert never reached the server — let normal push retry.
         await _store.clearInflightCreate(localId);
@@ -854,7 +845,6 @@ class SyncEngine {
         remote.position,
       );
       out.pushed += 1;
-      out.markListChanged(sent.listId);
       return;
     }
     switch (reconcile.onCreateError(error)) {
@@ -909,7 +899,6 @@ class SyncEngine {
         row.localUpdated,
       );
       out.pushed += 1;
-      out.markListChanged(row.listId);
       return;
     }
     switch (reconcile.onUpdateError(error)) {
@@ -919,7 +908,6 @@ class SyncEngine {
         // Delete-wins (P4): the FK cascade takes this row and its WHOLE subtree,
         // unpushed subtasks included (RFC-009 D3 REJECTED; no auto-promotion).
         await _store.deleteTaskHard(row.task.id);
-        out.markListChanged(row.listId);
       case UpdateFailed(:final failure):
         _applyPushFailure(failure, error, out, _taskRef(row), 'update');
     }
@@ -978,12 +966,11 @@ class SyncEngine {
         // so the newer edit would be neither kept nor ever pushed. A miss
         // leaves the row dirty on its stale etag; the next run 412s again and
         // re-merges against what the user actually has.
-        final applied = await _store.mergeConflictIfUnchanged(
+        await _store.mergeConflictIfUnchanged(
           local.task.id,
           local.localUpdated,
           mergedTask.copyWith(etag: remote.etag, updated: remote.updated),
         );
-        if (applied > 0) out.markListChanged(local.listId);
         return;
       }
     }
@@ -1006,7 +993,6 @@ class SyncEngine {
         final copy = reconcile.conflictedCopy(local, remote, _newId());
         await _store.resolveConflictedCopy(remote, local.localUpdated, copy);
     }
-    out.markListChanged(local.listId);
   }
 
   /// Push one delete: unconditional (no If-Match, probe 7); success/404 →
@@ -1025,7 +1011,6 @@ class SyncEngine {
       // anywhere, so its own create pass is what pushes it (#267).
       if (await _store.deleteTaskIfUnchanged(row.task.id, row.localUpdated)) {
         out.deleted += 1;
-        out.markListChanged(row.listId);
       }
       return;
     }
@@ -1039,7 +1024,6 @@ class SyncEngine {
       case HardDeleteLocal():
         if (await _store.deleteTaskIfUnchanged(row.task.id, row.localUpdated)) {
           out.deleted += 1;
-          out.markListChanged(row.listId);
           return;
         }
         // An undo revived the row while the DELETE was in flight (#267). The
@@ -1049,9 +1033,7 @@ class SyncEngine {
         // subtree loses its remote identity and goes back as a fresh create;
         // a row the user re-deleted inside the same window stays a tombstone
         // and completes on the next run's 404.
-        if (await _store.demoteSubtreeToCreate(row.task.id) > 0) {
-          out.markListChanged(row.listId);
-        }
+        await _store.demoteSubtreeToCreate(row.task.id);
       case final DeleteFailed f:
         _applyPushFailure(f.failure, error!, out, _taskRef(row), 'delete');
     }
@@ -1068,8 +1050,7 @@ class SyncEngine {
   ) async {
     final target = reconcile.rehomeTarget(survivors, ghost);
     if (target != null) {
-      final moved = await _store.rehomeUnpushedTasks(ghost, target.list.id);
-      if (moved > 0) out.markListChanged(target.list.id);
+      await _store.rehomeUnpushedTasks(ghost, target.list.id);
       return true;
     }
     return !await _store.hasUnpushedTasks(ghost);
@@ -1221,7 +1202,6 @@ class SyncEngine {
       // Race-safe: won't clobber a row a live UI edit just dirtied.
       await _store.upsertRemoteTask(stored);
       out.pulled += 1;
-      out.markListChanged(localListId);
     }
 
     // Ghost detection: remove clean local rows absent from the server.
@@ -1236,7 +1216,6 @@ class SyncEngine {
     List<String> thirdLevel,
     SyncOutcome out,
   ) async {
-    final listId = list.list.id;
     for (final id in thirdLevel) {
       final before = await _store.findTaskAny(id);
       if (before == null) continue; // vanished between detection and repair
@@ -1246,7 +1225,6 @@ class SyncEngine {
         // the nesting until a push-enabled run sends the corrective move.
         await _promoteAndDetach(id);
         out.conflicts += 1;
-        out.markListChanged(listId);
       } else if (before.remoteId != null && list.remoteId != null) {
         // A synced grandchild really sits on the server under a subtask. Push
         // the corrective move so the server converges too.
@@ -1263,7 +1241,6 @@ class SyncEngine {
           // pending edit only meta-adopts, so make it top-level locally too.
           await _promoteLocalIfNested(id);
           out.conflicts += 1;
-          out.markListChanged(listId);
         } else {
           // The corrective move did not land. Either way the LOCAL third level
           // must NOT linger — promote now and DROP the etag so the next pull
@@ -1271,7 +1248,6 @@ class SyncEngine {
           // ghost-removed on the next complete pull).
           await _promoteAndDetach(id);
           out.conflicts += 1;
-          out.markListChanged(listId);
         }
       } else {
         // An un-acknowledged subtask create whose parent was demoted out from
@@ -1279,7 +1255,6 @@ class SyncEngine {
         // pushes as a TOP-LEVEL create next.
         await _promoteLocalIfNested(id);
         out.conflicts += 1;
-        out.markListChanged(listId);
       }
     }
   }
@@ -1352,7 +1327,6 @@ class SyncEngine {
       // delete. The FK cascade takes the whole subtree (RFC-009 D3 REJECTED).
       if (await _store.removeGhostTask(ghostId)) {
         out.deleted += 1;
-        out.markListChanged(listId);
       }
     }
   }

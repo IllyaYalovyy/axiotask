@@ -313,6 +313,63 @@ void main() {
     expect(await remoteOrder(client, 'L1'), ['B', 'A']);
   });
 
+  test('reorder of a row with an unsent edit keeps the edit', () async {
+    // §E × a DIRTY row. Same shape as the test above, except this device still
+    // holds an unpushed edit of its own when the move lands. The move response
+    // body is the row as the SERVER has it — without that edit — so adopting it
+    // would replace the user's text with the older remote one AND mark the row
+    // clean, so the edit would never be pushed either. A dirty row takes the
+    // meta only; its own content push (which carries its etag) governs.
+    final (client, eng) = await engine(push: true);
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    client.seedTask('L1', 'A', 'a', '00000000000001');
+    client.seedTask('L1', 'B', 'b', '00000000000002');
+    await eng.run();
+
+    // The user renames A and drags it after B; the rename's push drops on the
+    // network, so A is still dirty when the move goes out in the same run.
+    final a0 = (await findByAnyId(eng.store, 'A'))!;
+    await eng.store.upsertTask(
+      StoredTask(
+        task: a0.task.copyWith(title: 'my unsent edit'),
+        listId: a0.listId,
+        syncState: SyncState.dirty,
+        localUpdated: _t0,
+        pendingOp: 'update',
+        remoteId: a0.remoteId,
+      ),
+    );
+    await client.patchTask(
+      'L1',
+      'A',
+      const TaskPatch(title: 'renamed elsewhere'),
+    );
+    await localMove(eng, 'A', previous: 'B');
+    client.failNext(Method.patchTask, () => const ServerError(503));
+
+    final out = await eng.run();
+
+    expect(out.pushed, 1, reason: 'the reorder landed; the rename did not');
+    final a = (await findByAnyId(eng.store, 'A'))!;
+    expect(
+      a.task.title,
+      'my unsent edit',
+      reason: "the move adopted the meta only — the user's text is intact",
+    );
+    expect(
+      a.syncState,
+      SyncState.dirty,
+      reason: 'and the edit is still queued to push',
+    );
+    expect(a.pendingOp, 'update');
+    expect(await eng.store.pendingMoves(), isEmpty);
+    expect(await remoteOrder(client, 'L1'), [
+      'B',
+      'A',
+    ], reason: 'the reorder reached the server');
+    expect(await localOrder(eng, 'L1'), ['B', 'A']);
+  });
+
   test('move whose previous died remotely keeps the reparent', () async {
     // §E gap — the ambiguous 404. The user dropped T under P, after P's existing
     // subtask B; another device deleted B in the meantime. B is still in OUR
