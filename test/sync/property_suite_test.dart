@@ -867,8 +867,7 @@ bool isNoop(SyncOutcome o) =>
     o.conflicts == 0 &&
     o.deleted == 0 &&
     o.errors == 0 &&
-    !o.listsChanged &&
-    o.changedListIds.isEmpty;
+    !o.listsChanged;
 
 // ─── Universal structural invariants ─────────────────────────────────────────
 
