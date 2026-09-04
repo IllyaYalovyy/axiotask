@@ -204,6 +204,47 @@ class Store {
     );
   }
 
+  /// Delete list [list] and every task row it holds in ONE transaction.
+  ///
+  /// [tombstone] true (the server has seen the list) leaves a `deleted` list row
+  /// whose `delete` pushes — Google cascades its tasks server-side, so the local
+  /// rows go now and nothing is stranded. False (a never-synced list) drops the
+  /// list row outright; `ON DELETE CASCADE` would take the tasks anyway.
+  ///
+  /// Kill-window: split into a per-task delete loop plus the list write (as this
+  /// was before #271), a process death in between hard-deletes tasks the server
+  /// never saw AND leaves the list visible and undeleted — unpushed work lost
+  /// with no sign of it. Wrapped here, a kill rolls the whole thing back and the
+  /// list is still there to delete again. Writes only, no API call (§2).
+  Future<void> deleteListWithTasks(
+    StoredTaskList list, {
+    required bool tombstone,
+    required String now,
+  }) async {
+    await _db.transaction(() async {
+      await _db.customUpdate(
+        'DELETE FROM tasks WHERE list_id = ?',
+        variables: [Variable<String>(list.list.id)],
+        updates: {_db.tasks},
+        updateKind: UpdateKind.delete,
+      );
+      if (tombstone) {
+        await upsertList(
+          StoredTaskList(
+            list: list.list,
+            syncState: SyncState.deleted,
+            localUpdated: now,
+            pendingOp: 'delete',
+            localOnly: list.localOnly,
+            remoteId: list.remoteId,
+          ),
+        );
+      } else {
+        await deleteListHard(list.list.id);
+      }
+    });
+  }
+
   /// All known lists (excluding tombstones), in arbitrary order.
   Future<List<StoredTaskList>> allLists() async {
     final rows = await _db.customSelect(_selectListsSql).get();
@@ -345,6 +386,46 @@ class Store {
       variables: _taskVars(t),
       updates: {_db.tasks},
     );
+  }
+
+  /// Run [action] as ONE database transaction: every write inside it lands, or
+  /// none does. Reads inside see the transaction's own uncommitted writes.
+  ///
+  /// [writeTasks] covers the common case — a set of rows decided up front. This
+  /// seam is for a multi-row operation whose writes INTERLEAVE with reads, which
+  /// a prepared row list cannot express: the backup restore resolves each task's
+  /// parent against rows written earlier in the same restore. Writes only — the
+  /// decision (and any API call) belongs outside the transaction (§2).
+  Future<T> transaction<T>(Future<T> Function() action) =>
+      _db.transaction(action);
+
+  /// Persist [rows] — and then hard-delete [hardDeletes] — as ONE atomic unit:
+  /// every write lands or none does. The single write path for a command that
+  /// touches more than one row.
+  ///
+  /// Kill-window: a multi-row command written as N autocommits (as the cascades,
+  /// undos and clears were before #271) leaves half its rows applied when the
+  /// process dies mid-way — a parent completed above an open subtask, a subtask
+  /// dated before its parent (#164), a revived root with its subtree still
+  /// tombstoned. Wrapped here, a kill rolls the command back whole.
+  ///
+  /// [rows] are applied IN ORDER, so a caller restoring a subtree lists parents
+  /// before children (the FK is checked per statement). [hardDeletes] run last,
+  /// so a row removed here is removed after every upsert above it. Writes only —
+  /// the decision already happened in the command, never an API call inside the
+  /// transaction (§2).
+  Future<void> writeTasks(
+    List<StoredTask> rows, {
+    List<String> hardDeletes = const [],
+  }) async {
+    await _db.transaction(() async {
+      for (final row in rows) {
+        await upsertTask(row);
+      }
+      for (final id in hardDeletes) {
+        await deleteTaskHard(id);
+      }
+    });
   }
 
   /// Upsert a row pulled from the server, but NEVER clobber a locally

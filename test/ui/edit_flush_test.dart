@@ -1,5 +1,5 @@
 // Edit-loss protection (F10 / #183). Drives the REAL app shell over a
-// FakeBackend and asserts what the fake HOLDS after the two edit-losing paths:
+// FakeCommands and asserts what the fake HOLDS after the two edit-losing paths:
 //   • the Android system back that closes an open detail (a go_router pop via
 //     the shell's PopScope, which never runs the panel's own flush-on-close),
 //     and
@@ -42,7 +42,7 @@ void main() {
       PrefsStore(File(p.join(tmp.path, 'prefs.json')))
         ..save(const Prefs(onboardingSeen: true));
 
-  Future<(FakeBackend, GoRouter)> pumpShell(
+  Future<(FakeCommands, GoRouter)> pumpShell(
     WidgetTester tester, {
     required List<StoredTask> initialTasks,
     List<StoredTaskList> initialLists = const [],
@@ -59,7 +59,7 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final fake = FakeBackend(List.of(initialTasks));
+    final fake = FakeCommands(List.of(initialTasks));
     addTearDown(fake.dispose);
     final store = seenPrefs();
     final router = buildAppRouter(initialViewId: 'all');

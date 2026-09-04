@@ -1,6 +1,6 @@
 // Shared harness for the T7.6 list-surface suites (BulkOps, ContextMenu,
 // DemoteToSubtask, MoveToList, DragAndDrop). Pumps the real [TaskListView] over
-// the same in-memory [FakeBackend] the detail suites use (it ACTUALLY mutates
+// the same in-memory [FakeCommands] the detail suites use (it ACTUALLY mutates
 // its task set and re-emits), so the tests assert what RENDERS and what the fake
 // HOLDS — never that a method merely fired. Reuses detail_harness's fake so the
 // two surfaces share one Commands double.
@@ -17,14 +17,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend;
+import 'detail_harness.dart' show FakeCommands;
 import 'toast_harness.dart' show wrapWithToast;
 
 /// A fixed clock so the quick-date bulk ops resolve deterministically.
 final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 
 /// Pump [TaskListView] on a desktop-width surface (or [size]) over a
-/// [FakeBackend] seeded with [initial] and [lists]. Navigation callbacks are
+/// [FakeCommands] seeded with [initial] and [lists]. Navigation callbacks are
 /// captured into [opened] / [openedNotes] so a test can assert the intent.
 ///
 /// [hapticsDevice] overrides the raw device seam (#257) with a recorder, and
@@ -35,7 +35,7 @@ final testClock = Clock.fixed(DateTime.utc(2026, 6, 15, 12));
 /// ViewListPane passes down: pushing a new value into it and pumping is exactly
 /// what a route change (row tap, search jump, detail prev/next) does to this
 /// widget, without needing a router in the test. Omit it for a closed detail.
-Future<FakeBackend> pumpList(
+Future<FakeCommands> pumpList(
   WidgetTester tester, {
   required List<StoredTask> initial,
   required List<StoredTaskList> lists,
@@ -60,7 +60,7 @@ Future<FakeBackend> pumpList(
   // ReorderableListView, whose per-child GlobalKeys crash on duplicate task ids
   // (the fake's bare 'gen' default). The real app's newLocalId is unique too.
   var seq = 0;
-  final fake = FakeBackend(initial, newId: newId ?? (() => 'gen-${seq++}'));
+  final fake = FakeCommands(initial, newId: newId ?? (() => 'gen-${seq++}'));
   addTearDown(fake.dispose);
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;

@@ -2,7 +2,7 @@
 // gone, so the two functions that had NO other home — Duplicate and "Make
 // subtask of…" (the #88 parent picker) — live here, on the screen a row tap
 // already opens. Every assertion is about what the panel OFFERS and what the
-// mutating [FakeBackend] HOLDS afterwards, never that a command merely fired.
+// mutating [FakeCommands] HOLDS afterwards, never that a command merely fired.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -173,11 +173,7 @@ void main() {
           title: 'buy milk',
         );
         final id = created.task.id;
-        // The detail panel is OPEN on the just-created task.
-        rig.commands.setEditing(id);
-        await rig.engine.holdCreateId(rig.commands.heldCreateId).run();
-        // The panel closes; the push lands while the user is still on the row.
-        rig.commands.setEditing(null);
+        // The push lands while the user is still on the row.
         await rig.engine.run();
 
         // Now the user types in the still-open detail: the notes field saves.

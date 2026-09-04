@@ -2,7 +2,7 @@
 // navigation (flushing edits first), detach (#promoteTask), the empty-subtask
 // discard-on-close rule (kept when it has children), the List move repoint
 // (#93), and the parent breadcrumb. Assertions are on the USER-VISIBLE result
-// and what the [FakeBackend] holds afterwards.
+// and what the [FakeCommands] holds afterwards.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

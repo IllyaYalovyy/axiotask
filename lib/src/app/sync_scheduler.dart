@@ -309,11 +309,6 @@ class SyncScheduler {
   /// untouched (they have their own handling).
   int _attentionStreak = 0;
 
-  /// The id of the one task the UI is actively holding (inline editor row or
-  /// open detail panel). Its CREATE push is held so an id remap can't invalidate
-  /// the id the UI operates on. `null` when nothing is being edited.
-  String? _heldCreateId;
-
   /// A snapshot of the current sync status — the UI-safe projection. It carries
   /// the sanitized [SyncStatusView.lastError] and NEVER the raw error detail:
   /// [SyncStatus.lastRawError] (which may hold raw SQL / a request URL) stays
@@ -338,11 +333,6 @@ class SyncScheduler {
   /// Wake the background loop (a mutation happened). A no-op unless the loop is
   /// running and — via its own auth gate — actually authenticated.
   void scheduleSync() => _notify.notifyOne();
-
-  /// Record the id of the task the UI is holding, or `null` when nothing is
-  /// being edited. Only that one task's create push is held; every other create
-  /// still syncs.
-  void setEditingTask(String? id) => _heldCreateId = id;
 
   /// Dirty (unpushed) local changes that a flush/sync would send.
   Future<int> pendingPushCount() => store.pendingPushCount();
@@ -399,16 +389,12 @@ class SyncScheduler {
   Future<SyncOutcome> runSync() => _serialized(_runSyncInner);
 
   Future<SyncOutcome> _runSyncInner() async {
-    // While the user is mid-edit, hold ONLY the create of the exact row the UI
-    // is holding: a create remaps a local id to the server id, which would
-    // invalidate that id. Every other create still pushes.
-    final heldCreateId = _heldCreateId;
     final engine = SyncEngine.withPush(
       client(),
       store,
       pushEnabled(),
       poison: _poison,
-    ).holdCreateId(heldCreateId);
+    );
 
     SyncOutcome? outcome;
     SyncError? error;
@@ -552,19 +538,14 @@ class SyncScheduler {
   /// Only acts when it can actually push — signed in, push enabled, session
   /// alive, and something pending — otherwise a pointless or destructive round
   /// trip is skipped (a signed-out flush would push to the throwaway offline
-  /// client and wrongly mark rows clean). The window is closing, so nothing
-  /// holds an id anymore: the held create is released first so it pushes with
-  /// everything else. Bounded by [kExitSyncTimeout] so a hung network can never
-  /// block the app from closing.
+  /// client and wrongly mark rows clean). Bounded by [kExitSyncTimeout] so a
+  /// hung network can never block the app from closing.
   Future<void> flushOnExit() async {
     if (!auth.isAuthenticated || !pushEnabled() || auth.needsReauth) {
       return;
     }
     // Nothing dirty → don't delay exit on a network round trip.
     if (await pendingPushCount() == 0) return;
-    // Release the panel's held create — the panel is gone, so its id may safely
-    // remap now — and push everything.
-    setEditingTask(null);
     try {
       await runSync().timeout(kExitSyncTimeout);
     } on TimeoutException {

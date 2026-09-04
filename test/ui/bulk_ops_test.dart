@@ -1,5 +1,5 @@
 // BulkOps (MIGRATION-PLAN §5 T7.6). Multi-select + the bulk bar, driven through
-// the real [TaskListView] over the mutating [FakeBackend], so every assertion is
+// the real [TaskListView] over the mutating [FakeCommands], so every assertion is
 // about what RENDERS or what the fake HOLDS after a whole-selection op. The
 // reference's `x`-key / Esc / Ctrl+M keyboard triggers die with the keyboard
 // layer; selection enters via Ctrl-click and every bulk action is a tappable

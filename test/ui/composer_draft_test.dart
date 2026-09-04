@@ -18,7 +18,7 @@
 // Every assertion is about what the user sees (the chip's label in the composer)
 // and what the backend HOLDS (the created task's `due` / `listId`) — never that
 // a callback fired. Determinism: a fixed clock ([_clock]) so "Tomorrow" is a
-// known date, and static provider streams over the in-memory FakeBackend.
+// known date, and static provider streams over the in-memory FakeCommands.
 
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
@@ -32,7 +32,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list;
+import 'detail_harness.dart' show FakeCommands, list;
 import 'list_harness.dart' show pumpList, settleList;
 
 /// Fixed "now" — 2026-06-15, so "Tomorrow" is 2026-06-16 and nothing reads the
@@ -82,7 +82,7 @@ void main() {
   /// gives it, and the tree the sheet's root-navigator route sits above.
   Future<void> pumpPhone(
     WidgetTester tester, {
-    required FakeBackend fake,
+    required FakeCommands fake,
     required List<StoredTaskList> lists,
   }) async {
     tester.view.physicalSize = phone;
@@ -153,14 +153,14 @@ void main() {
     });
   }
 
-  StoredTask taskNamed(FakeBackend fake, String title) =>
+  StoredTask taskNamed(FakeCommands fake, String title) =>
       fake.tasks.firstWhere((t) => t.task.title == title);
 
   group('phone — the sheet composer', () {
     testWidgets('a date picked in the composer is the date the SECOND add gets '
         'too, and the chip keeps saying so (#264)', (tester) async {
       var minted = 0;
-      final fake = FakeBackend([], newId: () => 'new-${minted++}');
+      final fake = FakeCommands([], newId: () => 'new-${minted++}');
       addTearDown(fake.dispose);
       await pumpPhone(tester, fake: fake, lists: [list('L1', 'My Tasks')]);
       await openComposer(tester);
@@ -197,7 +197,7 @@ void main() {
       'the chip\'s × drops the aim — the next add is undated (#264)',
       (tester) async {
         var minted = 0;
-        final fake = FakeBackend([], newId: () => 'new-${minted++}');
+        final fake = FakeCommands([], newId: () => 'new-${minted++}');
         addTearDown(fake.dispose);
         await pumpPhone(tester, fake: fake, lists: [list('L1', 'My Tasks')]);
         await openComposer(tester);
@@ -230,7 +230,7 @@ void main() {
     testWidgets('closing the composer releases the aim — a reopened composer '
         'shows no date and adds undated (#264)', (tester) async {
       var minted = 0;
-      final fake = FakeBackend([], newId: () => 'new-${minted++}');
+      final fake = FakeCommands([], newId: () => 'new-${minted++}');
       addTearDown(fake.dispose);
       await pumpPhone(tester, fake: fake, lists: [list('L1', 'My Tasks')]);
       await openComposer(tester);
@@ -262,7 +262,7 @@ void main() {
     testWidgets('the destination stays aimed across submits and is released by '
         'a close (#264)', (tester) async {
       var minted = 0;
-      final fake = FakeBackend([], newId: () => 'new-${minted++}');
+      final fake = FakeCommands([], newId: () => 'new-${minted++}');
       addTearDown(fake.dispose);
       await pumpPhone(
         tester,

@@ -261,21 +261,16 @@ DeleteAction planDelete(ApiError? error) {
 /// * [unresolvedInflight] — a marker recovery that could NOT resolve still
 ///   means "this insert may already have landed"; that create waits for a run
 ///   with a complete remote view (H1).
-/// * [held] — the one id the UI is actively holding. A create remaps a local id
-///   to the server id, which would invalidate the id the UI holds, so that ONE
-///   create waits. Every other create still pushes.
 bool createIsEligible(
   String? pendingOp,
   String? remoteId,
   String id,
   Set<String> attempted,
   Set<String> unresolvedInflight,
-  String? held,
 ) =>
     effectivePendingOp(pendingOp, remoteId) == 'create' &&
     !attempted.contains(id) &&
-    !unresolvedInflight.contains(id) &&
-    held != id;
+    !unresolvedInflight.contains(id);
 
 /// The push op a dirty row really needs, read against what the server already
 /// knows about it (#269).

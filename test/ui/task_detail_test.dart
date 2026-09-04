@@ -1,6 +1,6 @@
 // TaskDetail suite — WIDGET tests that drive the real [TaskDetail] and assert
 // what RENDERS and what the fake backend HOLDS after a gesture. The backend is
-// the shared in-memory [FakeBackend] (see detail_harness.dart), so the tests
+// the shared in-memory [FakeCommands] (see detail_harness.dart), so the tests
 // stay off drift's real event queue.
 //
 // Covered here: the two-level guard (invariant #1), subtask add-with-kept-focus
@@ -577,7 +577,7 @@ void main() {
       tester,
     ) async {
       final opened = <String>[];
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('P', 'parent', notes: 'see https://example.com/x for more'),
       ]);
       addTearDown(fake.dispose);
@@ -618,7 +618,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('P', 'parent'),
         row('C', longTitle, parent: 'P'),
       ]);
@@ -679,7 +679,7 @@ void main() {
       };
       addTearDown(() => FlutterError.onError = previous);
 
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('P', 'parent'),
         row('C1', 'kid one', parent: 'P', position: '1', done: true),
         row('C2', 'kid two', parent: 'P', position: '2'),

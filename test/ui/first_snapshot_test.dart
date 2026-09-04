@@ -33,7 +33,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../support/pump_motion.dart';
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 
 const _phone = Size(400, 800);
 
@@ -51,7 +51,7 @@ Future<void Function(List<StoredTask>)> _pumpWaiting(
 
   final store = StreamController<List<StoredTask>>();
   addTearDown(store.close);
-  final fake = FakeBackend(const []);
+  final fake = FakeCommands(const []);
   addTearDown(fake.dispose);
 
   await tester.pumpWidget(

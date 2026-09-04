@@ -45,7 +45,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'detail_harness.dart' show FakeBackend, list, pumpDetail, row;
+import 'detail_harness.dart' show FakeCommands, list, pumpDetail, row;
 import 'list_harness.dart';
 import 'toast_harness.dart' show wrapWithToast;
 
@@ -285,7 +285,7 @@ void main() {
       testWidgets('the detail keeps its navigation and its subtasks', (
         tester,
       ) async {
-        late final FakeBackend fake;
+        late final FakeCommands fake;
         await withClock(_clock, () async {
           fake = await pumpDetail(
             tester,
@@ -360,7 +360,7 @@ void main() {
       // list picker and submit (#217). The line is the constraint.
       testWidgets('the composer still takes a task', (tester) async {
         var seq = 0;
-        final fake = FakeBackend(const [], newId: () => 'gen-${seq++}');
+        final fake = FakeCommands(const [], newId: () => 'gen-${seq++}');
         addTearDown(fake.dispose);
         tester.view.physicalSize = _phone;
         tester.view.devicePixelRatio = 1.0;

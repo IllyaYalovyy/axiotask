@@ -8,7 +8,7 @@
 //   • the soft keyboard (IME) resizes the compact body so content is not hidden
 //     behind it.
 //
-// Everything runs over the in-memory [FakeBackend] and static provider streams
+// Everything runs over the in-memory [FakeCommands] and static provider streams
 // (no database), and the refresh action is a captured completer, so the
 // assertions are about what the user sees: focus, the spinner, the resized body.
 
@@ -24,7 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 
 void main() {
   const phone = Size(400, 800);
@@ -43,7 +43,7 @@ void main() {
   // action; [viewInsetsBottom] simulates the soft keyboard.
   Future<void> pumpChrome(
     WidgetTester tester, {
-    required FakeBackend fake,
+    required FakeCommands fake,
     required List<StoredTaskList> lists,
     Future<void> Function()? onRefresh,
     double viewInsetsBottom = 0,
@@ -93,7 +93,7 @@ void main() {
 
   testWidgets('touch mounts NO inline quick-add bar — the FAB is the one '
       'creation affordance (#216)', (tester) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -107,7 +107,7 @@ void main() {
 
   testWidgets('the FAB opens the bottom-sheet composer, focused and ready '
       '(no empty-task create) (#216)', (tester) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -132,7 +132,7 @@ void main() {
 
   testWidgets('submitting in the composer creates the task, clears the field, '
       'and keeps the sheet open for rapid entry (#216)', (tester) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -162,7 +162,7 @@ void main() {
   testWidgets('dismissing the composer keeps an unsubmitted draft (#216)', (
     tester,
   ) async {
-    final fake = FakeBackend([row('T1', 'Buy milk')]);
+    final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -215,7 +215,7 @@ void main() {
       ]) {
     testWidgets('${dismissal.name} takes the keyboard down with the composer, '
         'and it stays down (#233)', (tester) async {
-      final fake = FakeBackend([row('T1', 'Buy milk')]);
+      final fake = FakeCommands([row('T1', 'Buy milk')]);
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -261,7 +261,7 @@ void main() {
   testWidgets('pulling down from the top runs the refresh action + spinner', (
     tester,
   ) async {
-    final fake = FakeBackend([row('T1', 'a'), row('T2', 'b'), row('T3', 'c')]);
+    final fake = FakeCommands([row('T1', 'a'), row('T2', 'b'), row('T3', 'c')]);
     addTearDown(fake.dispose);
     var refreshed = false;
     final gate = Completer<void>();
@@ -301,7 +301,7 @@ void main() {
   ) async {
     // Enough rows to scroll the viewport well past the top.
     final many = [for (var i = 0; i < 30; i++) row('T$i', 'task $i')];
-    final fake = FakeBackend(many);
+    final fake = FakeCommands(many);
     addTearDown(fake.dispose);
     var refreshed = false;
     await pumpChrome(
@@ -328,7 +328,7 @@ void main() {
   ) async {
     // A keyed marker fills the body so we can measure where it ends.
     Future<double> bodyBottomWith(double kb) async {
-      final fake = FakeBackend([row('T1', 'a')]);
+      final fake = FakeCommands([row('T1', 'a')]);
       addTearDown(fake.dispose);
       tester.view.physicalSize = phone;
       tester.view.devicePixelRatio = 1.0;

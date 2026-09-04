@@ -1,7 +1,7 @@
 // The per-row ACTION SURFACE (MIGRATION-PLAN §4/§5 T7.6): the ContextMenu PORT
 // cases, DemoteToSubtask, and MoveToList (context-menu half). Driven through the
 // real [TaskListView] — a right-click opens the desktop context menu, the "⋯"
-// button opens the touch action sheet — over the mutating [FakeBackend], so the
+// button opens the touch action sheet — over the mutating [FakeCommands], so the
 // assertions are about what the surface offers and what the fake HOLDS after an
 // action. Keyboard submenu navigation dies with the keyboard layer; the actions
 // all port, and submenus open on CLICK, not hover.

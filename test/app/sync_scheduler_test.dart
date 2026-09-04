@@ -514,34 +514,6 @@ void main() {
       );
     });
 
-    test('releases the held create the open panel was holding', () async {
-      final h = await makeHarness(push: true, signedIn: true);
-      h.client.seedList('L1', 'Inbox');
-      await h.scheduler.runSync();
-
-      final created = await h.commands.createTask(
-        listId: await pulledList(h.store, 'L1'),
-        title: 'call dad',
-      );
-      // The detail panel follows the new task → it is the held create.
-      h.scheduler.setEditingTask(created.task.id);
-
-      // Sanity: with the hold in place a normal sync would NOT push it.
-      final out = await h.scheduler.runSync();
-      expect(
-        out.pushed,
-        0,
-        reason: 'precondition: the held create is not pushed',
-      );
-      expect(await h.scheduler.pendingPushCount(), 1);
-
-      // Quit: the exit flush must release the hold and push it.
-      await h.scheduler.flushOnExit();
-
-      expect(await remoteHasTitle(h.client, 'L1', 'call dad'), isTrue);
-      expect(await h.scheduler.pendingPushCount(), 0);
-    });
-
     test('does nothing when signed out', () async {
       final h = await makeHarness(); // not signed in, push off
       await seedLocalList(h.store, 'L1', 'Inbox');

@@ -3,13 +3,13 @@
 // view AND only while Show-completed is on (you cannot bulk-delete what you
 // cannot see). Deletion is destructive and NOT undoable, so it goes behind a
 // styled confirm naming the count. These tests drive the real [TaskListView]
-// over the mutating [FakeBackend] and assert what RENDERS and what the fake
+// over the mutating [FakeCommands] and assert what RENDERS and what the fake
 // HOLDS afterward — never that a method merely fired.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 import 'list_harness.dart';
 
 void main() {
@@ -64,7 +64,7 @@ void main() {
   });
 
   group('confirm flow', () {
-    Future<FakeBackend> pump(WidgetTester tester) => pumpList(
+    Future<FakeCommands> pump(WidgetTester tester) => pumpList(
       tester,
       initial: seed,
       lists: oneList,

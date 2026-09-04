@@ -379,51 +379,6 @@ void main() {
     expect(await eng.store.inflightCreates(), isEmpty);
   });
 
-  test('in-flight recovery leaves the held create id alone', () async {
-    // The row the UI is holding had its create crash mid-flight, so an orphan
-    // is on the server. Adopting it remaps the local id to the server id —
-    // precisely what heldCreateId exists to prevent. Recovery must wait.
-    final (client, eng) = await engine(push: true);
-    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
-    await eng.run();
-
-    await eng.store.upsertTask(
-      dirtyTask('local-1', 'L1', 'create', title: 'buy milk'),
-    );
-    client.commitThenFailNextInsert();
-    await eng.run();
-    expect((await eng.store.inflightCreates()).length, 1);
-
-    // The user opens the panel on that row, then a sync runs.
-    final held = SyncEngine.withPush(
-      client,
-      eng.store,
-      true,
-    ).holdCreateId('local-1');
-    await held.run();
-    expect(
-      (await eng.store.listTasks('L1')).any((t) => t.task.id == 'local-1'),
-      isTrue,
-      reason: 'the id the panel holds must not be remapped mid-edit',
-    );
-    expect(client.callCount(Method.insertTask), 1, reason: 'no re-insert');
-    expect(
-      (await eng.store.inflightCreates()).length,
-      1,
-      reason: 'the marker stays open until the hold clears',
-    );
-
-    // Panel closed: recovery adopts the orphan, still without duplicating.
-    await eng.run();
-    expect(client.callCount(Method.insertTask), 1);
-    final milk = (await eng.store.listTasks(
-      'L1',
-    )).where((t) => t.task.title == 'buy milk').toList();
-    expect(milk.length, 1);
-    expect(milk.single.remoteId?.startsWith('remote-') ?? false, isTrue);
-    expect(await eng.store.inflightCreates(), isEmpty);
-  });
-
   test('crash adoption matches across due normalization', () async {
     // Orphan adoption compares content; the server orphan carries the canonical
     // due form while the local row has the short form. They must still match, or
@@ -968,45 +923,40 @@ void main() {
     },
   );
 
-  test(
-    'held create survives a remote list delete and pushes after release',
-    () async {
-      // §G × held create. The held row is not pushed this run — and a remote list
-      // delete in the same window must not destroy it either (P2). It re-homes,
-      // waits for the hold to clear, then pushes.
-      final (client, eng) = await engine(push: true);
-      await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
-      await seedSyncedList(client, eng.store, 'L2', 'Work');
-      await eng.run();
+  test('an unpushed create survives a remote list delete and re-homes', () async {
+    // §G × P2: a queued create whose list is deleted on the server must not be
+    // destroyed with the list. It re-homes to the default list, keeping its id,
+    // and pushes there — one copy, in the list the user can still see.
+    final (client, eng) = await engine(push: true);
+    await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
+    await seedSyncedList(client, eng.store, 'L2', 'Work');
+    await eng.run();
 
-      await eng.store.upsertTask(
-        dirtyTask('local-held', 'L2', 'create', title: 'held row'),
-      );
-      await client.deleteTasklist('L2');
+    await eng.store.upsertTask(
+      dirtyTask('local-q', 'L2', 'create', title: 'queued row'),
+    );
+    await client.deleteTasklist('L2');
 
-      final engHold = SyncEngine.withPush(
-        client,
-        eng.store,
-        true,
-      ).holdCreateId('local-held');
-      final out = await engHold.run();
-      expect(out.pushed, 0, reason: 'the held create does not push');
-      expect(await placement(eng.store, 'local-held'), (
-        'L1',
-        null,
-      ), reason: 'but it survives the list delete, re-homed');
-      expect(
-        (await findByAnyId(eng.store, 'local-held'))!.task.id,
-        'local-held',
-        reason: 'id not remapped while held',
-      );
+    // A pull-only run: the list delete lands while the create is still queued,
+    // so the re-home is observable before anything pushes.
+    final pullOnly = SyncEngine.withPush(client, eng.store, false);
+    final out = await pullOnly.run();
+    expect(out.pushed, 0, reason: 'nothing pushes on a pull-only run');
+    expect(await placement(eng.store, 'local-q'), (
+      'L1',
+      null,
+    ), reason: 'it survives the list delete, re-homed to the default list');
+    expect(
+      (await findByAnyId(eng.store, 'local-q'))!.task.id,
+      'local-q',
+      reason: 'the id never moves',
+    );
 
-      // Released: it pushes.
-      final out2 = await eng.run();
-      expect(out2.pushed, greaterThanOrEqualTo(1));
-      expect(await serverCount(client, 'L1', 'held row'), 1);
-    },
-  );
+    // Now it pushes, into the list it re-homed to.
+    final out2 = await eng.run();
+    expect(out2.pushed, greaterThanOrEqualTo(1));
+    expect(await serverCount(client, 'L1', 'queued row'), 1);
+  });
 
   test('crash between re-home and push converges, no duplicate', () async {
     // P8 over the new path: the row re-homes, its insert commits on the server,

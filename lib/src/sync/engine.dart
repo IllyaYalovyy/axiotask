@@ -115,23 +115,10 @@ class SyncOutcome {
 
 /// Configuration for a sync engine instance.
 class SyncConfig {
-  const SyncConfig({this.pushEnabled = false, this.heldCreateId});
+  const SyncConfig({this.pushEnabled = false});
 
   /// Whether to push local changes to the server.
   final bool pushEnabled;
-
-  /// Hold the CREATE push of exactly this one task this run: the id of the row
-  /// the UI is actively holding (the inline editor's row, or the open detail
-  /// panel's task).
-  ///
-  /// This used to exist because a landing create REWROTE the row's id, which
-  /// invalidated every reference the UI held. That rewrite is gone (#224): ids
-  /// are immutable, so a create landing under an open editor is now harmless.
-  /// The hold is kept as a pure quiescence measure — a row under active editing
-  /// does not have its half-typed first version pushed — and its removal is a
-  /// product decision, not an implementation one. Every OTHER create still
-  /// pushes; updates/deletes/moves always push.
-  final String? heldCreateId;
 }
 
 /// Identity of a row whose push failed: what a rejection is counted against
@@ -167,14 +154,6 @@ class SyncEngine {
        _newId = newId ?? newLocalId,
        _poison = poison ?? PoisonRegistry();
 
-  SyncEngine._(
-    this._client,
-    this._store,
-    this._config,
-    this._newId,
-    this._poison,
-  );
-
   final TasksApi _client;
   final Store _store;
   final SyncConfig _config;
@@ -190,16 +169,6 @@ class SyncEngine {
   /// The store this engine writes to — exposed for tests that assert on the
   /// persisted state (the reference tests read `eng.store` directly).
   Store get store => _store;
-
-  /// Return a copy holding the CREATE push of this one task id this run (see
-  /// [SyncConfig.heldCreateId]). `null` holds nothing.
-  SyncEngine holdCreateId(String? id) => SyncEngine._(
-    _client,
-    _store,
-    SyncConfig(pushEnabled: _config.pushEnabled, heldCreateId: id),
-    _newId,
-    _poison,
-  );
 
   /// Execute a full sync cycle: push then pull. Always writes to sync_log.
   ///
@@ -289,12 +258,8 @@ class SyncEngine {
     };
 
     // List CREATES first — tasks reference lists, so the list must exist (with
-    // its remote id) before we push tasks into it. Held while the user is
-    // editing (a list-id remap would disrupt the row the UI holds), but never
-    // blocks the task creates below.
-    if (_config.heldCreateId == null) {
-      await _pushListCreates(out);
-    }
+    // its remote id) before we push tasks into it.
+    await _pushListCreates(out);
 
     // Creates, in dependency order. A child insert names its parent's REMOTE id
     // in the request, so a create is pushable only once its parent has one. Each
@@ -314,7 +279,6 @@ class SyncEngine {
           row.task.id,
           attempted,
           unresolvedCreates,
-          _config.heldCreateId,
         )) {
           continue;
         }
@@ -575,9 +539,6 @@ class SyncEngine {
   /// creates, so it never merges unrelated tasks.
   Future<void> _recoverInflightCreates(SyncOutcome out) async {
     for (final (localId, listId) in await _store.inflightCreates()) {
-      // The create this marker belongs to is held, so its recovery is too:
-      // resolving the marker here would push the row past the hold.
-      if (_config.heldCreateId == localId) continue;
       // findTaskAny on purpose: a row the user deleted (or moved to another
       // list) while its insert was in flight is a TOMBSTONE, and that tombstone
       // is the only thing that still knows what the committed insert looks like.

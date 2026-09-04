@@ -289,5 +289,57 @@ void main() {
         ),
       );
     });
+
+    // A restore is ONE transaction (#271). Written row by row, a fault (or the
+    // process dying — this runs on a phone) part-way through leaves the user
+    // with a list holding some of its tasks and no way to tell which are
+    // missing; the retry then SKIPS the rows that did land, so the gap sticks.
+    test('a fault mid-restore writes nothing at all', () async {
+      final src = await freshStore();
+      await src.upsertList(_list('L1', 'Inbox'));
+      await src.upsertTask(_task('T1', 'L1', 'first'));
+      await src.upsertTask(_task('T2', 'L1', 'second', position: '2'));
+      final out = File('${tmp.path}/snap.json');
+      await service(src).export(to: out);
+
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      final dst = _FaultingStore(db)..failOnTaskWrite(2);
+
+      await expectLater(
+        BackupService(store: dst, backupsDir: tmp).importFrom(from: out),
+        throwsA(anything),
+      );
+
+      expect(
+        await dst.allTasks(),
+        isEmpty,
+        reason: 'the first task rolled back with the second',
+      );
+      expect(
+        await dst.allLists(),
+        isEmpty,
+        reason: 'the list rolled back with its tasks',
+      );
+    });
   });
+}
+
+/// A store whose Nth task write faults — standing in for the process dying
+/// part-way through a restore.
+class _FaultingStore extends Store {
+  _FaultingStore(super.db);
+
+  int? _failTaskWrite;
+  int _taskWrites = 0;
+
+  void failOnTaskWrite(int nth) => _failTaskWrite = nth;
+
+  @override
+  Future<void> upsertTask(StoredTask t) async {
+    if (++_taskWrites == _failTaskWrite) {
+      throw StateError('injected fault on task write #$_taskWrites');
+    }
+    return super.upsertTask(t);
+  }
 }

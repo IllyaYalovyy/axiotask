@@ -17,7 +17,7 @@
 // app bar's render box actually IS, which surface a tap opened, which rows
 // render. The harness is the REAL compact chrome over the REAL [TaskListView]
 // (the list mounted inside a nested Navigator, the shape go_router's ShellRoute
-// gives it), fed by an in-memory [FakeBackend] — no database, no clock, no
+// gives it), fed by an in-memory [FakeCommands] — no database, no clock, no
 // network.
 
 import 'dart:math' as math;
@@ -35,7 +35,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'detail_harness.dart' show FakeBackend, list, row;
+import 'detail_harness.dart' show FakeCommands, list, row;
 
 void _noop(String _) {}
 
@@ -59,7 +59,7 @@ void main() {
   /// is exactly what a soft keyboard coming up does to the shell.
   Future<void> pumpChrome(
     WidgetTester tester, {
-    required FakeBackend fake,
+    required FakeCommands fake,
     required List<StoredTaskList> lists,
     Size size = phone,
     String viewId = 'all',
@@ -158,7 +158,7 @@ void main() {
   group('one bar (#244)', () {
     testWidgets('the toolbar actions live IN the app bar — search, sort and '
         'the overflow, with no second bar under it', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -193,7 +193,7 @@ void main() {
     testWidgets('every merged action is reachable: search opens the overlay', (
       tester,
     ) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -211,7 +211,7 @@ void main() {
     testWidgets('every merged action is reachable: sort reorders the rows', (
       tester,
     ) async {
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('A', 'Zebra', position: '1'),
         row('B', 'Apple', position: '2'),
       ]);
@@ -242,7 +242,7 @@ void main() {
 
     testWidgets('every merged action is reachable: the overflow carries '
         'add-multiple, show-completed and select-tasks', (tester) async {
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('A', 'apples'),
         row('D', 'done thing', done: true),
       ]);
@@ -278,7 +278,7 @@ void main() {
 
     testWidgets('a SMART view offers no clear-completed in the overflow — '
         'there is no single list to clear', (tester) async {
-      final fake = FakeBackend([row('D', 'done thing', done: true)]);
+      final fake = FakeCommands([row('D', 'done thing', done: true)]);
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -302,7 +302,7 @@ void main() {
   group('the bar rides the scroll (#244)', () {
     testWidgets('scrolling down past the threshold slides the bar off the top; '
         'scrolling back up returns it', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
       expect(tester.getRect(appBar).top, 0, reason: 'pinned at rest');
@@ -346,7 +346,7 @@ void main() {
 
     testWidgets('the bar and the FAB leave and return together — one gesture, '
         'one threshold', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
       expect(find.byType(FloatingActionButton), findsOneWidget);
@@ -364,7 +364,7 @@ void main() {
     testWidgets('a nudge under the threshold never flickers the bar', (
       tester,
     ) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -386,7 +386,7 @@ void main() {
     testWidgets('the collapsed bar still leaves the status bar to the system', (
       tester,
     ) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -408,7 +408,7 @@ void main() {
 
     testWidgets('a raised keyboard cancels the hide — the bar comes back even '
         'mid-scroll', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       final ime = ValueNotifier<double>(0);
       addTearDown(ime.dispose);
@@ -438,7 +438,7 @@ void main() {
 
     testWidgets('with animations off the bar still leaves — it just stops '
         'travelling to get there', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -466,7 +466,7 @@ void main() {
       // the bottom NavigationBar the shell draws over it (#234). The two
       // rarest bulk ops moved behind this menu (#265), so "it opens" is not
       // enough — a finger has to be able to land on what it opened.
-      final fake = FakeBackend([
+      final fake = FakeCommands([
         row('T1', 'oranges'),
         row('T2', 'lemons', position: '2'),
       ]);
@@ -512,7 +512,7 @@ void main() {
 
     testWidgets('a selection keeps the bulk bar on screen whatever the scroll '
         'is doing', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
@@ -559,7 +559,7 @@ void main() {
 
     testWidgets('the pinned bar is one toolbar tall under the notch, and the '
         'rows start at its edge — no empty band between', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -595,7 +595,7 @@ void main() {
 
     testWidgets('the sync line rides the bar\'s real bottom edge under the '
         'notch, not the bottom of an over-tall slot (#255)', (tester) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -627,7 +627,7 @@ void main() {
         'the rows keep the bar\'s edge and stop AT the status bar', (
       tester,
     ) async {
-      final fake = FakeBackend(manyRows());
+      final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
         tester,
@@ -667,7 +667,7 @@ void main() {
 
   testWidgets('the EXPANDED layout is untouched: no app bar, and the list '
       'keeps its own toolbar', (tester) async {
-    final fake = FakeBackend(manyRows());
+    final fake = FakeCommands(manyRows());
     addTearDown(fake.dispose);
     await pumpChrome(
       tester,
