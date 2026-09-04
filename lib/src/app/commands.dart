@@ -741,6 +741,7 @@ class Commands {
         ),
       );
       await _restoreSubtree(token, now);
+      _notifyMutation();
       return;
     }
 

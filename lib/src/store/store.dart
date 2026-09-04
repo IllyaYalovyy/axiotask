@@ -339,6 +339,60 @@ class Store {
     );
   }
 
+  /// Hard-delete a tombstone whose confirmed delete push drained it — but only
+  /// if the row's `local_updated` still equals that drain snapshot. Returns
+  /// whether the row was removed.
+  ///
+  /// Without the guard, an undo that revived the row while the DELETE was in
+  /// flight would be erased by the push completing: Google has already dropped
+  /// the task, so the row the user just got back would vanish LOCALLY TOO, with
+  /// no tombstone and no remote copy left to recover it from (#267). When the
+  /// guard misses, the row stays and the caller decides what it now means — see
+  /// [demoteSubtreeToCreate].
+  Future<bool> deleteTaskIfUnchanged(
+    String id,
+    String expectedLocalUpdated,
+  ) async {
+    final affected = await _db.customUpdate(
+      'DELETE FROM tasks WHERE id = ?1 AND local_updated = ?2',
+      variables: [Variable<String>(id), Variable<String>(expectedLocalUpdated)],
+      updates: {_db.tasks},
+      updateKind: UpdateKind.delete,
+    );
+    return affected > 0;
+  }
+
+  /// Strip the remote identity from [rootId] and its subtree and re-queue them
+  /// as fresh creates. Returns how many rows changed.
+  ///
+  /// Used when a DELETE that Google already carried out can no longer be
+  /// applied locally (#267): the remote ids are dead — the server cascade took
+  /// the subtree with the root — so the surviving rows have to go back as new
+  /// inserts, not as updates against ids that would 404. Their local ids do NOT
+  /// move (#224), so an undo token, an open detail panel or a captured callback
+  /// still resolves.
+  ///
+  /// A row that is a TOMBSTONE again is left alone: its `local_updated` moved
+  /// because the user re-deleted it, and resurrecting it as a create would undo
+  /// the delete they just asked for. That tombstone's own push completes on the
+  /// server's 404.
+  Future<int> demoteSubtreeToCreate(String rootId) async {
+    return _db.customUpdate(
+      'WITH RECURSIVE subtree(id) AS ('
+      '  SELECT ?1 '
+      '  UNION ALL '
+      '  SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id'
+      ') '
+      'UPDATE tasks SET remote_id = NULL, etag = NULL, '
+      "  sync_state = 'dirty', pending_op = 'create', "
+      '  base_title = NULL, base_notes = NULL, base_due = NULL, '
+      '  base_status = NULL '
+      "WHERE id IN (SELECT id FROM subtree) AND sync_state != 'deleted'",
+      variables: [Variable<String>(rootId)],
+      updates: {_db.tasks},
+    );
+  }
+
   /// All visible tasks in [listId] (tombstones excluded), ordered
   /// top-level-first then by position. The caller folds them into a tree.
   Future<List<StoredTask>> listTasks(String listId) async {

@@ -895,15 +895,22 @@ class SyncEngine {
 
   /// Push one delete: unconditional (no If-Match, probe 7); success/404 →
   /// hard-delete local (FK cascade takes the subtree); else classified failure.
+  ///
+  /// The local hard-delete is guarded on the drained `local_updated`: an undo
+  /// that revived the row while the DELETE was in flight must not be erased by
+  /// the push completing (#267).
   Future<void> _pushDelete(StoredTask row, SyncOutcome out) async {
     final listRemoteId = await _store.listRemoteId(row.listId);
     final taskRemoteId = row.remoteId;
     if (listRemoteId == null || taskRemoteId == null) {
       // The server never acknowledged this row, so there is nothing to delete
       // remotely — the tombstone would otherwise linger in the drain forever.
-      await _store.deleteTaskHard(row.task.id);
-      out.deleted += 1;
-      out.markListChanged(row.listId);
+      // A revive that landed since the drain keeps the row: nothing was deleted
+      // anywhere, so its own create pass is what pushes it (#267).
+      if (await _store.deleteTaskIfUnchanged(row.task.id, row.localUpdated)) {
+        out.deleted += 1;
+        out.markListChanged(row.listId);
+      }
       return;
     }
     ApiError? error;
@@ -914,9 +921,21 @@ class SyncEngine {
     }
     switch (reconcile.planDelete(error)) {
       case HardDeleteLocal():
-        await _store.deleteTaskHard(row.task.id);
-        out.deleted += 1;
-        out.markListChanged(row.listId);
+        if (await _store.deleteTaskIfUnchanged(row.task.id, row.localUpdated)) {
+          out.deleted += 1;
+          out.markListChanged(row.listId);
+          return;
+        }
+        // An undo revived the row while the DELETE was in flight (#267). The
+        // task is gone on Google but back on the user's screen, so hard-
+        // deleting it now would lose it on BOTH sides with nothing left to
+        // recover it from. Google's cascade took the subtree too, so the whole
+        // subtree loses its remote identity and goes back as a fresh create;
+        // a row the user re-deleted inside the same window stays a tombstone
+        // and completes on the next run's 404.
+        if (await _store.demoteSubtreeToCreate(row.task.id) > 0) {
+          out.markListChanged(row.listId);
+        }
       case final DeleteFailed f:
         _applyPushFailure(f.failure, error!, out, row.task.id, 'delete');
     }
