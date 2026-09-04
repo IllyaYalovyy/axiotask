@@ -148,6 +148,89 @@ void main() {
     });
   });
 
+  group('delete_task_if_unchanged / demote_subtree_to_create (#267)', () {
+    /// A synced tombstone plus one synced child tombstone, as `deleteTask`
+    /// writes them: both rows carry Google's id, only the root is pushable.
+    Future<Store> tombstonedPair({String localUpdated = _t0}) async {
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      for (final (id, parent, op) in [
+        ('P', null, 'delete'),
+        ('C', 'P', null),
+      ]) {
+        final base = taskOf(id, 'L1', parent, '1');
+        await s.upsertTask(
+          StoredTask(
+            task: base.task,
+            listId: 'L1',
+            syncState: SyncState.deleted,
+            localUpdated: localUpdated,
+            pendingOp: op,
+            remoteId: 'r-$id',
+          ),
+        );
+      }
+      return s;
+    }
+
+    test('a matching snapshot removes the row and its subtree', () async {
+      final s = await tombstonedPair();
+      expect(await s.deleteTaskIfUnchanged('P', _t0), isTrue);
+      expect(await s.findTaskAny('P'), isNull);
+      expect(await s.findTaskAny('C'), isNull, reason: 'FK cascade');
+    });
+
+    test('a stale snapshot keeps the row — an undo revived it', () async {
+      // The row was revived while the DELETE was in flight, so its
+      // local_updated moved. Deleting it now would lose it on both sides.
+      final s = await tombstonedPair(localUpdated: '2026-01-01T00:00:05Z');
+      expect(await s.deleteTaskIfUnchanged('P', _t0), isFalse);
+      expect(await s.findTaskAny('P'), isNotNull);
+    });
+
+    test('demote strips the dead remote identity across the subtree', () async {
+      final s = await tombstonedPair(localUpdated: '2026-01-01T00:00:05Z');
+      // What undo does to the pair: revive both in place as dirty updates.
+      for (final id in ['P', 'C']) {
+        final row = (await s.findTaskAny(id))!;
+        await s.upsertTask(
+          StoredTask(
+            task: row.task,
+            listId: row.listId,
+            syncState: SyncState.dirty,
+            localUpdated: '2026-01-01T00:00:05Z',
+            pendingOp: 'update',
+            remoteId: row.remoteId,
+          ),
+        );
+      }
+
+      expect(await s.demoteSubtreeToCreate('P'), 2);
+      for (final id in ['P', 'C']) {
+        final row = (await s.findTaskAny(id))!;
+        expect(row.remoteId, isNull, reason: '$id: Google no longer has it');
+        expect(row.task.etag, isNull, reason: '$id: nothing to If-Match');
+        expect(row.syncState, SyncState.dirty);
+        expect(row.pendingOp, 'create');
+      }
+      expect((await s.listTasks('L1')).map((r) => r.task.id), [
+        'P',
+        'C',
+      ], reason: 'both rows are visible again');
+    });
+
+    test('demote leaves a re-deleted tombstone alone', () async {
+      // The user undid the delete and then deleted again inside the same
+      // in-flight window: the row must NOT come back as a create.
+      final s = await tombstonedPair(localUpdated: '2026-01-01T00:00:05Z');
+      expect(await s.demoteSubtreeToCreate('P'), 0);
+      final row = (await s.findTaskAny('P'))!;
+      expect(row.syncState, SyncState.deleted);
+      expect(row.pendingOp, 'delete');
+      expect(row.remoteId, 'r-P', reason: 'the pending DELETE still needs it');
+    });
+  });
+
   group('apply_pushed_task', () {
     test('detaches when the adopted parent is absent', () async {
       // A push/refetch response can name a parent this device no longer holds.

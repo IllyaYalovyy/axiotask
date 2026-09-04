@@ -1891,6 +1891,25 @@ void main() {
         deleteToken = await commands.deleteTask(created.task.id);
       });
       await expectFires('undoDelete', () => commands.undoDelete(deleteToken));
+      // The other undoDelete branch: a row the server already holds is
+      // TOMBSTONED, and undo revives it in place. That path returned without
+      // notifying, so the revive waited out the 60s periodic cycle instead of
+      // the 3-5s debounce every other mutation gets (#267).
+      await seedTask(store, 'synced-1', 'L1', 'server-backed');
+      late DeleteToken revivedToken;
+      await expectFires('deleteTask (tombstone)', () async {
+        revivedToken = await commands.deleteTask('synced-1');
+      });
+      expect(
+        (await store.findTaskAny('synced-1'))!.syncState,
+        SyncState.deleted,
+        reason:
+            'this arm must exercise the REVIVE branch, not the recreate one',
+      );
+      await expectFires(
+        'undoDelete (revive in place)',
+        () => commands.undoDelete(revivedToken),
+      );
       late StoredTaskList createdList;
       await expectFires('createList', () async {
         createdList = await commands.createList('New list');
