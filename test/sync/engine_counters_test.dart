@@ -500,6 +500,35 @@ void main() {
       expect(await serverTitles(client, 'L1'), ['first', 'second']);
     });
 
+    test('two rejected list creates', () async {
+      final (client, eng) = await engine();
+      await eng.store.upsertList(localList('a', 'Work'));
+      await eng.store.upsertList(localList('b', 'Home'));
+      client.failNext(
+        Method.insertTasklist,
+        () => const OtherApiError('400: no'),
+      );
+      client.failNext(
+        Method.insertTasklist,
+        () => const OtherApiError('400: no'),
+      );
+
+      final out = await eng.run();
+
+      expect(out.errors, 2, reason: 'both refusals were reported');
+      expect(out.pushed, 0);
+      expect(
+        await client.listTasklists(),
+        isEmpty,
+        reason: 'neither list reached the server',
+      );
+      expect(
+        [for (final l in await eng.store.allLists()) l.remoteId],
+        [null, null],
+        reason: 'a refused list create stays unpushed, to be retried',
+      );
+    });
+
     test('two rejected moves', () async {
       final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Inbox');
