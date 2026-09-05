@@ -80,6 +80,17 @@ void main() {
       });
     });
 
+    test('the lead word may be all the title there is', () {
+      // Edge of the strip-leaves-title rule: "on" is consumed as the lead word
+      // of the date phrase, leaving the bare title "on" — non-empty, so this IS
+      // a dated task called "on", not an undated one called "on 2026-08-03".
+      // Matches the reference (App.svelte parseQuickAddDue), which strips the
+      // same span before testing it.
+      onDay('2026-08-01', () {
+        expect(parseQuickAddDue('on 2026-08-03'), '2026-08-03');
+      });
+    });
+
     test('bare trailing date', () {
       onDay('2026-08-01', () {
         expect(parseQuickAddDue('Ship release 2026-12-25'), '2026-12-25');

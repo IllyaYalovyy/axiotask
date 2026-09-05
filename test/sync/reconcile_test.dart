@@ -545,6 +545,35 @@ void main() {
       );
     });
 
+    test('find_orphan_by_base adopts when cleared notes meet absent notes', () {
+      // Google stores "no notes" as an ABSENT field, but a local CLEAR sends the
+      // empty string, and that is what the base snapshot keeps. Both sides are
+      // normalised to null before comparing; without that, the committed row
+      // misses, the create is retried and the task is duplicated on the server
+      // (RFC-009 §G, #122).
+      const cleared = BaseSnapshot(
+        title: 'buy milk',
+        notes: '',
+        status: TaskStatus.needsAction,
+      );
+      final committed = task('server-id').copyWith(title: 'buy milk');
+      expect(committed.notes, isNull, reason: 'the wire omits empty notes');
+      expect(
+        findOrphanByBase(cleared, null, [committed], <String>{})?.id,
+        'server-id',
+      );
+
+      // The normaliser folds ONLY the empty string: notes the user actually
+      // typed still have to match, or a create would adopt an unrelated row
+      // that merely shares its title.
+      const typed = BaseSnapshot(
+        title: 'buy milk',
+        notes: 'oat, not soy',
+        status: TaskStatus.needsAction,
+      );
+      expect(findOrphanByBase(typed, null, [committed], <String>{}), isNull);
+    });
+
     test('find_orphan requires matching parent (#145)', () {
       final local = task('local-uuid').copyWith(parent: 'P1');
       final foreignTop = task('foreign-top').copyWith(title: local.title);

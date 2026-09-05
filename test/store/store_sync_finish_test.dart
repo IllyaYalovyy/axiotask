@@ -650,6 +650,94 @@ void main() {
       expect(moves.single.previousId, 'B');
     });
 
+    test('reorderSiblings queues the move it just applied', () async {
+      // The reorder writes the new positions AND the queued move in one
+      // transaction (#202). That row is the whole wire request the push will
+      // later send, so a swapped pair here asks Google to move the wrong task,
+      // into the wrong list, or under the wrong parent — and the server obeys.
+      // All four ids are distinct so any permutation of them shows up.
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('P', 'L1', null, '1'));
+      await s.upsertTask(taskOf('A', 'L1', 'P', '1'));
+      await s.upsertTask(taskOf('B', 'L1', 'P', '2'));
+
+      // Drag B above A: they swap position slots, and B now follows nothing.
+      final a = (await s.findTaskAny('A'))!;
+      final b = (await s.findTaskAny('B'))!;
+      await s.reorderSiblings(
+        [
+          StoredTask(
+            task: b.task.copyWith(position: '1'),
+            listId: b.listId,
+            syncState: b.syncState,
+            localUpdated: b.localUpdated,
+            remoteId: b.remoteId,
+          ),
+          StoredTask(
+            task: a.task.copyWith(position: '2'),
+            listId: a.listId,
+            syncState: a.syncState,
+            localUpdated: a.localUpdated,
+            remoteId: a.remoteId,
+          ),
+        ],
+        taskId: 'B',
+        listId: 'L1',
+        parentId: 'P',
+        previousId: 'A',
+      );
+
+      // Read back as a record so a swapped pair prints as a diff, not as two
+      // indistinguishable `Instance of 'PendingMove'`s.
+      expect(
+        [
+          for (final m in await s.pendingMoves())
+            (m.taskId, m.listId, m.parentId, m.previousId),
+        ],
+        [('B', 'L1', 'P', 'A')],
+      );
+      // The other half of the transaction: the stored order moved too, so the
+      // local list and the queued move agree.
+      expect(
+        [for (final r in await s.listTasks('L1')) r.task.id],
+        ['P', 'B', 'A'],
+      );
+    });
+
+    test('reorderSiblings to the front records a null previous', () async {
+      // Non-happy path: "first in its list" is expressed by the ABSENCE of a
+      // previous sibling, and a top-level row has no parent. Both nulls have to
+      // reach the row, or the push would re-anchor the task under whatever
+      // stale ids the last move left there.
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('X', 'L1', null, '1'));
+      await s.upsertTask(taskOf('Y', 'L1', null, '2'));
+      final y = (await s.findTaskAny('Y'))!;
+      await s.reorderSiblings(
+        [
+          StoredTask(
+            task: y.task.copyWith(position: '0'),
+            listId: y.listId,
+            syncState: y.syncState,
+            localUpdated: y.localUpdated,
+            remoteId: y.remoteId,
+          ),
+        ],
+        taskId: 'Y',
+        listId: 'L1',
+      );
+      expect(
+        [
+          for (final m in await s.pendingMoves())
+            (m.taskId, m.listId, m.parentId, m.previousId),
+        ],
+        [('Y', 'L1', null, null)],
+      );
+      expect([for (final r in await s.listTasks('L1')) r.task.id], ['Y', 'X']);
+    });
+
     test('clear_move removes it', () async {
       final s = await freshStore();
       await s.upsertList(listOf('L1'));
