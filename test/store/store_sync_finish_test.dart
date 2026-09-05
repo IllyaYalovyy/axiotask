@@ -475,6 +475,65 @@ void main() {
     });
   });
 
+  group('delete_list_with_tasks (#271)', () {
+    // The two halves of `deleteList` at the store layer: the list row either
+    // survives as a pushable tombstone or goes with its tasks. The command
+    // suite picks the branch; nothing here had ever run the branch itself, so
+    // reading the flag backwards would delete a pushed list locally and leave
+    // Google holding it forever (or tombstone a list Google never saw, queuing
+    // a delete for an id the server would 404 on).
+    test('a pushed list is tombstoned and keeps its delete queued', () async {
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+
+      await s.deleteListWithTasks(
+        listOf('L1'),
+        tombstone: true,
+        now: '2026-02-02T00:00:00Z',
+      );
+
+      final row = await s.findListAny('L1');
+      expect(row, isNotNull, reason: 'the row stays as a tombstone');
+      expect(row!.syncState, SyncState.deleted);
+      expect(row.pendingOp, 'delete', reason: 'the delete still has to push');
+      expect(row.localUpdated, '2026-02-02T00:00:00Z');
+      expect((await s.drainDirtyLists()).map((l) => l.list.id), [
+        'L1',
+      ], reason: 'the next push carries the delete to Google');
+      expect(await s.allLists(), isEmpty, reason: 'gone from the sidebar');
+      expect(
+        await s.findTaskAny('T1'),
+        isNull,
+        reason:
+            "its tasks go with it — Google's own cascade removes them there",
+      );
+    });
+
+    test('an unpushed list is hard-deleted, row and tasks both', () async {
+      // Non-happy path for the push side: a list Google never saw must leave
+      // NOTHING behind — a tombstone here would queue a delete for an id the
+      // server has never heard of.
+      final s = await freshStore();
+      await s.upsertList(localListOf('LOCAL'));
+      await s.upsertTask(taskOf('T1', 'LOCAL', null, '1'));
+
+      await s.deleteListWithTasks(
+        localListOf('LOCAL'),
+        tombstone: false,
+        now: '2026-02-02T00:00:00Z',
+      );
+
+      expect(await s.findListAny('LOCAL'), isNull, reason: 'row gone');
+      expect(await s.findTaskAny('T1'), isNull, reason: 'tasks gone');
+      expect(
+        await s.drainDirtyLists(),
+        isEmpty,
+        reason: 'nothing is queued for a list the server never had',
+      );
+    });
+  });
+
   group('rehome_unpushed_tasks', () {
     test('moves only rows the server never saw', () async {
       // D2 at the store layer: etag-less rows follow to the target list, keeping

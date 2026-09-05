@@ -207,6 +207,27 @@ void main() {
       ]);
     });
 
+    test('due sort: the same rows in the other input order sort alike', () {
+      // The mirror of the case above, and the half the comparator never ran:
+      // here a dated row is ALREADY above an undated one, so the null branch is
+      // reached with the arguments the other way round. A comparator that
+      // sinks undated rows in one direction only is not antisymmetric — and
+      // since Dart's sort is not stable, the visible order would then depend on
+      // the order the rows happened to arrive in.
+      final all = [
+        task('d2', due: day(9), position: '1'),
+        task('u1', due: null, position: '2'),
+        task('d1', due: day(4), position: '3'),
+        task('u2', due: null, position: '4'),
+      ];
+      expect(ids(visible(all, 'all', sort: SortMode.due)), [
+        'd1',
+        'd2',
+        'u1',
+        'u2',
+      ]);
+    });
+
     test('due sort over undated rows alone keeps manual order', () {
       // Non-happy path: nothing to sort by. Two undated rows tie, and the tie
       // breaks on position — an undated view must not scramble under a due sort.
