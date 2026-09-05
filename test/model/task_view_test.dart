@@ -185,6 +185,60 @@ void main() {
       ]);
     });
 
+    test('due sort: every dated row outranks every undated one', () {
+      // The null tie-break, straight from the reference comparator
+      // (App.svelte applySortAndOrder: `if (!da && !db) return 0; if (!da)
+      // return 1; if (!db) return -1`): dated rows come first in date order and
+      // the undated block sinks below them WHATEVER their positions say. Here
+      // both undated rows sit above both dated ones in manual order, so a
+      // comparator that read the nulls the other way would leave them
+      // interleaved instead of at the bottom.
+      final all = [
+        task('u1', due: null, position: '1'),
+        task('d2', due: day(9), position: '2'),
+        task('u2', due: null, position: '3'),
+        task('d1', due: day(4), position: '4'),
+      ];
+      expect(ids(visible(all, 'all', sort: SortMode.due)), [
+        'd1',
+        'd2',
+        'u1',
+        'u2',
+      ]);
+    });
+
+    test('due sort: the same rows in the other input order sort alike', () {
+      // The mirror of the case above, and the half the comparator never ran:
+      // here a dated row is ALREADY above an undated one, so the null branch is
+      // reached with the arguments the other way round. A comparator that
+      // sinks undated rows in one direction only is not antisymmetric — and
+      // since Dart's sort is not stable, the visible order would then depend on
+      // the order the rows happened to arrive in.
+      final all = [
+        task('d2', due: day(9), position: '1'),
+        task('u1', due: null, position: '2'),
+        task('d1', due: day(4), position: '3'),
+        task('u2', due: null, position: '4'),
+      ];
+      expect(ids(visible(all, 'all', sort: SortMode.due)), [
+        'd1',
+        'd2',
+        'u1',
+        'u2',
+      ]);
+    });
+
+    test('due sort over undated rows alone keeps manual order', () {
+      // Non-happy path: nothing to sort by. Two undated rows tie, and the tie
+      // breaks on position — an undated view must not scramble under a due sort.
+      final all = [
+        task('c', due: null, position: '3'),
+        task('a', due: null, position: '1'),
+        task('b', due: null, position: '2'),
+      ];
+      expect(ids(visible(all, 'all', sort: SortMode.due)), ['a', 'b', 'c']);
+    });
+
     test('alpha sort is case-insensitive A→Z', () {
       final all = [
         task('b', title: 'banana', position: '1'),
@@ -284,6 +338,34 @@ void main() {
       expect(SortMode.byId(null), SortMode.manual);
       expect(SortMode.byId('bogus'), SortMode.manual);
     });
+
+    test('every mode round-trips through its persisted id', () {
+      // `sort_per_view` in prefs.json stores the id and nothing else, so a mode
+      // whose id does not map back is silently demoted to "My order" on the
+      // next launch — the user's chosen sort quietly lost.
+      for (final m in SortMode.values) {
+        expect(
+          SortMode.byId(m.id),
+          m,
+          reason: '${m.name} must survive a restart',
+        );
+      }
+    });
+
+    test('each mode pairs its persisted id with its dropdown label', () {
+      // The id is written to prefs.json; the label is what the sort dropdown
+      // renders. Swapping the two would persist "Due date" as a sort id (an
+      // unknown value on the next launch) and offer "due" as a menu entry.
+      expect(
+        [for (final m in SortMode.values) (m.id, m.label)],
+        [
+          ('manual', 'My order'),
+          ('due', 'Due date'),
+          ('alpha', 'Alphabetical'),
+          ('created', 'Reverse my order'),
+        ],
+      );
+    });
   });
 
   // The #190 landing-feedback decision: given a fresh create's due and the view
@@ -371,6 +453,17 @@ void main() {
       // Viewing the excluded list itself: the list view ignores exclusion and
       // shows every create, so no toast (the newest-pin already surfaces it).
       expect(dest('L1', due: day(0), excludedLists: {'L1'}), isNull);
+    });
+
+    test('a dated create from Unscheduled lands in Upcoming', () {
+      // Typing a date into a quick-add made from Unscheduled removes the row
+      // from the view that created it. +10 days is past Focus (+7) and inside
+      // Upcoming, so the toast must both READ "Upcoming" and jump to the
+      // `upcoming` view — the id is what the jump navigates to, the label is
+      // what the toast says.
+      final d = dest('unscheduled', due: day(10));
+      expect(d?.viewId, 'upcoming');
+      expect(d?.label, 'Upcoming');
     });
 
     test('the inclusive +14 boundary stays visible in Upcoming (no toast)', () {

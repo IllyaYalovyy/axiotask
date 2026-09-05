@@ -25,13 +25,31 @@
 #     unobservable). The pilot's 4 predates #277's own change to that file and
 #     no run reproduces it, so the cap is the number the committed tool
 #     actually produces.
-# The other seven are the pilot's counts, taken BEFORE #277/#278 landed: they
+#   store.dart      56 mutants, 0 survivors, 9m21 (#279 batch 3)
+#   task_view.dart  86 mutants, 0 survivors, 6m36 (#279 batch 3)
+#   quick_add_parse.dart 11 mutants, 1 survivor, 0m30 — `(?:on\s+)?` -> `(?:on\s-)?`
+#     in the trailing-date pattern. Equivalent: the phrase is never removed
+#     from the title (the parser only reports the date), so the match extent is
+#     observable solely through the strip-leaves-title rule, and the required
+#     leading `\s+` cannot match at index 0 of a trimmed title — the strip can
+#     never come out empty either way. Checked by brute force over 1080 inputs
+#     for #279.
+#   reconcile.dart  285 mutants, 8 survivors, 1h03 (#279 batch 3) — every
+#     mutant that RAN and returned was killed. Seven are the `Object.hash`
+#     argument permutations on the decision classes' `hashCode` getters, on
+#     lines no test in test/sync executes (equal values still hash equal, so
+#     covering them cannot kill them). The eighth is a TIMEOUT:
+#     `orderParentsFirst`'s `var progressed = false` flipped to `true` never
+#     leaves its `while (true)`, so the run is killed at the per-mutant
+#     timeout and the report has no text to quote for it. The pilot's 1
+#     counted neither class; no run of the committed tool reproduces it.
+# The other four are the pilot's counts, taken BEFORE #277/#278 landed: they
 # are upper bounds, and the first run of each should come in under them.
 lib/src/store/backup.dart	7
 lib/src/sync/engine.dart	26
-lib/src/sync/reconcile.dart	1
-lib/src/store/store.dart	3
-lib/src/model/task_view.dart	4
+lib/src/sync/reconcile.dart	8
+lib/src/store/store.dart	0
+lib/src/model/task_view.dart	0
 lib/src/model/dates.dart	3
 lib/src/model/effective_due.dart	5
 lib/src/model/quick_add_parse.dart	1

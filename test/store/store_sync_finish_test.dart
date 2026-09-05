@@ -475,6 +475,65 @@ void main() {
     });
   });
 
+  group('delete_list_with_tasks (#271)', () {
+    // The two halves of `deleteList` at the store layer: the list row either
+    // survives as a pushable tombstone or goes with its tasks. The command
+    // suite picks the branch; nothing here had ever run the branch itself, so
+    // reading the flag backwards would delete a pushed list locally and leave
+    // Google holding it forever (or tombstone a list Google never saw, queuing
+    // a delete for an id the server would 404 on).
+    test('a pushed list is tombstoned and keeps its delete queued', () async {
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('T1', 'L1', null, '1'));
+
+      await s.deleteListWithTasks(
+        listOf('L1'),
+        tombstone: true,
+        now: '2026-02-02T00:00:00Z',
+      );
+
+      final row = await s.findListAny('L1');
+      expect(row, isNotNull, reason: 'the row stays as a tombstone');
+      expect(row!.syncState, SyncState.deleted);
+      expect(row.pendingOp, 'delete', reason: 'the delete still has to push');
+      expect(row.localUpdated, '2026-02-02T00:00:00Z');
+      expect((await s.drainDirtyLists()).map((l) => l.list.id), [
+        'L1',
+      ], reason: 'the next push carries the delete to Google');
+      expect(await s.allLists(), isEmpty, reason: 'gone from the sidebar');
+      expect(
+        await s.findTaskAny('T1'),
+        isNull,
+        reason:
+            "its tasks go with it — Google's own cascade removes them there",
+      );
+    });
+
+    test('an unpushed list is hard-deleted, row and tasks both', () async {
+      // Non-happy path for the push side: a list Google never saw must leave
+      // NOTHING behind — a tombstone here would queue a delete for an id the
+      // server has never heard of.
+      final s = await freshStore();
+      await s.upsertList(localListOf('LOCAL'));
+      await s.upsertTask(taskOf('T1', 'LOCAL', null, '1'));
+
+      await s.deleteListWithTasks(
+        localListOf('LOCAL'),
+        tombstone: false,
+        now: '2026-02-02T00:00:00Z',
+      );
+
+      expect(await s.findListAny('LOCAL'), isNull, reason: 'row gone');
+      expect(await s.findTaskAny('T1'), isNull, reason: 'tasks gone');
+      expect(
+        await s.drainDirtyLists(),
+        isEmpty,
+        reason: 'nothing is queued for a list the server never had',
+      );
+    });
+  });
+
   group('rehome_unpushed_tasks', () {
     test('moves only rows the server never saw', () async {
       // D2 at the store layer: etag-less rows follow to the target list, keeping
@@ -648,6 +707,94 @@ void main() {
       final moves = await s.pendingMoves();
       expect(moves, hasLength(1));
       expect(moves.single.previousId, 'B');
+    });
+
+    test('reorderSiblings queues the move it just applied', () async {
+      // The reorder writes the new positions AND the queued move in one
+      // transaction (#202). That row is the whole wire request the push will
+      // later send, so a swapped pair here asks Google to move the wrong task,
+      // into the wrong list, or under the wrong parent — and the server obeys.
+      // All four ids are distinct so any permutation of them shows up.
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('P', 'L1', null, '1'));
+      await s.upsertTask(taskOf('A', 'L1', 'P', '1'));
+      await s.upsertTask(taskOf('B', 'L1', 'P', '2'));
+
+      // Drag B above A: they swap position slots, and B now follows nothing.
+      final a = (await s.findTaskAny('A'))!;
+      final b = (await s.findTaskAny('B'))!;
+      await s.reorderSiblings(
+        [
+          StoredTask(
+            task: b.task.copyWith(position: '1'),
+            listId: b.listId,
+            syncState: b.syncState,
+            localUpdated: b.localUpdated,
+            remoteId: b.remoteId,
+          ),
+          StoredTask(
+            task: a.task.copyWith(position: '2'),
+            listId: a.listId,
+            syncState: a.syncState,
+            localUpdated: a.localUpdated,
+            remoteId: a.remoteId,
+          ),
+        ],
+        taskId: 'B',
+        listId: 'L1',
+        parentId: 'P',
+        previousId: 'A',
+      );
+
+      // Read back as a record so a swapped pair prints as a diff, not as two
+      // indistinguishable `Instance of 'PendingMove'`s.
+      expect(
+        [
+          for (final m in await s.pendingMoves())
+            (m.taskId, m.listId, m.parentId, m.previousId),
+        ],
+        [('B', 'L1', 'P', 'A')],
+      );
+      // The other half of the transaction: the stored order moved too, so the
+      // local list and the queued move agree.
+      expect(
+        [for (final r in await s.listTasks('L1')) r.task.id],
+        ['P', 'B', 'A'],
+      );
+    });
+
+    test('reorderSiblings to the front records a null previous', () async {
+      // Non-happy path: "first in its list" is expressed by the ABSENCE of a
+      // previous sibling, and a top-level row has no parent. Both nulls have to
+      // reach the row, or the push would re-anchor the task under whatever
+      // stale ids the last move left there.
+      final s = await freshStore();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('X', 'L1', null, '1'));
+      await s.upsertTask(taskOf('Y', 'L1', null, '2'));
+      final y = (await s.findTaskAny('Y'))!;
+      await s.reorderSiblings(
+        [
+          StoredTask(
+            task: y.task.copyWith(position: '0'),
+            listId: y.listId,
+            syncState: y.syncState,
+            localUpdated: y.localUpdated,
+            remoteId: y.remoteId,
+          ),
+        ],
+        taskId: 'Y',
+        listId: 'L1',
+      );
+      expect(
+        [
+          for (final m in await s.pendingMoves())
+            (m.taskId, m.listId, m.parentId, m.previousId),
+        ],
+        [('Y', 'L1', null, null)],
+      );
+      expect([for (final r in await s.listTasks('L1')) r.task.id], ['Y', 'X']);
     });
 
     test('clear_move removes it', () async {

@@ -16,6 +16,7 @@ import 'package:axiotask/src/model/task_list.dart';
 // after the tables); hide them so the domain model types win unambiguously.
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
+import 'package:axiotask/src/store/store_error.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -401,6 +402,80 @@ void main() {
         expect(SyncState.parse(st.asStr), st);
       }
       expect(SyncState.parse('unknown'), isNull);
+    });
+  });
+
+  group('rows this app could not have written', () {
+    // Every read maps a row through a parse of its `sync_state` / `status`
+    // text. The columns carry CHECK constraints, so the app itself can never
+    // store an unknown value — the guards exist for a database it did not
+    // write (hand-edited, restored from elsewhere, or left by a build that
+    // knew a state this one does not). What a user must never get in that case
+    // is a silently mis-read row: the read fails loudly instead, and the sync
+    // layer reports it as a non-transient store error. The CHECK is suspended
+    // for one statement here to stand in for that database; no product code
+    // ever does this.
+    Future<(Store, AppDatabase)> corruptible() async {
+      final db = await AppDatabase.openMemory();
+      addTearDown(db.close);
+      await db.customStatement('PRAGMA ignore_check_constraints = ON');
+      return (Store(db), db);
+    }
+
+    test('an unknown list sync_state fails the read', () async {
+      final (s, db) = await corruptible();
+      await s.upsertList(listOf('L1'));
+      await db.customStatement(
+        "UPDATE task_lists SET sync_state = 'archived' WHERE id = 'L1'",
+      );
+      await expectLater(
+        s.allLists(),
+        throwsA(
+          isA<StoreSqlError>().having(
+            (e) => e.message,
+            'message',
+            contains('archived'),
+          ),
+        ),
+      );
+    });
+
+    test('an unknown task status fails the read', () async {
+      final (s, db) = await corruptible();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+      await db.customStatement(
+        "UPDATE tasks SET status = 'inProgress' WHERE id = 'T1'",
+      );
+      await expectLater(
+        s.findTaskAny('T1'),
+        throwsA(
+          isA<StoreSqlError>().having(
+            (e) => e.message,
+            'message',
+            contains('inProgress'),
+          ),
+        ),
+      );
+    });
+
+    test('an unknown task sync_state fails the read', () async {
+      final (s, db) = await corruptible();
+      await s.upsertList(listOf('L1'));
+      await s.upsertTask(taskOf('T1', 'L1', null, '0001'));
+      await db.customStatement(
+        "UPDATE tasks SET sync_state = 'archived' WHERE id = 'T1'",
+      );
+      await expectLater(
+        s.listTasks('L1'),
+        throwsA(
+          isA<StoreSqlError>().having(
+            (e) => e.message,
+            'message',
+            contains('archived'),
+          ),
+        ),
+      );
     });
   });
 

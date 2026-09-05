@@ -1,9 +1,10 @@
 // Port of `store/repo.rs`'s in-file repo tests — the T1.4a partition: the
 // push-side write paths (`drain_dirty` / `drain_dirty_lists`), the in-flight
-// race guards (`mark_task_clean` / `apply_pushed_task`), and the base-snapshot
-// CASE capture/clear that `upsert_task` drives (#124/#139). Each test names the
-// invariant it protects; the finish_create / tombstone / rehome / counts /
-// clear paths belong to T1.4b and are ported there.
+// race guards (`mark_task_clean` / `apply_pushed_task`), the list-push confirm
+// (`mark_list_clean`), and the base-snapshot CASE capture/clear that
+// `upsert_task` drives (#124/#139). Each test names the invariant it protects;
+// the finish_create / tombstone / rehome / counts / clear paths belong to T1.4b
+// and are ported there.
 //
 // Assertions read STATE the store persists — the rows drained for push, the
 // values `list_tasks` / `find_task_any` return after a landing, and the base
@@ -228,6 +229,81 @@ void main() {
       expect(row.syncState, SyncState.deleted);
       expect(row.pendingOp, 'delete');
       expect(row.remoteId, 'r-P', reason: 'the pending DELETE still needs it');
+    });
+  });
+
+  group('mark_list_clean', () {
+    /// A list mid-push: renamed locally, queued as an update, still carrying
+    /// the etag and `updated` the last pull left behind.
+    Future<Store> pushingList() async {
+      final s = await freshStore();
+      await s.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'L1', title: 'Renamed', etag: 'e1', updated: _t0),
+          syncState: SyncState.dirty,
+          localUpdated: _t0,
+          pendingOp: 'update',
+          remoteId: 'g-L1',
+        ),
+      );
+      return s;
+    }
+
+    test('a landed push clears the queue and adopts the server values', () async {
+      // The list push is only finished when the ROW says so: still dirty (or
+      // still carrying `pending_op`) and the next run pushes the same rename
+      // again, forever. The etag and `updated` are the server's answer and have
+      // to land too, or the following pull reads the row as remotely changed.
+      final s = await pushingList();
+      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z');
+      final row = (await s.findListAny('L1'))!;
+      expect(row.syncState, SyncState.clean);
+      expect(row.pendingOp, isNull);
+      expect(row.list.etag, 'e2');
+      expect(row.list.updated, '2026-02-01T00:00:00Z');
+      expect(
+        row.list.title,
+        'Renamed',
+        reason: 'a confirm rewrites no content',
+      );
+      expect(
+        row.remoteId,
+        'g-L1',
+        reason: 'the learned Google id is untouched',
+      );
+    });
+
+    test('a response without an etag keeps the one we hold', () async {
+      // Non-happy path: the tasklists endpoint ignores If-Match, so a response
+      // may carry no etag at all. COALESCE keeps the stored one — nulling it
+      // would drop the only version marker the row has.
+      final s = await pushingList();
+      await s.markListClean('L1', null, '2026-02-01T00:00:00Z');
+      final row = (await s.findListAny('L1'))!;
+      expect(row.list.etag, 'e1');
+      expect(row.syncState, SyncState.clean, reason: 'the push still landed');
+      expect(row.list.updated, '2026-02-01T00:00:00Z');
+    });
+
+    test('it confirms only the list it names', () async {
+      // A concurrent second dirty list must keep its queue: confirming one
+      // push may never mark the whole sidebar in-sync.
+      final s = await pushingList();
+      await s.upsertList(
+        StoredTaskList(
+          list: TaskList(id: 'L2', title: 'Other', etag: 'x1', updated: _t0),
+          syncState: SyncState.dirty,
+          localUpdated: _t0,
+          pendingOp: 'update',
+          remoteId: 'g-L2',
+        ),
+      );
+      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z');
+      final other = (await s.findListAny('L2'))!;
+      expect(other.syncState, SyncState.dirty);
+      expect(other.pendingOp, 'update');
+      expect(other.list.etag, 'x1');
+      expect(other.list.updated, _t0);
     });
   });
 
