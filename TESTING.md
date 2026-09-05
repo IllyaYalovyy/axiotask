@@ -173,3 +173,63 @@ budget expired mid-chain and the test asserted against a store still being
 emptied. Wait on the OUTCOME instead — the reset's notice is rendered only after
 its future returns, so the loop leaves the moment the notice appears and the
 round cap bounds only the failure path.
+
+## Mutation testing — would the suite notice?
+
+Coverage says a line RAN. It cannot say an assertion DEPENDED on it: a test
+that pumps the widget and asserts nothing covers everything and protects
+nothing. Mutation testing asks the harder question by breaking the code on
+purpose — one operator, constant or statement at a time — and re-running the
+tests. A mutant the suite still passes is a **survivor**: a place where the
+product could be wrong and the gate would stay green.
+
+```bash
+flutter test --coverage                       # the run needs coverage/lcov.info
+tool/mutation.sh lib/src/model/dates.dart     # one file (~6 min)
+tool/mutation.sh --plan lib/src/sync/engine.dart   # show the scope, run nothing
+tool/mutation.sh                              # the whole core — hours; detach it
+python3 tool/mutation_report.py -v mutation/  # the table + every survivor
+```
+
+It is **not part of `.ktask/verify.sh`** — a full core run is over an hour
+(engine.dart alone is ~1 h). Run it at review time, or when an issue asks for a
+before/after on a specific file. Everything it writes lands in the gitignored
+`mutation/`: one markdown report and the generated config per source file, plus
+`survivors.tsv` (file, line, original, mutated).
+
+Two properties make the numbers trustworthy, and both are asserted in
+`test/tool/mutation_tool_test.dart`:
+
+- **It never runs in the working tree.** `mutation_test` edits sources in place;
+  a session that dies mid-mutant would leave a mutated file behind. The run
+  happens on an rsync'd throwaway copy, and the script compares a hash of
+  `lib/ test/ tool/ integration_test/` before and after — a changed tree is a
+  hard failure, not a warning.
+- **Each file is mutated against the tests that cover it.** The same-name
+  `<name>_test.dart` first, then up to 8 test files that import it directly.
+  `engine.dart`, `reconcile.dart` and `store.dart` have no same-name test — the
+  whole of `test/sync` / `test/store` is their scope. A consequence worth
+  knowing: behaviour covered ONLY from outside that scope (engine paths
+  exercised just by `test/app/*`) shows up as a survivor. That is a real signal
+  — the unit's own suite never exercised it — not a tooling artefact.
+
+### Triaging a survivor
+
+Every survivor gets one of three verdicts, and the verdict is decided by
+reading the test file, never by the tool:
+
+- **Equivalent mutant** — the mutated program cannot behave differently, so no
+  test could ever kill it (`Object.hash` argument permutations: equal values
+  still hash equal; `<=` → `<` where the operands are equal; `>= 10` → `> 10`
+  guarding `substring(0, 10)`). Record it in the closing issue and move on.
+- **Weak test** — the behaviour IS exercised, but nothing asserts the part the
+  mutant changed (a counter incremented and never read, a branch taken and only
+  its side effect checked). Add the assertion.
+- **Untested behaviour** — no test reaches the line at all. Write the test.
+
+**A survivor is closed by an ASSERTION, never by excluding the line**, never by
+deleting the mutation rule, and never by raising the cap in
+`tool/mutation_baseline.tsv`. That file is a ratchet, seeded from the
+2026-09-02/03 pilot (949 mutants, 55 survivors → #277–#279): a file may never
+grow survivors, and `tool/mutation_report.py` exits non-zero when one does.
+Killed a survivor? Lower the number in the same commit.

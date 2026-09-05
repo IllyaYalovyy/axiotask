@@ -1,0 +1,38 @@
+# Per-file survivor ratchet for tool/mutation.sh (#280).
+#
+# <lib/ source path><TAB><maximum surviving mutants>
+#
+# A SURVIVOR is a mutant the file's test scope did not notice (the tool's
+# "Undetected" count, which includes mutants no test covers at all). The numbers
+# are seeded from the 2026-09-02/03 pilot, so the ratchet can only ever go DOWN:
+# kill a survivor, lower the number in the same commit. Raising one means the
+# suite stopped noticing something it used to catch — that is a regression in
+# the tests, and it is closed with an assertion, never with a bigger cap.
+#
+# Some survivors are EQUIVALENT mutants (the mutated program cannot behave
+# differently — see TESTING.md), which is why a file's floor is rarely 0. An
+# equivalent mutant is documented in the closing issue, not asserted away with a
+# test that contradicts the contract.
+#
+# Files absent from this list are reported but not ratcheted.
+#
+# Measured with this tool (mutation.sh, same-name test + importers):
+#   dates.dart         39 mutants, 3 survivors, 5m45
+#   effective_due.dart 37 mutants, 5 survivors, 1m06 — all five are the
+#     equivalent mutants #277 characterised (two Object.hash argument
+#     permutations, `<=`->`<` on operands that are equal, `>= 10`->`> 10`
+#     around substring(0, 10), and deleting a `seen.remove` the memo makes
+#     unobservable). The pilot's 4 predates #277's own change to that file and
+#     no run reproduces it, so the cap is the number the committed tool
+#     actually produces.
+# The other seven are the pilot's counts, taken BEFORE #277/#278 landed: they
+# are upper bounds, and the first run of each should come in under them.
+lib/src/store/backup.dart	7
+lib/src/sync/engine.dart	26
+lib/src/sync/reconcile.dart	1
+lib/src/store/store.dart	3
+lib/src/model/task_view.dart	4
+lib/src/model/dates.dart	3
+lib/src/model/effective_due.dart	5
+lib/src/model/quick_add_parse.dart	1
+lib/src/model/task_list.dart	3
