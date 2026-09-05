@@ -201,11 +201,15 @@ def main(argv: list[str]) -> int:
     baseline = read_baseline(args.baseline) if args.baseline else {}
     over: list[tuple[Report, int]] = []
     unlisted: list[Report] = []
-    # A survivor is judged by reading it. Mutants no test covers are counted but
-    # never listed; anything beyond that gap means the extraction lost mutants —
-    # a silent parse failure would show survivors nobody can see.
+    # A survivor is judged by reading it. Two kinds are counted but never
+    # listed: mutants no test covers, and mutants that HUNG the suite (the tool
+    # kills the command at the timeout and has no result text to quote).
+    # Anything beyond those two gaps means the extraction lost mutants — a
+    # silent parse failure would show survivors nobody can see.
     unreadable = [
-        r for r in reports if len(r.survivors) + r.uncovered < r.survived
+        r
+        for r in reports
+        if len(r.survivors) + r.uncovered + r.timeouts < r.survived
     ]
     for report in reports:
         cap = baseline.get(report.source)
@@ -247,8 +251,9 @@ def main(argv: list[str]) -> int:
         print(
             f"CANNOT READ {report.path}: {report.survived} undetected mutants "
             f"but only {len(report.survivors)} could be read from the report "
-            f"({report.uncovered} covered by no test). The report format "
-            f"changed or the parser broke — fix it before trusting a number."
+            f"({report.uncovered} covered by no test, {report.timeouts} timed "
+            f"out). The report format changed or the parser broke — fix it "
+            f"before trusting a number."
         )
     for report, cap in over:
         print(

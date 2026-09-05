@@ -216,6 +216,36 @@ void main() {
     );
   });
 
+  test('a mutant that HUNG the suite is counted, not called a parse failure', () {
+    // A mutant can also survive by never returning: mutation_test kills the
+    // test command at the timeout, counts the mutant undetected, and writes no
+    // text for it — the same shape as an uncovered one. reconcile.dart
+    // produces exactly this (`var progressed = false` flipped to `true` in
+    // orderParentsFirst loops forever), so charging the difference to the
+    // parser would make every run of that file exit "CANNOT READ" and no
+    // reconcile number could ever be trusted again.
+    final dir = _fixture(
+      'effective_due.md',
+      _report
+          .replaceFirst('| Undetected    | 3 ', '| Undetected    | 4 ')
+          .replaceFirst('| Timeouts      | 0 ', '| Timeouts      | 1 '),
+      'lib/src/model/effective_due.dart\t4\n',
+    );
+
+    final run = _summarise(['--baseline', '$dir/baseline.tsv', dir]);
+
+    expect(run.exitCode, 0, reason: run.stdout as String);
+    expect(run.stdout, isNot(contains('CANNOT READ')));
+    // The timeout is still visible in the table — it is a survivor a human has
+    // to account for, just not one the report can quote.
+    expect(
+      (run.stdout as String)
+          .split('\n')
+          .firstWhere((l) => l.startsWith('lib/src/model/effective_due.dart')),
+      matches(RegExp(r'\s37\s+4\s+1\s+1\s+4\s')),
+    );
+  });
+
   test('a file with no baseline entry is flagged, not silently ratcheted', () {
     final dir = _fixture('effective_due.md', _report, '# nothing listed\n');
 

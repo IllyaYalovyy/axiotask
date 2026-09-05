@@ -215,7 +215,7 @@ Two properties make the numbers trustworthy, and both are asserted in
 
 ### Triaging a survivor
 
-Every survivor gets one of three verdicts, and the verdict is decided by
+Every survivor gets one of four verdicts, and the verdict is decided by
 reading the test file, never by the tool:
 
 - **Equivalent mutant** — the mutated program cannot behave differently, so no
@@ -226,6 +226,12 @@ reading the test file, never by the tool:
   mutant changed (a counter incremented and never read, a branch taken and only
   its side effect checked). Add the assertion.
 - **Untested behaviour** — no test reaches the line at all. Write the test.
+- **Timed out** — the mutant makes the suite hang, so the run is killed at the
+  per-mutant timeout (`reconcile.dart`'s `orderParentsFirst` has one: flip
+  `var progressed = false` to `true` and its `while (true)` never ends). The
+  tool counts it undetected and has no result text to quote for it, so it never
+  appears in `survivors.tsv`. No assertion can close it — the run never
+  returns. Record it like an equivalent mutant.
 
 **A survivor is closed by an ASSERTION, never by excluding the line**, never by
 deleting the mutation rule, and never by raising the cap in
