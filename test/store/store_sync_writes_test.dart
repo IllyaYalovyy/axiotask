@@ -949,6 +949,7 @@ void main() {
           'T1',
           landed('moved', 'e2', '9'),
           adoptBody: true,
+          adoptMeta: false,
           expectedLocalUpdated: _t0,
         );
 
@@ -975,6 +976,7 @@ void main() {
         'T1',
         landed('server title', 'e2', '9'),
         adoptBody: false,
+        adoptMeta: true,
         expectedLocalUpdated: _t0,
       );
 
@@ -991,6 +993,36 @@ void main() {
         SyncState.dirty,
         reason: 'the edit still needs push',
       );
+    });
+
+    test('neither: clears the intent and adopts nothing at all', () async {
+      // #284's arm. The caller decided the move response carries a remote edit
+      // this device has not seen, so its etag is NOT ours to take: the row keeps
+      // the etag its own patch will send, and that patch 412s instead of
+      // silently overwriting the other device.
+      final s = await stageMovedTask(state: SyncState.dirty);
+
+      await s.finishMove(
+        'T1',
+        landed('renamed elsewhere', 'e2', '9'),
+        adoptBody: false,
+        adoptMeta: false,
+        expectedLocalUpdated: _t0,
+      );
+
+      expect(
+        await s.pendingMoves(),
+        isEmpty,
+        reason: 'the intent still clears — the move itself landed',
+      );
+      final t1 = (await s.listTasks('L1')).single;
+      expect(
+        t1.task.etag,
+        'e1',
+        reason: 'the row keeps the etag that guards its own push',
+      );
+      expect(t1.task.title, 'my edit', reason: 'and its pending edit');
+      expect(t1.syncState, SyncState.dirty);
     });
 
     test(
@@ -1014,6 +1046,7 @@ void main() {
             'T1',
             landed('moved', 'e2', '9'),
             adoptBody: false,
+            adoptMeta: true,
             expectedLocalUpdated: _t0,
           ),
           throwsA(anything),

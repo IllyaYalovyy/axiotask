@@ -584,17 +584,37 @@ enum MoveAdoption {
   /// the row and freeze that drift in place (P6).
   body,
 
-  /// The row carries its own pending content edit: keep it (meta only). Its
-  /// update push adopts the server body on this run or the next.
+  /// The row carries its own pending content edit: keep it and take the meta
+  /// only. Its update push adopts the server body on this run or the next.
+  ///
+  /// Only chosen when the move response PROVES nothing else changed the row:
+  /// the content it echoes is still the base this device last agreed on, so the
+  /// rotated etag stands for our move and nothing more.
   metaOnly,
+
+  /// Adopt NOTHING (#284). The move response echoes content that is no longer
+  /// our base, so another device edited the row while the move was in the air —
+  /// and the etag the move returned already covers that edit. Landing it on a
+  /// row that still holds an unpushed edit of our own would disarm the only
+  /// guard that edit has: the next patch's `If-Match` would match, the server
+  /// would take it, and the other device's text would be gone with no 412 and
+  /// no conflicted copy. Keeping our stale etag makes that patch 412 instead,
+  /// and the resolver forks the conflicted copy (P3).
+  none,
 }
 
 /// Decide how much of a move response to adopt, from the row snapshot taken
 /// *before* the call (so a mid-flight re-edit stays dirty).
-MoveAdoption moveAdoption(StoredTask? before) =>
-    before != null && before.syncState == SyncState.clean
-    ? MoveAdoption.body
-    : MoveAdoption.metaOnly;
+/// [base] is the row's base snapshot (`null` for a clean row, which carries
+/// none by schema invariant §B, and for a dirty row whose base was never
+/// captured — unprovable either way, so it adopts nothing).
+MoveAdoption moveAdoption(StoredTask? before, Task remote, BaseSnapshot? base) {
+  if (before == null) return MoveAdoption.none;
+  if (before.syncState == SyncState.clean) return MoveAdoption.body;
+  return base != null && onlyLocalDiverged(remote, base)
+      ? MoveAdoption.metaOnly
+      : MoveAdoption.none;
+}
 
 /// What a failed move push does (§E, §F).
 enum MoveFailure {

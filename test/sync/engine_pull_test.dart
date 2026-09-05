@@ -794,6 +794,75 @@ void main() {
     expect((await localRow(eng, 'L1', 'C')).syncState, SyncState.clean);
   });
 
+  test("d7's corrective move must not disarm the grandchild's If-Match", () async {
+    // #284, at the D7 repair's own move. Same shape as the test above, except
+    // another device also RENAMED C. The corrective move's response echoes that
+    // rename and carries an etag that already covers it — so adopting the etag
+    // onto a row still holding our unpushed edit disarms the `If-Match` that
+    // edit depends on: the next patch matches, the server takes it, and the
+    // other device's text is gone with no 412 and no conflicted copy.
+    final (client, eng) = await engine(push: true);
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    client.seedTask('L1', 'P', 'parent', '00000000000001');
+    client.seedTask('L1', 'T', 'subtask-to-be', '00000000000002');
+    client.seedTaskWithParent('L1', 'C', 'grandchild', '00000000000003', 'T');
+    await eng.run();
+
+    final c0 = await localRow(eng, 'L1', 'C');
+    await eng.store.upsertTask(
+      StoredTask(
+        task: c0.task.copyWith(title: 'my unsent edit'),
+        listId: c0.listId,
+        syncState: SyncState.dirty,
+        localUpdated: '2026-06-03T00:00:00Z',
+        pendingOp: 'update',
+        remoteId: c0.remoteId,
+      ),
+    );
+    // The other device renames C and demotes T under P — C is now a third
+    // level whose server content is no longer what we last agreed on.
+    await client.patchTask(
+      'L1',
+      'C',
+      const TaskPatch(title: 'renamed elsewhere'),
+    );
+    await client.moveTask('L1', 'T', parent: 'P');
+    // Our push drops on the network, so C is still dirty when the repair runs
+    // — the 412 it would otherwise draw comes on the RETRY run, which is where
+    // the guard is under test.
+    client.failNext(Method.patchTask, () => const ServerError(503));
+
+    await eng.run();
+    final repaired = await localRow(eng, 'L1', 'C');
+    expect(repaired.task.parent, isNull, reason: 'C is top-level again');
+    expect(
+      repaired.syncState,
+      SyncState.dirty,
+      reason: 'and our edit is still queued',
+    );
+
+    // The retry. This is the run the guard exists for.
+    final out2 = await eng.run();
+    expect(out2.conflicts, 1, reason: 'the retry met a 412, not a clean write');
+    final rows = await eng.store.listTasks('L1');
+    final c = rows.firstWhere((r) => serverId(r) == 'C');
+    expect(
+      c.task.title,
+      'renamed elsewhere',
+      reason: "the other device's edit is canonical (P3)",
+    );
+    expect(
+      (await client.getTask('L1', 'C')).title,
+      'renamed elsewhere',
+      reason: 'and it was never overwritten on the server',
+    );
+    expect(
+      rows.map((r) => r.task.title),
+      contains('my unsent edit (conflicted copy)'),
+      reason: 'our edit survives as a copy rather than silently winning',
+    );
+  });
+
   test('d7 flattens a pulled third level locally even with push '
       'disabled', () async {
     // #137: invariant #1 is ABSOLUTE — it does not depend on whether this sync

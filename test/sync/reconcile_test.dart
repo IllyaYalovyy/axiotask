@@ -710,17 +710,52 @@ void main() {
     });
 
     test('move adopts the body only for a clean row', () {
-      expect(moveAdoption(stored(task('t'))), MoveAdoption.body);
-      // A pending content edit must survive the move response.
+      // A clean row has no base (schema invariant §B) and needs none.
+      expect(
+        moveAdoption(stored(task('t')), task('t'), null),
+        MoveAdoption.body,
+      );
+      // A pending content edit must survive the move response: the row takes
+      // the meta only, and only because the response still echoes its base — so
+      // the rotated etag stands for our move and nothing else.
       final dirty = StoredTask(
-        task: task('t'),
+        task: task('t').copyWith(title: 'my unsent edit'),
         listId: 'L',
         syncState: SyncState.dirty,
         localUpdated: 'u',
         pendingOp: 'update',
       );
-      expect(moveAdoption(dirty), MoveAdoption.metaOnly);
-      expect(moveAdoption(null), MoveAdoption.metaOnly);
+      const base = BaseSnapshot(
+        title: 'task t',
+        status: TaskStatus.needsAction,
+      );
+      expect(moveAdoption(dirty, task('t'), base), MoveAdoption.metaOnly);
+      // No row to write to at all.
+      expect(moveAdoption(null, task('t'), base), MoveAdoption.none);
+    });
+
+    test('move adopts nothing when its response shows a remote edit', () {
+      // #284. The move response echoes content that is no longer our base, so
+      // another device edited the row while the move was in the air and the
+      // etag it returned already covers that edit. Adopting it onto a row with
+      // an unpushed edit disarms the `If-Match` that edit depends on.
+      final dirty = StoredTask(
+        task: task('t').copyWith(title: 'my unsent edit'),
+        listId: 'L',
+        syncState: SyncState.dirty,
+        localUpdated: 'u',
+        pendingOp: 'update',
+      );
+      const base = BaseSnapshot(
+        title: 'task t',
+        status: TaskStatus.needsAction,
+      );
+      expect(
+        moveAdoption(dirty, task('t').copyWith(title: 'renamed there'), base),
+        MoveAdoption.none,
+      );
+      // A dirty row whose base was never captured proves nothing either way.
+      expect(moveAdoption(dirty, task('t'), null), MoveAdoption.none);
     });
 
     test('move failures', () {

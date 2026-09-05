@@ -672,14 +672,32 @@ class SyncEngine {
 
   /// Adopt a landed move's response. The snapshot taken *before* the call
   /// decides how much of it is adopted: a clean row takes the whole body (a move
-  /// can complete the task server-side — P6), a dirty one only the meta.
+  /// can complete the task server-side — P6), a dirty one at most the meta, and
+  /// only while the response proves no other device edited it (#284).
   Future<void> _applyMoveResponse(StoredTask? before, Task remote) async {
-    if (reconcile.moveAdoption(before) == MoveAdoption.body && before != null) {
-      await _store.applyPushedTask(remote, before.localUpdated);
-    } else {
-      await _store.refreshTaskMeta(remote.id, remote.etag, remote.updated);
+    switch (await _moveAdoption(before, remote)) {
+      case MoveAdoption.body:
+        await _store.applyPushedTask(remote, before!.localUpdated);
+      case MoveAdoption.metaOnly:
+        await _store.refreshTaskMeta(remote.id, remote.etag, remote.updated);
+      case MoveAdoption.none:
+        break;
     }
   }
+
+  /// [reconcile.moveAdoption] with the evidence it judges on: the row's base
+  /// snapshot, i.e. the content this device last agreed with the server. A move
+  /// response that still echoes the base changed nothing but position, so its
+  /// etag is ours to adopt; one that does not means a remote edit raced us, and
+  /// that etag must NOT land on a row holding an unpushed edit (#284). A clean
+  /// row carries no base (schema invariant §B) and needs none — it adopts the
+  /// whole body.
+  Future<MoveAdoption> _moveAdoption(StoredTask? before, Task remote) async =>
+      reconcile.moveAdoption(
+        before,
+        remote,
+        before == null ? null : await _store.baseSnapshot(before.task.id),
+      );
 
   /// Push pending position/parent moves via the Tasks move endpoint.
   Future<void> _pushMoves(SyncOutcome out) async {
@@ -735,10 +753,12 @@ class SyncEngine {
           // the server's parent/position land, both under one txn so a kill in
           // the gap rolls back and the move re-pushes next run.
           final landed = await _localizeOne(remote!, mv.taskId);
+          final adoption = await _moveAdoption(before, landed);
           await _store.finishMove(
             mv.taskId,
             landed,
-            adoptBody: reconcile.moveAdoption(before) == MoveAdoption.body,
+            adoptBody: adoption == MoveAdoption.body,
+            adoptMeta: adoption == MoveAdoption.metaOnly,
             expectedLocalUpdated: before?.localUpdated ?? landed.updated,
           );
           out.pushed += 1;

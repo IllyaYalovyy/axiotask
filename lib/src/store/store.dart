@@ -1117,6 +1117,14 @@ class Store {
   /// pending_op. Used after a move push: the move endpoint returns a new etag,
   /// but the row may carry an unrelated pending content edit whose dirty flag
   /// must survive.
+  ///
+  /// The etag a move returns stands for the WHOLE server row, not just its
+  /// position — so this may only be called once the CALLER has established that
+  /// nothing but the move produced it (`MoveAdoption.metaOnly`, #284). Land the
+  /// etag of a row another device edited on top of an unpushed local edit and
+  /// the next patch's `If-Match` matches: the server takes it, the other
+  /// device's text is gone with no 412 and no conflicted copy — the silent
+  /// overwrite `If-Match` exists to prevent.
   Future<void> refreshTaskMeta(
     String id,
     String? newEtag,
@@ -1333,8 +1341,12 @@ class Store {
   /// pending move intent AND adopt the server's response in a SINGLE
   /// transaction. [adoptBody] adopts the whole response body via
   /// [applyPushedTask] (a CLEAN row — a move can complete the task server-side,
-  /// P6); otherwise only the meta (etag/updated) is refreshed via
-  /// [refreshTaskMeta], sparing an unrelated pending content edit.
+  /// P6); [adoptMeta] takes only the meta (etag/updated) via [refreshTaskMeta],
+  /// sparing an unrelated pending content edit. Neither adopts nothing but the
+  /// cleared intent: the move response showed a remote edit this device has not
+  /// seen, so the pending edit keeps the stale etag that makes its own push
+  /// conditional (#284). The two flags are the arms of one decision
+  /// (`MoveAdoption`) and are never both true.
   ///
   /// Kill-window: split across two writes (as the reference is —
   /// `clear_move` then `apply_move_response`), a crash in the gap leaves the
@@ -1352,13 +1364,15 @@ class Store {
     String taskId,
     Task remote, {
     required bool adoptBody,
+    required bool adoptMeta,
     required String expectedLocalUpdated,
   }) async {
+    assert(!(adoptBody && adoptMeta));
     await _db.transaction(() async {
       await clearMove(taskId);
       if (adoptBody) {
         await applyPushedTask(remote, expectedLocalUpdated);
-      } else {
+      } else if (adoptMeta) {
         await refreshTaskMeta(remote.id, remote.etag, remote.updated);
       }
     });

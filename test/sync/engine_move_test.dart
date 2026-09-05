@@ -370,6 +370,77 @@ void main() {
     expect(await localOrder(eng, 'L1'), ['B', 'A']);
   });
 
+  test('a move does not disarm If-Match on a row with an unsent edit', () async {
+    // #284. The move endpoint mints a FRESH etag, and that etag stands for the
+    // WHOLE server row — including an edit another device landed in the
+    // meantime. Adopting it onto a row that still holds an unpushed edit of its
+    // own disarms the only guard that edit has: the retry's `If-Match` matches,
+    // the server takes the patch, and the other device's text is gone with no
+    // 412, no conflicted copy and no trace. A dirty row keeps its own etag, so
+    // the retry meets the 412 that forks the copy (P3).
+    final (client, eng) = await engine(push: true);
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    client.seedTask('L1', 'A', 'a', '00000000000001');
+    client.seedTask('L1', 'B', 'b', '00000000000002');
+    await eng.run();
+
+    // The user renames A and drags it after B.
+    final a0 = (await findByAnyId(eng.store, 'A'))!;
+    await eng.store.upsertTask(
+      StoredTask(
+        task: a0.task.copyWith(title: 'my unsent edit'),
+        listId: a0.listId,
+        syncState: SyncState.dirty,
+        localUpdated: _t0,
+        pendingOp: 'update',
+        remoteId: a0.remoteId,
+      ),
+    );
+    // Another device renames the same row before either of ours goes out.
+    await client.patchTask(
+      'L1',
+      'A',
+      const TaskPatch(title: 'renamed elsewhere'),
+    );
+    await localMove(eng, 'A', previous: 'B');
+    // The rename's push drops on the network; the reorder still lands, so the
+    // run ends with a dirty row whose server etag the move has just rotated.
+    client.failNext(Method.patchTask, () => const ServerError(503));
+
+    await eng.run();
+    expect(
+      (await findByAnyId(eng.store, 'A'))!.syncState,
+      SyncState.dirty,
+      reason: 'the rename is still queued after the reorder landed',
+    );
+
+    // The retry. This is the run the guard exists for.
+    final out = await eng.run();
+
+    expect(out.conflicts, 1, reason: 'the retry met a 412, not a clean write');
+    final rows = await eng.store.listTasks('L1');
+    final a = rows.firstWhere((r) => serverId(r) == 'A');
+    expect(
+      a.task.title,
+      'renamed elsewhere',
+      reason: "the other device's edit is canonical (P3)",
+    );
+    expect(
+      (await client.getTask('L1', 'A')).title,
+      'renamed elsewhere',
+      reason: 'and it was never overwritten on the server',
+    );
+    expect(
+      rows.map((r) => r.task.title),
+      contains('my unsent edit (conflicted copy)'),
+      reason: 'our edit survives as a copy rather than silently winning',
+    );
+    expect(await remoteOrder(client, 'L1'), [
+      'B',
+      'A',
+    ], reason: 'the reorder still reached the server');
+  });
+
   test('move whose previous died remotely keeps the reparent', () async {
     // §E gap — the ambiguous 404. The user dropped T under P, after P's existing
     // subtask B; another device deleted B in the meantime. B is still in OUR
