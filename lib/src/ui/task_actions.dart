@@ -1,8 +1,8 @@
 // The DESKTOP right-click ACTION SURFACE (MIGRATION-PLAN §4). A single action
 // list — Select, Edit title, Edit notes, Set due date, Move to list,
 // Detach/Make-subtask-of, Duplicate, Details, Open in Google Tasks, Delete —
-// shown by [showTaskContextMenu]: a small menu positioned at the cursor,
-// clamped to the viewport, dismissed by tapping outside.
+// shown by [showTaskContextMenu]: a small menu placed at the cursor so that the
+// WHOLE menu is inside the window, dismissed by tapping outside.
 //
 // A coarse pointer has NO surface here (#245). The per-row "⋮" and its bottom
 // sheet are gone: touch reaches every one of these functions where it already
@@ -16,6 +16,7 @@
 // sub-suite dies with the keyboard layer; the ACTIONS all port.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -318,8 +319,85 @@ class _TaskActionMenuState extends State<TaskActionMenu> {
   }
 }
 
+/// The menu's fixed width, and the keep-out band it holds at every window edge.
+const double _menuWidth = 260;
+const double _menuMargin = 8;
+
+/// Places the action menu against the cursor AFTER measuring it (#285).
+///
+/// The placement this replaced clamped only the menu's TOP edge into the
+/// window, never the menu: a right-click in the bottom third opened a menu
+/// whose lower half — everything from "Set due date" down to "Delete" — hung
+/// below the window and could not be reached at all. Answering "does it fit?"
+/// needs the menu's laid-out height, which is exactly what a
+/// [SingleChildLayoutDelegate] is handed.
+///
+/// The rule is the desktop context-menu standard: open DOWNWARD from the cursor
+/// when there is room, otherwise flip UP so the cursor is the menu's bottom
+/// edge, otherwise sit on the margin. Because the menu is measured with LOOSE
+/// constraints, an inline submenu expanding re-lays-out a child whose size the
+/// parent uses — so the delegate runs again and the menu RE-ANCHORS instead of
+/// growing off the bottom. A menu taller than the window scrolls inside its
+/// own box (the height cap is the window minus the margins), so the last item
+/// is always reachable.
+class _CursorMenuLayout extends SingleChildLayoutDelegate {
+  const _CursorMenuLayout({required this.anchor, required this.margins});
+
+  /// The cursor, in the layout box's coordinates — the same as global, because
+  /// the route is mounted WITHOUT a SafeArea (see [showTaskContextMenu]).
+  final Offset anchor;
+
+  /// The band kept clear at the window edges: [_menuMargin] plus whatever the
+  /// device hides behind (a notch, a gesture pill).
+  final EdgeInsets margins;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints.loose(
+        Size(
+          math.min(
+            _menuWidth,
+            math.max(0.0, constraints.maxWidth - margins.horizontal),
+          ),
+          math.max(0.0, constraints.maxHeight - margins.vertical),
+        ),
+      );
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final left = _between(
+      anchor.dx,
+      margins.left,
+      math.max(margins.left, size.width - margins.right - childSize.width),
+    );
+    final lowest = size.height - margins.bottom - childSize.height;
+    final double top;
+    if (anchor.dy <= lowest) {
+      top = anchor.dy; // room below: the cursor is the menu's TOP edge
+    } else if (anchor.dy - childSize.height >= margins.top) {
+      top = anchor.dy - childSize.height; // flipped: cursor is the BOTTOM edge
+    } else {
+      top = lowest; // taller than either side of the cursor: sit on the margin
+    }
+    return Offset(
+      left,
+      _between(top, margins.top, math.max(margins.top, lowest)),
+    );
+  }
+
+  @override
+  bool shouldRelayout(_CursorMenuLayout old) =>
+      anchor != old.anchor || margins != old.margins;
+
+  /// [v] held between [lo] and [hi] (callers guarantee `lo <= hi`).
+  /// `num.clamp` answers a `num`, and a layout offset must be a `double`.
+  static double _between(double v, double lo, double hi) =>
+      v < lo ? lo : (v > hi ? hi : v);
+}
+
 /// Show the desktop right-click context menu for a row at [globalPosition],
-/// clamped to the viewport. Dismissed by tapping outside (the barrier).
+/// placed so the whole menu is inside the window (#285). Dismissed by tapping
+/// outside (the barrier).
 Future<void> showTaskContextMenu(
   BuildContext context,
   Offset globalPosition,
@@ -328,37 +406,25 @@ Future<void> showTaskContextMenu(
   return showDialog<void>(
     context: context,
     barrierColor: Colors.transparent,
-    builder: (context) {
-      final size = MediaQuery.of(context).size;
-      const menuWidth = 260.0;
-      const menuMaxHeight = 460.0;
-      // Clamp so the menu never spills off-screen (position clamped to viewport,
-      // the ContextMenu.svelte contract).
-      final left = globalPosition.dx.clamp(8.0, size.width - menuWidth - 8);
-      final top = globalPosition.dy.clamp(8.0, size.height - 48);
-      return Stack(
-        children: [
-          Positioned(
-            left: left,
-            top: top,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: menuWidth,
-                maxHeight: menuMaxHeight,
-              ),
-              child: Material(
-                elevation: 8,
-                borderRadius: BorderRadius.circular(8),
-                clipBehavior: Clip.antiAlias,
-                child: TaskActionMenu(
-                  entries: entries,
-                  onClose: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    },
+    // No SafeArea: it would inset the layout box and so shift the menu away
+    // from the click by the device padding. The delegate holds that padding
+    // clear itself, against coordinates that still match [globalPosition].
+    useSafeArea: false,
+    builder: (context) => CustomSingleChildLayout(
+      delegate: _CursorMenuLayout(
+        anchor: globalPosition,
+        margins:
+            MediaQuery.paddingOf(context) + const EdgeInsets.all(_menuMargin),
+      ),
+      child: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: TaskActionMenu(
+          entries: entries,
+          onClose: () => Navigator.of(context).pop(),
+        ),
+      ),
+    ),
   );
 }

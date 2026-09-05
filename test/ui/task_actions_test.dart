@@ -6,7 +6,10 @@
 // action. Keyboard submenu navigation dies with the keyboard layer; the actions
 // all port, and submenus open on CLICK, not hover.
 
+import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/bulk_bar.dart';
+import 'package:axiotask/src/ui/quick_date_menu.dart' show kQuickDateItems;
+import 'package:axiotask/src/ui/task_actions.dart' show TaskActionMenu;
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
@@ -461,6 +464,204 @@ void main() {
           reason: 'the kept desktop menu lost "$id"',
         );
       }
+    });
+  });
+
+  // #285: the menu used to be positioned by clamping its TOP edge to
+  // `height - 48`, which guarantees nothing about the menu — right-clicking a
+  // row in the bottom third opened a menu whose lower half (Set due date …
+  // Delete) hung below the window, unreachable. Placement now MEASURES the menu
+  // first (a SingleChildLayoutDelegate is handed the laid-out child size) and
+  // opens downward, flips up, or clamps accordingly.
+  //
+  // Heights here are widget-test heights: with no font declared, every label
+  // measures about twice its production width, so "Set due date", "Move to
+  // list", "Make subtask of…" and "Open in Google Tasks" wrap to two lines and
+  // the menu is roughly twice as tall as it is for a real user. That is why the
+  // downward case is pinned at a cursor with room for a ~470dp menu rather than
+  // at the window's midpoint.
+  group('menu placement — the WHOLE menu stays in the window (#285)', () {
+    /// Enough rows to right-click at any height in a 500–800dp window.
+    List<StoredTask> manyRows() => [
+      for (var i = 0; i < 20; i++)
+        row('T$i', 'task $i', webViewLink: 'https://g/$i'),
+    ];
+
+    /// Right-click at an exact window point (whatever row is under it).
+    Future<void> rightClickAt(WidgetTester tester, Offset at) async {
+      final gesture = await tester.startGesture(at, buttons: kSecondaryButton);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+    }
+
+    /// Every action the open menu is showing must be reachable: its rect inside
+    /// the window, and inside the menu's own (clipping) box.
+    void expectEveryItemReachable(WidgetTester tester, Size window) {
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      var seen = 0;
+      for (final id in const [
+        'select',
+        'edit',
+        'notes',
+        'due',
+        'move',
+        'demote',
+        'duplicate',
+        'details',
+        'open-google',
+        'delete',
+      ]) {
+        final finder = find.byKey(Key('taskmenu-$id'));
+        if (finder.evaluate().isEmpty) continue;
+        seen++;
+        final r = tester.getRect(finder);
+        expect(
+          r.top >= 0 &&
+              r.left >= 0 &&
+              r.bottom <= window.height &&
+              r.right <= window.width,
+          isTrue,
+          reason: '"$id" at $r hangs outside the $window window',
+        );
+        expect(
+          r.top >= box.top && r.bottom <= box.bottom,
+          isTrue,
+          reason: '"$id" at $r is clipped away by the menu box $box',
+        );
+      }
+      expect(seen, 10, reason: 'the fixture should offer the full action set');
+    }
+
+    testWidgets('a right-click near the window BOTTOM keeps every action on '
+        'screen, flipping the menu up from the cursor', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 780));
+      expect(find.byKey(const Key('taskmenu-delete')), findsOneWidget);
+      expectEveryItemReachable(tester, window);
+      // Flipped: the cursor is now the menu's BOTTOM edge, so the pointer is
+      // still on the menu it opened.
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      expect(box.bottom, 780);
+      expect(box.left, 600);
+    });
+
+    testWidgets('with room below the cursor the menu still opens DOWNWARD, '
+        'its top edge at the click', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 250));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      expect(box.topLeft, const Offset(600, 250));
+      expectEveryItemReachable(tester, window);
+    });
+
+    testWidgets('a right-click at the RIGHT edge pulls the menu back inside '
+        'by its measured width', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(1190, 250));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      expect(box.right, 1192); // the 8dp margin, not the window edge
+      expectEveryItemReachable(tester, window);
+    });
+
+    testWidgets('expanding "Set due date" from the bottom RE-ANCHORS the menu '
+        '— all six date options stay on screen', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 780));
+      final before = tester.getRect(find.byType(TaskActionMenu));
+      await tester.tap(find.byKey(const Key('taskmenu-due')));
+      await tester.pump();
+      final after = tester.getRect(find.byType(TaskActionMenu));
+      // It grew UPWARD out of the cursor instead of off the bottom.
+      expect(after.top, lessThan(before.top));
+      expect(after.bottom, 780);
+      for (final item in kQuickDateItems) {
+        final finder = find.byKey(Key('taskmenu-due-${item.id}'));
+        expect(finder, findsOneWidget, reason: 'missing "${item.label}"');
+        final r = tester.getRect(finder);
+        expect(
+          r.top >= 0 && r.bottom <= window.height,
+          isTrue,
+          reason: '"${item.label}" at $r hangs outside the window',
+        );
+      }
+      expectEveryItemReachable(tester, window);
+    });
+
+    testWidgets('in a window shorter than the menu the body SCROLLS — Delete '
+        'is reachable and nothing is clipped away', (tester) async {
+      const window = Size(1200, 500);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 450));
+      await tester.tap(find.byKey(const Key('taskmenu-due')));
+      await tester.pump();
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      // Capped at the window minus the two 8dp margins, sitting on the top one.
+      expect(box.top, 8);
+      expect(box.height, 484);
+      final delete = find.byKey(const Key('taskmenu-delete'));
+      // Below the fold to begin with…
+      expect(tester.getRect(delete).top, greaterThan(box.bottom));
+      // …and scrolling brings it fully inside the box (and so the window).
+      await tester.drag(find.byType(TaskActionMenu), const Offset(0, -900));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final r = tester.getRect(delete);
+      expect(r.top, greaterThanOrEqualTo(box.top));
+      expect(r.bottom, lessThanOrEqualTo(box.bottom));
+    });
+
+    testWidgets('device chrome is kept clear too: a click over the gesture '
+        'pill lifts the menu above it', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+        padding: phoneInsets,
+      );
+      await rightClickAt(tester, const Offset(600, 770));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      // 8dp above the pill, not 8dp above the window edge.
+      expect(box.bottom, 800 - phoneInsets.bottom - 8);
+      expect(box.top, greaterThanOrEqualTo(phoneInsets.top + 8));
+      expectEveryItemReachable(tester, window);
     });
   });
 }
