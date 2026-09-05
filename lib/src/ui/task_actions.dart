@@ -264,6 +264,55 @@ class _TaskActionMenuState extends State<TaskActionMenu> {
   // hover behavior; only one is open at a time.
   String? _expanded;
 
+  // The menu's own scroll position — explicit because the scrollbar needs it
+  // to paint against, and the submenu reveal needs it to move (#286).
+  final ScrollController _scroll = ScrollController();
+
+  // The first and last row of the CURRENTLY expanded submenu (its header and
+  // its last item), so a reveal can ask for the block by its two ends.
+  final GlobalKey _blockStart = GlobalKey();
+  final GlobalKey _blockEnd = GlobalKey();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Open [entry] (or close it if it is [open] already), and bring what just
+  /// appeared into view.
+  ///
+  /// Expanding is the one thing this menu does that can put NEW rows past its
+  /// own bottom edge: in a short window, "Move to list" with ten lists used to
+  /// answer a tap with one visible target and nine below the fold, which reads
+  /// as a menu that did nothing. The reveal runs the frame after the expansion
+  /// lays out, and asks for the block's END first and its START second, so the
+  /// smaller scroll wins: a block that fits is shown whole, a block taller than
+  /// the menu is shown from its TOP (never scrolled past its first target).
+  ///
+  /// It is a jump, not a glide, because the menu box itself RE-ANCHORS in the
+  /// same frame (#285) — animating the content against a box that moved
+  /// instantly would read as two unrelated motions.
+  void _toggleSubmenu(TaskMenuSubmenu entry, {required bool open}) {
+    setState(() => _expanded = open ? null : entry.id);
+    if (open) return; // collapsing takes nothing new below the fold
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _reveal(_blockEnd, ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+      _reveal(_blockStart, ScrollPositionAlignmentPolicy.keepVisibleAtStart);
+    });
+  }
+
+  void _reveal(GlobalKey row, ScrollPositionAlignmentPolicy policy) {
+    final rowContext = row.currentContext;
+    if (rowContext == null) return;
+    Scrollable.ensureVisible(
+      rowContext,
+      duration: Duration.zero,
+      alignmentPolicy: policy,
+    );
+  }
+
   void _activate(TaskMenuItem item) {
     widget.onClose();
     // Run after the surface has closed so an action that opens another surface
@@ -295,26 +344,49 @@ class _TaskActionMenuState extends State<TaskActionMenu> {
           children.add(_leaf(entry));
         case TaskMenuSubmenu():
           final open = _expanded == entry.id;
+          final header = ListTile(
+            key: Key('taskmenu-${entry.id}'),
+            dense: true,
+            leading: Icon(entry.icon, size: 20),
+            title: Text(entry.label),
+            trailing: Icon(open ? Icons.expand_less : Icons.chevron_right),
+            // Click-not-hover: tap toggles the inline expansion.
+            onTap: () => _toggleSubmenu(entry, open: open),
+          );
+          // The expanded block is tagged at both ends for the reveal.
           children.add(
-            ListTile(
-              key: Key('taskmenu-${entry.id}'),
-              dense: true,
-              leading: Icon(entry.icon, size: 20),
-              title: Text(entry.label),
-              trailing: Icon(open ? Icons.expand_less : Icons.chevron_right),
-              // Click-not-hover: tap toggles the inline expansion.
-              onTap: () => setState(() => _expanded = open ? null : entry.id),
-            ),
+            open ? KeyedSubtree(key: _blockStart, child: header) : header,
           );
           if (open) {
-            for (final item in entry.items) {
-              children.add(_leaf(item, indent: 16));
+            for (final (i, item) in entry.items.indexed) {
+              final leaf = _leaf(item, indent: 16);
+              children.add(
+                i == entry.items.length - 1
+                    ? KeyedSubtree(key: _blockEnd, child: leaf)
+                    : leaf,
+              );
             }
           }
       }
     }
-    return SingleChildScrollView(
-      child: Column(mainAxisSize: MainAxisSize.min, children: children),
+    // A menu taller than the window scrolls, and now SAYS it does: the thumb is
+    // the only edge available to say so, since the menu is placed to fit (#285)
+    // and so never hangs over one. `thumbVisibility` is not "always painted" —
+    // the painter draws nothing while there is nothing to scroll, which is what
+    // keeps the affordance honest on the menu that fits.
+    return Scrollbar(
+      controller: _scroll,
+      thumbVisibility: true,
+      // Desktop's ScrollBehavior would add a SECOND scrollbar of its own —
+      // the fading one that was already here and that nobody saw, because it
+      // only appears while the content is moving.
+      child: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+        child: SingleChildScrollView(
+          controller: _scroll,
+          child: Column(mainAxisSize: MainAxisSize.min, children: children),
+        ),
+      ),
     );
   }
 }

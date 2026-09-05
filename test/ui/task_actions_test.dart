@@ -14,6 +14,7 @@ import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderCustomPaint;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'detail_harness.dart' show list, row;
@@ -662,6 +663,189 @@ void main() {
       expect(box.bottom, 800 - phoneInsets.bottom - 8);
       expect(box.top, greaterThanOrEqualTo(phoneInsets.top + 8));
       expectEveryItemReachable(tester, window);
+    });
+  });
+
+  // #286: a menu too tall for the window scrolls — but it said so nowhere. The
+  // body was a bare SingleChildScrollView, and the only scrollbar it had was
+  // the platform's, which appears WHILE the content moves: a user who does not
+  // already know to scroll never sees one. Nothing hangs over a window edge to
+  // hint at it either, because the menu is placed to FIT (#285). So a short
+  // window showed a menu that looked complete and was not, and an inline
+  // submenu expanded into rows laid out past the fold — opening "Move to list"
+  // could reveal one target out of ten.
+  //
+  // Widget-test heights again: with no font declared every label measures about
+  // twice its production width, so the collapsed menu is ~467dp tall here. The
+  // windows below are chosen against that, not against a real desktop.
+  group('a menu that scrolls SAYS so (#286)', () {
+    /// Enough rows to right-click anywhere in a short window.
+    List<StoredTask> manyRows() => [
+      for (var i = 0; i < 20; i++)
+        row('T$i', 'task $i', webViewLink: 'https://g/$i'),
+    ];
+
+    /// [n] move targets — enough of them and the expanded submenu runs past
+    /// the fold.
+    List<StoredTaskList> lists(int n) => [
+      for (var i = 1; i <= n; i++) list('L$i', 'List $i'),
+    ];
+
+    /// Right-click at an exact window point and let the menu SETTLE — the
+    /// scrollbar fades in over 300ms once the scroll view has reported its
+    /// metrics, so a single pump would sample a thumb at zero opacity.
+    Future<void> rightClickAt(WidgetTester tester, Offset at) async {
+      final gesture = await tester.startGesture(at, buttons: kSecondaryButton);
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(milliseconds: 350));
+    }
+
+    final scrollbarPaint = find.descendant(
+      of: find.byType(TaskActionMenu),
+      matching: find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.foregroundPainter is ScrollbarPainter,
+      ),
+    );
+
+    /// The thumb the open menu is actually PAINTING, in window coordinates, or
+    /// null when it paints none — recorded off the live [ScrollbarPainter] the
+    /// menu mounted, so the assertion is about pixels on screen rather than a
+    /// flag on a widget.
+    Rect? paintedThumb(WidgetTester tester) {
+      if (scrollbarPaint.evaluate().isEmpty) return null;
+      final render = tester.renderObject<RenderCustomPaint>(scrollbarPaint);
+      final canvas = TestRecordingCanvas();
+      (render.foregroundPainter! as ScrollbarPainter).paint(
+        canvas,
+        render.size,
+      );
+      for (final call in canvas.invocations) {
+        if (call.invocation.memberName == #drawRRect) {
+          final rrect = call.invocation.positionalArguments.first as RRect;
+          return rrect.outerRect.shift(render.localToGlobal(Offset.zero));
+        }
+      }
+      return null; // the painter declined to paint: nothing to scroll
+    }
+
+    /// Every action id the open menu shows, top to bottom, must sit inside the
+    /// menu's own box to be reachable without scrolling.
+    void expectInsideBox(WidgetTester tester, Rect box, List<String> ids) {
+      for (final id in ids) {
+        final finder = find.byKey(Key('taskmenu-$id'));
+        expect(finder, findsOneWidget, reason: 'no "$id" in the menu');
+        final r = tester.getRect(finder);
+        expect(
+          r.top >= box.top && r.bottom <= box.bottom,
+          isTrue,
+          reason: '"$id" at $r is outside the menu box $box',
+        );
+      }
+    }
+
+    testWidgets('a menu taller than the window paints a thumb, so the user can '
+        'see there is more below', (tester) async {
+      const window = Size(1200, 400);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 350));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      // The menu really is cut off: Delete is laid out past its bottom edge.
+      expect(
+        tester.getRect(find.byKey(const Key('taskmenu-delete'))).bottom,
+        greaterThan(box.bottom),
+        reason: 'fixture no longer overflows — the case under test is gone',
+      );
+      final thumb = paintedThumb(tester);
+      expect(thumb, isNotNull, reason: 'a scrollable menu painted no thumb');
+      // Inside the menu, against its right edge, and shorter than the track —
+      // a thumb that filled the track would say the opposite of the truth.
+      expect(box.contains(thumb!.topLeft), isTrue, reason: '$thumb vs $box');
+      expect(
+        box.contains(thumb.bottomRight - const Offset(0.5, 0.5)),
+        isTrue,
+        reason: '$thumb vs $box',
+      );
+      expect(thumb.right, greaterThan(box.right - 16));
+      expect(thumb.height, lessThan(box.height * 0.9));
+    });
+
+    testWidgets('a menu that FITS paints no thumb — the affordance appears '
+        'only when there is something to scroll', (tester) async {
+      const window = Size(1200, 800);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: twoLists,
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 250));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      expect(
+        tester.getRect(find.byKey(const Key('taskmenu-delete'))).bottom,
+        lessThanOrEqualTo(box.bottom),
+        reason: 'fixture overflows — this case needs a menu that FITS',
+      );
+      expect(
+        paintedThumb(tester),
+        isNull,
+        reason: 'a menu with nothing to scroll painted a scrollbar thumb',
+      );
+    });
+
+    testWidgets('expanding "Move to list" past the fold scrolls the WHOLE '
+        'submenu into view', (tester) async {
+      const window = Size(1200, 500);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: lists(10),
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 450));
+      await tester.tap(find.byKey(const Key('taskmenu-move')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      // The header the user tapped, the first target and the last one: the
+      // block is short enough to show whole, so all of it is on screen.
+      expectInsideBox(tester, box, ['move', 'move-L1', 'move-L10']);
+    });
+
+    testWidgets('a submenu TALLER than the menu itself is revealed from its '
+        'TOP — the first target is never scrolled past', (tester) async {
+      const window = Size(1200, 500);
+      await pumpList(
+        tester,
+        initial: manyRows(),
+        lists: lists(20),
+        size: window,
+        platform: TargetPlatform.linux,
+      );
+      await rightClickAt(tester, const Offset(600, 450));
+      await tester.tap(find.byKey(const Key('taskmenu-move')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final box = tester.getRect(find.byType(TaskActionMenu));
+      // It cannot all fit; what the user must see is the header and the start
+      // of the list, not its tail.
+      expectInsideBox(tester, box, ['move', 'move-L1', 'move-L2']);
+      expect(
+        tester.getRect(find.byKey(const Key('taskmenu-move'))).top,
+        lessThan(box.top + 8),
+        reason: 'the expanded header should be scrolled to the menu top',
+      );
+      // …and the thumb says the rest is below.
+      expect(paintedThumb(tester), isNotNull);
     });
   });
 }
