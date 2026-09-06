@@ -47,6 +47,7 @@ class ListChromeActions {
     required this.onSort,
     required this.onShowCompleted,
     required this.onClearCompleted,
+    required this.onExport,
   });
 
   /// The active sort order for the current view.
@@ -79,6 +80,9 @@ class ListChromeActions {
   /// the entry (not a concrete list, or completed tasks are hidden).
   final VoidCallback? onClearCompleted;
 
+  /// Open the export sheet for the current view (#297); `null` drops the entry.
+  final VoidCallback? onExport;
+
   @override
   bool operator ==(Object other) =>
       other is ListChromeActions &&
@@ -90,7 +94,8 @@ class ListChromeActions {
       other.onBulkAdd == onBulkAdd &&
       other.onSort == onSort &&
       other.onShowCompleted == onShowCompleted &&
-      other.onClearCompleted == onClearCompleted;
+      other.onClearCompleted == onClearCompleted &&
+      other.onExport == onExport;
 
   @override
   int get hashCode => Object.hash(
@@ -103,6 +108,7 @@ class ListChromeActions {
     onSort,
     onShowCompleted,
     onClearCompleted,
+    onExport,
   );
 }
 
@@ -197,6 +203,8 @@ class CompactListActions extends StatelessWidget {
                 actions.onShowCompleted(!actions.showCompleted);
               case 'clear-completed':
                 actions.onClearCompleted?.call();
+              case 'export':
+                actions.onExport?.call();
             }
           },
           itemBuilder: (context) => [
@@ -237,6 +245,16 @@ class CompactListActions extends StatelessWidget {
                 'Show completed',
               ),
             ),
+            if (actions.onExport != null)
+              PopupMenuItem<String>(
+                key: const Key('toolbar-export'),
+                value: 'export',
+                child: _entry(
+                  context,
+                  Icons.file_download_outlined,
+                  'Export view…',
+                ),
+              ),
             if (actions.onClearCompleted != null) ...[
               const PopupMenuDivider(),
               // Last, divided off and error-toned: the one destructive,

@@ -114,36 +114,59 @@ class ListToolbar extends StatelessWidget {
                   ),
                 ),
               ),
-              if (actions.onSelectTasks != null)
+              // The overflow renders for ANY entry it has to carry, not just
+              // the coarse-pointer one: "Select tasks" is touch-only, so a
+              // gate on that alone would hide the export from every mouse.
+              if (actions.onSelectTasks != null || actions.onExport != null)
                 PopupMenuButton<String>(
                   key: const Key('toolbar-overflow'),
                   tooltip: 'More list actions',
                   icon: const Icon(Icons.more_vert),
-                  onSelected: (_) => actions.onSelectTasks!(),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'select':
+                        actions.onSelectTasks?.call();
+                      case 'export':
+                        actions.onExport?.call();
+                    }
+                  },
                   itemBuilder: (context) => [
-                    PopupMenuItem<String>(
-                      key: const Key('toolbar-select-tasks'),
-                      value: 'select',
-                      enabled: actions.selectTasksEnabled,
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.check_box_outlined,
-                            size: 20,
-                            // PopupMenuItem greys the LABEL of a disabled entry
-                            // (a DefaultTextStyle) but not an icon, which would
-                            // leave a half-disabled row.
-                            color: actions.selectTasksEnabled
-                                ? null
-                                : Theme.of(context).disabledColor,
-                          ),
-                          const SizedBox(width: 12),
-                          // A Material menu caps its width; at a large text
-                          // scale the label wraps rather than being clipped.
-                          const Flexible(child: Text('Select tasks')),
-                        ],
+                    if (actions.onSelectTasks != null)
+                      PopupMenuItem<String>(
+                        key: const Key('toolbar-select-tasks'),
+                        value: 'select',
+                        enabled: actions.selectTasksEnabled,
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.check_box_outlined,
+                              size: 20,
+                              // PopupMenuItem greys the LABEL of a disabled
+                              // entry (a DefaultTextStyle) but not an icon,
+                              // which would leave a half-disabled row.
+                              color: actions.selectTasksEnabled
+                                  ? null
+                                  : Theme.of(context).disabledColor,
+                            ),
+                            const SizedBox(width: 12),
+                            // A Material menu caps its width; at a large text
+                            // scale the label wraps rather than being clipped.
+                            const Flexible(child: Text('Select tasks')),
+                          ],
+                        ),
                       ),
-                    ),
+                    if (actions.onExport != null)
+                      const PopupMenuItem<String>(
+                        key: Key('toolbar-export'),
+                        value: 'export',
+                        child: Row(
+                          children: [
+                            Icon(Icons.file_download_outlined, size: 20),
+                            SizedBox(width: 12),
+                            Flexible(child: Text('Export view…')),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
             ],

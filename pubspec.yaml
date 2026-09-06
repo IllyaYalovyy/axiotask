@@ -119,6 +119,21 @@ dependencies:
   # auth/google_sign_in_token_provider.dart; desktop never touches it. Resolves
   # under the meta 1.18.0 / analyzer-12 ceiling (T0.1).
   google_sign_in: ^7.2.0
+  # Export delivery on ANDROID (#297) — the system share sheet is the only way
+  # a phone hands a document to another app (there is no user-visible
+  # filesystem to save into), and it is a platform intent, so it cannot be
+  # written in Dart. The canonical, maintained plugin; it also declares the
+  # FileProvider that makes the shared CSV readable by the receiving app.
+  # Behind the [ExportDelivery] seam (app/export_delivery.dart) so no test ever
+  # touches the plugin channel. Adds ONE transitive package
+  # (share_plus_platform_interface); see the #297 report for the justification.
+  share_plus: ^13.3.0
+  # Export delivery on DESKTOP (#297) — the GTK save dialog behind "Save…",
+  # the Flutter-team plugin for it. Same seam, same test isolation: the picker
+  # is one injected function, so the file-writing half of Save is exercised on
+  # the host VM. It also ships file_selector_android into the APK (a handful of
+  # KB the phone build never calls, since Android exports by share sheet).
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:

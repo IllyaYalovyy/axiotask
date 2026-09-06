@@ -274,7 +274,7 @@ void main() {
       );
     });
 
-    testWidgets('the toolbar overflow is a COARSE-pointer affordance — the '
+    testWidgets('"Select tasks" is a COARSE-pointer affordance — the '
         'desktop reaches selection by Ctrl-click and right-click', (
       tester,
     ) async {
@@ -284,7 +284,16 @@ void main() {
         lists: oneList,
         platform: TargetPlatform.linux,
       );
-      expect(find.byKey(const Key('toolbar-overflow')), findsNothing);
+
+      // The overflow itself is no longer touch-only: it is where "Export view…"
+      // lives on every pointer class (#297). What must stay away from a mouse
+      // is the selection ENTRY, not the button that opens the menu.
+      await tester.tap(find.byKey(const Key('toolbar-overflow')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('toolbar-select-tasks')), findsNothing);
+      expect(find.text('Select tasks'), findsNothing);
+      expect(find.byKey(const Key('toolbar-export')), findsOneWidget);
     });
   });
 

@@ -49,6 +49,7 @@ void main() {
                 onDeleteList: (id) => cap.deleted.add(id),
                 onToggleExclude: (id) => cap.toggled.add(id),
                 onReorderLists: (o) => cap.reordered.add(o),
+                onExportList: (id) => cap.exported.add(id),
                 footer: footer,
               ),
               const Expanded(child: SizedBox()),
@@ -287,6 +288,29 @@ void main() {
   });
 
   // ── The list menu: three distinct things, Delete fenced off (#248) ────────
+  // The failure barred: a list the user can see but cannot get OUT of the app —
+  // the export entry has to be on the list's own menu, aimed at THAT list, on
+  // the one surface a finger can reach (touch has no right-click).
+  group('exporting a list:', () {
+    testWidgets('the list menu offers Export… and names the list', (
+      tester,
+    ) async {
+      final cap = await pump(
+        tester,
+        lists: [list('L1', 'Work'), list('L2', 'Home')],
+      );
+
+      // The SECOND list's menu — an export must carry the id of the row it was
+      // opened from, not of whichever list happens to be selected.
+      await tester.tap(find.byIcon(Icons.more_vert).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Export…'));
+      await tester.pumpAndSettle();
+
+      expect(cap.exported, ['L2']);
+    });
+  });
+
   // The failure barred: `Delete list` sitting undivided, in the same tone,
   // directly under the exclude toggle the user reaches for routinely — a
   // slightly mis-aimed tap lands on an irreversible cascade delete.
@@ -489,4 +513,5 @@ class _Captured {
   final List<String> deleted = [];
   final List<String> toggled = [];
   final List<List<String>> reordered = [];
+  final List<String> exported = [];
 }

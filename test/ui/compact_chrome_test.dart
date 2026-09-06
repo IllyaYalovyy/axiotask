@@ -153,6 +153,29 @@ void main() {
     return gesture;
   }
 
+  // The failure barred: the export reachable only from the desktop toolbar, so
+  // a phone — where the app bar IS the toolbar — could never export a view at
+  // all. Touch has no right-click and no second place to look.
+  group('exporting the view from the one bar (#297)', () {
+    testWidgets('the app-bar overflow opens the export sheet for the view', (
+      tester,
+    ) async {
+      final fake = FakeCommands([row('T1', 'Buy milk')]);
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      await tester.tap(find.descendant(of: appBar, matching: overflow));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('toolbar-export')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Export All Tasks'), findsOneWidget);
+      // …and the sheet's buttons are inside the phone's safe area, not under
+      // the bar it was opened from.
+      expect(find.byKey(const Key('export-copy')), findsOneWidget);
+    });
+  });
+
   group('one bar (#244)', () {
     testWidgets('the toolbar actions live IN the app bar — search, sort and '
         'the overflow, with no second bar under it', (tester) async {

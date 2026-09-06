@@ -41,6 +41,7 @@ class Sidebar extends StatelessWidget {
     required this.onDeleteList,
     required this.onToggleExclude,
     required this.onReorderLists,
+    this.onExportList,
     this.footer,
     this.onOpenProperties,
     this.onToggleTheme,
@@ -84,6 +85,11 @@ class Sidebar extends StatelessWidget {
 
   /// The full list-id order after a drag reorder.
   final ValueChanged<List<String>> onReorderLists;
+
+  /// Export list `id` — opens the export sheet aimed at that list (#297).
+  /// `null` drops the entry (a sidebar mounted without the sheet, as in the
+  /// standalone widget tests).
+  final ValueChanged<String>? onExportList;
 
   /// The auth/sync footer, held at the bottom while there is room and scrolled
   /// with the rest when there is not. `null` hides it (auth wiring pending).
@@ -168,6 +174,9 @@ class Sidebar extends StatelessWidget {
               onRename: () => _renameList(context, lists[i]),
               onDelete: () => _deleteList(context, lists[i]),
               onToggleExclude: () => onToggleExclude(lists[i].list.id),
+              onExport: onExportList == null
+                  ? null
+                  : () => onExportList!(lists[i].list.id),
             ),
           ),
           const SliverToBoxAdapter(child: SizedBox(height: 8)),
@@ -452,6 +461,7 @@ class _ListRow extends StatelessWidget {
     required this.onRename,
     required this.onDelete,
     required this.onToggleExclude,
+    required this.onExport,
     super.key,
   });
 
@@ -464,6 +474,7 @@ class _ListRow extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onToggleExclude;
+  final VoidCallback? onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -552,6 +563,7 @@ class _ListRow extends StatelessWidget {
                   onRename: onRename,
                   onDelete: onDelete,
                   onToggleExclude: onToggleExclude,
+                  onExport: onExport,
                 ),
               ],
             ),
@@ -569,12 +581,14 @@ class _ListMenu extends StatelessWidget {
     required this.onRename,
     required this.onDelete,
     required this.onToggleExclude,
+    required this.onExport,
   });
 
   final bool excluded;
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onToggleExclude;
+  final VoidCallback? onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -589,6 +603,8 @@ class _ListMenu extends StatelessWidget {
             onDelete();
           case 'exclude':
             onToggleExclude();
+          case 'export':
+            onExport?.call();
         }
       },
       itemBuilder: (context) {
@@ -616,6 +632,16 @@ class _ListMenu extends StatelessWidget {
                   : 'Exclude from smart views',
             ),
           ),
+          // Taking the list OUT of the app: a read-only action, so it sits with
+          // the harmless entries above the rule rather than beside the delete.
+          if (onExport != null)
+            const PopupMenuItem(
+              value: 'export',
+              child: _MenuRow(
+                icon: Icons.file_download_outlined,
+                label: 'Export…',
+              ),
+            ),
           // Deleting a list cascades every task in it and there is no undo, so
           // it is fenced off from the toggle above it and toned as what it is
           // — a mis-aimed tap used to land straight on it (#248).
