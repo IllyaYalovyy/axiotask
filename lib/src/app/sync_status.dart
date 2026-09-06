@@ -7,6 +7,13 @@
 // lines across cadence ticks — which can carry raw SQL and must never reach the
 // UI. [SyncStatusView] is what the Properties dialog and the sync-updated
 // notification render, and it deliberately omits that field.
+//
+// [SyncStatusView.quarantined] rides that sanitized surface deliberately
+// (#296): a held row's id and its own title carry nothing internal — a title is
+// the user's own words (#187) — and the "Needs attention" view cannot retry,
+// discard or open a row it cannot name.
+
+import '../model/attention.dart' show ConflictLink, QuarantinedRow;
 
 /// Live sync status and running stats.
 ///
@@ -52,6 +59,18 @@ class SyncStatus {
   /// carries it and the UI can surface a re-auth action, not just an error.
   bool needsReauth = false;
 
+  /// The rows the poison cap is HOLDING (#270/#296), as of the last successful
+  /// run. A state, not an event: it is re-reported every run for as long as the
+  /// rows stay held, and a run that fails leaves it untouched (they are still
+  /// held). Empty is the healthy value.
+  List<QuarantinedRow> quarantined = const [];
+
+  /// The conflicted copies forked this session (#296) — the id pairs the "Needs
+  /// attention" view resolves against the live rows. Cumulative, never cleared
+  /// by a run: a fork the user has not decided on yet is still waiting, and one
+  /// they HAVE decided on stops resolving to a live pair on its own.
+  List<ConflictLink> conflicts = const [];
+
   /// A deep copy — the notifier emits snapshots so a later run's mutation can
   /// never retroactively alter what a listener already received.
   SyncStatus clone() => SyncStatus()
@@ -64,7 +83,9 @@ class SyncStatus {
     ..lastError = lastError
     ..lastRawError = lastRawError
     ..needsAttention = needsAttention
-    ..needsReauth = needsReauth;
+    ..needsReauth = needsReauth
+    ..quarantined = List.unmodifiable(quarantined)
+    ..conflicts = List.unmodifiable(conflicts);
 }
 
 /// The sanitized, UI-facing projection of [SyncStatus] — the Dart port of
@@ -82,6 +103,8 @@ class SyncStatusView {
     required this.lastError,
     required this.needsAttention,
     required this.needsReauth,
+    this.quarantined = const [],
+    this.conflicts = const [],
   });
 
   /// Project a [SyncStatus] to its UI-safe view, dropping the raw error detail.
@@ -95,6 +118,8 @@ class SyncStatusView {
     lastError: s.lastError,
     needsAttention: s.needsAttention,
     needsReauth: s.needsReauth,
+    quarantined: List.unmodifiable(s.quarantined),
+    conflicts: List.unmodifiable(s.conflicts),
   );
 
   final String? lastSynced;
@@ -109,6 +134,13 @@ class SyncStatusView {
   final bool needsAttention;
   final bool needsReauth;
 
+  /// The rows the poison cap is holding — see [SyncStatus.quarantined]. What
+  /// the "Needs attention" view lists and acts on (#296).
+  final List<QuarantinedRow> quarantined;
+
+  /// The conflicted copies forked this session — see [SyncStatus.conflicts].
+  final List<ConflictLink> conflicts;
+
   /// A "never synced" snapshot — the Properties Sync tab's default before any
   /// sync has run (and the seam value until the scheduler is wired in).
   const SyncStatusView.initial()
@@ -120,7 +152,9 @@ class SyncStatusView {
       totalSyncs = 0,
       lastError = null,
       needsAttention = false,
-      needsReauth = false;
+      needsReauth = false,
+      quarantined = const [],
+      conflicts = const [];
 }
 
 /// A live signal about ONE sync run — the transient facts the outcome-carrying

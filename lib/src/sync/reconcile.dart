@@ -18,6 +18,7 @@
 // Pure Dart: no Flutter dependency, fully unit-testable.
 
 import '../api/api_error.dart';
+import '../model/attention.dart' show kConflictedCopySuffix;
 import '../model/base_snapshot.dart';
 import '../model/dates.dart' show normalizeDue;
 import '../model/task.dart';
@@ -191,7 +192,7 @@ StoredTask conflictedCopy(StoredTask local, Task remote, String newId) =>
         id: newId,
         parent: local.task.parent,
         position: local.task.position,
-        title: '${local.task.title} (conflicted copy)',
+        title: '${local.task.title}$kConflictedCopySuffix',
         notes: local.task.notes,
         status: local.task.status,
         due: local.task.due,

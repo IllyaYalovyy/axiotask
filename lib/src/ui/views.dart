@@ -52,6 +52,15 @@ enum SmartView {
   }
 }
 
+/// The id of the "Needs attention" view (#296) — a smart view in every sense
+/// except that it is not one of [SmartView]'s five: it carries no date
+/// predicate, it is not a bottom-bar destination, and it EXISTS only while it
+/// has something in it.
+const String kAttentionViewId = 'attention';
+
+/// Its label — in the sidebar, the app bar and the window title.
+const String kAttentionViewLabel = 'Needs attention';
+
 /// The human label for [viewId]: a smart-view name, else the matching entry in
 /// [listTitles], else the "All Tasks" fallback (never blank — a stale persisted
 /// view id must still yield a sensible title).
@@ -59,6 +68,7 @@ String viewLabelFor(
   String viewId, {
   Map<String, String> listTitles = const {},
 }) {
+  if (viewId == kAttentionViewId) return kAttentionViewLabel;
   return SmartView.byId(viewId)?.label ??
       listTitles[viewId] ??
       SmartView.all.label;

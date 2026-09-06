@@ -16,6 +16,7 @@
 
 import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/fake_tasks_api.dart';
+import 'package:axiotask/src/model/attention.dart' show QuarantinedRow;
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
@@ -98,9 +99,14 @@ void main() {
     );
     final capped = await runSync();
     expect(client.callCount(Method.patchTask), kPoisonRejectCap);
-    expect(capped.quarantined, [
-      'Poison renamed',
-    ], reason: 'the run that exhausts the budget names the stuck change');
+    final localId = (await findByAnyId(store, 'T1'))!.task.id;
+    expect(
+      capped.quarantined,
+      [QuarantinedRow(id: localId, title: 'Poison renamed')],
+      reason:
+          'the run that exhausts the budget names the stuck change AND says '
+          'which row it is, so the "Needs attention" view can act on it (#296)',
+    );
     expect(
       capped.errors,
       0,
@@ -116,7 +122,7 @@ void main() {
       reason: 'a quarantined row must not be pushed again',
     );
     expect(held.quarantined, [
-      'Poison renamed',
+      QuarantinedRow(id: localId, title: 'Poison renamed'),
     ], reason: 'the status keeps naming it for as long as it is held');
     expect(held.errors, 0);
     expect(
