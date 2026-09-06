@@ -323,6 +323,32 @@ class _TaskRowState extends State<TaskRow> {
   /// a screen reader can never hear a different name than the eye reads.
   String get _displayTitle => widget.title.isEmpty ? 'Untitled' : widget.title;
 
+  /// The task's own due date, or `null` when it has none (blank counts as none).
+  String? get _ownDue => (widget.due ?? '').isNotEmpty ? widget.due : null;
+
+  /// The date borrowed from the earliest unfinished subtask — shown only when
+  /// the task has no [_ownDue].
+  String? get _inheritedDue =>
+      (widget.inheritedDue ?? '').isNotEmpty ? widget.inheritedDue : null;
+
+  /// What the due segment SAYS (#289) — the same date the badge shows, in
+  /// words, named as the due date.
+  ///
+  /// The badge itself is a glance: "5d overdue" under a title, beside a notes
+  /// icon. A screen reader gets no position and no colour, so the label has to
+  /// carry both halves the eye reads off the layout — that this is the DUE
+  /// DATE, and what it is. The "↳" marker's borrowed date says whose it is;
+  /// the arrow glyph itself is silent.
+  String get _dueSemanticLabel {
+    final own = _ownDue;
+    if (own != null) return 'Due ${formatDueSpoken(own)}';
+    final inherited = _inheritedDue;
+    if (inherited != null) {
+      return 'No due date, earliest subtask due ${formatDueSpoken(inherited)}';
+    }
+    return 'No due date';
+  }
+
   void _startEdit() {
     setState(() {
       _editor = TextEditingController(text: widget.title);
@@ -966,10 +992,8 @@ class _TaskRowState extends State<TaskRow> {
   /// [TaskRow.onPickDate] wired the tap goes straight to the calendar, and with
   /// neither callback the segment is plain text (no dead button).
   Widget _dueSegment(ThemeData theme, TextStyle? muted) {
-    final own = (widget.due ?? '').isNotEmpty ? widget.due : null;
-    final inherited = (widget.inheritedDue ?? '').isNotEmpty
-        ? widget.inheritedDue
-        : null;
+    final own = _ownDue;
+    final inherited = _inheritedDue;
 
     Widget child;
     if (own != null) {
@@ -1037,23 +1061,40 @@ class _TaskRowState extends State<TaskRow> {
     // padding around the content on either: the segment's leading glyph is the
     // meta line's leading edge, and it lines up with the title's first glyph.
     final target = metaTouchTarget(theme.platform, child);
-    if (!_dateMenuWired) {
-      return StateLayer(
+    // The segment is a BUTTON and says so (#289). [StateLayer] is an [InkWell],
+    // which publishes a tap action and nothing else, so the node announced as
+    // "5d overdue, double tap to activate": no role, and a phrase that names
+    // neither the field nor the task. The role goes here rather than in
+    // [StateLayer] itself because the wrapper's other call sites are not
+    // buttons — the row body and the sidebar/search rows are list items, and
+    // the two completed-toggles are checkboxes.
+    //
+    // The visible label is EXCLUDED underneath: it is written for the eye
+    // ("5d overdue"), and [_dueSemanticLabel] says the same date in words.
+    //
+    // The action is named with `onTapHint`, not `hint`: Android's bridge folds
+    // a plain `hint` into the node's CONTENT DESCRIPTION
+    // (`AccessibilityBridge.getValueLabelHint`), so every row would carry the
+    // phrase as part of its NAME; an `onTapHint` becomes the label of the click
+    // action (`BaseRoleConfigurator.configureTappable`), so TalkBack says
+    // "double tap to open the date options" — and suppresses it entirely for
+    // users who have turned usage hints off.
+    Widget button(VoidCallback onTap) => Semantics(
+      button: true,
+      label: _dueSemanticLabel,
+      onTapHint: _dateMenuWired ? 'open the date options' : 'open the calendar',
+      child: StateLayer(
         key: const Key('row-due-segment'),
-        onTap: widget.onPickDate!,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(4),
-        child: target,
-      );
-    }
+        child: ExcludeSemantics(child: target),
+      ),
+    );
+    if (!_dateMenuWired) return button(widget.onPickDate!);
     return QuickDateAnchor(
       onSetDue: widget.onSetDue!,
       onPickDate: widget.onPickDate!,
-      builder: (context, open) => StateLayer(
-        key: const Key('row-due-segment'),
-        onTap: open,
-        borderRadius: BorderRadius.circular(4),
-        child: target,
-      ),
+      builder: (context, open) => button(open),
     );
   }
 }

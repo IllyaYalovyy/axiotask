@@ -80,6 +80,30 @@ String formatDue(String? due) {
   return d.year != now.year ? '$month ${d.day}, ${d.year}' : '$month ${d.day}';
 }
 
+/// [formatDue]'s date in words a SCREEN READER can say (#289).
+///
+/// The badge is written for the eye — "5d overdue", "in 3d" — and a screen
+/// reader is free to read "5d" as a letter after a number. Same reasoning as
+/// the subtask pill's "1 of 3 subtasks complete" (#287): what is announced has
+/// to be a phrase, not a glyph. The absolute form ("Jul 4") already is one, so
+/// beyond a week out this IS [formatDue].
+///
+/// Returns the empty string when [due] is null/empty — an undated task has no
+/// date to say, and the caller words that state itself.
+String formatDueSpoken(String? due) {
+  if (due == null || due.isEmpty) return '';
+  final d = parseLocalDate(due);
+  final n = clock.now();
+  final now = DateTime(n.year, n.month, n.day);
+  final diff = d.difference(now).inDays;
+  if (diff < -1) return '${-diff} days ago';
+  if (diff == -1) return 'yesterday';
+  if (diff == 0) return 'today';
+  if (diff == 1) return 'tomorrow';
+  if (diff < 7) return 'in $diff days';
+  return formatDue(due);
+}
+
 /// An absolute LOCAL date-and-time label for a stored instant — "Jun 15 14:05",
 /// with the year added only when it differs from the current one.
 ///

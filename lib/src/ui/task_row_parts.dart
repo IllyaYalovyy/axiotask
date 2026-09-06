@@ -80,37 +80,44 @@ class LinkBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: url,
-      child: StateLayer(
-        key: const Key('link-badge'),
-        onTap: () => onOpen(url),
-        borderRadius: BorderRadius.circular(4),
-        // A finger gets the whole meta band as a target; the mouse keeps it
-        // compact (F19 #198's 48dp audit — see [metaTouchTarget]). No padding
-        // of its own: every meta item is exactly one [kMetaLineHeight] text
-        // line, flush with the line's leading edge (#276).
-        child: metaTouchTarget(
-          theme.platform,
-          SizedBox(
-            height: kMetaLineHeight,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.open_in_new,
-                  size: kMetaIconSize,
-                  color: theme.colorScheme.primary,
-                  semanticLabel: 'Open link',
-                ),
-                if (extra > 0) ...[
-                  const SizedBox(width: 2),
-                  Text(
-                    '+$extra',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
+      // A BUTTON, and it says so (#289): [StateLayer] is an [InkWell], which
+      // gives the node a tap action but never the button role, so the badge
+      // announced as a bare "Open link" with no hint that it was a control.
+      // The icon's own `semanticLabel` stays the name.
+      child: Semantics(
+        button: true,
+        child: StateLayer(
+          key: const Key('link-badge'),
+          onTap: () => onOpen(url),
+          borderRadius: BorderRadius.circular(4),
+          // A finger gets the whole meta band as a target; the mouse keeps it
+          // compact (F19 #198's 48dp audit — see [metaTouchTarget]). No padding
+          // of its own: every meta item is exactly one [kMetaLineHeight] text
+          // line, flush with the line's leading edge (#276).
+          child: metaTouchTarget(
+            theme.platform,
+            SizedBox(
+              height: kMetaLineHeight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.open_in_new,
+                    size: kMetaIconSize,
+                    color: theme.colorScheme.primary,
+                    semanticLabel: 'Open link',
                   ),
+                  if (extra > 0) ...[
+                    const SizedBox(width: 2),
+                    Text(
+                      '+$extra',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

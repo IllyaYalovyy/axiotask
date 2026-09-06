@@ -133,7 +133,9 @@ void main() {
       final date = tester
           .getSemantics(find.text('5d overdue'))
           .getSemanticsData();
-      expect(date.label, '5d overdue');
+      // The date segment names the DUE DATE in words (#289) — the badge's
+      // "5d overdue" is what the eye reads, not what the ear gets.
+      expect(date.label, 'Due 5 days ago');
       expect(date.value, isEmpty);
       handle.dispose();
     });
