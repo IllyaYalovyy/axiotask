@@ -35,6 +35,7 @@ import 'package:axiotask/src/ui/motion.dart';
 import 'package:axiotask/src/ui/sync_feedback.dart';
 import 'package:axiotask/src/ui/theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -79,6 +80,21 @@ Widget _shell({required bool running, bool reducedMotion = false}) =>
         ),
       ),
     );
+
+/// Every [SemanticsData] in the rendered tree, root first.
+List<SemanticsData> _semantics(WidgetTester tester) {
+  final out = <SemanticsData>[];
+  void walk(SemanticsNode node) {
+    out.add(node.getSemanticsData());
+    node.visitChildren((child) {
+      walk(child);
+      return true;
+    });
+  }
+
+  walk(tester.binding.rootElement!.renderObject!.debugSemantics!);
+  return out;
+}
 
 void main() {
   group('the sync line', () {
@@ -168,6 +184,44 @@ void main() {
       await tester.pumpWidget(_shell(running: false, reducedMotion: true));
       await tester.pump();
       expect(_line, findsNothing, reason: 'no fill, no fade — one frame');
+    });
+
+    testWidgets('the line speaks only while the run is in flight (#287)', (
+      tester,
+    ) async {
+      // The fill and the fade are the tail of a fact already stated — and a
+      // DETERMINATE bar publishes a bare semantic value ("100") plus the
+      // progressBar role, which a screen reader reads ahead of whatever label
+      // shares its node. The tail is a picture, so it says nothing at all.
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(_shell(running: true));
+      await tester.pump();
+      expect(
+        _semantics(tester).where((d) => d.label == 'Syncing'),
+        hasLength(1),
+        reason: 'a running sync is announced',
+      );
+
+      await tester.pumpWidget(_shell(running: false));
+      await tester.pump();
+      expect(
+        _line,
+        findsOneWidget,
+        reason: 'the fill is still on screen — this is about what it SAYS',
+      );
+      expect(
+        _semantics(tester).where((d) => d.value.isNotEmpty),
+        isEmpty,
+        reason: 'the finishing fill contributed a bare "0"/"100"',
+      );
+      expect(
+        _semantics(tester).where((d) => d.role == SemanticsRole.progressBar),
+        isEmpty,
+      );
+
+      await pumpMotion(tester, MotionDurations.syncLineFinish, fraction: 0.75);
+      expect(_semantics(tester).where((d) => d.value.isNotEmpty), isEmpty);
+      handle.dispose();
     });
 
     testWidgets('the line never moves a row (it costs no layout)', (

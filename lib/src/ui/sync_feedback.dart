@@ -124,23 +124,32 @@ class _SyncProgressLineState extends State<SyncProgressLine>
     return _bar(colors, 1, 1 - (t - fillEnd) / (1 - fillEnd));
   }
 
-  Widget _bar(ColorScheme colors, double? value, double opacity) => Opacity(
-    opacity: opacity,
-    child: LinearProgressIndicator(
-      key: const Key('sync-progress-line'),
-      // Null while the run is in flight (an indeterminate sweep: we cannot
-      // know how far through a sync is), a real fraction once it has landed.
-      value: value,
-      minHeight: kSyncLineHeight,
-      color: colors.primary,
-      // No track. Over an app bar a full-width band would read as a piece of
-      // chrome that had appeared; only the moving part should be new.
-      backgroundColor: Colors.transparent,
-      // Announced only while the run is actually happening — the fill and the
-      // fade are the tail of a fact already stated.
-      semanticsLabel: value == null ? 'Syncing' : null,
-    ),
-  );
+  Widget _bar(ColorScheme colors, double? value, double opacity) {
+    final bar = Opacity(
+      opacity: opacity,
+      child: LinearProgressIndicator(
+        key: const Key('sync-progress-line'),
+        // Null while the run is in flight (an indeterminate sweep: we cannot
+        // know how far through a sync is), a real fraction once it has landed.
+        value: value,
+        minHeight: kSyncLineHeight,
+        color: colors.primary,
+        // No track. Over an app bar a full-width band would read as a piece of
+        // chrome that had appeared; only the moving part should be new.
+        backgroundColor: Colors.transparent,
+        // Announced only while the run is actually happening — the fill and the
+        // fade are the tail of a fact already stated.
+        semanticsLabel: value == null ? 'Syncing' : null,
+      ),
+    );
+    // …and "announced only while running" has to be enforced, not merely left
+    // unlabelled (#287): a DETERMINATE indicator publishes a bare semantic
+    // value ("0" … "100") and the `progressBar` role whether or not anyone
+    // named it, and a screen reader reads a node's value ahead of its label.
+    // The tail is a picture of something already said, so it leaves the
+    // semantics tree exactly as it leaves the hit test.
+    return value == null ? bar : ExcludeSemantics(child: bar);
+  }
 }
 
 /// [SyncProgressLine] bound to the live runtime.
