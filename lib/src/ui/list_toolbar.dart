@@ -72,37 +72,44 @@ class ListToolbar extends StatelessWidget {
                 ),
               // The whole label toggles — a coarse pointer gets a full-size
               // target, not just the checkbox (touch has no hover).
-              StateLayer(
-                key: const Key('show-completed-toggle'),
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => actions.onShowCompleted(!actions.showCompleted),
-                // A 48dp-tall hit area — the toolbar renders on a phone too, so the
-                // whole toggle (not just the shrink-wrapped checkbox) is tappable.
-                // SizedBox (not Container-with-alignment, which would fill the width).
-                child: SizedBox(
-                  height: 48,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: actions.showCompleted,
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          onChanged: (v) => actions.onShowCompleted(v ?? false),
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            'Show completed',
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                            style: Theme.of(context).textTheme.labelLarge,
+              // ONE screen-reader stop for the whole toggle (#288): without
+              // it the box was a separately focusable node that announced
+              // "not checked, checkbox" with no name at all, beside a
+              // node that carried the words.
+              MergeSemantics(
+                child: StateLayer(
+                  key: const Key('show-completed-toggle'),
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => actions.onShowCompleted(!actions.showCompleted),
+                  // A 48dp-tall hit area — the toolbar renders on a phone too, so the
+                  // whole toggle (not just the shrink-wrapped checkbox) is tappable.
+                  // SizedBox (not Container-with-alignment, which would fill the width).
+                  child: SizedBox(
+                    height: 48,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Checkbox(
+                            value: actions.showCompleted,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            onChanged: (v) =>
+                                actions.onShowCompleted(v ?? false),
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              'Show completed',
+                              overflow: TextOverflow.ellipsis,
+                              softWrap: false,
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

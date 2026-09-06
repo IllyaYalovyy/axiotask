@@ -53,20 +53,29 @@ class SubtaskHeader extends StatelessWidget {
             // The toggle only exists once something can be hidden — an
             // affordance that would do nothing must not render.
             if (completedCount > 0)
-              StateLayer(
-                onTap: () => onHideCompleted(!hideCompleted),
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Checkbox(
-                        value: hideCompleted,
-                        onChanged: (v) => onHideCompleted(v ?? false),
-                      ),
-                      Text('Hide completed', style: theme.textTheme.bodySmall),
-                    ],
+              // ONE screen-reader stop, not a node labelled "Hide completed"
+              // wrapping a nameless "checkbox" node (#288): the box and the
+              // words beside it are the same control, so they announce as one
+              // — "Hide completed, not checked, checkbox".
+              MergeSemantics(
+                child: StateLayer(
+                  onTap: () => onHideCompleted(!hideCompleted),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: hideCompleted,
+                          onChanged: (v) => onHideCompleted(v ?? false),
+                        ),
+                        Text(
+                          'Hide completed',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -133,14 +142,23 @@ class SubtaskRow extends StatelessWidget {
     final theme = Theme.of(context);
     final done = task.status == TaskStatus.completed;
     final hasDue = (task.due ?? '').isNotEmpty;
+    // The title as the row SAYS it, shared by the visible line and the
+    // checkbox's accessible name so the two can never diverge.
+    final displayTitle = task.title.isEmpty ? 'Untitled' : task.title;
     return Row(
       children: [
         // 48dp hit area (the glyph stays default-sized — enlarge the target,
         // never the checkbox, #167).
-        SizedBox(
-          width: 48,
-          height: 48,
-          child: Checkbox(value: done, onChanged: (_) => onToggle()),
+        // The box is its own semantics node, so it NAMES the subtask it would
+        // complete (#288) — otherwise every subtask's box announced the same
+        // anonymous "not checked, checkbox".
+        Semantics(
+          label: displayTitle,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Checkbox(value: done, onChanged: (_) => onToggle()),
+          ),
         ),
         Expanded(
           // The subtask's title is a tap surface of its own (it opens the
@@ -156,7 +174,7 @@ class SubtaskRow extends StatelessWidget {
               // the fixed reorder arrows + due button never get pushed off the
               // edge and overflow a narrow detail pane (G9 #208).
               child: Text(
-                task.title.isEmpty ? 'Untitled' : task.title,
+                displayTitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
