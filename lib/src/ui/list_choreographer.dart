@@ -23,6 +23,8 @@
 // simply snap, so a sync that rewrites two hundred rows is over within
 // [listMotionWindow] instead of rippling for seconds.
 
+import 'package:flutter/scheduler.dart';
+
 import '../model/task.dart';
 import '../store/stored.dart';
 import 'commit_flash.dart' show CommitTarget, TaskCommit;
@@ -30,6 +32,26 @@ import 'completion_motion.dart';
 import 'list_motion.dart';
 import 'motion.dart' show MotionDurations;
 import 'visible_rows.dart';
+
+/// The clock the choreography's holds are timed against: the frame being
+/// produced, or — when the build runs OUTSIDE a frame — the last frame the
+/// engine delivered.
+///
+/// A build is not always inside a frame. At startup the root widget is
+/// attached from a timer, before the engine has begun one, so the first build
+/// of the whole tree runs with the scheduler idle. There
+/// [SchedulerBinding.currentFrameTimeStamp] is `null` behind a `!` — it threw
+/// on every cold start and the launch's first frame rendered the error subtree
+/// where the list should be (#290).
+/// [SchedulerBinding.currentSystemFrameTimeStamp] is the same monotonic
+/// engine clock without that hole: the stamp of the frame in flight, of the
+/// last one outside a frame, and [Duration.zero] before the first. Only the
+/// DIFFERENCE between two of these is ever used (expiring a hold whose row was
+/// never built), and it is unchanged by the epoch offset the frame-only getter
+/// applies — so an out-of-frame build simply reads "no time has passed since
+/// the last frame", which is the truth for a build a frame or less away.
+Duration choreographyNow() =>
+    SchedulerBinding.instance.currentSystemFrameTimeStamp;
 
 /// What a rendered list slot is doing this frame.
 enum SlotMotion {
@@ -198,7 +220,8 @@ class ListChoreographer {
   /// ARRIVED — plus the rows that just left, re-inserted where they stood so
   /// they can fold away instead of vanishing.
   ///
-  /// [now] is the current frame's timestamp, used only to expire a hold whose
+  /// [now] is the current frame's timestamp ([choreographyNow] at every call
+  /// site that has no fixed clock of its own), used only to expire a hold whose
   /// row was never built (it left or arrived off-screen) and therefore never
   /// reported back. Until [hasData] has been true once nothing animates at all:
   /// the first contents a view shows are not an event, they are the view.

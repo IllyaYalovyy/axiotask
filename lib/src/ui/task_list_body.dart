@@ -353,7 +353,9 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
       visible: view.rows,
       byId: view.byId,
       hasData: view.hasData,
-      now: WidgetsBinding.instance.currentFrameTimeStamp,
+      // NOT `currentFrameTimeStamp`: a build does not always run inside a
+      // frame, and that getter is `null` behind a `!` when it does not (#290).
+      now: choreographyNow(),
     );
     final tasks = view.stored;
     final overdueCount = view.overdueCount;
