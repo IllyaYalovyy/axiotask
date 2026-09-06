@@ -122,6 +122,20 @@ class LinkBadge extends StatelessWidget {
 /// The subtask progress indicator: a filled bar plus a "done/total" label. The
 /// subtasks themselves live in the detail panel (invariant #1); tapping the row
 /// opens it.
+///
+/// It speaks to a screen reader as ONE sentence — "1 of 3 subtasks complete" —
+/// and nothing inside it speaks at all (#287). Both halves of that matter:
+///
+///   • A determinate [LinearProgressIndicator] publishes a semantic VALUE
+///     ("33") and the `progressBar` ROLE. The row is a single merged semantics
+///     node, so those became the ROW's, and Android's accessibility bridge
+///     reads a node's value before its label — a task with two unfinished
+///     subtasks announced as "0, ext two (copy)", a bare number ahead of the
+///     title on a node the AT believed was a progress bar. The bar is a
+///     picture of a fraction that is written beside it in full, so it is
+///     [ExcludeSemantics]-silent: no information is lost.
+///   • "1/3" is not a sentence. A screen reader is free to read a slash as a
+///     date separator or to say the glyph; the words are unambiguous.
 class SubtaskProgress extends StatelessWidget {
   const SubtaskProgress({
     super.key,
@@ -139,37 +153,41 @@ class SubtaskProgress extends StatelessWidget {
     final fraction = total == 0 ? 0.0 : (done / total).clamp(0.0, 1.0);
     return Tooltip(
       message: '$done/$total subtasks',
-      child: SizedBox(
-        height: kMetaLineHeight,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 56,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: fraction,
-                  minHeight: 6,
-                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                  color: theme.colorScheme.primary,
+      child: Semantics(
+        label: '$done of $total subtasks complete',
+        excludeSemantics: true,
+        child: SizedBox(
+          height: kMetaLineHeight,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 56,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: fraction,
+                    minHeight: 6,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-            // The count ellipsizes so the bar+count never overflows a narrow
-            // meta column (G9 #208); the bar keeps its fixed width.
-            Flexible(
-              child: Text(
-                '$done/$total',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              const SizedBox(width: 6),
+              // The count ellipsizes so the bar+count never overflows a narrow
+              // meta column (G9 #208); the bar keeps its fixed width.
+              Flexible(
+                child: Text(
+                  '$done/$total',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
