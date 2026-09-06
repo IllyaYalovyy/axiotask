@@ -14,6 +14,10 @@ void main() {
 
   final now = DateTime(2026, 6, 15); // a fixed "today"
 
+  /// The label the badge SHOWS for [due] — what the spoken form must agree
+  /// with wherever it does not respell anything.
+  String visible(String due) => fmt(due, now);
+
   group('formatDue', () {
     test('empty/null renders as empty', () {
       expect(fmt(null, now), '');
@@ -42,6 +46,40 @@ void main() {
       final out = fmt(full, now);
       expect(out, isNot(contains('T00:00')));
       expect(out, 'Jun 22');
+    });
+  });
+
+  group('formatDueSpoken (#289)', () {
+    String spoken(String? due) =>
+        withClock(Clock.fixed(now), () => formatDueSpoken(due));
+
+    test('an undated task has no date to say', () {
+      // The caller words "No due date" itself — an empty phrase here would
+      // otherwise be spliced into a sentence as a silent gap.
+      expect(spoken(null), '');
+      expect(spoken(''), '');
+    });
+
+    test('the badge glyphs become words', () {
+      // "5d" / "in 3d" are written for the eye; a screen reader says the
+      // letter. Everything a badge abbreviates is spelled out.
+      expect(spoken('2026-06-10'), '5 days ago');
+      expect(spoken('2026-06-13'), '2 days ago');
+      expect(spoken('2026-06-18'), 'in 3 days');
+    });
+
+    test('the one-day words are already words', () {
+      expect(spoken('2026-06-14'), 'yesterday');
+      expect(spoken('2026-06-15'), 'today');
+      expect(spoken('2026-06-16'), 'tomorrow');
+    });
+
+    test('a week or more out IS the visible absolute date', () {
+      // Past the relative window there is nothing to respell, so the spoken
+      // and visible labels must not drift apart.
+      expect(spoken('2026-06-22'), visible('2026-06-22'));
+      expect(spoken('2026-06-22'), 'Jun 22');
+      expect(spoken('2027-03-10'), 'Mar 10, 2027');
     });
   });
 
