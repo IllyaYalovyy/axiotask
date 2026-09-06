@@ -146,6 +146,7 @@ class AuthSyncRuntime {
     // that ended before the widget tree existed.
     syncRunEventsProvider.overrideWith((ref) => scheduler.runs),
     refreshActionProvider.overrideWithValue(refresh),
+    retryQuarantinedActionProvider.overrideWithValue(retryQuarantined),
     freshSyncActionProvider.overrideWithValue(freshSync),
     // Built from the scope's Ref so the gesture can raise a toast on the ONE
     // feedback surface the UI already renders (#212) — a failed sign-in must
@@ -221,6 +222,15 @@ class AuthSyncRuntime {
   /// real sync when a live session exists, otherwise a no-op — the reactive
   /// store already keeps every view live, so there is nothing to "reload".
   Future<void> refresh() => _syncNow();
+
+  /// Give a held row (#270) one more push — the "Needs attention" view's Retry.
+  /// The release alone would only take effect on the next cadence tick, and a
+  /// user who just pressed a button is owed the attempt now, so it runs a sync
+  /// straight after (a no-op while signed out).
+  Future<void> retryQuarantined(String id) async {
+    scheduler.releaseQuarantine(id);
+    await _syncNow();
+  }
 
   /// Fresh sync: drop synced local data (local-only lists survive) and re-pull
   /// from Google, the source of truth. The local clear runs regardless; the

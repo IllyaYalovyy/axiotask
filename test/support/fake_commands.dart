@@ -14,6 +14,7 @@
 import 'dart:async';
 
 import 'package:axiotask/src/app/commands.dart';
+import 'package:axiotask/src/model/attention.dart' show strippedCopyTitle;
 import 'package:axiotask/src/model/dates.dart'
     show DateMove, applyDateMove, normalizeDue;
 import 'package:axiotask/src/model/task.dart';
@@ -580,6 +581,100 @@ class FakeCommands implements Commands {
       );
     }
     _emit();
+  }
+
+  // ── sync repairs (#296) ──────────────────────────────────────────────────
+  //
+  // The real commands read a row's BASE snapshot (its content as of the last
+  // agreement with Google) out of the store; the fake has no such column, so a
+  // test that exercises Discard seeds [serverTitles] with what the server
+  // holds. Everything else is performed for real against the fake's own set,
+  // so the suites assert the ROWS afterwards, not that a method fired.
+
+  /// What Google holds for a row, keyed by task id — the stand-in for the store's
+  /// base snapshot. A row absent from it has never been agreed (an unpushed
+  /// create), and discarding its change discards the row, as in production.
+  final Map<String, String> serverTitles = {};
+
+  @override
+  Future<DiscardToken> discardLocalChange(String id) async {
+    final i = _tasks.indexWhere((t) => t.task.id == id);
+    if (i < 0) throw CommandError('task $id not found');
+    final before = _tasks[i];
+    final base = serverTitles[id];
+    if (base == null) {
+      return DiscardToken(rowBefore: before, deleted: await deleteTask(id));
+    }
+    _tasks[i] = StoredTask(
+      task: before.task.copyWith(title: base),
+      listId: before.listId,
+      syncState: SyncState.clean,
+      localUpdated: before.localUpdated,
+      remoteId: before.remoteId,
+    );
+    _emit();
+    return DiscardToken(rowBefore: before);
+  }
+
+  @override
+  Future<void> undoDiscardLocalChange(DiscardToken token) async {
+    final deleted = token.deleted;
+    if (deleted != null) {
+      await undoDelete(deleted);
+      return;
+    }
+    _replace(token.rowBefore);
+    _emit();
+  }
+
+  @override
+  Future<ConflictToken> resolveConflict({
+    required String originalId,
+    required String copyId,
+    required ConflictChoice choice,
+  }) async {
+    final oi = _tasks.indexWhere((t) => t.task.id == originalId);
+    final ci = _tasks.indexWhere((t) => t.task.id == copyId);
+    if (oi < 0 || ci < 0) throw CommandError('task $originalId not found');
+    final original = _tasks[oi];
+    final copy = _tasks[ci];
+    final stripped = strippedCopyTitle(copy.task.title);
+    switch (choice) {
+      case ConflictChoice.keepMine:
+        _tasks[oi] = _rebuild(
+          original,
+          original.task.copyWith(
+            title: stripped,
+            notes: copy.task.notes,
+            due: copy.task.due,
+            status: copy.task.status,
+          ),
+        );
+        _tasks.removeWhere((t) => t.task.id == copyId);
+      case ConflictChoice.keepTheirs:
+        _tasks.removeWhere((t) => t.task.id == copyId);
+      case ConflictChoice.keepBoth:
+        _tasks[ci] = _rebuild(copy, copy.task.copyWith(title: stripped));
+    }
+    _emit();
+    return ConflictToken(originalBefore: original, copyBefore: copy);
+  }
+
+  @override
+  Future<void> undoResolveConflict(ConflictToken token) async {
+    _replace(token.originalBefore);
+    _replace(token.copyBefore);
+    _emit();
+  }
+
+  /// Put [row] back at its id — restoring it if the resolution removed it.
+  void _replace(StoredTask row) {
+    final i = _tasks.indexWhere((t) => t.task.id == row.task.id);
+    if (i < 0) {
+      _tasks.add(row);
+    } else {
+      _tasks[i] = row;
+    }
   }
 
   @override

@@ -27,6 +27,7 @@
 
 import 'package:clock/clock.dart';
 
+import '../model/attention.dart' show strippedCopyTitle;
 import '../model/dates.dart'
     show DateMove, applyDateMove, normalizeDue, nowUtcString;
 import '../model/task.dart';
@@ -38,6 +39,7 @@ import 'ids.dart' show newLocalId;
 part 'commands/command_tokens.dart';
 part 'commands/command_unit.dart';
 part 'commands/list_commands.dart';
+part 'commands/sync_repair_commands.dart';
 part 'commands/task_edit_commands.dart';
 part 'commands/task_lifecycle_commands.dart';
 part 'commands/task_structure_commands.dart';
@@ -51,12 +53,19 @@ class Commands {
     : _edit = TaskEditCommands(store, newId ?? newLocalId),
       _lifecycle = TaskLifecycleCommands(store, newId ?? newLocalId),
       _structure = TaskStructureCommands(store, newId ?? newLocalId),
-      _lists = ListCommands(store, newId ?? newLocalId);
+      _lists = ListCommands(store, newId ?? newLocalId) {
+    _repair = SyncRepairCommands(store, newId ?? newLocalId, _lifecycle);
+  }
 
   final TaskEditCommands _edit;
   final TaskLifecycleCommands _lifecycle;
   final TaskStructureCommands _structure;
   final ListCommands _lists;
+
+  /// The sync-repair unit (#296). Built in the constructor body because it
+  /// borrows [_lifecycle] — a repair that removes a row must delete it the one
+  /// correct way, not a second copy of the rule.
+  late final SyncRepairCommands _repair;
 
   /// Fired after every successful state-changing command (#209). The
   /// composition root points this at the sync scheduler's trigger, so a local
@@ -145,6 +154,45 @@ class Commands {
     final cleared = await _lifecycle.clearCompleted(listId);
     if (cleared > 0) _notifyMutation();
     return cleared;
+  }
+
+  // ── sync repairs (the "Needs attention" view, #296) ───────────────────────
+
+  /// Throw away a row's unpushed change and adopt the server's copy — see
+  /// [SyncRepairCommands.discardLocalChange].
+  Future<DiscardToken> discardLocalChange(String id) async {
+    final token = await _repair.discardLocalChange(id);
+    _notifyMutation();
+    return token;
+  }
+
+  /// Put a discarded local change back — see
+  /// [SyncRepairCommands.undoDiscardLocalChange].
+  Future<void> undoDiscardLocalChange(DiscardToken token) async {
+    await _repair.undoDiscardLocalChange(token);
+    _notifyMutation();
+  }
+
+  /// Resolve a conflicted pair — see [SyncRepairCommands.resolveConflict].
+  Future<ConflictToken> resolveConflict({
+    required String originalId,
+    required String copyId,
+    required ConflictChoice choice,
+  }) async {
+    final token = await _repair.resolveConflict(
+      originalId: originalId,
+      copyId: copyId,
+      choice: choice,
+    );
+    _notifyMutation();
+    return token;
+  }
+
+  /// Revert a conflict resolution — see
+  /// [SyncRepairCommands.undoResolveConflict].
+  Future<void> undoResolveConflict(ConflictToken token) async {
+    await _repair.undoResolveConflict(token);
+    _notifyMutation();
   }
 
   /// Delete a task — see [TaskLifecycleCommands.deleteTask].

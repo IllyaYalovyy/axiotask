@@ -17,6 +17,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../auth/auth_controller.dart' show AuthSnapshot;
+import '../model/attention.dart';
 import '../model/sync_run.dart';
 import '../model/task_view.dart';
 import '../store/database.dart';
@@ -138,6 +139,38 @@ final viewCountsProvider = Provider<Map<String, int>>((ref) {
     window: dateWindowNow(),
   );
 });
+
+/// Everything the "Needs attention" view shows (#296), resolved from the live
+/// rows and the sync layer's session state — and, through [AttentionItems.count],
+/// the sidebar badge that is the whole announcement.
+///
+/// Derived, not stored: the quarantined set and the conflict links are
+/// republished by each sync RUN, but a repair takes effect on the STORE
+/// immediately, and offline the next run may be a long way off. Resolving both
+/// against the live rows is what lets a discard or a Keep-theirs empty the view
+/// on the spot.
+final attentionItemsProvider = Provider<AttentionItems>((ref) {
+  final tasks =
+      ref.watch(allTasksProvider).asData?.value ?? const <StoredTask>[];
+  final lists =
+      ref.watch(listsProvider).asData?.value ?? const <StoredTaskList>[];
+  final sync = ref.watch(syncStatusViewProvider);
+  return attentionItems(
+    tasks: tasks,
+    lists: lists,
+    quarantined: sync.quarantined,
+    links: sync.conflicts,
+    needsReauth: ref.watch(needsReauthProvider) || sync.needsReauth,
+    needsAttention: sync.needsAttention,
+    syncMessage: sync.lastError,
+  );
+});
+
+/// Give a held row one more push (#296) — the view's "Retry". A no-op default
+/// until the composition root (F5) overrides it with the scheduler's release +
+/// a sync run; overridable so a widget test can drive the action without one.
+final retryQuarantinedActionProvider =
+    Provider<Future<void> Function(String id)>((ref) => (id) async {});
 
 /// The auth/sync footer widget pinned at the bottom of the sidebar, or `null`
 /// when the live auth controller is not wired into the app (its current state —

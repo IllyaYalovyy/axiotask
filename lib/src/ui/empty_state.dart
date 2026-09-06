@@ -37,6 +37,7 @@ import 'views.dart';
 /// view, the generic prompt for a list / All Tasks. Ports the reference's
 /// per-view empty strings.
 String emptyMessageFor(String viewId) => switch (viewId) {
+  kAttentionViewId => 'Nothing needs attention',
   'focus' => 'All clear for this week',
   'upcoming' => 'Nothing upcoming',
   'missed' => 'Nothing overdue',
@@ -46,6 +47,7 @@ String emptyMessageFor(String viewId) => switch (viewId) {
 
 /// The icon above [emptyMessageFor] — the same five-way split, in glyphs.
 IconData emptyIconFor(String viewId) => switch (viewId) {
+  kAttentionViewId => Icons.verified_outlined,
   'focus' => Icons.check_circle_outline,
   'upcoming' => Icons.event_available,
   'missed' => Icons.sentiment_satisfied_alt,
@@ -60,7 +62,9 @@ IconData emptyIconFor(String viewId) => switch (viewId) {
 /// Every smart view is computed — a task added from Upcoming lands wherever its
 /// date puts it, which may well not be Upcoming — so none of them do.
 String? emptyHintFor(String viewId) =>
-    SmartView.byId(viewId) == null ? 'Add a task' : null;
+    (SmartView.byId(viewId) == null && viewId != kAttentionViewId)
+    ? 'Add a task'
+    : null;
 
 /// The empty state for [viewId]: icon, line, and (on a list) a hint.
 ///

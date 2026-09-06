@@ -29,6 +29,7 @@ import '../api/api_error.dart';
 import '../api/tasks_api.dart';
 import '../app/ids.dart' show newLocalId;
 import '../app/logging.dart';
+import '../model/attention.dart' show QuarantinedRow;
 import '../model/base_snapshot.dart';
 import '../model/page.dart';
 import '../model/task.dart';
@@ -36,6 +37,7 @@ import '../model/task_list.dart';
 import '../store/store.dart';
 import '../store/store_error.dart';
 import '../store/stored.dart';
+import 'conflicts.dart';
 import 'poison.dart';
 import 'reconcile.dart' as reconcile;
 import 'reconcile.dart'
@@ -89,15 +91,23 @@ class SyncOutcome {
   /// counted in [quarantined] instead: it is no longer "will retry".
   int errors = 0;
 
-  /// Titles of the rows whose push is now HELD because the server rejected
-  /// them [kPoisonRejectCap] runs running (#270). Unlike [errors] this is a
-  /// STATE, not an event: it is re-reported every run for as long as the rows
-  /// stay quarantined, because only the user editing them can release them.
-  final List<String> quarantined = [];
+  /// The rows whose push is now HELD because the server rejected them
+  /// [kPoisonRejectCap] runs running (#270). Unlike [errors] this is a STATE,
+  /// not an event: it is re-reported every run for as long as the rows stay
+  /// quarantined, because only the user editing them — or the "Needs attention"
+  /// view acting on them (#296) — can release them.
+  ///
+  /// Each entry carries the row's id as well as its title: the id is what the
+  /// view retries, discards or opens, and a title alone cannot be acted on.
+  final List<QuarantinedRow> quarantined = [];
 
-  /// Dedup-append a quarantined row's title.
-  void noteQuarantined(String title) {
-    if (!quarantined.contains(title)) quarantined.add(title);
+  /// The held rows' titles, in order — what the status line names.
+  List<String> get quarantinedTitles => [for (final q in quarantined) q.title];
+
+  /// Dedup-append a quarantined row (by id).
+  void noteQuarantined(String id, String title) {
+    if (quarantined.any((q) => q.id == id)) return;
+    quarantined.add(QuarantinedRow(id: id, title: title));
   }
 
   /// The task-list collection or list metadata changed, so callers must
@@ -129,9 +139,11 @@ class SyncEngine {
     this._store, {
     String Function()? newId,
     PoisonRegistry? poison,
+    ConflictRegistry? conflicts,
   }) : _config = const SyncConfig(),
        _newId = newId ?? newLocalId,
-       _poison = poison ?? PoisonRegistry();
+       _poison = poison ?? PoisonRegistry(),
+       _conflicts = conflicts ?? ConflictRegistry();
 
   /// Create with an explicit push flag. [poison] carries the rejection streaks
   /// ACROSS runs; omitting it gives this engine a private, empty registry (a
@@ -142,9 +154,11 @@ class SyncEngine {
     bool pushEnabled, {
     String Function()? newId,
     PoisonRegistry? poison,
+    ConflictRegistry? conflicts,
   }) : _config = SyncConfig(pushEnabled: pushEnabled),
        _newId = newId ?? newLocalId,
-       _poison = poison ?? PoisonRegistry();
+       _poison = poison ?? PoisonRegistry(),
+       _conflicts = conflicts ?? ConflictRegistry();
 
   final TasksApi _client;
   final Store _store;
@@ -153,6 +167,11 @@ class SyncEngine {
   /// Consecutive push rejections per row (#270) — owned by the caller so it
   /// survives between runs.
   final PoisonRegistry _poison;
+
+  /// The conflicted copies this SESSION has forked (#296) — owned by the caller
+  /// for the same reason: the pairing is a fact about the fork, and the engine
+  /// that made it is gone by the time the user acts on it.
+  final ConflictRegistry _conflicts;
 
   /// Fresh id generator for conflicted copies (injectable for deterministic
   /// tests; defaults to a v4 UUID).
@@ -358,7 +377,7 @@ class SyncEngine {
             'push of $op ${row.id} rejected $runs runs running '
             '($e) — quarantined until it is edited',
           );
-          out.noteQuarantined(row.title);
+          out.noteQuarantined(row.id, row.title);
         } else {
           out.errors += 1;
         }
@@ -369,7 +388,7 @@ class SyncEngine {
   /// outcome so the status keeps naming it for as long as it is held.
   bool _isQuarantined(PushRowRef row, SyncOutcome out) {
     if (!_poison.isQuarantined(row.id, row.localUpdated)) return false;
-    out.noteQuarantined(row.title);
+    out.noteQuarantined(row.id, row.title);
     return true;
   }
 
@@ -1012,6 +1031,10 @@ class SyncEngine {
         out.conflicts += 1;
         final copy = reconcile.conflictedCopy(local, remote, _newId());
         await _store.resolveConflictedCopy(remote, local.localUpdated, copy);
+        // Record the fork while the two rows are still known to belong
+        // together — after this there is nothing in the schema that says so
+        // (#296).
+        _conflicts.record(originalId: local.task.id, copyId: copy.task.id);
     }
   }
 

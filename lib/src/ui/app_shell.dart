@@ -13,6 +13,7 @@ import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'attention_view.dart';
 import 'composer_controller.dart';
 import 'detail_motion.dart';
 import 'guarded_command.dart';
@@ -131,6 +132,9 @@ class AppShell extends ConsumerWidget {
     final sidebar = Sidebar(
       selectedViewId: sel.viewId,
       counts: counts,
+      // The "Needs attention" entry, which exists only while it has something
+      // in it (#296) — the count IS the announcement; nothing else says a word.
+      attentionCount: ref.watch(attentionItemsProvider).count,
       lists: lists,
       excludedLists: excluded,
       onSelectView: (id) {
@@ -227,7 +231,12 @@ class AppShell extends ConsumerWidget {
       // empty-task create, #166). On a fine pointer the always-visible
       // quick-add bar is it, and the FAB never renders — width does not decide
       // (a narrow desktop window keeps the bar, not the FAB).
-      onNewTask: coarsePointerPlatform(Theme.of(context).platform)
+      // …and never in the "Needs attention" view, which creates nothing: a FAB
+      // there would open a composer the pane has no room for and a task the
+      // view would not show (#296).
+      onNewTask:
+          coarsePointerPlatform(Theme.of(context).platform) &&
+              sel.viewId != kAttentionViewId
           ? ref.read(newTaskRequestProvider.notifier).bump
           : null,
       // Every open and close of the compact drawer, plus the retraction when a
@@ -353,7 +362,13 @@ class AppShell extends ConsumerWidget {
   /// Persist the newly selected view (survives restart, localStorage parity)
   /// and navigate to it.
   void _selectView(BuildContext context, WidgetRef ref, String viewId) {
-    ref.read(prefsControllerProvider.notifier).setView(viewId);
+    // "Needs attention" is a repair surface, not a home: it is hidden whenever
+    // it is empty, and its contents are session-scoped, so a relaunch into it
+    // would land on an empty pane whose sidebar entry is not even there. Every
+    // other view persists exactly as before.
+    if (viewId != kAttentionViewId) {
+      ref.read(prefsControllerProvider.notifier).setView(viewId);
+    }
     context.go(viewPath(viewId));
   }
 }
@@ -386,6 +401,18 @@ class ViewListPane extends StatelessWidget {
     // same nested Navigator) across views, so the switch is this keyed subtree
     // being replaced. [ViewSwitch] carries it across (#254) — a shared axis
     // along the bottom bar's ordering, a fade-through where there is none.
+    // The repair view creates nothing, so it mounts no composer and no
+    // quick-add: its rows are things to FIX, and an "add a task" affordance
+    // here would add one somewhere the view cannot show it (#296).
+    if (viewId == kAttentionViewId) {
+      return ViewSwitch(
+        slot: null,
+        child: AttentionView(
+          key: const ValueKey('view-attention'),
+          onOpenTask: (id) => context.go(viewPath(viewId, taskId: id)),
+        ),
+      );
+    }
     return ComposerHost(
       // ABOVE the switch (#274): a view change mounts two panes for the length
       // of the transition, and the composer must stay ONE — one FAB listener,

@@ -67,6 +67,12 @@ class PoisonRegistry {
         entry.runs >= kPoisonRejectCap;
   }
 
+  /// Forget [id]'s streak entirely — the user asked for one more try (#296).
+  /// The row is unchanged, so the release the registry normally waits for (an
+  /// edit moving `local_updated`) will never come; this is the other way out,
+  /// and it hands the row the same fresh budget an edit would.
+  void release(String id) => _entries.remove(id);
+
   /// Drop every entry whose row is not in [liveIds] — it was pushed, deleted,
   /// or is no longer dirty, so its streak is over and its slot is dead weight.
   void retainAll(Set<String> liveIds) =>

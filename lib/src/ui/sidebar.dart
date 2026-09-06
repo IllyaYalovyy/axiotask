@@ -32,6 +32,7 @@ class Sidebar extends StatelessWidget {
   const Sidebar({
     required this.selectedViewId,
     required this.counts,
+    this.attentionCount = 0,
     required this.lists,
     required this.excludedLists,
     required this.onSelectView,
@@ -54,6 +55,11 @@ class Sidebar extends StatelessWidget {
   /// Badge counts keyed by view id (smart views + list ids). A missing or zero
   /// entry renders no badge.
   final Map<String, int> counts;
+
+  /// How many things the sync layer needs the user to look at (#296). Zero — the
+  /// normal state — renders NO "Needs attention" row at all: the view is hidden,
+  /// not empty, and the badge is the whole announcement (no banner, no dialog).
+  final int attentionCount;
 
   /// The lists to show, already in display order.
   final List<StoredTaskList> lists;
@@ -138,6 +144,7 @@ class Sidebar extends StatelessWidget {
               child: _Header(
                 selectedViewId: selectedViewId,
                 counts: counts,
+                attentionCount: attentionCount,
                 hasLists: lists.isNotEmpty,
                 onSelectView: onSelectView,
                 onCreateList: () => _createList(context),
@@ -286,6 +293,7 @@ class _Header extends StatelessWidget {
   const _Header({
     required this.selectedViewId,
     required this.counts,
+    required this.attentionCount,
     required this.hasLists,
     required this.onSelectView,
     required this.onCreateList,
@@ -293,6 +301,7 @@ class _Header extends StatelessWidget {
 
   final String selectedViewId;
   final Map<String, int> counts;
+  final int attentionCount;
   final bool hasLists;
   final ValueChanged<String> onSelectView;
   final VoidCallback onCreateList;
@@ -311,6 +320,19 @@ class _Header extends StatelessWidget {
             selected: v.id == selectedViewId,
             count: counts[v.id] ?? 0,
             onTap: () => onSelectView(v.id),
+          ),
+        // Sync's own repairs sit between the smart views and the lists — above
+        // Lists, as their own thing rather than a sixth date view — and ONLY
+        // while there is something to repair (#296).
+        if (attentionCount > 0)
+          _NavRow(
+            key: const Key('sidebar-attention'),
+            icon: Icons.report_problem_outlined,
+            selectedIcon: Icons.report_problem,
+            label: kAttentionViewLabel,
+            selected: selectedViewId == kAttentionViewId,
+            count: attentionCount,
+            onTap: () => onSelectView(kAttentionViewId),
           ),
         const SizedBox(height: 8),
         const Divider(height: 1, indent: 12, endIndent: 12),
@@ -361,6 +383,7 @@ class _NavRow extends StatelessWidget {
     required this.selected,
     required this.count,
     required this.onTap,
+    super.key,
   });
 
   final IconData icon;

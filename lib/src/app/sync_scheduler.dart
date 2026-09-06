@@ -17,6 +17,7 @@ import '../api/api_error.dart';
 import '../api/tasks_api.dart' show TasksApi;
 import '../model/dates.dart' show nowUtcString;
 import '../store/store.dart';
+import '../sync/conflicts.dart';
 import '../sync/engine.dart';
 import '../sync/poison.dart';
 import '../sync/sync_error.dart';
@@ -291,6 +292,11 @@ class SyncScheduler {
   /// runs, not about one of them.
   final PoisonRegistry _poison = PoisonRegistry();
 
+  /// The conflicted copies forked this session (#296) — same ownership, same
+  /// reason: a fork is a fact about the run that made it, and the view that
+  /// resolves it runs long after that engine is gone.
+  final ConflictRegistry _conflicts = ConflictRegistry();
+
   /// The quarantined set the last run reported, so a set that is merely
   /// REPEATING is not logged again every cadence tick (the same dedup rule the
   /// permanent-failure log follows, #131).
@@ -329,6 +335,17 @@ class SyncScheduler {
   /// Broadcast and non-replaying: a subscriber that mounts mid-run misses the
   /// start, which is right — it has no line up to take down.
   Stream<SyncRunEvent> get runs => _runController.stream;
+
+  /// Give a quarantined row one more chance (#296): forget its rejection
+  /// streak, so the next run pushes it again with a fresh budget.
+  ///
+  /// This is the "Retry" the "Needs attention" view offers. The registry's own
+  /// release is an EDIT (a moved `local_updated`), which a user who believes the
+  /// change is fine has no way to perform without changing their data — so the
+  /// view asks here instead. It does not run a sync itself: the caller decides
+  /// whether to trigger one now (the action seam does) or let the cadence pick
+  /// it up.
+  void releaseQuarantine(String id) => _poison.release(id);
 
   /// Wake the background loop (a mutation happened). A no-op unless the loop is
   /// running and — via its own auth gate — actually authenticated.
@@ -394,6 +411,7 @@ class SyncScheduler {
       store,
       pushEnabled(),
       poison: _poison,
+      conflicts: _conflicts,
     );
 
     SyncOutcome? outcome;
@@ -474,10 +492,12 @@ class SyncScheduler {
       // tell the user instead of hiding it behind a green "synced" state. A row
       // that has exhausted its rejection budget gets the stronger line: it is
       // not being retried at all any more, and only an edit releases it (#270).
-      _noteQuarantine(outcome.quarantined);
+      _status.quarantined = List.unmodifiable(outcome.quarantined);
+      _status.conflicts = _conflicts.links;
+      _noteQuarantine(outcome.quarantinedTitles);
       final parts = [
         if (outcome.quarantined.isNotEmpty)
-          quarantineMessage(outcome.quarantined),
+          quarantineMessage(outcome.quarantinedTitles),
         if (outcome.errors > 0)
           '${outcome.errors} change${outcome.errors == 1 ? '' : 's'} '
               'rejected by the server (kept locally, will retry)',
