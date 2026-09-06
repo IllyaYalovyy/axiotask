@@ -637,88 +637,90 @@ class _TaskRowState extends State<TaskRow> {
             // the window edge. It replaces a bare GestureDetector: the row is
             // the app's most-used control and was the one that answered a
             // pointer with nothing at all.
-            child: StateLayer(
-              onTap: _onBodyTap,
-              borderRadius: BorderRadius.circular(8),
-              // The M3 two-line pitch as a FLOOR (#276): every row is 72dp,
-              // whether it carries a date, a list label, both or neither, so a
-              // list reads as an even column instead of a ragged one. Larger
-              // text scales grow past it.
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: kTaskRowHeight),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // The completion target, top-aligned so its centre lands
-                    // on the TITLE line (#276). On touch it is the full 48dp
-                    // box (#167, CheckboxTapTarget). On a mouse it shrinks
-                    // to a compact box around the glyph — same rule as the
-                    // metadata badges ("compact on a mouse") — because the
-                    // invisible 48×48 area spanned ~75% of the desktop
-                    // row's height and completed tasks from clicks that
-                    // read as "the row" (#214). The 48dp-wide column stays
-                    // either way, so the title never shifts.
-                    SizedBox(
-                      width: _checkboxColumn,
-                      height: _checkboxColumn,
-                      // The box is its own semantics node — separately
-                      // focusable by TalkBack, Switch Access and the
-                      // keyboard — so it has to NAME the task it would
-                      // complete (#288). Without this it announced "not
-                      // checked, checkbox" identically for every row: the
-                      // one control that changes data was the one element
-                      // that never said what it acts on. A tooltip would not
-                      // do, being a hover affordance touch cannot reach.
-                      child: Semantics(
-                        label: _displayTitle,
-                        child: coarsePointerPlatform(theme.platform)
-                            ? SizedBox(
-                                key: const Key('row-checkbox-target'),
-                                width: _checkboxColumn,
-                                height: _checkboxColumn,
-                                child: Checkbox(
-                                  value: widget.completed,
-                                  onChanged: (_) => widget.onToggle(),
-                                ),
-                              )
-                            : Center(
-                                child: SizedBox(
+            child: _withSelectedState(
+              StateLayer(
+                onTap: _onBodyTap,
+                borderRadius: BorderRadius.circular(8),
+                // The M3 two-line pitch as a FLOOR (#276): every row is 72dp,
+                // whether it carries a date, a list label, both or neither, so a
+                // list reads as an even column instead of a ragged one. Larger
+                // text scales grow past it.
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: kTaskRowHeight),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // The completion target, top-aligned so its centre lands
+                      // on the TITLE line (#276). On touch it is the full 48dp
+                      // box (#167, CheckboxTapTarget). On a mouse it shrinks
+                      // to a compact box around the glyph — same rule as the
+                      // metadata badges ("compact on a mouse") — because the
+                      // invisible 48×48 area spanned ~75% of the desktop
+                      // row's height and completed tasks from clicks that
+                      // read as "the row" (#214). The 48dp-wide column stays
+                      // either way, so the title never shifts.
+                      SizedBox(
+                        width: _checkboxColumn,
+                        height: _checkboxColumn,
+                        // The box is its own semantics node — separately
+                        // focusable by TalkBack, Switch Access and the
+                        // keyboard — so it has to NAME the task it would
+                        // complete (#288). Without this it announced "not
+                        // checked, checkbox" identically for every row: the
+                        // one control that changes data was the one element
+                        // that never said what it acts on. A tooltip would not
+                        // do, being a hover affordance touch cannot reach.
+                        child: Semantics(
+                          label: _displayTitle,
+                          child: coarsePointerPlatform(theme.platform)
+                              ? SizedBox(
                                   key: const Key('row-checkbox-target'),
-                                  width: 28,
-                                  height: 28,
+                                  width: _checkboxColumn,
+                                  height: _checkboxColumn,
                                   child: Checkbox(
                                     value: widget.completed,
                                     onChanged: (_) => widget.onToggle(),
-                                    materialTapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                )
+                              : Center(
+                                  child: SizedBox(
+                                    key: const Key('row-checkbox-target'),
+                                    width: 28,
+                                    height: 28,
+                                    child: Checkbox(
+                                      value: widget.completed,
+                                      onChanged: (_) => widget.onToggle(),
+                                      materialTapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
                                   ),
                                 ),
-                              ),
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // A rename that LANDS washes the title line, wherever
-                          // it was typed — this row's inline editor, the detail
-                          // panel's Title field, a sync pull (#252). OUTSIDE
-                          // [_mainLine] because the inline editor replaces the
-                          // whole line while it is open: a wrapper inside would
-                          // be torn down by the very rename it exists to report,
-                          // and would come back with nothing left to play.
-                          CommitFlash(
-                            commit: widget.commit,
-                            target: CommitTarget.title,
-                            child: _mainLine(theme, completion),
-                          ),
-                          const SizedBox(height: _titleToMeta),
-                          _metaLine(theme),
-                        ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // A rename that LANDS washes the title line, wherever
+                            // it was typed — this row's inline editor, the detail
+                            // panel's Title field, a sync pull (#252). OUTSIDE
+                            // [_mainLine] because the inline editor replaces the
+                            // whole line while it is open: a wrapper inside would
+                            // be torn down by the very rename it exists to report,
+                            // and would come back with nothing left to play.
+                            CommitFlash(
+                              commit: widget.commit,
+                              target: CommitTarget.title,
+                              child: _mainLine(theme, completion),
+                            ),
+                            const SizedBox(height: _titleToMeta),
+                            _metaLine(theme),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -791,6 +793,42 @@ class _TaskRowState extends State<TaskRow> {
     // anywhere on the row is caught (T8.1).
     return _wrapTouchGestures(withContext);
   }
+
+  /// Says out loud what the multi-select wash draws (#298).
+  ///
+  /// The accent bar and the tint were the ONLY marks of membership, so a screen
+  /// reader announced a picked row and an unpicked one identically: the bulk
+  /// bar gave the COUNT ("3 selected") and nothing gave the WHICH, one tap
+  /// away from a Delete that cascades every subtree in the set.
+  ///
+  /// It rides [body] — the open-the-detail surface, which is the node carrying
+  /// the row's title — rather than the row's outermost widget, because a flag
+  /// parked on an unlabelled ancestor is read by nobody: the announcement has
+  /// to arrive WITH "apples", not on a node above it.
+  ///
+  /// The state is published only while a selection is on the table. A plain
+  /// list is not a chooser, and `selected: false` is not silence — it makes an
+  /// assistive technology say "not selected" after every title in the app's
+  /// most-read surface. [TaskRow.selected] is checked as well as
+  /// [TaskRow.selectionActive] so a row can never be washed and mute.
+  ///
+  /// The row the DETAIL panel shows ([TaskRow.openInDetail], the quieter
+  /// [openDetailWash]) deliberately gets NO flag: it is a pointer to what is
+  /// open, not a member of a chosen set, and "selected" there would name a row
+  /// that Delete will not touch.
+  ///
+  /// The wrapper is ALWAYS in the tree and it is the PROPERTY that goes null —
+  /// a null annotation publishes nothing and creates no node. Adding and
+  /// removing the widget instead would change the shape of the tree above the
+  /// body every time the mode is entered or left, unmounting and re-inflating
+  /// the whole row body (its ink, its checkbox, an open inline rename) on a
+  /// keystroke that is only supposed to change what the row SAYS.
+  Widget _withSelectedState(Widget body) => Semantics(
+    selected: widget.selected || widget.selectionActive
+        ? widget.selected
+        : null,
+    child: body,
+  );
 
   /// The main line: title (or inline editor), the pending-sync dot, and — in a
   /// cross-list view — the list label at the trailing edge.
