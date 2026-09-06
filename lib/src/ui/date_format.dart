@@ -117,6 +117,24 @@ String formatDueSpoken(String? due) {
   return formatDue(due);
 }
 
+/// The spoken NAME of a due-date CONTROL — "Due 5 days ago", or "No due date"
+/// when there is none (#289/#299).
+///
+/// The row's date segment and the detail panel's Due field are the same
+/// concept on two surfaces, and a screen reader must not hear a different
+/// phrase depending on which one the user reached: the row said
+/// "Due 5 days ago" while the panel said "5d overdue" for the very same task.
+/// One task, one vocabulary — so the wording lives here, once, and both
+/// surfaces read it.
+///
+/// The bare date ([formatDueSpoken]) is not enough on its own: neither surface
+/// gives a screen reader the position or the colour a sighted user reads the
+/// meaning off, so the label carries the field's name too.
+String formatDueFieldSpoken(String? due) {
+  final spoken = formatDueSpoken(due);
+  return spoken.isEmpty ? 'No due date' : 'Due $spoken';
+}
+
 /// An absolute LOCAL date-and-time label for a stored instant — "Jun 15 14:05",
 /// with the year added only when it differs from the current one.
 ///

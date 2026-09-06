@@ -99,6 +99,13 @@ class DueField extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text(
                 label.isEmpty ? 'No date' : label,
+                // What the field SAYS is the phrase the row's date segment
+                // says (#299) — "Due 5 days ago", never the eye's "5d
+                // overdue". Both surfaces are the same control on the same
+                // task, so a screen reader must not hear two vocabularies
+                // depending on which one the user reached; the wording is
+                // [formatDueFieldSpoken]'s, once, for both.
+                semanticsLabel: formatDueFieldSpoken(due),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 // Semibold on overdue only — the same emphasis the row's badge

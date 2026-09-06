@@ -111,6 +111,13 @@ class LinkBadge extends StatelessWidget {
                     const SizedBox(width: 2),
                     Text(
                       '+$extra',
+                      // "+2" is written for the eye; a screen reader said
+                      // "plus 2" (#299) — a glyph, like #287's "1/3". Said in
+                      // words, and said HONESTLY: the tap opens the first
+                      // link, and these are the ones it does not open.
+                      semanticsLabel: extra == 1
+                          ? '1 more link'
+                          : '$extra more links',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

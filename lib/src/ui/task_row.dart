@@ -341,12 +341,15 @@ class _TaskRowState extends State<TaskRow> {
   /// the arrow glyph itself is silent.
   String get _dueSemanticLabel {
     final own = _ownDue;
-    if (own != null) return 'Due ${formatDueSpoken(own)}';
+    if (own != null) return formatDueFieldSpoken(own);
+    // The undated wording is the shared one too (#299) — a date-less row and a
+    // date-less detail field say the same thing.
+    final undated = formatDueFieldSpoken(null);
     final inherited = _inheritedDue;
     if (inherited != null) {
-      return 'No due date, earliest subtask due ${formatDueSpoken(inherited)}';
+      return '$undated, earliest subtask due ${formatDueSpoken(inherited)}';
     }
-    return 'No due date';
+    return undated;
   }
 
   void _startEdit() {
