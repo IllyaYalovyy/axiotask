@@ -318,6 +318,11 @@ class _TaskRowState extends State<TaskRow> {
     }
   }
 
+  /// The title as the row SAYS it — a blank title renders (and announces) as
+  /// "Untitled". The checkbox's accessible name and the title line share it so
+  /// a screen reader can never hear a different name than the eye reads.
+  String get _displayTitle => widget.title.isEmpty ? 'Untitled' : widget.title;
+
   void _startEdit() {
     setState(() {
       _editor = TextEditingController(text: widget.title);
@@ -630,29 +635,40 @@ class _TaskRowState extends State<TaskRow> {
                     SizedBox(
                       width: _checkboxColumn,
                       height: _checkboxColumn,
-                      child: coarsePointerPlatform(theme.platform)
-                          ? SizedBox(
-                              key: const Key('row-checkbox-target'),
-                              width: _checkboxColumn,
-                              height: _checkboxColumn,
-                              child: Checkbox(
-                                value: widget.completed,
-                                onChanged: (_) => widget.onToggle(),
-                              ),
-                            )
-                          : Center(
-                              child: SizedBox(
+                      // The box is its own semantics node — separately
+                      // focusable by TalkBack, Switch Access and the
+                      // keyboard — so it has to NAME the task it would
+                      // complete (#288). Without this it announced "not
+                      // checked, checkbox" identically for every row: the
+                      // one control that changes data was the one element
+                      // that never said what it acts on. A tooltip would not
+                      // do, being a hover affordance touch cannot reach.
+                      child: Semantics(
+                        label: _displayTitle,
+                        child: coarsePointerPlatform(theme.platform)
+                            ? SizedBox(
                                 key: const Key('row-checkbox-target'),
-                                width: 28,
-                                height: 28,
+                                width: _checkboxColumn,
+                                height: _checkboxColumn,
                                 child: Checkbox(
                                   value: widget.completed,
                                   onChanged: (_) => widget.onToggle(),
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                              )
+                            : Center(
+                                child: SizedBox(
+                                  key: const Key('row-checkbox-target'),
+                                  width: 28,
+                                  height: 28,
+                                  child: Checkbox(
+                                    value: widget.completed,
+                                    onChanged: (_) => widget.onToggle(),
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
                                 ),
                               ),
-                            ),
+                      ),
                     ),
                     Expanded(
                       child: Column(
@@ -798,7 +814,7 @@ class _TaskRowState extends State<TaskRow> {
                 // and leaving rename no longer resizes the line (#276).
                 style: theme.textTheme.bodyLarge,
                 child: StrikeSweep(
-                  title: widget.title.isEmpty ? 'Untitled' : widget.title,
+                  title: _displayTitle,
                   progress: completion,
                   completedColor: completedTitleColor(theme.colorScheme),
                 ),
