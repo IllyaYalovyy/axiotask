@@ -266,6 +266,7 @@ void main() {
                 onSort: (_) {},
                 onShowCompleted: (_) {},
                 onClearCompleted: null,
+                onExport: null,
               ),
             ),
           ),

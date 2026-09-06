@@ -34,6 +34,7 @@ import 'bulk_ops.dart';
 import 'compact_chrome.dart';
 import 'composer_controller.dart';
 import 'detail_motion.dart';
+import 'export_sheet.dart';
 import 'haptics.dart';
 import 'list_choreographer.dart';
 import 'list_toolbar.dart';
@@ -173,6 +174,21 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
 
   /// Open the bulk-add dialog on this view's default target list.
   void _openBulkAddDefault() => ComposerScope.of(context).openBulkAdd(context);
+
+  /// Open the export sheet for THIS view (#297), named the way the view is
+  /// named everywhere else (a list by its title, a smart view by its label).
+  void _openExport() {
+    final lists =
+        ref.read(listsProvider).asData?.value ?? const <StoredTaskList>[];
+    showExportSheet(
+      context,
+      viewId: widget.viewId,
+      title: viewLabelFor(
+        widget.viewId,
+        listTitles: {for (final l in lists) l.list.id: l.list.title},
+      ),
+    );
+  }
 
   /// Open the live search over EVERY task. Selecting a result navigates to it —
   /// a matched subtask lands on its parent's list so it opens in context (#92).
@@ -318,6 +334,9 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
       onClearCompleted: showCompleted && !_isSmartView
           ? _confirmClearCompleted
           : null,
+      // Offered in every view: a smart view is as exportable as a list — it is
+      // the set of rows in front of the user, which is what an export IS.
+      onExport: _openExport,
     );
     // Hosted by the compact shell? Then it owns the bar these actions live in
     // (#244). Published after the frame: a provider/notifier written mid-build

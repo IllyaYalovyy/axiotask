@@ -75,9 +75,22 @@ String formatDue(String? due) {
   if (diff == 0) return 'today';
   if (diff == 1) return 'tomorrow';
   if (diff < 7) return 'in ${diff}d';
-  // Show the year only when it isn't the current calendar year.
+  return formatAbsoluteDue(due);
+}
+
+/// An ABSOLUTE calendar-day label for [due] — "Sep 12", with the year appended
+/// whenever it is not the current one.
+///
+/// [formatDue]'s tail, and what anything that OUTLIVES today must use instead
+/// of it: a relative label ("in 3d") is true for one day, so an exported
+/// document (#297) that carried one would be lying the morning after it was
+/// written. "The current year" comes from `package:clock`.
+String formatAbsoluteDue(String due) {
+  final d = parseLocalDate(due);
   final month = _monthAbbr[d.month - 1];
-  return d.year != now.year ? '$month ${d.day}, ${d.year}' : '$month ${d.day}';
+  return d.year != clock.now().year
+      ? '$month ${d.day}, ${d.year}'
+      : '$month ${d.day}';
 }
 
 /// [formatDue]'s date in words a SCREEN READER can say (#289).

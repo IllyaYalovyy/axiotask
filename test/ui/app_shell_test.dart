@@ -53,6 +53,7 @@ void main() {
     GoRouter? router,
     List<StoredTask> tasks = const [],
     Stream<List<StoredTask>>? tasksStream,
+    List<StoredTaskList> lists = const [],
     bool settle = true,
   }) async {
     await tester.pumpWidget(
@@ -69,7 +70,7 @@ void main() {
           allTasksProvider.overrideWith(
             (ref) => tasksStream ?? Stream.value(tasks),
           ),
-          listsProvider.overrideWith((ref) => const Stream.empty()),
+          listsProvider.overrideWith((ref) => Stream.value(lists)),
           if (router != null) routerProvider.overrideWithValue(router),
         ],
         child: const AxiotaskApp(),
@@ -274,6 +275,7 @@ void main() {
       required PrefsStore store,
       required GoRouter router,
       List<StoredTask> tasks = const [],
+      List<StoredTaskList> lists = const [],
     }) async {
       // Compact form factor — the phone chrome where the ladder is the primary
       // navigation (no side-by-side detail, no persistent sidebar).
@@ -286,8 +288,45 @@ void main() {
         title: _FakeTitle(),
         router: router,
         tasks: tasks,
+        lists: lists,
       );
     }
+
+    // The failure barred: the sidebar OFFERS "Export…" (its own suite proves
+    // the entry fires) and the shell never wires it to anything, so a list menu
+    // on a real device has an entry that does nothing at all — and, wired but
+    // careless, opens the sheet UNDER the drawer that is still standing over it.
+    testWidgets("the drawer's list menu opens the export sheet for that list, "
+        'with the drawer out of the way', (tester) async {
+      final router = buildAppRouter(initialViewId: 'all');
+      await pumpPhone(
+        tester,
+        store: seenPrefs(),
+        router: router,
+        tasks: [storedTask('T1', 'my task')],
+        lists: [
+          StoredTaskList(
+            list: const TaskList(id: 'L1', title: 'Groceries', updated: 't'),
+            syncState: SyncState.clean,
+            localUpdated: 't',
+          ),
+        ],
+      );
+
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.more_vert).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Export…'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Export Groceries'), findsOneWidget);
+      expect(
+        find.byType(Drawer),
+        findsNothing,
+        reason: 'the drawer must not stay stacked over the sheet (#166)',
+      );
+    });
 
     testWidgets('back with an active selection (no detail) clears it', (
       tester,

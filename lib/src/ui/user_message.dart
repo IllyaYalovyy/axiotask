@@ -48,6 +48,7 @@ const Map<String, String> _familyAction = <String, String>{
   'set_auto_sync': 'update your settings',
   'set_editing': 'update your settings',
   'export_backup': 'export your backup',
+  'export_tasks': 'export your tasks',
   'import_backup': 'restore your backup',
 };
 

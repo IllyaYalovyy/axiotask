@@ -16,6 +16,7 @@ import '../store/stored.dart';
 import 'attention_view.dart';
 import 'composer_controller.dart';
 import 'detail_motion.dart';
+import 'export_sheet.dart';
 import 'guarded_command.dart';
 import 'haptics.dart';
 import 'list_detail_scaffold.dart';
@@ -174,6 +175,15 @@ class AppShell extends ConsumerWidget {
           ref.read(prefsControllerProvider.notifier).toggleExclude(id),
       onReorderLists: (ids) =>
           ref.read(prefsControllerProvider.notifier).setListOrder(ids),
+      onExportList: (id) {
+        // The drawer would otherwise stay stacked over the sheet (#166).
+        closeDrawer();
+        showExportSheet(
+          context,
+          viewId: id,
+          title: listTitles[id] ?? SmartView.all.label,
+        );
+      },
       footer: footer,
       onOpenProperties: () {
         closeDrawer(); // don't leave the drawer stacked over the dialog (#166)
