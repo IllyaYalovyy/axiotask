@@ -10,6 +10,33 @@ This branch (`flutter`) is intended to eventually replace `main`. The
 Tauri/Rust implementation on `main` remains the reference for behavior, UX
 contracts, and the sync semantics oracle until parity is reached.
 
+## Install
+
+Every `v*` tag publishes a GitHub release with three installable artifacts and
+their checksums:
+https://github.com/IllyaYalovyy/axiotask/releases
+
+- **Fedora / RHEL** — `sudo dnf install ./axiotask-<version>.x86_64.rpm`
+- **Debian / Ubuntu** — `sudo apt install ./axiotask_<version>_amd64.deb`
+  (`apt install` of a local *file path* resolves the dependencies; `dpkg -i`
+  leaves them unsatisfied). Ubuntu 24.04 / Debian 13 and newer.
+- **Android** — download `axiotask-<version>.apk` and open it (sideloading
+  needs "install unknown apps" for your browser or file manager). For update
+  notifications, add the repository to
+  [Obtainium](https://github.com/ImranR98/Obtainium) and point it at the
+  releases page; it tracks the tags and offers each new APK.
+
+Verify what you downloaded against the release's `SHA256SUMS`:
+
+```
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+Both Linux packages install the same tree — the app under `/usr/lib/axiotask`,
+a launcher at `/usr/bin/axiotask`, the desktop entry, the hicolor icons and the
+AppStream metainfo — so the app appears in the menu and in software centres.
+The APK and the Linux packages carry the same version, built from the same tag.
+
 ## Requirements
 
 - Flutter SDK (stable channel) with the Linux desktop target enabled.
@@ -127,7 +154,39 @@ Google Cloud project.
 - RPM package: `tool/build_rpm.sh` (see `tool/build_rpm.sh --dry-run`), then
   install with `dnf install` of the produced rpm. This installs the launcher,
   desktop entry, icons and AppStream metainfo system-wide.
+- DEB package: `tool/build_deb.sh` (see `tool/build_deb.sh --dry-run`) — the
+  same tree at the same paths, built with `dpkg-deb` (Fedora: `sudo dnf install
+  dpkg`). Both write into `dist/`.
 - Android (debug): `flutter build apk --debug`
+
+### Releasing
+
+Publishing is one command, and `.github/workflows/release.yml` does the rest —
+Linux release bundle, RPM, DEB (lintian + a real install in an `ubuntu:24.04`
+container), release-signed APK, `SHA256SUMS`, and a GitHub release with
+generated notes:
+
+```
+git tag v$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')
+git push origin --tags
+```
+
+The tag must equal the pubspec version and the newest AppStream `<release>`
+entry must be that same version; `tool/release_guard.sh v<version>` checks both
+and runs first in the workflow — run it yourself before tagging. A published
+release cannot be withdrawn.
+
+The APK is signed from `android/key.properties` (gitignored: `storeFile`,
+`storePassword`, `keyAlias`, `keyPassword`). Without that file a release build
+falls back to the **debug** key and says so loudly in the Gradle log: such an
+APK installs but can never sign in, because Play Services authorizes the app by
+package name + signing-certificate SHA-1. The release workflow fails rather
+than publish one. One-time operator setup:
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEYSTORE_KEY_ALIAS`, `ANDROID_KEYSTORE_KEY_PASSWORD` and
+`AXIOTASK_GOOGLE_CLIENT_ID` / `AXIOTASK_GOOGLE_CLIENT_SECRET` as repository
+secrets, plus the release certificate's SHA-1 registered on the Google Cloud
+project.
 
 The desktop entry (`linux/packaging/io.github.illyayalovyy.axiotask.desktop`)
 and the AppStream metainfo
@@ -193,7 +252,8 @@ Locally:
 
 - `lib/` — application code (deep modules, simple interfaces)
 - `test/`, `integration_test/` — unit/widget tests and real-engine smoke
-- `tool/` — build/run scripts (`dev.sh`, `install.sh`, `build_rpm.sh`)
+- `tool/` — build/run scripts (`dev.sh`, `install.sh`, `build_rpm.sh`,
+  `build_deb.sh`, `release_guard.sh`)
 - `designs/` — RFCs; see `designs/RFC-000-template.md`. Architecture and the
   migration plan are specified by RFC before implementation.
 

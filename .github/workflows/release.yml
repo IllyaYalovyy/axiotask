@@ -1,0 +1,196 @@
+# The release pipeline (#300): `git tag v1.2.3 && git push --tags` is the whole
+# publishing procedure. Everything below happens automatically and produces one
+# GitHub release carrying three installable artifacts and their checksums.
+#
+#   axiotask-<version>-<build>.x86_64.rpm   Fedora and friends (tool/build_rpm.sh)
+#   axiotask_<version>-<build>_amd64.deb    Debian/Ubuntu      (tool/build_deb.sh)
+#   axiotask-<version>.apk                  Android sideload / Obtainium
+#   SHA256SUMS                              checksums for all three
+#
+# Nothing here is reversible: the tag, the assets and their checksums are public
+# the moment this finishes, and package managers may already have fetched them.
+# So the run is ordered guard → build → verify → publish, and every check that
+# can fail the release does so BEFORE the first byte is uploaded:
+#
+#   - tool/release_guard.sh refuses a tag that does not equal the pubspec
+#     version, or a metainfo whose newest <release> is not that version.
+#   - lintian --fail-on error,warning inspects the .deb, and the package is then
+#     really installed in an ubuntu:24.04 container: the pinned Depends are a
+#     claim about a real distribution, and this is the only thing that proves it.
+#   - a missing Android signing secret FAILS the run. It must never fall back to
+#     the debug key: Play Services authorizes by package name + signing SHA-1
+#     (RFC-010), so a debug-signed APK cannot sign in — and looks fine until a
+#     user tries.
+#
+# Operator prerequisites (one-time, human — see README "Install"):
+#   secrets.AXIOTASK_GOOGLE_CLIENT_ID / _SECRET   desktop OAuth client (#229)
+#   secrets.ANDROID_KEYSTORE_BASE64               base64 of the release .jks
+#   secrets.ANDROID_KEYSTORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD
+#   the keystore's SHA-1 registered on the Google Cloud project (RFC-010)
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Creating the release and uploading assets writes to the repository.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build and publish the release assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # FIRST, before any build: does this tag describe this tree? A failure
+      # here costs a deleted tag; the same mistake caught later costs a
+      # published release that cannot be withdrawn.
+      - name: The tag must equal the pubspec version
+        run: bash tool/release_guard.sh "${GITHUB_REF_NAME}"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Record the toolchain this release was built with
+        run: flutter --version
+
+      # clang/cmake/ninja/pkg-config/libgtk-3-dev: what `flutter build linux`
+      # needs and the runner image does not ship. rpm: rpmbuild, for
+      # tool/build_rpm.sh. lintian: the .deb inspection. appstream and
+      # desktop-file-utils: both packagers validate the metadata they are about
+      # to ship and refuse to build if it is invalid.
+      - name: Install the Linux build and packaging toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            rpm lintian appstream desktop-file-utils
+
+      - run: flutter pub get
+
+      # The desktop OAuth client, compiled into the Linux build so an RPM/DEB
+      # install can sign in out of the box (#229). Written through the
+      # environment, never interpolated into the shell command, and deleted
+      # before the Android build — Android has no client credentials at all.
+      - name: Write the desktop OAuth credentials
+        env:
+          CLIENT_ID: ${{ secrets.AXIOTASK_GOOGLE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.AXIOTASK_GOOGLE_CLIENT_SECRET }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+            echo "::error::AXIOTASK_GOOGLE_CLIENT_ID / _SECRET are not set — the released Linux packages could not sign in out of the box"
+            exit 1
+          fi
+          jq -n --arg id "$CLIENT_ID" --arg secret "$CLIENT_SECRET" \
+            '{AXIOTASK_GOOGLE_CLIENT_ID: $id, AXIOTASK_GOOGLE_CLIENT_SECRET: $secret}' \
+            > tool/oauth_credentials.json
+
+      - name: Build the Linux release bundle
+        run: |
+          source tool/oauth_defines.sh
+          oauth_define_args
+          echo "$(oauth_defines_report)"
+          flutter build linux --release ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"}
+
+      # Both packages are built from the ONE bundle above: a second build would
+      # be a second, differently-verified binary in the same release.
+      - name: Package the RPM
+        run: bash tool/build_rpm.sh --bundle build/linux/x64/release/bundle
+
+      - name: Package the DEB
+        run: bash tool/build_deb.sh --bundle build/linux/x64/release/bundle
+
+      # Without --fail-on, lintian prints its findings and exits 0 — which is
+      # the same as not running it.
+      - name: lintian
+        run: lintian --fail-on error,warning dist/*.deb
+
+      # The pinned Depends claim the package installs on Ubuntu 24.04. This is
+      # the only step that actually asks apt.
+      - name: Install the DEB in ubuntu:24.04
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq /dist/axiotask_*.deb
+            test -x /usr/bin/axiotask
+            test -f /usr/share/applications/io.github.illyayalovyy.axiotask.desktop
+            test -f /usr/share/metainfo/io.github.illyayalovyy.axiotask.metainfo.xml
+            if ldd /usr/lib/axiotask/axiotask | grep -q "not found"; then
+              echo "the installed binary has unresolved libraries" >&2
+              exit 1
+            fi
+            dpkg -V axiotask
+            apt-get remove -y -qq axiotask
+          '
+
+      # The APK is signed with the release keystore or the release fails. The
+      # debug fallback in build.gradle.kts exists for local builds only.
+      - name: Write the Android signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] \
+             || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::the ANDROID_KEYSTORE_* secrets are not set — refusing to publish a debug-signed APK, which cannot sign in (RFC-010)"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/axiotask-release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/axiotask-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      # Android is identified by package name + signing SHA-1 and has no client
+      # credentials of its own (RFC-010), so the desktop client file is removed
+      # before this build rather than compiled into an APK that cannot use it.
+      - name: Build the release APK
+        run: |
+          rm -f tool/oauth_credentials.json
+          flutter build apk --release
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             "dist/axiotask-${GITHUB_REF_NAME#v}.apk"
+
+      - name: Verify the APK is NOT debug-signed
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee certs.txt
+          if grep -qi 'CN=Android Debug' certs.txt; then
+            echo "::error::the APK was signed with the debug key — the ANDROID_KEYSTORE_* secrets did not reach the build"
+            exit 1
+          fi
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum axiotask*.rpm axiotask*.deb axiotask*.apk > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/axiotask*.rpm
+            dist/axiotask*.deb
+            dist/axiotask*.apk
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true
