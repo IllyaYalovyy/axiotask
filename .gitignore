@@ -69,6 +69,11 @@ app.*.map.json
 # README, "Google sign-in setup".
 tool/oauth_credentials.json
 
+# Built packages: tool/build_rpm.sh and tool/build_deb.sh write the .rpm/.deb
+# here, and the release workflow adds the APK and SHA256SUMS. Artifacts of a
+# build, never committed — the release page is where they belong.
+/dist/
+
 # alchemist golden-mismatch artifacts (never committed)
 **/failures/
 

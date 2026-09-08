@@ -90,6 +90,22 @@ List<String> _packagedNames(String suffix) =>
 String? _xmlValue(String xml, String tag) =>
     RegExp('<$tag>([^<]+)</$tag>').firstMatch(xml)?.group(1);
 
+/// The `version` attribute of every `<release>` element, in document order.
+List<String> _releaseVersions(String xml) => RegExp(
+  r'<release\s+version="([^"]+)"',
+).allMatches(xml).map((m) => m.group(1)!).toList();
+
+/// Numeric dotted-version comparison (`1.10.0` > `1.9.0`, which a string
+/// compare gets backwards).
+int _compareVersions(String a, String b) {
+  final x = a.split('.').map(int.parse).toList();
+  final y = b.split('.').map(int.parse).toList();
+  for (var i = 0; i < x.length && i < y.length; i++) {
+    if (x[i] != y[i]) return x[i].compareTo(y[i]);
+  }
+  return x.length.compareTo(y.length);
+}
+
 String _pubspecVersion() {
   final line = File(
     'pubspec.yaml',
@@ -195,8 +211,34 @@ void main() {
       );
     });
 
-    test('<release> version tracks pubspec (no stale advertised version)', () {
-      expect(xml, contains('version="${_pubspecVersion()}"'));
+    // Extended for the release pipeline (#300): "the file mentions the version
+    // somewhere" is not enough once a release list has more than one entry. A
+    // software centre shows the NEWEST entry as "what's new", and
+    // tool/release_guard.sh refuses to tag unless that entry is the version
+    // being released — so the newest entry, and the ordering that makes
+    // "newest" mean the first one, are both pinned here.
+    test('the newest <release> is exactly the pubspec version', () {
+      final versions = _releaseVersions(xml);
+      expect(versions, isNotEmpty, reason: 'no <release> entries at all');
+      expect(
+        versions.first,
+        _pubspecVersion(),
+        reason:
+            'GNOME Software advertises the first <release> entry; it must be '
+            'the version this tree builds (releases found: $versions)',
+      );
+    });
+
+    test('releases are listed newest first', () {
+      final versions = _releaseVersions(xml);
+      final sorted = [...versions]..sort((a, b) => _compareVersions(b, a));
+      expect(
+        versions,
+        sorted,
+        reason:
+            'the AppStream convention is newest first, and both the release '
+            'guard and the software centre read the first entry as newest',
+      );
     });
 
     test('launchable points at the shipped desktop entry', () {

@@ -16,6 +16,15 @@ add_executable(${BINARY_NAME}
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# Hardening: link the runner as a position-independent executable so the OS can
+# load it at a random address (ASLR). The Flutter template leaves this off, and
+# the packaged binary is then reported by lintian as hardening-no-pie — which
+# the release workflow treats as a failure (#300). The plugin libraries are
+# shared objects and already position-independent; only this executable needs
+# the flags, so they are set on the target rather than globally.
+target_compile_options(${BINARY_NAME} PRIVATE "-fPIE")
+target_link_options(${BINARY_NAME} PRIVATE "-pie")
+
 # Add preprocessor definitions for the application ID.
 add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 
