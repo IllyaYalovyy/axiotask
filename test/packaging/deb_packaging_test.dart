@@ -39,6 +39,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'elf_fixture.dart';
+
 const _appId = 'io.github.illyayalovyy.axiotask';
 const _appName = 'axiotask';
 const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
@@ -53,19 +55,31 @@ const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
   return (version: raw.split('+').first, build: raw.split('+').last);
 }
 
-bool _installed(String tool) => Process.runSync('which', [tool]).exitCode == 0;
-
 ProcessResult _runScript(List<String> args) =>
     Process.runSync('bash', ['tool/build_deb.sh', ...args]);
 
+/// The build-tree RUNPATH the Flutter toolchain links into every plugin
+/// library — an absolute path to the directory the plugin was COMPILED in,
+/// which means nothing on the machine the package is installed on (#301).
+const _buildTreeRunpath = '/nonexistent/axiotask/linux/flutter/ephemeral';
+
 /// A stand-in for `flutter build linux --release` output: the binary the
 /// launcher points at plus the bundled shared objects.
+///
+/// `libfake_plugin.so` is a REAL linked shared object carrying a build-tree
+/// RUNPATH, so the packager's rewrite is exercised on the same kind of file it
+/// meets in a release bundle; `libapp.so` is deliberately NOT an ELF file, so
+/// the rewrite has to walk past what it cannot parse instead of failing.
 Directory _makeBundle() {
   final d = Directory.systemTemp.createTempSync('axiotask_debbundle_');
   File('${d.path}/$_appName').writeAsStringSync('#!/bin/sh\ntrue\n');
   Process.runSync('chmod', ['+x', '${d.path}/$_appName']);
   Directory('${d.path}/lib').createSync();
   File('${d.path}/lib/libapp.so').writeAsStringSync('so');
+  linkSharedObject(
+    path: '${d.path}/lib/libfake_plugin.so',
+    runpath: _buildTreeRunpath,
+  );
   Directory('${d.path}/data/flutter_assets').createSync(recursive: true);
   File(
     '${d.path}/data/flutter_assets/AssetManifest.json',
@@ -80,12 +94,35 @@ void main() {
   // file this repository wrote itself.
   test('dpkg-deb is installed (prerequisite, never a silent skip)', () {
     expect(
-      _installed('dpkg-deb'),
+      installed('dpkg-deb'),
       isTrue,
       reason:
           'dpkg-deb is missing — the .deb suite builds a real package with it.\n'
           '  Fedora: sudo dnf install dpkg\n'
           '  Debian/Ubuntu: it is part of the base system (dpkg)',
+    );
+  });
+
+  // Same ruling, for the RUNPATH check (#301): the fixture is a real linked
+  // shared object and the assertion is what readelf reads back out of the
+  // packaged file. Without these two the RUNPATH group would silently degrade
+  // into inspecting a text file the test wrote itself.
+  test('cc and readelf are installed (prerequisite, never a silent skip)', () {
+    expect(
+      installed('cc'),
+      isTrue,
+      reason:
+          'no C compiler — the RUNPATH assertions link a real shared object.\n'
+          '  Fedora: sudo dnf install gcc\n'
+          '  Debian/Ubuntu: sudo apt install build-essential',
+    );
+    expect(
+      installed('readelf'),
+      isTrue,
+      reason:
+          'readelf is missing — it is what reads the packaged RUNPATH back.\n'
+          '  Fedora: sudo dnf install binutils\n'
+          '  Debian/Ubuntu: sudo apt install binutils',
     );
   });
 
@@ -444,6 +481,50 @@ void main() {
       },
     );
 
+    // #301. A plugin library keeps the RUNPATH of the directory it was BUILT
+    // in, so a locally built package embeds the builder's home directory and a
+    // released one points every shipped .so at a path that exists on no user's
+    // machine. Both packagers rewrite it to $ORIGIN — the directory the library
+    // is installed in, which is where the engine and the other plugins really
+    // are — and this is the assertion that the shipped bytes say so.
+    test('no packaged shared object searches outside its own directory', () {
+      final tmp = Directory.systemTemp.createTempSync('axiotask_debrpath_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      expect(
+        Process.runSync('dpkg-deb', ['--extract', deb.path, tmp.path]).exitCode,
+        0,
+      );
+      final elves = Directory('${tmp.path}/usr/lib/$_appName')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => runpathOf(f.path) != null)
+          .toList();
+      expect(
+        elves,
+        isNotEmpty,
+        reason: 'the fixture bundle ships a shared object with a RUNPATH',
+      );
+      for (final f in elves) {
+        final rpath = runpathOf(f.path)!;
+        for (final entry in rpath.split(':')) {
+          expect(
+            entry,
+            startsWith(r'$ORIGIN'),
+            reason:
+                '${f.path.substring(tmp.path.length)} is packaged with '
+                'RUNPATH "$rpath" — a search path outside the installed '
+                'bundle. lintian reports it as custom-library-search-path and '
+                'a locally built package leaks the builder\'s directories.',
+          );
+        }
+        expect(
+          rpath,
+          isNot(contains(_buildTreeRunpath)),
+          reason: 'the build tree must not survive into the package',
+        );
+      }
+    });
+
     test('lintian overrides ship, and every one carries its reason', () {
       final tmp = Directory.systemTemp.createTempSync('axiotask_deblint_');
       addTearDown(() => tmp.deleteSync(recursive: true));
@@ -486,6 +567,30 @@ void main() {
               'override is how a real packaging defect gets hidden',
         );
       }
+    });
+
+    // The other half of #301: once nothing searches outside $ORIGIN there is
+    // nothing left to suppress, and a shipped override for a tag lintian no
+    // longer emits is itself a lintian finding (unused-override) — as well as
+    // a standing licence to reintroduce the defect unnoticed.
+    test('custom-library-search-path is no longer suppressed', () {
+      final tmp = Directory.systemTemp.createTempSync('axiotask_deblint2_');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      expect(
+        Process.runSync('dpkg-deb', ['--extract', deb.path, tmp.path]).exitCode,
+        0,
+      );
+      final overrides = File(
+        '${tmp.path}/usr/share/lintian/overrides/$_appName',
+      ).readAsLinesSync().where((l) => !l.trim().startsWith('#'));
+      expect(
+        overrides.where((l) => l.contains('custom-library-search-path')),
+        isEmpty,
+        reason:
+            'the RUNPATHs are rewritten to \$ORIGIN now, so this override '
+            'suppresses a tag lintian does not emit (unused-override) and '
+            'would hide the defect if it came back',
+      );
     });
   });
 

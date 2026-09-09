@@ -57,6 +57,10 @@ BUNDLE_DIR="build/linux/x64/release/bundle"
 # shellcheck source=tool/oauth_defines.sh
 . "$ROOT/tool/oauth_defines.sh"
 
+# The shared RUNPATH step both packagers run (#301).
+# shellcheck source=tool/bundle_runpath.sh
+. "$ROOT/tool/bundle_runpath.sh"
+
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn()  { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -129,6 +133,7 @@ stage_buildroot() {
   install -d "$root/usr/lib/${PKG_NAME}" "$root/usr/bin" \
              "$root/usr/share/applications"
   cp -a "$BUNDLE_DIR/." "$root/usr/lib/${PKG_NAME}/"
+  normalize_bundle_runpath "$root/usr/lib/${PKG_NAME}"
   ln -sf "/usr/lib/${PKG_NAME}/${PKG_NAME}" "$root/usr/bin/${PKG_NAME}"
   install -Dm644 "$DESKTOP_SRC" "$root/usr/share/applications/${APP_ID}.desktop"
   for s in ${ICON_SIZES}; do

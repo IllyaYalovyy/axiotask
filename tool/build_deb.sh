@@ -67,6 +67,10 @@ CHANGELOG_DATE="Mon, 07 Sep 2026 00:00:00 +0000"
 # shellcheck source=tool/oauth_defines.sh
 . "$ROOT/tool/oauth_defines.sh"
 
+# The shared RUNPATH step both packagers run (#301).
+# shellcheck source=tool/bundle_runpath.sh
+. "$ROOT/tool/bundle_runpath.sh"
+
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn()  { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()   { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -161,16 +165,11 @@ CHANGELOG
 # on the package, so a tag lintian cannot be told about would block every
 # release. Each entry below is a deliberate property of shipping a self-contained
 # Flutter bundle, and each one MUST carry the comment that says why; the
-# packaging test fails on an override without one.
+# packaging test fails on an override without one. Nothing here may stand in for
+# a fix: `custom-library-search-path` used to be listed and is now answered by
+# normalize_bundle_runpath rewriting the paths instead of hiding them (#301).
 render_lintian_overrides() {
   cat <<OVERRIDES
-# The runner finds the engine and the plugin libraries through the RUNPATH
-# \$ORIGIN/lib that the Flutter toolchain links in: they are private to this
-# application, live next to the binary in /usr/lib/axiotask/lib and are
-# deliberately on no system search path. The plugin libraries additionally keep
-# the RUNPATH of the directory they were BUILT in, which the loader never uses
-# (the engine is already resolved through the runner).
-${PKG_NAME}: custom-library-search-path
 # The plugin libraries link against the Flutter engine without repeating its
 # transitive dependencies. Nothing outside this bundle loads them, and the
 # runner has already pulled in everything they need.
@@ -204,6 +203,7 @@ stage_package() {
                      "$root/usr/share/lintian/overrides"
 
   cp -a "$BUNDLE_DIR/." "$root/usr/lib/${PKG_NAME}/"
+  normalize_bundle_runpath "$root/usr/lib/${PKG_NAME}"
   # Normalise the bundle's permissions: whatever umask the build ran under, the
   # package must ship 0755 directories/executables and 0644 data, or lintian
   # reports non-standard permissions and a group-writable install lands on the
