@@ -344,99 +344,113 @@ class _TaskListViewState extends ConsumerState<TaskListView> {
     final chrome = CompactChromeScope.maybeOf(context);
     if (chrome != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) chrome.publish(actions);
+        if (mounted) chrome.controller.publish(actions);
       });
+    }
+
+    final bulkBar = BulkBarSlot(
+      shown: _selection.active,
+      builder: (context) => BulkBar(
+        count: _selection.count,
+        onComplete: () => _bulkOps(all, lists).complete(),
+        onSetDue: (move) => _bulkOps(all, lists).setDue(move),
+        onPickDue: () => _bulkOps(all, lists).pickDue(context),
+        onMove: () => _bulkOps(all, lists).move(context),
+        onDuplicate: () => _bulkOps(all, lists).duplicate(),
+        // Hidden outright when no single task can host the whole
+        // selection. Asked of the ROWS, not of a command-backed op, so
+        // the question costs no store access.
+        onDemote: bulkDemoteCandidates(_selection.ids, all).isEmpty
+            ? null
+            : () => _bulkOps(all, lists).demote(context),
+        onDelete: () => _bulkOps(all, lists).delete(),
+        onClear: _selection.clear,
+      ),
+    );
+    final body = TaskListBody(
+      viewId: widget.viewId,
+      selectedTaskId: widget.selectedTaskId,
+      selection: _selection,
+      choreographer: _choreographer,
+      editRequest: _editRequest,
+      haptics: _haptics,
+      pendingEdits: _pendingEdits,
+      onInlineEditActive: _renameBack.set,
+      actions: TaskRowActions(
+        toggle: (stored) => _rowActions(all, lists).toggle(stored),
+        open: (rowContext, stored) {
+          // Before the navigation, while the row is still laid out: the
+          // rect the compact detail grows out of (#253). An open reached
+          // any other way — search, quick-add follow, a bare URL change —
+          // records nothing, and the detail fades in rather than
+          // pretending it came from a row.
+          DetailOriginScope.maybeOf(
+            rowContext,
+          )?.report(stored.task.id, rowContext);
+          widget.onOpenTask(stored.task.id);
+        },
+        contextMenu: (stored, pos) =>
+            _rowActions(all, lists).showMenu(context, stored, pos),
+        selectToggle: (id) {
+          // Joining or leaving a selection is the same small event.
+          _haptics.tick();
+          _selection.toggle(id);
+        },
+        rename: (id, title) => ref.read(commandsProvider).renameTask(id, title),
+        setDue: (id, move) => _rowActions(all, lists).quickDue(id, move),
+        pickDate: (stored) => _rowActions(
+          all,
+          lists,
+        ).pickDue(context, stored.task.id, stored.task.due),
+        openUrl: (url) => ref.read(urlOpenerProvider)(url),
+        editDone: (id) {
+          if (_editRequest.value == id) _editRequest.value = null;
+        },
+      ),
+    );
+
+    // Hosted: the shell's ONE bar is an OVERLAY above this pane (#305), so the
+    // rows clear it with scroll padding of their own and the bulk bar — which
+    // still takes its slot at the top of the pane, so the rows below still make
+    // room for it (#265) — is PAINTED at the bar's bottom edge instead of
+    // behind it. Hence the reversed direction: the same two children in the
+    // same two places, with the rows painted FIRST so the bulk bar lands on top
+    // of the ones that scroll beneath it.
+    if (chrome != null) {
+      return Column(
+        verticalDirection: VerticalDirection.up,
+        children: [
+          Expanded(child: body),
+          UnderCompactBar(child: bulkBar),
+        ],
+      );
     }
 
     return Column(
       children: [
-        // The compact shell hosts these actions in its ONE app bar (#244); on
-        // every other layout they are this pane's own toolbar. Never both.
-        if (chrome == null)
-          // The expanded layout has no app bar, so this pane's top chrome IS
-          // one: the quiet sync line rides the toolbar's bottom edge here
-          // (#255). A Stack, never another Column child — the line is painted
-          // over the divider and moves nothing.
-          Stack(
-            children: [
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [ListToolbar(actions), const Divider(height: 1)],
-              ),
-              const Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: LiveSyncLine(),
-              ),
-            ],
-          ),
+        // The expanded layout has no app bar, so this pane's top chrome IS
+        // one: the quiet sync line rides the toolbar's bottom edge here
+        // (#255). A Stack, never another Column child — the line is painted
+        // over the divider and moves nothing.
+        Stack(
+          children: [
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [ListToolbar(actions), const Divider(height: 1)],
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: LiveSyncLine(),
+            ),
+          ],
+        ),
         // The bar's own slot: it collapses its height in and out (#265), so the
         // rows below make room for it rather than being shoved a bar's worth in
         // one frame. Always mounted, zero-height when there is no selection.
-        BulkBarSlot(
-          shown: _selection.active,
-          builder: (context) => BulkBar(
-            count: _selection.count,
-            onComplete: () => _bulkOps(all, lists).complete(),
-            onSetDue: (move) => _bulkOps(all, lists).setDue(move),
-            onPickDue: () => _bulkOps(all, lists).pickDue(context),
-            onMove: () => _bulkOps(all, lists).move(context),
-            onDuplicate: () => _bulkOps(all, lists).duplicate(),
-            // Hidden outright when no single task can host the whole
-            // selection. Asked of the ROWS, not of a command-backed op, so
-            // the question costs no store access.
-            onDemote: bulkDemoteCandidates(_selection.ids, all).isEmpty
-                ? null
-                : () => _bulkOps(all, lists).demote(context),
-            onDelete: () => _bulkOps(all, lists).delete(),
-            onClear: _selection.clear,
-          ),
-        ),
-        Expanded(
-          child: TaskListBody(
-            viewId: widget.viewId,
-            selectedTaskId: widget.selectedTaskId,
-            selection: _selection,
-            choreographer: _choreographer,
-            editRequest: _editRequest,
-            haptics: _haptics,
-            pendingEdits: _pendingEdits,
-            onInlineEditActive: _renameBack.set,
-            actions: TaskRowActions(
-              toggle: (stored) => _rowActions(all, lists).toggle(stored),
-              open: (rowContext, stored) {
-                // Before the navigation, while the row is still laid out: the
-                // rect the compact detail grows out of (#253). An open reached
-                // any other way — search, quick-add follow, a bare URL change —
-                // records nothing, and the detail fades in rather than
-                // pretending it came from a row.
-                DetailOriginScope.maybeOf(
-                  rowContext,
-                )?.report(stored.task.id, rowContext);
-                widget.onOpenTask(stored.task.id);
-              },
-              contextMenu: (stored, pos) =>
-                  _rowActions(all, lists).showMenu(context, stored, pos),
-              selectToggle: (id) {
-                // Joining or leaving a selection is the same small event.
-                _haptics.tick();
-                _selection.toggle(id);
-              },
-              rename: (id, title) =>
-                  ref.read(commandsProvider).renameTask(id, title),
-              setDue: (id, move) => _rowActions(all, lists).quickDue(id, move),
-              pickDate: (stored) => _rowActions(
-                all,
-                lists,
-              ).pickDue(context, stored.task.id, stored.task.due),
-              openUrl: (url) => ref.read(urlOpenerProvider)(url),
-              editDone: (id) {
-                if (_editRequest.value == id) _editRequest.value = null;
-              },
-            ),
-          ),
-        ),
+        bulkBar,
+        Expanded(child: body),
       ],
     );
   }

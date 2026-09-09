@@ -32,6 +32,7 @@ import '../model/dates.dart' show DateMove, ymdForMove;
 import '../model/task_view.dart';
 import '../store/stored.dart';
 import 'bulk_add.dart';
+import 'compact_chrome.dart';
 import 'composer_draft.dart';
 import 'composer_sheet.dart';
 import 'due_date_picker.dart';
@@ -496,11 +497,31 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     });
     final scoped = ComposerScope(controller: this, child: widget.child);
     if (touch) return scoped;
+    // A fine pointer in a COMPACT shell (a narrow desktop window — width does
+    // not decide, #216) keeps this bar AND gets the shell's one app bar over
+    // the top of the pane (#305). The bar's band is spent here, as real layout
+    // above the composer, and the pane below is told the band is gone: the
+    // rows must not pad themselves for a bar this composer already clears.
+    // Nothing scrolls under anything on this path — which is why the shell
+    // pins its bar for a fine pointer rather than collapsing it.
+    final chrome = CompactChromeScope.maybeOf(context);
     return Column(
       children: [
-        ComposerBar(controller: this),
+        Padding(
+          padding: EdgeInsets.only(top: chrome?.insetTop ?? 0),
+          child: ComposerBar(controller: this),
+        ),
         const Divider(height: 1),
-        Expanded(child: scoped),
+        Expanded(
+          child: chrome == null
+              ? scoped
+              : CompactChromeScope(
+                  controller: chrome.controller,
+                  insetTop: 0,
+                  barShown: chrome.barShown,
+                  child: scoped,
+                ),
+        ),
       ],
     );
   }

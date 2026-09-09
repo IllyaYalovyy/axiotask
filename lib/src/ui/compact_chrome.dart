@@ -21,8 +21,6 @@
 // so the mid-width band where an open detail collapses the shell (#208) cannot
 // end up with the actions in neither place.
 
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../model/task_view.dart' show SortMode;
@@ -137,11 +135,20 @@ class ListChromeController extends ValueNotifier<ListChromeActions?> {
 }
 
 /// Marks a subtree as hosted by the compact shell's app bar, carrying the
-/// [ListChromeController] the list publishes into. Absent → the list owns its
-/// own toolbar.
+/// [ListChromeController] the list publishes into and the geometry of the bar
+/// it publishes into. Absent → the list owns its own toolbar.
+///
+/// The bar is an OVERLAY (#305): it is painted over the hosted subtree rather
+/// than laid out above it, so that hiding or returning it re-lays-out nothing.
+/// What the subtree owes it is [insetTop] — the band the pinned bar covers,
+/// which the list spends as SCROLL PADDING (rows start below the bar and travel
+/// under it) and any non-scrolling chrome of its own spends as a paint offset
+/// ([barBottom]).
 class CompactChromeScope extends InheritedWidget {
   const CompactChromeScope({
     required this.controller,
+    required this.insetTop,
+    required this.barShown,
     required super.child,
     super.key,
   });
@@ -149,14 +156,59 @@ class CompactChromeScope extends InheritedWidget {
   /// The channel to publish list actions into.
   final ListChromeController controller;
 
-  /// The hosting shell's chrome channel, or `null` when nothing hosts it.
-  static ListChromeController? maybeOf(BuildContext context) => context
-      .dependOnInheritedWidgetOfExactType<CompactChromeScope>()
-      ?.controller;
+  /// The height of the band the pinned bar covers, in the hosted subtree's own
+  /// coordinates (the shell has already inset it past the status bar). Constant
+  /// while the bar moves — that is the point.
+  final double insetTop;
+
+  /// How much of the bar is on screen: 1 pinned, 0 fully collapsed. Listen to it
+  /// only for chrome that must ride WITH the bar; the rows must not.
+  final Animation<double> barShown;
+
+  /// Where the bar's bottom edge is right now, in the hosted subtree's own
+  /// coordinates: [insetTop] pinned, 0 gone. What a bar of the list's own
+  /// (the bulk bar, the desktop composer) offsets its paint by so it sits
+  /// under the shell's bar rather than behind it.
+  double get barBottom => insetTop * barShown.value;
+
+  /// The hosting shell's chrome scope, or `null` when nothing hosts it.
+  static CompactChromeScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CompactChromeScope>();
 
   @override
   bool updateShouldNotify(CompactChromeScope oldWidget) =>
-      controller != oldWidget.controller;
+      controller != oldWidget.controller ||
+      insetTop != oldWidget.insetTop ||
+      barShown != oldWidget.barShown;
+}
+
+/// Paints [child] — a bar of the hosted list's own — below the shell's
+/// collapsing bar instead of behind it, without giving it a different SLOT.
+///
+/// The child keeps the layout box it always had at the top of the pane, so the
+/// rows below still make room for it exactly as before; only its paint (and
+/// with it its hit test and its semantic rect) is offset down to the shell
+/// bar's bottom edge, and rides up with the bar as that collapses. Mounted
+/// inside a [Column] with [VerticalDirection.up] so the rows are painted FIRST
+/// and this lands on top of them.
+class UnderCompactBar extends StatelessWidget {
+  const UnderCompactBar({required this.child, super.key});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final chrome = CompactChromeScope.maybeOf(context);
+    if (chrome == null) return child;
+    return AnimatedBuilder(
+      animation: chrome.barShown,
+      builder: (context, child) => Transform.translate(
+        offset: Offset(0, chrome.barBottom),
+        child: child,
+      ),
+      child: child,
+    );
+  }
 }
 
 /// The merged actions as they render in the compact app bar: search and sort
@@ -303,16 +355,20 @@ class CompactListActions extends StatelessWidget {
 
 /// An app bar that can ride the list's scroll off the top of the screen.
 ///
-/// It collapses by LAYOUT, not by transform alone: the slot it occupies shrinks
-/// from the bar's full height to nothing while the bar itself stays full-size
-/// and overflows upward, so the bar's bottom edge and the body's top edge move
-/// together — the body follows the bar up instead of leaving a hole where it
-/// was, exactly as a non-pinned sliver app bar scrolls off. At [shown] == 1 it
-/// IS the bare [AppBar] (no wrapper between the theme and the pixels, so a
-/// pinned bar is pixel-identical to the one that never collapsed) and at 0 it is
-/// GONE — not merely off-screen, so a hidden action is out of the hit-test AND
-/// out of the semantics tree that a screen reader walks.
-class CollapsingAppBar extends StatelessWidget implements PreferredSizeWidget {
+/// It is an OVERLAY (#305), not a slot: the shell stacks it over the list, and
+/// what keeps the rows clear of it is scroll padding INSIDE the list
+/// ([CompactChromeScope.insetTop]) rather than layout above it. So the bar
+/// hides and returns without re-laying-out anything — the rows it uncovers are
+/// the rows that were under it, and not one of them moves as it goes. At
+/// [shown] == 1 it IS the bare [AppBar] parked at the top (no wrapper between
+/// the theme and the pixels, so a pinned bar is pixel-identical to one that
+/// never collapsed) and at 0 it is GONE — not merely off-screen, so a hidden
+/// action is out of the hit-test AND out of the semantics tree that a screen
+/// reader walks.
+///
+/// Returns a [Positioned], so it belongs directly in the shell's [Stack]; the
+/// stack's own clip is what cuts the bar off as it slides past the top edge.
+class CollapsingAppBar extends StatelessWidget {
   const CollapsingAppBar({
     required this.bar,
     required this.shown,
@@ -328,45 +384,25 @@ class CollapsingAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   /// The status-bar inset the bar covers on top of its own toolbar (an [AppBar]
   /// insets itself past the status bar, through its own [SafeArea], when it is
-  /// the [Scaffold]'s primary bar).
+  /// a [Scaffold]'s primary bar — and it still does here, because the shell
+  /// leaves the top padding in the [MediaQuery] the bar reads).
   final double topPadding;
 
   /// The height the bar occupies when fully shown.
   double get fullHeight => bar.preferredSize.height + topPadding;
 
-  /// The height the slot actually occupies at [shown] — where the bar's bottom
-  /// edge, and with it the body's top edge, sits.
-  double get height => fullHeight * shown;
-
-  /// What the hosting [Scaffold] is TOLD to reserve — the slot MINUS the status
-  /// bar, because the Scaffold adds that inset back itself
-  /// (`Scaffold._appBarMaxHeight` = its app bar's preferred height + the top
-  /// padding, for a `primary` Scaffold — the default, and what the compact
-  /// shell mounts). Counting it here too has the phone reserve it twice: the bar's
-  /// top-aligned fill takes the whole over-tall slot, so the toolbar draws
-  /// where it belongs and the surplus becomes a band of bar-coloured nothing
-  /// under it — every row pushed down past it, and a `flexibleSpace` sync line
-  /// left floating at the bottom of the band rather than on the bar's edge
-  /// (#262). Never negative: a slot shorter than the status bar (a bar nearly
-  /// gone) asks for nothing, and the SizedBox below still gives the exact
-  /// height — the Scaffold's is a MAXIMUM, not a demand.
-  @override
-  Size get preferredSize => Size.fromHeight(math.max(0, height - topPadding));
-
   @override
   Widget build(BuildContext context) {
-    if (shown >= 1) return bar;
     if (shown <= 0) return const SizedBox.shrink();
-    return SizedBox(
-      height: height,
-      // Bottom-aligned and unclipped: the bar keeps its full height and slides
-      // up past the top of the screen, which is what clips it.
-      child: OverflowBox(
-        alignment: Alignment.bottomCenter,
-        minHeight: fullHeight,
-        maxHeight: fullHeight,
-        child: bar,
-      ),
+    return Positioned(
+      left: 0,
+      right: 0,
+      // Its full height always: it slides up out of the stack rather than
+      // shrinking, so the toolbar never squashes and the sync line on its
+      // bottom edge (#255) rides it all the way out.
+      top: -fullHeight * (1 - shown),
+      height: fullHeight,
+      child: bar,
     );
   }
 }

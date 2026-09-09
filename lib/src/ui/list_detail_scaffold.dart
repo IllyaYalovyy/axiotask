@@ -40,8 +40,6 @@
 // flutter_adaptive_scaffold is discontinued, so this is deliberately a handful
 // of framework primitives we own and golden-test at both form factors.
 
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PredictiveBackEvent;
 
@@ -52,6 +50,7 @@ import 'motion.dart';
 import 'new_task_fab.dart';
 import 'resizable_split.dart';
 import 'shell_nav_bar.dart';
+import 'theme.dart' show coarsePointerPlatform;
 import 'view_motion.dart';
 
 export 'shell_nav_bar.dart' show ShellDestination, ShellNavBar;
@@ -618,13 +617,37 @@ class _CompactShellState extends State<_CompactShell>
   /// content moves up (the user is scrolling down the list).
   double _travelled = 0;
 
-  /// Whether scrolling is currently holding the chrome off screen.
-  bool _hiddenByScroll = false;
+  /// Whether scrolling is currently holding the FAB off screen. It returns the
+  /// moment the list stops: the list foot is padded for it (#234) so it covers
+  /// no row at rest, and it is touch's ONLY way to create a task — a list read
+  /// to its end must still be one tap from a new one.
+  bool _fabHidden = false;
+
+  /// Whether scrolling is currently holding the BAR off screen. Unlike the FAB
+  /// it does NOT come back when the scroll stops (#305): its return is a
+  /// re-entry into the space above the rows, and doing that under a finger that
+  /// has merely stopped moving is what shoved the whole list down every time
+  /// the user paused. It waits for the list to move back up.
+  bool _barHidden = false;
+
+  /// The band the pinned bar covers below the status bar — the list's own top
+  /// scroll padding, and the distance it must have scrolled before the bar may
+  /// leave. Re-read from the bar the shell actually built (a theme can set a
+  /// different toolbar height); the default is what that height is.
+  double _insetTop = kToolbarHeight;
 
   /// Whether a soft keyboard is up. A bottom view inset means something has
   /// focus, and a user who is typing must never be left without the bar (nor
   /// shown a "new task" button floating over the field — #233).
   bool _imeUp = false;
+
+  /// Whether the chrome rides the scroll at all. It is a TOUCH affordance: the
+  /// FAB it travels with renders for a coarse pointer only (#216), and only a
+  /// hosted list with nothing of its own above the rows can fill the band the
+  /// bar leaves — a narrow desktop window keeps its always-visible quick-add
+  /// bar there instead (#305). So a mouse gets the bar pinned, which is what a
+  /// window with a scrollbar and no thumb-reach problem wants anyway.
+  bool _collapses = true;
 
   /// How much of the app bar is on screen: 1 pinned, 0 collapsed. Driven at the
   /// FAB's own pace so the two halves of the chrome leave and return together.
@@ -656,6 +679,7 @@ class _CompactShellState extends State<_CompactShell>
     // returns, it just stops travelling to get there — the same rule the
     // completion collapse follows (#241).
     _bar.duration = Motion.of(context).resolve(NewTaskFab.transition);
+    _collapses = coarsePointerPlatform(Theme.of(context).platform);
     final imeUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     if (imeUp == _imeUp) return;
     _imeUp = imeUp;
@@ -681,7 +705,7 @@ class _CompactShellState extends State<_CompactShell>
   /// keyboard CANCELS the hide outright: whatever the scroll was doing, the bar
   /// comes back.
   void _syncBar() {
-    if (_hiddenByScroll && !_imeUp) {
+    if (_barHidden && !_imeUp) {
       _bar.reverse();
     } else {
       _bar.forward();
@@ -692,11 +716,25 @@ class _CompactShellState extends State<_CompactShell>
     if (notification.depth != 0 || notification.metrics.axis != Axis.vertical) {
       return false;
     }
-    if (notification is ScrollEndNotification) {
-      // At rest the chrome is always there — the list foot is padded for the
-      // FAB, and a bar you cannot reach at rest is a bar you cannot use.
+    // Still inside the band the pinned bar covers — the list has not yet
+    // scrolled up by the bar's own height — so the bar is there, whatever the
+    // gesture is doing (#305). Two things at once: the top of a list always
+    // wears its chrome (a bar you cannot reach is a bar you cannot use), and
+    // the band the bar would vacate has rows to fill it, never the list's own
+    // top padding showing through.
+    if (notification.metrics.pixels <= _insetTop) {
       _travelled = 0;
-      if (_hiddenByScroll) _setHidden(false);
+      _setHidden(fab: false, bar: false);
+      return false;
+    }
+    if (notification is ScrollEndNotification) {
+      // A scroll that merely STOPPED is not a scroll up (#305): the bar stays
+      // where the gesture left it, and with it every row. Only the direction
+      // count restarts, so the next gesture is measured from nothing rather
+      // than from the tail of the last one. The FAB, which moves no row either
+      // way, does come back.
+      _travelled = 0;
+      _setHidden(fab: false, bar: _barHidden);
     } else if (notification is ScrollUpdateNotification) {
       final delta = notification.scrollDelta ?? 0;
       if (delta == 0) return false;
@@ -704,18 +742,23 @@ class _CompactShellState extends State<_CompactShell>
       // a reversal rather than as 48dp of downward travel.
       if (delta.sign != _travelled.sign) _travelled = 0;
       _travelled += delta;
-      if (_travelled > _CompactShell.scrollThreshold && !_hiddenByScroll) {
-        _setHidden(true);
-      } else if (_travelled < -_CompactShell.scrollThreshold &&
-          _hiddenByScroll) {
-        _setHidden(false);
+      // One gesture, one threshold: both halves of the chrome leave together
+      // and both come back on a reversal together.
+      if (_travelled > _CompactShell.scrollThreshold && _collapses) {
+        _setHidden(fab: true, bar: true);
+      } else if (_travelled < -_CompactShell.scrollThreshold) {
+        _setHidden(fab: false, bar: false);
       }
     }
     return false;
   }
 
-  void _setHidden(bool hidden) {
-    setState(() => _hiddenByScroll = hidden);
+  void _setHidden({required bool fab, required bool bar}) {
+    if (fab == _fabHidden && bar == _barHidden) return;
+    setState(() {
+      _fabHidden = fab;
+      _barHidden = bar;
+    });
     _syncBar();
   }
 
@@ -723,14 +766,21 @@ class _CompactShellState extends State<_CompactShell>
   Widget build(BuildContext context) {
     final onNewTask = widget.onNewTask;
     final topInset = MediaQuery.paddingOf(context).top;
+    _insetTop = AppBarTheme.of(context).toolbarHeight ?? kToolbarHeight;
     // Built ONCE per rebuild and handed to the collapse animation as its
-    // pre-built child: the list is the expensive subtree and nothing in it
-    // changes as the bar slides. Only the BODY's scrolling drives the chrome —
-    // the drawer is the Scaffold's own child and its notifications never reach
-    // this listener. SafeArea handles the side/bottom insets the bottom nav
-    // does not (a landscape side notch); the TOP is left to the app bar.
+    // pre-built child: the list is the expensive subtree and NOTHING in it
+    // changes as the bar slides — that is the whole point of the bar being an
+    // overlay (#305). What the list is told is the constant band the pinned bar
+    // covers, which it spends as scroll padding: the rows start under the bar
+    // and travel beneath it, so hiding and returning it moves no row at all.
+    // Only the BODY's scrolling drives the chrome — the drawer is the
+    // Scaffold's own child and its notifications never reach this listener.
+    // SafeArea handles the side/bottom insets the bottom nav does not (a
+    // landscape side notch); the TOP is the status-bar padding below.
     final body = CompactChromeScope(
       controller: _chrome,
+      insetTop: _insetTop,
+      barShown: _bar,
       child: NotificationListener<ScrollNotification>(
         onNotification: _onScroll,
         child: SafeArea(top: false, child: widget.list),
@@ -747,6 +797,10 @@ class _CompactShellState extends State<_CompactShell>
           shown: _bar.value,
           topPadding: topInset,
           bar: AppBar(
+            // Stated, not inherited: [AppBar.preferredSize] reads the WIDGET's
+            // toolbar height and ignores the theme's, and the band the list
+            // pads itself by must be the height the bar actually draws at.
+            toolbarHeight: _insetTop,
             // The title CROSS-FADES as the view changes (#254), on the same
             // frame the pane transition and the nav-bar pill start on — a
             // label that snapped a frame ahead would arrive before the content
@@ -773,16 +827,15 @@ class _CompactShellState extends State<_CompactShell>
             ],
           ),
         );
-        // As the bar collapses its slot shrinks and the body's top rises with
-        // it — but never past the status bar: rows must not slide under the
-        // notch just because the bar went away.
-        final statusBarFloor = math.max(0.0, topInset - bar.height);
         return Scaffold(
           key: widget.scaffoldKey,
           // Keep inputs visible above the soft keyboard (IME) — the quick-add
           // bar and the detail's fields must never sit under the keyboard.
           resizeToAvoidBottomInset: true,
-          appBar: bar,
+          // No `appBar:` slot: the bar is stacked OVER the list below, so its
+          // coming and going is paint, never layout (#305). The Scaffold still
+          // hosts the drawer the bar's hamburger opens, and still leaves the
+          // status-bar padding in the MediaQuery the bar reads to inset itself.
           // The slide-in drawer IS the full sidebar. Inset its content past the
           // notch / status bar / gesture pill on the top, bottom, and left
           // edges, with a small explicit fallback so un-notched devices still
@@ -794,14 +847,42 @@ class _CompactShellState extends State<_CompactShell>
             ),
           ),
           onDrawerChanged: _reportDrawer,
-          body: Padding(
-            padding: EdgeInsets.only(top: statusBarFloor),
-            child: body!,
+          body: Stack(
+            // Expanded, not loose: the bar leaves the tree entirely once it is
+            // gone, and a Stack sized by its non-positioned children would
+            // collapse to nothing the moment the only child left is the one
+            // standing in for it.
+            fit: StackFit.expand,
+            children: [
+              // The list, from the status bar down: rows never render under the
+              // notch, whatever the bar is doing. The padding is applied here
+              // and REMOVED from the MediaQuery below it — exactly what the
+              // Scaffold does for a body under an app bar — so nothing inside
+              // insets itself past a notch that has already been cleared. Read
+              // through a [Builder]: the media query that matters is the
+              // BODY's, the one the Scaffold has already stripped the bottom
+              // nav's inset from, not the shell's own.
+              Builder(
+                builder: (context) => Padding(
+                  padding: EdgeInsets.only(
+                    top: MediaQuery.paddingOf(context).top,
+                  ),
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    child: body!,
+                  ),
+                ),
+              ),
+              // …and the bar over it. The Stack's own clip is what cuts the bar
+              // off as it slides past the top edge.
+              bar,
+            ],
           ),
           floatingActionButton: onNewTask == null
               ? null
               : NewTaskFab(
-                  visible: !widget.composerOpen && !_imeUp && !_hiddenByScroll,
+                  visible: !widget.composerOpen && !_imeUp && !_fabHidden,
                   onPressed: onNewTask,
                 ),
           bottomNavigationBar: ShellNavBar(

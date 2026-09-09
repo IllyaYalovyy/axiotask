@@ -25,6 +25,7 @@
 // test's fake clock. Nothing waits on a real timer, and no test pumps to
 // settle with a focused field.
 
+import 'package:axiotask/src/ui/compact_chrome.dart';
 import 'package:axiotask/src/ui/detail_motion.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/motion.dart';
@@ -75,6 +76,39 @@ class _Host extends StatefulWidget {
 class _HostState extends State<_Host> {
   String? open;
 
+  /// The stand-in rows themselves — two fixed-height rows and a rowless jump.
+  Widget _rows() => Column(
+    key: const Key('list-pane'),
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (final id in _Host.slots.keys)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Builder(
+            builder: (rowContext) => GestureDetector(
+              onTap: () {
+                widget.controller.report(id, rowContext);
+                setState(() => open = id);
+              },
+              child: SizedBox(
+                key: Key('row-$id'),
+                height: 56,
+                child: Center(child: Text('ROW-$id')),
+              ),
+            ),
+          ),
+        ),
+      // An open that came from somewhere OTHER than a row: search, a restored
+      // URL, the quick-add follow. Nothing is recorded.
+      TextButton(
+        key: const Key('open-rowless'),
+        onPressed: () => setState(() => open = 'B'),
+        child: const Text('JUMP'),
+      ),
+    ],
+  );
+
   /// Open [id] the way the router does — a plain selection change, with no row
   /// tap and so no recorded origin. This is what the detail's own prev/next
   /// does, and what a search jump does.
@@ -83,36 +117,17 @@ class _HostState extends State<_Host> {
   @override
   Widget build(BuildContext context) {
     final openId = open;
-    final rows = Column(
-      key: const Key('list-pane'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final id in _Host.slots.keys)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Builder(
-              builder: (rowContext) => GestureDetector(
-                onTap: () {
-                  widget.controller.report(id, rowContext);
-                  setState(() => open = id);
-                },
-                child: SizedBox(
-                  key: Key('row-$id'),
-                  height: 56,
-                  child: Center(child: Text('ROW-$id')),
-                ),
-              ),
-            ),
-          ),
-        // An open that came from somewhere OTHER than a row: search, a restored
-        // URL, the quick-add follow. Nothing is recorded.
-        TextButton(
-          key: const Key('open-rowless'),
-          onPressed: () => setState(() => open = 'B'),
-          child: const Text('JUMP'),
+    // The stand-in list clears the compact shell's bar the way a real one does:
+    // that bar is an OVERLAY over this pane (#305), so content that does not
+    // reserve its band renders behind it — for a scrolling list that band is
+    // scroll padding, and for these fixed rows it is a plain inset.
+    final rows = Builder(
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          top: CompactChromeScope.maybeOf(context)?.insetTop ?? 0,
         ),
-      ],
+        child: _rows(),
+      ),
     );
     return DetailOriginScope(
       controller: widget.controller,

@@ -9,9 +9,12 @@
 // So on the compact shell (and ONLY there) the toolbar's actions merge INTO the
 // app bar, and that one bar rides the SAME scroll gesture the FAB already rides
 // (#234): past [ListDetailScaffold.scrollThreshold] of downward travel it slides
-// off the top, a reversal (or the end of the scroll) brings it back. The bulk
-// bar is not part of it — a selection keeps its actions on screen whatever the
-// scroll is doing — and a raised keyboard cancels the hide outright.
+// off the top, and a reversal brings it back — the END of a scroll brings back
+// nothing (#305), because a bar that returns the moment a finger stops is a bar
+// that shoves the list down under it. It is an OVERLAY, so neither its leaving
+// nor its return moves a row. The bulk bar is not part of it — a selection keeps
+// its actions on screen whatever the scroll is doing — and a raised keyboard
+// cancels the hide outright.
 //
 // Every assertion here is geometric or about what a finger can reach: where the
 // app bar's render box actually IS, which surface a tap opened, which rows
@@ -19,8 +22,6 @@
 // (the list mounted inside a nested Navigator, the shape go_router's ShellRoute
 // gives it), fed by an in-memory [FakeCommands] — no database, no clock, no
 // network.
-
-import 'dart:math' as math;
 
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
@@ -30,6 +31,7 @@ import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/search.dart';
 import 'package:axiotask/src/ui/sync_feedback.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
+import 'package:axiotask/src/ui/task_row.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -69,6 +71,8 @@ void main() {
     Widget? syncLine,
     ValueNotifier<double>? ime,
     bool disableAnimations = false,
+    TargetPlatform platform = TargetPlatform.android,
+    ValueChanged<String> onOpenTask = _noop,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -84,6 +88,7 @@ void main() {
           listsProvider.overrideWith((ref) => Stream.value(lists)),
         ],
         child: MaterialApp(
+          theme: ThemeData(platform: platform),
           home: ValueListenableBuilder<double>(
             valueListenable: imeInset,
             builder: (context, bottomInset, child) => MediaQuery(
@@ -110,7 +115,7 @@ void main() {
                 list: Navigator(
                   onGenerateRoute: (settings) => MaterialPageRoute<void>(
                     builder: (_) =>
-                        composedList(viewId: viewId, onOpenTask: _noop),
+                        composedList(viewId: viewId, onOpenTask: onOpenTask),
                   ),
                 ),
               ),
@@ -328,17 +333,19 @@ void main() {
       await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
       expect(tester.getRect(appBar).top, 0, reason: 'pinned at rest');
 
-      // Mid-flight it is on its way out: its own top has gone negative, so the
-      // rows below have followed it up rather than sitting under a hole.
+      // Mid-flight it is on its way out: its own top has gone negative, and it
+      // is sliding OVER the rows — which do not move with it (#305).
       final gesture = await dragListDown(tester, settle: false);
+      await tester.pump(const Duration(milliseconds: 20));
+      final travelling = tester.getRect(find.text('Task 12'));
       await tester.pump(const Duration(milliseconds: 60));
       final leaving = tester.getRect(appBar);
       expect(leaving.top, lessThan(0));
       expect(leaving.bottom, lessThan(barHeight));
       expect(
-        tester.getRect(find.byType(TaskListView)).top,
-        closeTo(leaving.bottom, 0.5),
-        reason: 'the rows keep their edge glued to the leaving bar',
+        tester.getRect(find.text('Task 12')),
+        travelling,
+        reason: 'the leaving bar uncovers rows; it does not tow them',
       );
 
       await tester.pump(const Duration(milliseconds: 300));
@@ -376,10 +383,16 @@ void main() {
       expect(find.byType(FloatingActionButton), findsNothing);
       expect(appBar, findsNothing);
 
-      await gesture.up();
-      await tester.pumpAndSettle();
+      // …and they come back on the same reversal, together. Not on the END of
+      // the scroll: neither half of the chrome returns until the list moves
+      // back up (#305).
+      await gesture.moveBy(const Offset(0, 120));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
       expect(find.byType(FloatingActionButton), findsOneWidget);
       expect(tester.getRect(appBar).top, 0);
+      await gesture.up();
+      await tester.pumpAndSettle();
     });
 
     testWidgets('a nudge under the threshold never flickers the bar', (
@@ -555,8 +568,255 @@ void main() {
       final bulk = tester.getRect(find.byType(BulkBar));
       expect(bulk.top, greaterThanOrEqualTo(0));
       expect(bulk.bottom, lessThanOrEqualTo(800));
+
+      // …and with the bar back it is UNDER it, not behind it: the shell's bar
+      // is painted over this pane (#305), so a bulk bar that merely took the
+      // top of the pane would be invisible for as long as the bar is there.
+      await gesture.moveBy(const Offset(0, 120));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        tester.getRect(find.byType(BulkBar)).top,
+        tester.getRect(appBar).bottom,
+        reason: 'the bulk bar rides the one bar\'s bottom edge',
+      );
+      expect(
+        find.byType(BulkBar).hitTestable(),
+        findsOneWidget,
+        reason: 'and a finger reaches it there',
+      );
       await gesture.up();
       await tester.pumpAndSettle();
+    });
+  });
+
+  // The bar that came back on its own (#305). #244 asked for hide-on-scroll-
+  // down / return-on-scroll-up, and the merged shell returned it on
+  // ScrollEndNotification as well — so every time a finger stopped moving, the
+  // bar slid back INTO THE LAYOUT and shoved the whole list down by its own
+  // height under a finger that had just lifted. Two rules replace it: the bar
+  // returns only when the list moves back up (or is inside the bar's own band,
+  // or the keyboard is up), and it is an OVERLAY — its slot is padding INSIDE
+  // the scroll view, so the rows it uncovers are rows, and neither leaving nor
+  // returning re-lays-out a single one.
+
+  group('the bar never returns at rest, and never moves a row (#305)', () {
+    /// A row far enough down the list to still be on screen after the scroll —
+    /// the thing whose position must not change. (The rows are ordered by their
+    /// string position, so the fifth one down is "Task 12".)
+    final anchor = find.text('Task 12');
+
+    testWidgets('a scroll that merely STOPS leaves the bar away, and not one '
+        'row moves', (tester) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      final gesture = await dragListDown(tester);
+      expect(appBar, findsNothing, reason: 'the deliberate scroll hid it');
+      final resting = tester.getRect(anchor);
+
+      // The finger lifts. Nothing about the list has moved back up, so nothing
+      // about the chrome may change either.
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(
+        appBar,
+        findsNothing,
+        reason:
+            'a scroll that ended is not a scroll up: the bar must stay '
+            'away until the user asks for it back',
+      );
+      expect(
+        tester.getRect(anchor),
+        resting,
+        reason: 'the end of a scroll must not move a single row',
+      );
+    });
+
+    testWidgets('the bulk bar is opaque to the finger too — a tap on it never '
+        'reaches the row scrolled under it', (tester) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      await tester.longPress(find.text('Task 0'));
+      await tester.pumpAndSettle();
+      // The count is what the bar has room to say on a 400dp phone: one task.
+      expect(
+        find.descendant(of: find.byType(BulkBar), matching: find.text('1')),
+        findsOneWidget,
+      );
+
+      // Scroll a row up under the bulk bar without sending the app bar away.
+      final gesture = await tester.startGesture(const Offset(200, 400));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -40));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final bulk = tester.getRect(find.byType(BulkBar));
+      expect(
+        bulk.top,
+        tester.getRect(appBar).bottom,
+        reason: 'the bulk bar hangs off the one bar',
+      );
+      // Dead space: inside the bar's own box, above the 48dp rows of its
+      // controls — and directly over a row.
+      await tester.tapAt(Offset(bulk.center.dx, bulk.top + 2));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: find.byType(BulkBar), matching: find.text('1')),
+        findsOneWidget,
+        reason:
+            'a tap that fell through the bulk bar would toggle the row '
+            'hiding behind it into or out of the selection',
+      );
+    });
+
+    testWidgets('a tap on the bar never reaches the rows travelling under it', (
+      tester,
+    ) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      final opened = <String>[];
+      await pumpChrome(
+        tester,
+        fake: fake,
+        lists: [list('L1', 'Groceries')],
+        onOpenTask: opened.add,
+      );
+
+      // Scroll a little — not far enough to send the bar away — so that a row
+      // is genuinely underneath it.
+      final gesture = await tester.startGesture(const Offset(200, 400));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -40));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(appBar).top, 0, reason: 'the bar is still there');
+      // A row well clear of the bar opens on a tap — the control that makes
+      // the assertion below mean something.
+      await tester.tapAt(const Offset(200, 300));
+      await tester.pumpAndSettle();
+      expect(opened, isNotEmpty, reason: 'a tap on a row opens it');
+      opened.clear();
+
+      // The bar's own empty middle — its title, over a row.
+      await tester.tapAt(const Offset(200, 28));
+      await tester.pumpAndSettle();
+      expect(
+        opened,
+        isEmpty,
+        reason:
+            'the bar is opaque to the finger as well as to the eye: a tap '
+            'on it must never open the task hiding behind it',
+      );
+    });
+
+    testWidgets('the bar returns OVER the rows — the return moves nothing', (
+      tester,
+    ) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      final gesture = await dragListDown(tester);
+      expect(appBar, findsNothing);
+
+      // A reversal past the threshold asks for the bar back; the finger then
+      // holds still for the whole of its travel. Everything that moves from
+      // here is the bar moving, and the rows must not be part of it.
+      await gesture.moveBy(const Offset(0, 40));
+      await tester.pump();
+      final held = tester.getRect(anchor);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        tester.getRect(anchor),
+        held,
+        reason: 'mid-return the bar was still pushing the rows down',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.getRect(appBar).top, 0, reason: 'the bar is back');
+      expect(
+        tester.getRect(anchor),
+        held,
+        reason:
+            'the returning bar must slide OVER the list, not re-lay it '
+            'out — a row moving under a finger is the whole defect',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('inside the bar\'s own band the bar stays: a scroll too short '
+        'to fill the space it would leave never hides it', (tester) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+      final pinned = tester.getRect(anchor);
+
+      // Past the 24dp reaction threshold, but still inside the bar's own
+      // height: hiding here would uncover a band of scroll padding — bar-less
+      // AND row-less — instead of content.
+      final gesture = await tester.startGesture(const Offset(200, 400));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -40));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        tester.getRect(appBar).top,
+        0,
+        reason:
+            'the list has not yet scrolled the bar\'s own height, so there '
+            'is nothing to fill the band it would leave behind',
+      );
+      expect(
+        tester.getRect(anchor).top,
+        pinned.top - 40,
+        reason: 'the rows scrolled by exactly what the finger moved',
+      );
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('scrolled back to the top the bar is always there — the '
+        'chrome is never left unreachable', (tester) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
+
+      final gesture = await dragListDown(tester);
+      expect(appBar, findsNothing);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(appBar, findsNothing, reason: 'still away at rest');
+
+      // Back to the top, and the bar with it.
+      final back = await tester.startGesture(const Offset(200, 400));
+      await back.moveBy(const Offset(0, 20));
+      await tester.pump();
+      await back.moveBy(const Offset(0, 200));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await back.up();
+      await tester.pumpAndSettle();
+
+      expect(tester.getRect(appBar).top, 0);
+      expect(
+        tester.getRect(find.text('Task 0')).top,
+        greaterThanOrEqualTo(tester.getRect(appBar).bottom),
+        reason: 'and the first row sits under it, not behind it',
+      );
     });
   });
 
@@ -600,17 +860,11 @@ void main() {
             'toolbar',
       );
       expect(
-        tester.getRect(find.byType(TaskListView)).top,
+        tester.getRect(find.byType(TaskRow).first).top,
         barBottom,
-        reason: 'the list starts exactly where the bar ends',
-      );
-      // And the rows with it — a whole row of list is what the band costs.
-      expect(
-        tester.getRect(find.text('Task 0')).top,
-        lessThan(barBottom + 24),
         reason:
-            'the first row must be reachable under the bar, not a band '
-            'below it',
+            'the first row starts exactly where the bar ends — a second '
+            'inset would buy a band of dead bar above it',
       );
     });
 
@@ -638,16 +892,14 @@ void main() {
         reason: 'and it is still the same 2dp line, not a stretched band',
       );
       expect(
-        tester.getRect(find.byType(TaskListView)).top,
+        tester.getRect(find.byType(TaskRow).first).top,
         line.bottom,
         reason: 'the line and the first row share one edge',
       );
     });
 
-    testWidgets('the collapse floor survives: through every frame of the slide '
-        'the rows keep the bar\'s edge and stop AT the status bar', (
-      tester,
-    ) async {
+    testWidgets('through every frame of the slide the rows hold still, and '
+        'none of them is ever drawn under the notch', (tester) async {
       final fake = FakeCommands(manyRows());
       addTearDown(fake.dispose);
       await pumpChrome(
@@ -657,29 +909,82 @@ void main() {
         padding: const EdgeInsets.only(top: statusBar),
       );
 
+      // The finger stops moving the instant the threshold is crossed, so every
+      // pixel that moves from here belongs to the bar alone.
       final gesture = await dragListDown(tester, settle: false);
-      var floored = false;
+      await tester.pump();
+      final held = tester.getRect(find.text('Task 12'));
+      var gone = false;
       for (var frame = 0; frame < 20; frame++) {
         await tester.pump(const Duration(milliseconds: 20));
-        // Gone entirely (shown == 0) → the slot it left behind is zero-height.
-        final slot = appBar.evaluate().isEmpty
-            ? 0.0
-            : tester.getRect(appBar).bottom;
-        if (slot < statusBar) floored = true;
+        if (appBar.evaluate().isEmpty) gone = true;
+        expect(
+          tester.getRect(find.text('Task 12')),
+          held,
+          reason:
+              'frame $frame: the bar slides over the rows, never through '
+              'their layout',
+        );
         expect(
           tester.getRect(find.byType(TaskListView)).top,
-          closeTo(math.max(slot, statusBar), 0.5),
+          statusBar,
           reason:
-              'frame $frame: the rows follow the leaving bar (no hole) but '
-              'never past the notch (slot $slot)',
+              'frame $frame: the list is clipped at the notch, so no row '
+              'can ever be drawn under it',
         );
       }
       expect(
-        floored,
+        gone,
         isTrue,
         reason:
-            'the slide must actually shrink past the status bar, or this '
-            'proves nothing about the floor',
+            'the slide must actually take the bar off the screen, or this '
+            'proves nothing about what it did to the rows on the way',
+      );
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+  });
+
+  // A narrow window on a MOUSE is the compact shell too (width does not decide
+  // — #208/#216), and it keeps the always-visible quick-add bar the FAB stands
+  // in for on touch. That bar holds the top of the pane, so there is nothing
+  // there to scroll under the shell's bar: the band it would leave behind would
+  // be empty. So a fine pointer gets the bar PINNED, and the composer inset
+  // below it rather than painted behind it.
+  group('a narrow window with a mouse keeps its bar (#305)', () {
+    const composer = Key('quick-add-bar');
+
+    testWidgets('the quick-add bar sits under the one bar, and a scroll never '
+        'takes the bar off it', (tester) async {
+      final fake = FakeCommands(manyRows());
+      addTearDown(fake.dispose);
+      await pumpChrome(
+        tester,
+        fake: fake,
+        lists: [list('L1', 'Groceries')],
+        platform: TargetPlatform.linux,
+      );
+
+      expect(find.byKey(composer), findsOneWidget);
+      expect(
+        tester.getRect(find.byKey(composer)).top,
+        greaterThanOrEqualTo(tester.getRect(appBar).bottom),
+        reason: 'a composer painted behind the bar is one nobody can type in',
+      );
+
+      final gesture = await dragListDown(tester);
+      expect(
+        tester.getRect(appBar).top,
+        0,
+        reason:
+            'the collapsing chrome is a touch affordance: with a composer '
+            'holding the top of the pane there is nothing to fill the band '
+            'the bar would leave',
+      );
+      expect(
+        tester.getRect(find.byKey(composer)).top,
+        greaterThanOrEqualTo(tester.getRect(appBar).bottom),
+        reason: 'and the composer stays where it was',
       );
       await gesture.up();
       await tester.pumpAndSettle();
