@@ -255,6 +255,22 @@ List<StoredTask> orderedSubtasks(String parentId, Iterable<StoredTask> all) =>
     all.where((t) => t.task.parent == parentId).toList()
       ..sort((a, b) => a.task.position.compareTo(b.task.position));
 
+/// The subtasks of [parentId] AS THE CHECKLIST SHOWS THEM: [orderedSubtasks],
+/// minus the completed ones while [hideCompleted] is on.
+///
+/// The panel renders exactly this slice, and the detail's Prev/Next walk it
+/// (#303) — one spelling, so a step can never land on a row the checklist is
+/// not showing.
+List<StoredTask> shownSubtasks(
+  String parentId,
+  Iterable<StoredTask> all, {
+  required bool hideCompleted,
+}) {
+  final ordered = orderedSubtasks(parentId, all);
+  if (!hideCompleted) return ordered;
+  return ordered.where((t) => t.task.status != TaskStatus.completed).toList();
+}
+
 /// The sorted top-level rows shown for [viewId] — the port of `visibleTasks` +
 /// `applySortAndOrder`.
 ///
