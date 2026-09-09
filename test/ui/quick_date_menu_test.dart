@@ -546,7 +546,7 @@ void main() {
           ),
         );
         await settle(tester);
-        // Touch creates through the FAB's sheet composer (#216).
+        // Touch creates through the FAB's composer panel (#216).
         ProviderScope.containerOf(
           tester.element(find.byType(TaskListView)),
           listen: false,

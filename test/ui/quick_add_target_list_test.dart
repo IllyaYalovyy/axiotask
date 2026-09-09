@@ -313,7 +313,7 @@ void main() {
   group('phone composer geometry', () {
     const phone = Size(400, 800);
 
-    /// Open the FAB's bottom-sheet composer (#216) — the touch creation
+    /// Open the FAB's composer panel (#216) — the touch creation
     /// surface, which mounts the same bar as the desktop.
     Future<void> openComposer(WidgetTester tester) async {
       final container = ProviderScope.containerOf(

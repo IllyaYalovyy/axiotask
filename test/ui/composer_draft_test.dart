@@ -1,8 +1,8 @@
 // The composer's DRAFT AIM across consecutive adds (#264).
 //
-// The defect: the phone's bottom-sheet composer captured the parent's
-// `pickedDue` ONCE, when the sheet route was built, while the pane cleared that
-// same field after every create. So a user who tapped "Tomorrow", added a task,
+// The defect: the phone's composer (a bottom sheet then, a top-pinned panel
+// since #304) captured the parent's `pickedDue` ONCE, when its surface was
+// built, while the pane cleared that same field after every create. So a user who tapped "Tomorrow", added a task,
 // and typed the next one saw a chip that still said "tomorrow" — and got an
 // UNDATED task. The composer said one thing and created another, which is the
 // one thing a create surface may never do.
@@ -11,7 +11,7 @@
 // date and the destination list — is what the NEXT add uses, and it stays put
 // across submits. It goes away when the user says so (the chip's ×) or when the
 // composer closes. Both composer surfaces observe ONE draft, so they cannot
-// disagree about it: the always-visible desktop bar and the phone's sheet are
+// disagree about it: the always-visible desktop bar and the phone's panel are
 // asserted separately here, because the bug lived entirely in the gap between
 // them.
 //
@@ -77,9 +77,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  /// The REAL compact chrome (FAB + sheet composer) over [fake], at phone width,
-  /// with the list inside a NESTED navigator — the shape go_router's ShellRoute
-  /// gives it, and the tree the sheet's root-navigator route sits above.
+  /// The REAL compact chrome (FAB + composer panel) over [fake], at phone
+  /// width, with the list inside a NESTED navigator — the shape go_router's
+  /// ShellRoute gives it, and the pane the panel is pinned to the top of.
   Future<void> pumpPhone(
     WidgetTester tester, {
     required FakeCommands fake,
@@ -123,9 +123,16 @@ void main() {
     await settle(tester);
   }
 
-  /// Open the touch composer by tapping the FAB it morphs out of.
+  /// Open the touch composer by tapping the FAB it unfolds out of.
   Future<void> openComposer(WidgetTester tester) async {
     await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+  }
+
+  /// Fold it away again by its handle — the panel has no scrim to tap, because
+  /// the list under it never stops being live (#304).
+  Future<void> closeComposer(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('composer-close-handle')));
     await tester.pumpAndSettle();
   }
 
@@ -153,7 +160,7 @@ void main() {
   StoredTask taskNamed(FakeCommands fake, String title) =>
       fake.tasks.firstWhere((t) => t.task.title == title);
 
-  group('phone — the sheet composer', () {
+  group('phone — the composer panel', () {
     testWidgets('a date picked in the composer is the date the SECOND add gets '
         'too, and the chip keeps saying so (#264)', (tester) async {
       var minted = 0;
@@ -172,7 +179,7 @@ void main() {
       await add(tester, 'First');
       expect(taskNamed(fake, 'First').task.due, _tomorrow);
 
-      // THE DEFECT: the chip still says "tomorrow" here because the sheet
+      // THE DEFECT: the chip still said "tomorrow" here because the surface
       // captured the value once — but the pane had already dropped it, so the
       // next add lands undated. The composer must not promise what it will not
       // deliver: the aim it still SHOWS is the aim it must still USE.
@@ -241,9 +248,8 @@ void main() {
         reason: 'the aim is still standing — there is something to release',
       );
 
-      // Non-happy path: dismiss the sheet through the scrim, then come back.
-      await tester.tapAt(const Offset(200, 60));
-      await tester.pumpAndSettle();
+      // Non-happy path: fold the panel away, then come back.
+      await closeComposer(tester);
       await openComposer(tester);
 
       expect(
@@ -282,8 +288,7 @@ void main() {
         reason: 'the aim applies to this add AND every one after it (#217)',
       );
 
-      await tester.tapAt(const Offset(200, 60));
-      await tester.pumpAndSettle();
+      await closeComposer(tester);
       await openComposer(tester);
       await add(tester, 'Third');
       expect(

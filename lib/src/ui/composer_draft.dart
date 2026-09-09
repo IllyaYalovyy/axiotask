@@ -3,7 +3,7 @@
 // to keep as literal text, and the destination list.
 //
 // It is ONE object per mounted list pane, observed by BOTH composer surfaces:
-// the always-visible desktop bar and the phone's bottom-sheet composer. That is
+// the always-visible desktop bar and the phone's composer panel. That is
 // the whole point of it. Before #264 the aim lived in the pane's own `State`
 // fields, and the sheet — a route on the ROOT navigator, built once — captured
 // their values at build time while the pane went on mutating them. A submit

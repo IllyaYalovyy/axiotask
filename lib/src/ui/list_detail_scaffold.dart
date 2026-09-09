@@ -688,6 +688,20 @@ class _CompactShellState extends State<_CompactShell>
   }
 
   @override
+  void didUpdateWidget(covariant _CompactShell old) {
+    super.didUpdateWidget(old);
+    if (widget.composerOpen == old.composerOpen) return;
+    // Opening the composer ENDS the hide, it does not merely outvote it: the
+    // bar is back for good, and the count of travelled scroll starts again, so
+    // closing the composer cannot drop the bar the user is still typing under.
+    if (widget.composerOpen) {
+      _travelled = 0;
+      _setHidden(fab: false, bar: false);
+    }
+    _syncBar();
+  }
+
+  @override
   void dispose() {
     if (_drawerOpen) {
       // Withdrawn a frame LATER, never from inside dispose: what listens to
@@ -704,9 +718,10 @@ class _CompactShellState extends State<_CompactShell>
 
   /// Drive the bar to where the current state says it belongs. A raised
   /// keyboard CANCELS the hide outright: whatever the scroll was doing, the bar
-  /// comes back.
+  /// comes back — and so does an OPEN COMPOSER, which is pinned under the bar's
+  /// bottom edge (#304) and cannot hang off a bar that is not there.
   void _syncBar() {
-    if (_barHidden && !_imeUp) {
+    if (_barHidden && !_imeUp && !widget.composerOpen) {
       _bar.reverse();
     } else {
       _bar.forward();
@@ -745,7 +760,9 @@ class _CompactShellState extends State<_CompactShell>
       _travelled += delta;
       // One gesture, one threshold: both halves of the chrome leave together
       // and both come back on a reversal together.
-      if (_travelled > _CompactShell.scrollThreshold && _collapses) {
+      if (_travelled > _CompactShell.scrollThreshold &&
+          _collapses &&
+          !widget.composerOpen) {
         _setHidden(fab: true, bar: true);
       } else if (_travelled < -_CompactShell.scrollThreshold) {
         _setHidden(fab: false, bar: false);

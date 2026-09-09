@@ -109,7 +109,7 @@ void main() {
             // Fine-pointer by default, so the inline quick-add bar is mounted:
             // this suite pins the pointer-agnostic list/create SEMANTICS
             // through the bar. Touch-specific cases pass android and drive the
-            // FAB's bottom-sheet composer (#216) instead; the full touch
+            // FAB's composer panel (#216) instead; the full touch
             // chrome is pinned in touch_interactions_test.
             theme: ThemeData(platform: platform),
             home: Scaffold(
@@ -183,8 +183,8 @@ void main() {
     // phrase as literal text. On a touch pointer the whole date chip is the
     // "keep as text" button (#223 folded the standalone × back in to win the
     // composer's width back), and it stays finger-sized. Touch creates through
-    // the bottom-sheet composer (#216), so this drives the sheet: bump the
-    // FAB's request seam, then type there.
+    // the composer panel (#216), so this drives that panel: bump the FAB's
+    // request seam, then type there.
     await pumpView(tester, platform: TargetPlatform.android);
     final container = ProviderScope.containerOf(
       tester.element(find.byType(TaskListView)),
