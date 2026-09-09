@@ -505,7 +505,14 @@ void main() {
         hapticsDevice: haptics,
       );
 
-      await tester.tap(find.byKey(const Key('sub-due-C')));
+      // Since #306 a subtask's date IS the shared row due segment, inside
+      // that subtask's own row.
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('C')),
+          matching: find.byKey(const Key('row-due-segment')),
+        ),
+      );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       await tester.tap(find.byKey(quickDateKey('today')));

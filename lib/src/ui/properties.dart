@@ -434,6 +434,25 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
+        const SizedBox(height: 20),
+        // The setting behind the detail panel's "N completed" group (#306). It
+        // is a PREFERENCE — one answer for every task — so it is stated here,
+        // not re-offered as a checkbox inside every task's panel, where it read
+        // as a per-task control that would only ever affect that task.
+        _sectionHeading(theme, 'Task detail'),
+        SwitchListTile(
+          key: const Key('collapse-completed-subtasks-toggle'),
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Collapse completed subtasks'),
+          subtitle: const Text(
+            'Finished subtasks fold under "N completed" at the bottom of the '
+            'checklist. Tapping that group still opens them.',
+          ),
+          value: ref.watch(prefsControllerProvider).hideCompletedSubtasks,
+          onChanged: (v) => ref
+              .read(prefsControllerProvider.notifier)
+              .setHideCompletedSubtasks(v),
+        ),
         // Haptics exist only where there is a haptic engine to drive: the seam
         // is a no-op off Android (#257), so on a mouse platform this switch
         // would be furniture that changes nothing. Chosen by POINTER, like

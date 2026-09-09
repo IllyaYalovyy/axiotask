@@ -472,7 +472,12 @@ void main() {
             row('S', 'kid', parent: 'P'),
           ],
         );
-        await tester.tap(find.byKey(const Key('sub-due-S')));
+        await tester.tap(
+          find.descendant(
+            of: find.byKey(const ValueKey('S')),
+            matching: find.byKey(const Key('row-due-segment')),
+          ),
+        );
         await settle(tester);
         expect(renderedMenuLabels(tester), _frozenLabels);
         await tester.tap(find.byKey(quickDateKey('month')));

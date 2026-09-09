@@ -390,7 +390,7 @@ void main() {
   });
 
   group('per-subtask due (inline)', () {
-    testWidgets('shows a subtask due button labelled with the ISO date', (
+    testWidgets('a dated subtask shows its date on the row (#306)', (
       tester,
     ) async {
       await pumpDetail(
@@ -401,7 +401,16 @@ void main() {
           row('S', 'kid', parent: 'P', due: '2026-06-10T00:00:00.000Z'),
         ],
       );
-      expect(find.byTooltip('Subtask due date: 2026-06-10'), findsOneWidget);
+      // The row's own due segment, written the way every date in the app is
+      // written — not a bespoke subtask label with its own tooltip.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('S')),
+          matching: find.byKey(const Key('row-due-segment')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text(formatDue('2026-06-10T00:00:00.000Z')), findsOneWidget);
     });
 
     testWidgets('picking a subtask date sets it via setDueRaw on the subtask', (
@@ -415,7 +424,12 @@ void main() {
           row('S', 'kid', parent: 'P', due: '2026-06-10T00:00:00.000Z'),
         ],
       );
-      await tester.tap(find.byKey(const Key('sub-due-S')));
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('S')),
+          matching: find.byKey(const Key('row-due-segment')),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(quickDateKey('pick')));
       await tester.pumpAndSettle();
@@ -426,9 +440,11 @@ void main() {
     });
   });
 
-  // #220 — the section leads with a textual "x of y complete" so the user reads
-  // the progress instead of estimating it from the row's bar. It counts EVERY
-  // subtask, including ones the hide-completed toggle removes from view.
+  // #220 — the section states the progress instead of leaving it to be
+  // estimated from a bar. Since #306 it states it in the app's ONE progress
+  // format: the same [SubtaskProgress] the parent's row wears in the list, so
+  // the number reads and speaks identically in both places. It counts EVERY
+  // subtask, including the ones the completed group folds out of view.
   group('subtask progress summary (#220)', () {
     testWidgets('states how many of the subtasks are complete', (tester) async {
       await pumpDetail(
@@ -441,7 +457,7 @@ void main() {
           row('C3', 'kid three', parent: 'P', position: '3'),
         ],
       );
-      expect(find.text('1 of 3 complete'), findsOneWidget);
+      expect(find.text('1/3'), findsOneWidget);
     });
 
     testWidgets('re-counts as soon as a subtask is toggled', (tester) async {
@@ -467,8 +483,8 @@ void main() {
         fake.tasks.firstWhere((t) => t.task.id == 'C2').task.status,
         TaskStatus.completed,
       );
-      expect(find.text('2 of 3 complete'), findsOneWidget);
-      expect(find.text('1 of 3 complete'), findsNothing);
+      expect(find.text('2/3'), findsOneWidget);
+      expect(find.text('1/3'), findsNothing);
     });
 
     testWidgets('keeps counting the completed ones while they are hidden', (
@@ -484,25 +500,25 @@ void main() {
           row('C3', 'kid three', parent: 'P', position: '3'),
         ],
       );
-      await tester.tap(find.text('Hide completed'));
+      await tester.tap(find.byKey(const Key('completed-subtasks-toggle')));
       await settleDetail(tester);
 
-      expect(find.text('kid one'), findsNothing, reason: 'hidden from view');
+      expect(find.text('kid one'), findsNothing, reason: 'folded away');
       expect(
-        find.text('1 of 3 complete'),
+        find.text('1/3'),
         findsOneWidget,
-        reason: 'hidden subtasks still count toward the total',
+        reason: 'collapsed subtasks still count toward the total',
       );
     });
 
     testWidgets('a task with no subtasks states no count', (tester) async {
       await pumpDetail(tester, taskId: 'P', initial: [row('P', 'parent')]);
-      expect(find.textContaining(' complete'), findsNothing);
+      expect(find.byKey(const Key('subtask-progress')), findsNothing);
     });
   });
 
-  group('hide-completed / un-complete-all', () {
-    testWidgets('hides completed subtasks when the toggle is on', (
+  group('completed group / un-complete-all', () {
+    testWidgets('folding the group hides the completed subtasks', (
       tester,
     ) async {
       await pumpDetail(
@@ -515,15 +531,13 @@ void main() {
         ],
       );
       expect(find.text('done kid'), findsOneWidget);
-      await tester.tap(find.text('Hide completed'));
+      await tester.tap(find.byKey(const Key('completed-subtasks-toggle')));
       await settleDetail(tester);
       expect(find.text('done kid'), findsNothing);
       expect(find.text('open kid'), findsOneWidget);
     });
 
-    testWidgets('no Hide-completed toggle when nothing is completed', (
-      tester,
-    ) async {
+    testWidgets('no completed group when nothing is completed', (tester) async {
       await pumpDetail(
         tester,
         taskId: 'P',
@@ -532,7 +546,7 @@ void main() {
           row('S1', 'open kid', parent: 'P'),
         ],
       );
-      expect(find.text('Hide completed'), findsNothing);
+      expect(find.byKey(const Key('completed-subtasks-toggle')), findsNothing);
     });
 
     testWidgets(
@@ -751,7 +765,7 @@ void main() {
       );
       await settleDetail(tester);
 
-      expect(find.text('1 of 3 complete'), findsOneWidget);
+      expect(find.text('1/3'), findsOneWidget);
       expect(overflows, isEmpty, reason: overflows.join('\n'));
     });
   });

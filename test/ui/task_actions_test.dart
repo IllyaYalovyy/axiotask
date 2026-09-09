@@ -267,6 +267,29 @@ void main() {
       expect(find.text('Undo'), findsOneWidget);
     });
 
+    testWidgets('Delete names the subtasks it takes with it (#306)', (
+      tester,
+    ) async {
+      // A delete cascades the whole subtree (#106) and Undo restores all of it,
+      // so the toast has to state the reach — it used to name only the row the
+      // user right-clicked.
+      final fake = await pumpList(
+        tester,
+        initial: [
+          row('A', 'apples'),
+          row('A1', 'wash', parent: 'A'),
+          row('A2', 'peel', parent: 'A'),
+        ],
+        lists: oneList,
+      );
+      await rightClick(tester, 'apples');
+      await tester.tap(find.byKey(const Key('taskmenu-delete')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(fake.tasks, isEmpty, reason: 'the subtree went too');
+      expect(find.text('Deleted "apples" and 2 subtasks'), findsOneWidget);
+    });
+
     testWidgets('tapping outside closes the context menu (dismiss)', (
       tester,
     ) async {
