@@ -21,6 +21,7 @@ import '../app/providers.dart';
 import '../model/task.dart';
 import '../model/task_view.dart';
 import '../store/stored.dart';
+import 'compact_chrome.dart';
 import 'completion_motion.dart';
 import 'date_format.dart';
 import 'drag_lift.dart' show dragLiftProxyDecorator;
@@ -368,10 +369,19 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     // padding tracks the FAB exactly: the shell builds one only in the compact
     // layout, and only for a coarse pointer (#216), so a narrow mouse-driven
     // window spends no room on a clearance it does not need.
-    final listPadding =
-        mobile && coarsePointerPlatform(Theme.of(context).platform)
-        ? const EdgeInsets.only(bottom: NewTaskFab.clearance)
-        : EdgeInsets.zero;
+    // …and the collapsing app bar floats over the TOP of it (#305): the shell
+    // paints it over this pane rather than above it, so what keeps the first
+    // row clear of the bar is padding INSIDE the scroll view. The rows then
+    // travel under the bar as the list moves, which is what lets the bar leave
+    // without a single row shifting to fill the space — and what makes the
+    // space it leaves show rows rather than bare background.
+    final chromeInset = CompactChromeScope.maybeOf(context)?.insetTop ?? 0;
+    final listPadding = EdgeInsets.only(
+      top: chromeInset,
+      bottom: mobile && coarsePointerPlatform(Theme.of(context).platform)
+          ? NewTaskFab.clearance
+          : 0,
+    );
 
     // The heading is present only when there ARE overdue cards to head; it then
     // shifts every row down one slot in the list's index space.
@@ -397,8 +407,11 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
       content = LayoutBuilder(
         builder: (context, c) => SingleChildScrollView(
           physics: physics,
+          // The bar's band is the scroll view's padding here too, so the state
+          // centres in the room BELOW the bar rather than behind it.
+          padding: EdgeInsets.only(top: chromeInset),
           child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: c.maxHeight),
+            constraints: BoxConstraints(minHeight: c.maxHeight - chromeInset),
             // Keyed by view: switching from one empty view to another is
             // ENTERING a state, and the icon that names it arrives with it.
             child: EmptyStateView(
@@ -520,6 +533,9 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     if (!mobile) return gated;
     return RefreshIndicator(
       onRefresh: _pullRefresh,
+      // The scroll view starts BEHIND the app bar (#305); the spinner drops
+      // from the bar's bottom edge, not from under it.
+      edgeOffset: chromeInset,
       // The gesture's indicator and the line it hands off to (#255) are one
       // piece of feedback, so they are one colour — the app's primary, stated
       // here rather than inherited from whatever Material defaults to next.
