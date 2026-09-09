@@ -103,6 +103,10 @@ class AppShell extends ConsumerWidget {
     // …and the same drawer's open state, watched, so the back ladder below can
     // publish its claim on the gesture BEFORE the gesture happens (#263).
     final drawerOpen = ref.watch(drawerOpenProvider);
+    // The touch composer is a PANEL in the pane now, not a route (#304), so
+    // nothing pops it by itself: the back ladder below owns its dismissal, and
+    // the flag it reads is the same one the FAB and the panel render from.
+    final composerOpen = ref.watch(composerOpenProvider);
 
     // Panel prev/next: the neighbours of the open task in the ordering the user
     // is looking at, which is not always the same one (#303).
@@ -262,9 +266,10 @@ class AppShell extends ConsumerWidget {
       onResetDetailFraction: () =>
           prefsCtl.setDetailFraction(ListDetailScaffold.defaultDetailFraction),
       // ONE creation affordance per pointer class (#216): on touch the FAB is
-      // it — it opens the list's bottom-sheet composer (never a silent
-      // empty-task create, #166). On a fine pointer the always-visible
-      // quick-add bar is it, and the FAB never renders — width does not decide
+      // it — it opens the composer panel pinned under the app bar (never a
+      // silent empty-task create, #166/#304). On a fine pointer the
+      // always-visible quick-add bar is it, and the FAB never renders — width
+      // does not decide
       // (a narrow desktop window keeps the bar, not the FAB).
       // …and never in the "Needs attention" view, which creates nothing: a FAB
       // there would open a composer the pane has no room for and a task the
@@ -278,8 +283,8 @@ class AppShell extends ConsumerWidget {
       // rotation unmounts it still open — the input to [drawerOpen] above.
       onDrawerChanged: ref.read(drawerOpenProvider.notifier).set,
       // …and while that composer is up there is NO FAB: the two are one surface
-      // (#234), so the FAB can never render over the sheet it turned into.
-      composerOpen: ref.watch(composerOpenProvider),
+      // (#234), so the FAB can never render over the panel it turned into.
+      composerOpen: composerOpen,
       destinations: [
         for (final v in SmartView.values)
           ShellDestination(
@@ -328,17 +333,18 @@ class AppShell extends ConsumerWidget {
     // PopScope that [ListDetailScaffold] already owns. One system back resolves
     // the single highest-priority app-owned mode — one rung per press:
     //
-    //   0. an open drawer            → close it
-    //   1. the first-launch welcome  → dismiss it (persist onboardingSeen)
-    //   2. an open detail            → close it   (owned by the scaffold below)
-    //   3. an active selection       → clear it
-    //   4. (nothing left)            → let the OS pop the app
+    //   0. an open drawer             → close it
+    //   1. the first-launch welcome   → dismiss it (persist onboardingSeen)
+    //   2. an open detail             → close it  (owned by the scaffold below)
+    //   3. the open touch composer    → fold it away (#304)
+    //   4. an active selection        → clear it
+    //   5. (nothing left)             → let the OS pop the app
     //
-    // This PopScope owns rungs 0, 1 and 3 only; it deliberately leaves rung 2 to
-    // the scaffold's own PopScope. Both PopScopes register on the same route, so
-    // a blocked back fires BOTH callbacks — the `!detailOpen` guard below keeps
-    // this one from ALSO clearing the selection on the back that closes a detail
-    // (one back is exactly one rung).
+    // This PopScope owns rungs 0, 1, 3 and 4 only; it deliberately leaves rung
+    // 2 to the scaffold's own PopScope. Both PopScopes register on the same
+    // route, so a blocked back fires BOTH callbacks — the `!detailOpen` guard
+    // below keeps this one from ALSO clearing the selection on the back that
+    // closes a detail (one back is exactly one rung).
     //
     // The open drawer is rung 0, above every other app-owned one. The framework
     // has its own handling for it — the drawer registers a LocalHistoryEntry —
@@ -375,7 +381,11 @@ class AppShell extends ConsumerWidget {
       controller: ref.watch(detailOriginProvider),
       child: PopScope(
         canPop:
-            !(drawerOpen || showOnboarding || selectionActive || renameActive),
+            !(drawerOpen ||
+                showOnboarding ||
+                composerOpen ||
+                selectionActive ||
+                renameActive),
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) return;
           final scaffoldState = scaffoldKey.currentState;
@@ -383,6 +393,10 @@ class AppShell extends ConsumerWidget {
             scaffoldState!.closeDrawer();
           } else if (showOnboarding) {
             dismissOnboarding();
+          } else if (!detailOpen && composerOpen) {
+            // Back folds the composer away exactly as its handle does — and
+            // exactly as it dismissed the sheet this replaced (#304).
+            ref.read(composerOpenProvider.notifier).set(false);
           } else if (!detailOpen && renameActive) {
             ref.read(renameBackHandleProvider.notifier).commit();
           } else if (!detailOpen && selectionActive) {

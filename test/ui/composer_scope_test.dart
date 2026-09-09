@@ -5,10 +5,10 @@
 // its own draft, its own snapshot of the list set — and its own listener on
 // `newTaskRequestProvider`. A view switch mounts TWO panes at once (the
 // [ViewSwitch] cross-fade keeps the outgoing one alive for the length of the
-// transition), and both of them answered the same FAB tap: two bottom-sheet
-// composers stacked on one another, the lower one aimed at the view the user
-// had just LEFT. And an open sheet rendered from a `lists` value captured when
-// its route was built, so a list arriving while the composer was up (a sync
+// transition), and both of them answered the same FAB tap: two composers
+// stacked on one another, the lower one aimed at the view the user had just
+// LEFT. And an open composer rendered from a `lists` value captured when its
+// surface was built, so a list arriving while it was up (a sync
 // pull, or simply the lists stream resolving a frame late) was invisible to the
 // destination picker.
 //
@@ -172,7 +172,7 @@ void main() {
 
     // Dismiss the composer and step to another view — the pane the draft used
     // to live in is torn down by that step.
-    Navigator.of(tester.element(find.byKey(const Key('quick-add-bar')))).pop();
+    await tester.tap(find.byKey(const Key('composer-close-handle')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tapDestination(tester, 'Upcoming');

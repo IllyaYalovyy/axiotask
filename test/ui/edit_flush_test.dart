@@ -280,7 +280,7 @@ void main() {
       );
 
       // On touch (the shell's default test platform) creation goes through the
-      // FAB's bottom-sheet composer (#216): open it, type a draft, but never
+      // FAB's composer panel (#216): open it, type a draft, but never
       // submit.
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();

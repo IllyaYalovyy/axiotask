@@ -1,29 +1,30 @@
-// The touch creation affordance as ONE entity (#234): the FAB and the
-// bottom-sheet composer it opens.
+// The touch creation affordance as ONE entity (#234): the FAB and the composer
+// it opens.
 //
 // The defect this suite pins down: the composer was pushed onto the SHELL's
 // nested navigator (go_router's ShellRoute), while the FAB belongs to the outer
 // compact Scaffold — so the "modal" rendered UNDER the FAB and the FAB covered
 // the composer's own submit button. Task creation on a phone was broken by
-// construction, not by z-order luck.
+// construction, not by z-order luck. It is structurally impossible now: since
+// #304 the composer is not a route over the shell at all but a panel INSIDE the
+// pane, pinned under the app bar, and the FAB is gone while it is up.
 //
 // So the harness below models the real tree exactly: a [ListDetailScaffold]
 // whose `list` child sits inside its OWN [Navigator], the way the ShellRoute
 // mounts it. Every assertion is about what a finger can see and reach — the
 // composer's submit is hit-testable, the FAB is on screen or it is not, the last
-// row's date button clears the FAB — never about which route object the sheet
+// row's date button clears the FAB — never about which layer the composer
 // landed on.
 //
 // Determinism: static provider streams over the in-memory FakeCommands (no
 // database, no clock, no network). Animations are driven by explicit
-// `pump(duration)` where a frame in the MIDDLE of the morph is the thing under
+// `pump(duration)` where a frame in the MIDDLE of the unfold is the thing under
 // test.
 
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
-import 'package:axiotask/src/ui/new_task_fab.dart';
 import 'package:axiotask/src/ui/quick_date_menu.dart';
 import 'package:axiotask/src/ui/views.dart';
 import 'package:flutter/material.dart';
@@ -49,7 +50,7 @@ void main() {
 
   /// The REAL compact chrome over [fake], at phone width, with the list mounted
   /// inside a NESTED navigator — the shape go_router's ShellRoute gives it, and
-  /// the reason the composer used to render under the FAB.
+  /// the shape that once made the composer render under the FAB.
   Future<void> pumpChrome(
     WidgetTester tester, {
     required FakeCommands fake,
@@ -101,7 +102,7 @@ void main() {
   final fab = find.byType(FloatingActionButton);
   final submit = find.byKey(const Key('quick-add-submit'));
 
-  testWidgets('the composer layers ABOVE the shell — its submit button is '
+  testWidgets('the composer stands CLEAR of the shell — its submit button is '
       'reachable and no FAB is left on screen (#234)', (tester) async {
     final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
@@ -114,7 +115,7 @@ void main() {
     expect(
       fab,
       findsNothing,
-      reason: 'the FAB morphs INTO the composer — it cannot also sit over it',
+      reason: 'the FAB turns INTO the composer — it cannot also sit over it',
     );
     // And the composer's own submit is the topmost thing at its own centre: a
     // tap that lands on anything else fails here (warnIfMissed).
@@ -132,41 +133,50 @@ void main() {
     );
   });
 
-  testWidgets('open is ONE morph: mid-flight the composer is still unfolding '
-      'from the FAB corner (#234)', (tester) async {
+  testWidgets('open is ONE unfold: mid-flight the composer is still growing '
+      'out of the app bar\'s edge (#234/#304)', (tester) async {
     final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
 
-    // Where the FAB stands right now — the corner the composer must come out of.
-    final fabRect = tester.getRect(fab);
+    // The edge the composer hangs off — and the row it must not cover.
+    final barBottom = tester.getRect(find.byType(AppBar)).bottom;
     await tester.tap(fab);
-    await tester.pump(); // the route is pushed; the morph is at its start
+    await tester.pump(); // the panel is mounted; the unfold is at its start
 
     final surface = find.byKey(const Key('composer-surface'));
     expect(surface, findsOneWidget);
     final start = tester.getRect(surface);
     expect(
-      start.width,
-      closeTo(NewTaskFab.size, 0.5),
-      reason: 'the composer BEGINS as the FAB — one surface, not two',
+      start.height,
+      closeTo(0, 0.5),
+      reason: 'the composer BEGINS folded into the bar — one surface, not two',
     );
     expect(
-      start.right,
-      closeTo(fabRect.right, 0.5),
-      reason: 'and it begins in the corner the FAB just left',
+      start.top,
+      closeTo(barBottom, 0.5),
+      reason: 'and it begins at the edge it grows out of',
+    );
+    expect(
+      start.width,
+      phone.width,
+      reason: 'it grows DOWN, never out: the row inside never reflows',
     );
 
     // Mid-flight it is neither: it is unfolding.
     await tester.pump(const Duration(milliseconds: 100));
-    final mid = tester.getRect(surface).width;
-    expect(mid, greaterThan(NewTaskFab.size));
-    expect(mid, lessThan(phone.width));
+    final mid = tester.getRect(surface).height;
+    expect(mid, greaterThan(0));
 
     await tester.pumpAndSettle();
     final open = tester.getRect(surface);
-    expect(open.width, phone.width, reason: 'and lands as a full-width sheet');
-    expect(open.right, phone.width);
+    expect(open.height, greaterThan(mid), reason: 'and lands at full height');
+    expect(open.top, closeTo(barBottom, 0.5));
+    expect(
+      tester.getRect(find.text('Buy milk')).top,
+      greaterThanOrEqualTo(open.bottom),
+      reason: 'the list was pushed down by it, never covered',
+    );
   });
 
   testWidgets('the FAB is gone while the keyboard is up (#234)', (
@@ -284,7 +294,7 @@ void main() {
     expect(find.byKey(quickDateKey('clear')).hitTestable(), findsOneWidget);
   });
 
-  testWidgets('rapid consecutive adds: the sheet stays open and an empty '
+  testWidgets('rapid consecutive adds: the composer stays open and an empty '
       'submit creates nothing (#234)', (tester) async {
     // Unique ids: two adds in a row must not collide in the list's key space.
     var minted = 0;

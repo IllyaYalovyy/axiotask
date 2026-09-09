@@ -313,17 +313,28 @@ void main() {
         );
       });
 
-      testWidgets('the composer sheet closes; nothing else moves', (
-        tester,
-      ) async {
+      testWidgets('the composer panel folds away, keyboard and all; nothing '
+          'else moves', (tester) async {
         await pumpPhone(tester, tasks: [row('T1', 'my task')]);
         await tester.tap(find.byType(FloatingActionButton));
         await settle(tester);
         expect(find.byKey(const Key('composer-surface')), findsOneWidget);
+        expect(
+          tester.testTextInput.isVisible,
+          isTrue,
+          reason: 'the composer raised the keyboard when it opened',
+        );
 
         await back(tester);
 
         expect(find.byKey(const Key('composer-surface')), findsNothing);
+        expect(
+          tester.testTextInput.isVisible,
+          isFalse,
+          reason:
+              'the keyboard falls with the composer — an IME left open over a '
+              'surface that is gone is what strands the bottom inset (#233)',
+        );
         expect(find.text('my task'), findsOneWidget);
       });
 

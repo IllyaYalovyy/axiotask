@@ -4,7 +4,7 @@
 // submit.
 //
 // The same widget renders on BOTH composer surfaces — the desktop's
-// always-visible bar and the phone's bottom-sheet composer — so drafts, date
+// always-visible bar and the phone's composer panel (#304) — so drafts, date
 // preview, landing toasts and the background flush behave identically on either
 // pointer class. It is a pure renderer of the aim: the controller above it owns
 // the draft, performs the create, and hands the row down through
@@ -12,6 +12,8 @@
 //
 // A keystroke rebuilds ONLY this bar (to update the preview) — never the
 // enclosing list, so typing never re-runs the view's row derivation (F20 #199).
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
@@ -184,7 +186,7 @@ class _QuickAddBarState extends State<QuickAddBar> {
 
   /// The selection toolbar with its Paste button rerouted through
   /// [_handlePaste] (#219) — the only clipboard route a finger has, and the one
-  /// the phone's bottom-sheet composer uses. Every other button is the
+  /// the phone's composer panel uses. Every other button is the
   /// platform's own.
   Widget _pasteAwareContextMenu(
     BuildContext context,
@@ -457,7 +459,7 @@ class _QuickAddBarState extends State<QuickAddBar> {
 /// The pick is transient by design: it survives consecutive adds but is never
 /// written to prefs and resets when the view changes, so the composer's aim is
 /// always either "here" or something the user set moments ago.
-class _TargetListButton extends StatelessWidget {
+class _TargetListButton extends StatefulWidget {
   const _TargetListButton({
     required this.lists,
     required this.targetListId,
@@ -474,18 +476,73 @@ class _TargetListButton extends StatelessWidget {
   /// Drop the label and show the icon alone (a crowded phone row).
   final bool compact;
 
+  /// The gap the open menu keeps between its last entry and the soft keyboard.
+  static const double keyboardGap = 8;
+
+  @override
+  State<_TargetListButton> createState() => _TargetListButtonState();
+}
+
+class _TargetListButtonState extends State<_TargetListButton> {
+  /// The tallest the menu may be, measured from where this button actually
+  /// STANDS the moment it is pressed. `null` until it has been pressed once.
+  ///
+  /// The composer is at the top of the pane on a phone (#304), so the menu
+  /// unfurls downward into the space between the button and the keyboard —
+  /// screen height alone says nothing about how much of that there is. A cap
+  /// that ignored the button's own position let ten lists run their last
+  /// entries behind the IME, where no finger can reach them; with it the menu
+  /// scrolls instead.
+  double? _maxMenuHeight;
+
+  /// Where the soft keyboard's top edge is, in the screen's own coordinates.
+  ///
+  /// Read from the VIEW, not from the [MediaQuery]: a [Scaffold] with
+  /// `resizeToAvoidBottomInset` strips the bottom view inset from the query it
+  /// hands its body — it has already made room — so a composer inside that body
+  /// sees no keyboard at all. The menu is not in the body: it is rendered in
+  /// the root overlay, over the whole screen, where the keyboard very much is
+  /// in the way. The larger of the two is the honest answer on either path.
+  double _keyboardTop() {
+    final view = View.of(context);
+    final raw = view.viewInsets.bottom / view.devicePixelRatio;
+    final media = MediaQuery.of(context);
+    return media.size.height - math.max(media.viewInsets.bottom, raw);
+  }
+
+  /// Open the menu after measuring the room below the button — the [MenuStyle]
+  /// is read when the overlay is built, so the cap has to be in this widget
+  /// before the menu opens, not in the same callback that opens it.
+  void _toggle(MenuController controller) {
+    if (controller.isOpen) {
+      controller.close();
+      return;
+    }
+    final box = context.findRenderObject() as RenderBox?;
+    final anchorBottom = box == null || !box.hasSize
+        ? 0.0
+        : box.localToGlobal(Offset(0, box.size.height)).dy;
+    setState(() {
+      _maxMenuHeight =
+          _keyboardTop() - anchorBottom - _TargetListButton.keyboardGap;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) controller.open();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final lists = widget.lists;
+    final targetListId = widget.targetListId;
+    final compact = widget.compact;
     final title = lists
         .firstWhere((l) => l.list.id == targetListId, orElse: () => lists.first)
         .list
         .title;
-    // The menu never claims more height than the screen leaves once the soft
-    // keyboard is up — the composer is ALWAYS typed into, so an uncapped menu
-    // over a long list of lists puts its last entries behind the IME where no
-    // finger can reach them. Capped, it scrolls instead.
-    final media = MediaQuery.of(context);
-    final maxMenuHeight = media.size.height - media.viewInsets.bottom - 64;
+    // Until the button has been pressed once, the screen minus the keyboard is
+    // the best that can be said; the press replaces it with the real room.
+    final maxMenuHeight = _maxMenuHeight ?? (_keyboardTop() - 64);
     return MenuAnchor(
       style: MenuStyle(
         maximumSize: WidgetStatePropertyAll(
@@ -499,7 +556,7 @@ class _TargetListButton extends StatelessWidget {
             leadingIcon: l.list.id == targetListId
                 ? const Icon(Icons.check, size: 18)
                 : const SizedBox(width: 18),
-            onPressed: () => onChanged(l.list.id),
+            onPressed: () => widget.onChanged(l.list.id),
             child: Text(l.list.title),
           ),
       ],
@@ -518,8 +575,7 @@ class _TargetListButton extends StatelessWidget {
               minimumSize: const Size(48, 48),
               padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
-            onPressed: () =>
-                controller.isOpen ? controller.close() : controller.open(),
+            onPressed: () => _toggle(controller),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

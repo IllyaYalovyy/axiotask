@@ -190,7 +190,8 @@ final quickAddFocusProvider = Provider<FocusNode>((ref) {
 });
 
 /// A monotonically-increasing "new task" request (#216): the touch FAB bumps it
-/// and the mounted [TaskListView] listens, opening its bottom-sheet composer.
+/// and the app's one [ComposerHost] listens, opening the top-pinned composer
+/// panel (#304).
 /// A counter (not a bool/event bus) so consecutive taps re-trigger even when a
 /// listener missed one; nothing resets it. Desktop never bumps it — the
 /// always-visible quick-add bar is the fine-pointer creation affordance.

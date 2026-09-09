@@ -76,6 +76,7 @@ void main() {
                 onDestinationSelected: (_) {},
                 title: 'All Tasks',
                 onNewTask: ref.read(newTaskRequestProvider.notifier).bump,
+                composerOpen: ref.watch(composerOpenProvider),
                 list: composedList(viewId: 'all', onOpenTask: _noop),
               ),
             ),
@@ -101,7 +102,7 @@ void main() {
     expect(find.byType(FloatingActionButton), findsOneWidget);
   });
 
-  testWidgets('the FAB opens the bottom-sheet composer, focused and ready '
+  testWidgets('the FAB opens the composer panel, focused and ready '
       '(no empty-task create) (#216)', (tester) async {
     final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
@@ -120,14 +121,14 @@ void main() {
     expect(
       tester.widget<EditableText>(editable).focusNode.hasFocus,
       isTrue,
-      reason: 'the sheet raises the keyboard immediately',
+      reason: 'the panel raises the keyboard immediately',
     );
     // Opening must NOT create a task — the fake still holds exactly the seed.
     expect(fake.tasks.length, 1);
   });
 
   testWidgets('submitting in the composer creates the task, clears the field, '
-      'and keeps the sheet open for rapid entry (#216)', (tester) async {
+      'and keeps the panel open for rapid entry (#216)', (tester) async {
     final fake = FakeCommands([row('T1', 'Buy milk')]);
     addTearDown(fake.dispose);
     await pumpChrome(tester, fake: fake, lists: [list('L1', 'Groceries')]);
@@ -142,14 +143,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fake.tasks.where((t) => t.task.title == 'buy oats'), isNotEmpty);
-    final sheetField = find.widgetWithText(TextField, 'Add a task');
+    final panelField = find.widgetWithText(TextField, 'Add a task');
     expect(
-      sheetField,
+      panelField,
       findsOneWidget,
-      reason: 'the sheet stays open for the next task',
+      reason: 'the panel stays open for the next task',
     );
     expect(
-      tester.widget<TextField>(sheetField).controller?.text,
+      tester.widget<TextField>(panelField).controller?.text,
       isEmpty,
       reason: 'the field cleared for rapid consecutive adds',
     );
@@ -168,10 +169,11 @@ void main() {
       find.widgetWithText(TextField, 'Add a task'),
       'half a thought',
     );
-    // Tap the scrim above the sheet to dismiss without submitting.
-    await tester.tapAt(const Offset(200, 40));
+    // The handle on the panel's bottom edge dismisses it without submitting
+    // (there is no scrim to tap any more — the list under it stays live).
+    await tester.tap(find.byKey(const Key('composer-close-handle')));
     await tester.pumpAndSettle();
-    expect(find.text('Add a task'), findsNothing, reason: 'sheet closed');
+    expect(find.text('Add a task'), findsNothing, reason: 'panel closed');
     expect(fake.tasks.length, 1, reason: 'nothing was created');
 
     // Reopening shows the draft again — dismissal is not data loss.
@@ -180,32 +182,30 @@ void main() {
     expect(find.text('half a thought'), findsOneWidget);
   });
 
-  // #233 — the composer must never leave the soft keyboard behind. A focused,
-  // detached field on a route that is on its way out is the suspected mechanism
-  // for the stranded bottom view inset (half the screen reserved for a keyboard
-  // that is gone), so every dismissal path is pinned: the keyboard goes down
-  // with the sheet, and it does not come back up on its own afterwards.
+  // #233 — the composer must never leave the soft keyboard behind. A focused
+  // field on a surface that is on its way out is the suspected mechanism for
+  // the stranded bottom view inset (half the screen reserved for a keyboard
+  // that is gone), so every dismissal path the panel itself owns is pinned: the
+  // keyboard goes down with it, and does not come back up on its own
+  // afterwards. (The THIRD path, the system back button, is a rung of the
+  // shell's ladder rather than the panel's own gesture, and is pinned where
+  // that ladder is — compact_back_ladder_test.)
   for (final dismissal
       in <({String name, Future<void> Function(WidgetTester) go})>[
         (
-          name: 'a scrim tap',
-          go: (tester) => tester.tapAt(const Offset(200, 40)),
+          name: 'a tap on the handle',
+          go: (tester) =>
+              tester.tap(find.byKey(const Key('composer-close-handle'))),
         ),
         (
-          name: 'the system back button',
-          go: (tester) => tester.binding.handlePopRoute(),
-        ),
-        (
-          name: 'a swipe down',
+          name: 'a drag back up',
           go: (tester) async {
-            // From the sheet's drag handle, not its text field — a swipe that
-            // starts on the input is a text gesture, not a dismissal.
-            final sheet = tester.getRect(find.byType(BottomSheet));
-            await tester.flingFrom(
-              Offset(sheet.center.dx, sheet.top + 12),
-              const Offset(0, 400),
-              1000,
+            // From the panel's handle, not its text field — a drag that starts
+            // on the input is a text gesture, not a dismissal.
+            final handle = tester.getRect(
+              find.byKey(const Key('composer-close-handle')),
             );
+            await tester.flingFrom(handle.center, const Offset(0, -60), 600);
           },
         ),
       ]) {
@@ -237,11 +237,11 @@ void main() {
 
       // ...and nothing re-raises it while the sheet finishes leaving.
       await tester.pumpAndSettle();
-      expect(find.text('Add a task'), findsNothing, reason: 'sheet closed');
+      expect(find.text('Add a task'), findsNothing, reason: 'panel closed');
       expect(
         tester.testTextInput.isVisible,
         isFalse,
-        reason: 'no handler may re-focus the composer on a route that popped',
+        reason: 'no handler may re-focus a composer that is folding away',
       );
 
       // The release is a dismissal, not a permanent kill: the composer is
@@ -249,7 +249,7 @@ void main() {
       await tester.tap(find.byType(FloatingActionButton));
       await tester.pumpAndSettle();
       expect(tester.testTextInput.isVisible, isTrue);
-      await tester.tapAt(const Offset(200, 40));
+      await tester.tap(find.byKey(const Key('composer-close-handle')));
       await tester.pumpAndSettle();
     });
   }

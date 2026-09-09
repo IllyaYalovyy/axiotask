@@ -1,4 +1,5 @@
-// The quick-add composer, lifted ABOVE the view switch (#274).
+// The quick-add composer, lifted ABOVE the view switch (#274) — and, on a
+// phone, pinned to the TOP of the pane (#304).
 //
 // The composer used to belong to whichever [TaskListView] happened to be
 // mounted, and that is exactly one thing too many: a view switch mounts TWO
@@ -18,8 +19,16 @@
 // silently keeping tasks flowing into the list — or onto the date — you left
 // behind. The typed TITLE is not an aim; it survives, because a tab tap is not
 // a decision to throw away what you were writing.
-
-import 'dart:math' as math;
+//
+// The host also owns WHERE the touch composer stands (#304). It is no longer a
+// route over the list but a [TopComposerPanel] this host lays out ABOVE the
+// pane, in the band the shell's app bar covers — so the pane below is told that
+// band is spent ([CompactChromeScope.insetTop] 0) and the rows make room for
+// the composer instead of padding themselves for a bar it already clears. The
+// list is pushed, never covered; the panel unfolds downward out of the bar's
+// own edge; and [composerOpenProvider] is the one truth about whether it is up
+// (the FAB reads it, the back ladder closes it through it, and this host both
+// sets it and renders from it).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,8 +43,9 @@ import '../store/stored.dart';
 import 'bulk_add.dart';
 import 'compact_chrome.dart';
 import 'composer_draft.dart';
-import 'composer_sheet.dart';
+import 'composer_panel.dart';
 import 'due_date_picker.dart';
+import 'motion.dart';
 import 'new_task_fab.dart' show NewTaskFab;
 import 'quick_add_bar.dart';
 import 'theme.dart';
@@ -94,8 +104,11 @@ abstract class ComposerController implements Listenable {
   /// Accept the multi-line-paste offer (#219): one task per line.
   Future<void> addPastedLines(String raw);
 
-  /// Open the touch composer sheet (the FAB's own surface).
-  Future<void> openSheet(BuildContext context);
+  /// Open the touch composer — the panel the FAB turns into (#304).
+  void openComposer();
+
+  /// Fold it away again, releasing the aim it was holding (#264).
+  void closeComposer();
 
   /// Open the bulk-add dialog on this view's default target list; `null` when
   /// there is no list to create in.
@@ -156,8 +169,15 @@ class _ComposerNotifier extends ChangeNotifier {
 }
 
 class _ComposerHostState extends ConsumerState<ComposerHost>
+    with SingleTickerProviderStateMixin
     implements ComposerController {
   final _ComposerNotifier _notifier = _ComposerNotifier();
+
+  /// The phone composer's unfold (#304): 0 folded into the app bar's bottom
+  /// edge, 1 fully open above the first row. Seeded from the live open flag, so
+  /// a host that mounts with the composer already up renders it open rather
+  /// than leaving the shell with no FAB and no composer.
+  late final AnimationController _panel;
 
   @override
   void addListener(VoidCallback listener) => _notifier.addListener(listener);
@@ -211,6 +231,20 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     // deactivated widget.
     _pendingEdits = ref.read(pendingEditsProvider)
       ..register(PendingEdit.quickAdd, _flushDraft);
+    _panel = AnimationController(
+      vsync: this,
+      duration: MotionDurations.medium,
+      value: ref.read(composerOpenProvider) ? 1 : 0,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // "Remove animations" (Android) / reduced motion: the panel still opens and
+    // folds, it just stops travelling to get there — the rule every other piece
+    // of chrome beside it follows.
+    _panel.duration = Motion.of(context).resolve(MotionDurations.medium);
   }
 
   @override
@@ -230,6 +264,7 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
 
   @override
   void dispose() {
+    _panel.dispose();
     _pendingEdits.unregister(PendingEdit.quickAdd, _flushDraft);
     draft.removeListener(_notifier.notify);
     _notifier.dispose();
@@ -479,24 +514,105 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     }
   }
 
+  // ── the touch composer's own presence (#304) ──────────────────────────────
+
+  /// The phone's pane: the composer panel above, the list below it.
+  ///
+  /// The SHAPE never changes — a [Column] of two slots, whether the composer is
+  /// up or not — because the second slot is the list, and rebuilding that
+  /// subtree would throw away its scroll offset and restart every row's
+  /// entrance. What changes is where the app bar's band is spent: while the
+  /// composer stands in it the pane below is told the band is gone
+  /// ([CompactChromeScope.insetTop] 0), so the two arrangements put the first
+  /// row in exactly the same place and opening the composer moves rows DOWN by
+  /// the composer's own height, never by a bar's.
+  Widget _phoneLayout(Widget scoped) {
+    final chrome = CompactChromeScope.maybeOf(context);
+    // Both built once per rebuild, never per frame of the unfold: the same
+    // widget instance handed back to a child element is not rebuilt at all.
+    Widget hosted(double insetTop) => chrome == null
+        ? scoped
+        : CompactChromeScope(
+            controller: chrome.controller,
+            insetTop: insetTop,
+            barShown: chrome.barShown,
+            child: scoped,
+          );
+    final closed = hosted(chrome?.insetTop ?? 0);
+    final open = hosted(0);
+    final panel = Padding(
+      // Under the shell's app bar, which is painted OVER this pane (#305) and
+      // is pinned for as long as the composer hangs off it.
+      padding: EdgeInsets.only(top: chrome?.insetTop ?? 0),
+      child: TopComposerPanel(
+        controller: this,
+        unfold: _panel,
+        onClose: closeComposer,
+      ),
+    );
+    return AnimatedBuilder(
+      animation: _panel,
+      builder: (context, _) {
+        // Gone means GONE: a folded composer is out of the layout, out of the
+        // hit test and out of the semantics tree, not a zero-height field a
+        // screen reader can still walk into.
+        final up = !_panel.isDismissed;
+        return Column(
+          children: [
+            if (up) panel else const SizedBox.shrink(),
+            Expanded(child: up ? open : closed),
+          ],
+        );
+      },
+    );
+  }
+
   @override
-  Future<void> openSheet(BuildContext context) =>
-      showComposerSheet(context, ref, this);
+  void openComposer() => ref.read(composerOpenProvider.notifier).set(true);
+
+  @override
+  void closeComposer() => ref.read(composerOpenProvider.notifier).set(false);
+
+  /// The panel follows the ONE open flag, whoever moved it — the FAB through
+  /// [openComposer], the handle through [closeComposer], the shell's back
+  /// ladder straight through the provider.
+  void _onComposerOpen(bool open) {
+    if (open) {
+      _panel.forward();
+      // The composer is ready to type into the moment it appears, with no
+      // extra tap — and it is at the TOP, so the keyboard it raises can never
+      // cover it (#304).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && ref.read(composerOpenProvider)) {
+          ref.read(quickAddFocusProvider).requestFocus();
+        }
+      });
+    } else {
+      _panel.reverse();
+      // Let the keyboard go with the surface that raised it.
+      ref.read(quickAddFocusProvider).unfocus();
+      // The composer session is over: the aim goes back to the view's defaults
+      // (#264). A date the user set for THIS burst of adds must not be waiting,
+      // unannounced, on a composer they open again an hour later.
+      draft.release();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     // ONE creation affordance per pointer class (#216): touch creates through
-    // the FAB's bottom-sheet composer (thumb zone, IME pre-raised), so the
-    // inline bar — which duplicated the FAB and cost a row of screen — mounts
-    // on a fine pointer only. The FAB bumps [newTaskRequestProvider]; THIS
-    // host — the one above the view switch — opens the sheet, so a tap during
-    // a switch can never be answered twice.
+    // the FAB's composer panel, so the always-visible inline bar — which
+    // duplicated the FAB and cost a row of screen — mounts on a fine pointer
+    // only. The FAB bumps [newTaskRequestProvider]; THIS host — the one above
+    // the view switch — opens the panel, so a tap during a switch can never be
+    // answered twice.
     final touch = coarsePointerPlatform(Theme.of(context).platform);
     ref.listen(newTaskRequestProvider, (previous, next) {
-      if (touch && next != previous) openSheet(context);
+      if (touch && next != previous) openComposer();
     });
+    ref.listen(composerOpenProvider, (previous, next) => _onComposerOpen(next));
     final scoped = ComposerScope(controller: this, child: widget.child);
-    if (touch) return scoped;
+    if (touch) return _phoneLayout(scoped);
     // A fine pointer in a COMPACT shell (a narrow desktop window — width does
     // not decide, #216) keeps this bar AND gets the shell's one app bar over
     // the top of the pane (#305). The bar's band is spent here, as real layout
@@ -574,13 +690,6 @@ class ComposerBar extends ConsumerWidget {
     );
   }
 }
-
-/// The bottom padding the composer sheet keeps clear: the keyboard when it is
-/// up (#166's IME contract), and the gesture pill when it is not.
-double composerSheetInset(BuildContext context) => math.max(
-  MediaQuery.viewInsetsOf(context).bottom,
-  MediaQuery.paddingOf(context).bottom,
-);
 
 /// The clearance the list keeps below its last row for the floating FAB.
 double get fabClearance => NewTaskFab.clearance;

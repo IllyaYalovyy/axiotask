@@ -14,17 +14,14 @@
 //     and a stale inset used to leave it floating mid-screen, #233), and while
 //     the composer is open. It is truly ABSENT then, not merely transparent:
 //     nothing to overlap, nothing to tap by accident.
-//   • [ComposerMorph] is the composer's own surface, and it UNFOLDS out of the
-//     corner the FAB just left — one continuous motion, not two surfaces
-//     trading places. Its route goes on the ROOT navigator, above every piece
-//     of shell furniture (the FAB, the NavigationBar); the toast overlay, which
-//     is mounted above the whole Navigator, still out-stacks it (F19).
+//   • the composer it opens is a [TopComposerPanel] pinned under the app bar
+//     (#304), not a sheet over the thumb: it unfolds downward out of the bar's
+//     own edge, pushes the list down instead of covering it, and lands where
+//     the rows it creates land. Nothing of the shell is left on top of it,
+//     because it is part of the pane rather than a route over it.
 //
 // Nothing here is desktop-facing: the fine-pointer creation affordance is the
 // always-visible quick-add bar (#216), and the shell never builds a FAB there.
-
-import 'dart:math' as math;
-import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
@@ -59,7 +56,7 @@ class NewTaskFab extends StatefulWidget {
 
   /// How long the FAB takes to leave or return — and, because the shell's app
   /// bar leaves at the same pace, the span the whole compact chrome shares.
-  /// (Why it is shorter than the composer's own route transition:
+  /// (Why it is shorter than the composer's own unfold:
   /// [MotionDurations.fabTransition].)
   static const Duration transition = MotionDurations.fabTransition;
 
@@ -132,187 +129,6 @@ class _NewTaskFabState extends State<NewTaskFab>
           child: Transform.scale(scale: _scale.value, child: fab),
         );
       },
-    );
-  }
-}
-
-/// The composer's surface: the sheet the FAB turns into.
-///
-/// [animation] is the sheet route's own animation, so open and close are the
-/// same motion played in both directions. The surface starts as a
-/// [NewTaskFab.size] rounded blob at the bottom END corner — where the FAB was
-/// standing — and unfolds across the screen while the route slides it up.
-///
-/// The unfolding is a WIDTH change over a child that is always laid out at full
-/// width (an [Align] with a width factor, clipped): the composer's row never
-/// reflows mid-flight, so nothing pops, jumps, or overflows while the surface
-/// is narrow.
-class ComposerMorph extends StatefulWidget {
-  const ComposerMorph({
-    required this.animation,
-    required this.onDismiss,
-    required this.onFoldStart,
-    required this.child,
-    super.key,
-  });
-
-  /// The sheet route's transition animation.
-  final Animation<double> animation;
-
-  /// The user asked to close the composer (the drag handle's tap / its
-  /// semantics action) — pop the sheet.
-  final VoidCallback onDismiss;
-
-  /// The sheet has BEGUN folding away. Fired once, on the frame the route
-  /// starts reversing: the pop future does not complete until the fold has
-  /// finished, which would leave the corner empty for the whole exit before the
-  /// FAB returned to it.
-  final VoidCallback onFoldStart;
-
-  /// The composer itself.
-  final Widget child;
-
-  /// The Material 3 modal-sheet corner radius.
-  static const double sheetRadius = 28;
-
-  @override
-  State<ComposerMorph> createState() => _ComposerMorphState();
-}
-
-class _ComposerMorphState extends State<ComposerMorph> {
-  /// Guards [ComposerMorph.onFoldStart] against a second fire (a fold the user
-  /// drags back open and lets go of again).
-  bool _announcedFold = false;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.animation.addStatusListener(_onStatus);
-  }
-
-  @override
-  void dispose() {
-    widget.animation.removeStatusListener(_onStatus);
-    super.dispose();
-  }
-
-  void _onStatus(AnimationStatus status) {
-    if (status != AnimationStatus.reverse || _announcedFold) return;
-    _announcedFold = true;
-    widget.onFoldStart();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // The width the composer unfolds TO. Finite in every real layout (the
-        // sheet is laid out against the screen); the fallback keeps a
-        // pathological unbounded constraint from producing a NaN factor.
-        final full = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : NewTaskFab.size;
-        return AnimatedBuilder(
-          animation: widget.animation,
-          child: Material(
-            // The M3 modal-sheet surface, drawn here rather than by the route:
-            // the route's own background would pop in full-width behind the
-            // morph instead of being part of it.
-            color: colors.surfaceContainerLow,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _DragHandle(onDismiss: widget.onDismiss),
-                widget.child,
-              ],
-            ),
-          ),
-          builder: (context, surface) {
-            final t = MotionCurves.enter.transform(
-              widget.animation.value.clamp(0.0, 1.0),
-            );
-            final width = lerpDouble(NewTaskFab.size, full, t)!;
-            // The blob sits exactly where the FAB stood — inset by the FAB's
-            // margin — and that inset melts away as it becomes the sheet. The
-            // inset is also what the surface is laid out inside, so the width
-            // factor is measured against THAT, not against the screen: at rest
-            // the visible surface is one FAB wide, to the pixel.
-            final inset = lerpDouble(NewTaskFab.margin, 0, t)!;
-            final laidOut = math.max(full - inset, 1.0);
-            final radius = Radius.circular(
-              lerpDouble(NewTaskFab.size / 2, ComposerMorph.sheetRadius, t)!,
-            );
-            // The OUTER align keeps the sheet full-width (a shrink-wrapped
-            // sheet would be centred by the route's own constraints, and the
-            // composer would unfold out of thin air in the middle of the
-            // screen); the inner one is the unfold itself.
-            return Align(
-              alignment: AlignmentDirectional.bottomEnd,
-              heightFactor: 1,
-              child: Padding(
-                padding: EdgeInsetsDirectional.only(end: inset),
-                child: ClipRRect(
-                  key: const Key('composer-surface'),
-                  borderRadius: BorderRadius.only(
-                    topLeft: radius,
-                    topRight: radius,
-                    // Square at rest: the sheet's bottom edge is the screen's.
-                    bottomLeft: Radius.circular(radius.x * (1 - t)),
-                    bottomRight: Radius.circular(radius.x * (1 - t)),
-                  ),
-                  child: Align(
-                    // Anchored to the corner it grew out of; the child keeps
-                    // its full width and is simply not all visible yet.
-                    alignment: AlignmentDirectional.bottomEnd,
-                    widthFactor: (width / laidOut).clamp(0.0, 1.0),
-                    heightFactor: 1,
-                    child: surface,
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-/// The sheet's drag handle — ours rather than the route's, so it is part of the
-/// morphing surface instead of a second thing appearing above it. Same metrics,
-/// colour and semantics as the Material default (a 48dp target around a 32×4
-/// bar, labelled with the platform's dismiss label).
-class _DragHandle extends StatelessWidget {
-  const _DragHandle({required this.onDismiss});
-
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final size = theme.bottomSheetTheme.dragHandleSize ?? const Size(32, 4);
-    return Semantics(
-      label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
-      container: true,
-      button: true,
-      onTap: onDismiss,
-      child: SizedBox(
-        width: math.max(size.width, kMinInteractiveDimension),
-        height: math.max(size.height, kMinInteractiveDimension),
-        child: Center(
-          child: Container(
-            width: size.width,
-            height: size.height,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(size.height / 2),
-              color:
-                  theme.bottomSheetTheme.dragHandleColor ??
-                  theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

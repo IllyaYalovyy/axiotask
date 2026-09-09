@@ -75,9 +75,9 @@ abstract final class MotionDurations {
   // the user can see. Each says why it is not simply `short` or `long`.
 
   /// 120ms — the FAB's leave and return (#234). Deliberately shorter than the
-  /// composer's own route transition: the FAB has to be gone before the sheet
-  /// unfolds far enough to reach the corner, or the two read as two surfaces
-  /// trading places instead of one becoming the other.
+  /// composer's own unfold ([medium]): the FAB has to be gone before the panel
+  /// has unfolded, or the two read as two surfaces trading places instead of
+  /// one becoming the other.
   static const Duration fabTransition = Duration(milliseconds: 120);
 
   /// 500ms — a nav-bar destination going from unselected to selected (#237).

@@ -221,7 +221,7 @@ void main() {
         final surfaces = {
           'the page': scheme.surface,
           'a menu / sheet': scheme.surfaceContainer,
-          'the composer sheet': scheme.surfaceContainerLow,
+          'the composer panel': scheme.surfaceContainerLow,
           'a raised container': scheme.surfaceContainerHigh,
           'the highest container': scheme.surfaceContainerHighest,
         };

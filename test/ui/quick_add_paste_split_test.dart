@@ -13,7 +13,7 @@
 //   • a single-line paste, or a paste spliced into an existing draft, never
 //     offers the split;
 //   • the offer reaches the phone through the long-press Paste toolbar inside
-//     the bottom-sheet composer, and keeps that composer to ONE line.
+//     the phone's composer panel, and keeps that composer to ONE line.
 //
 // Everything runs over the in-memory [FakeCommands] with a MOCKED CLIPBOARD, so
 // the assertions are about what the user sees (the chip, the draft text, the
@@ -112,7 +112,7 @@ void main() {
     return fake;
   }
 
-  /// Open the FAB's bottom-sheet composer (#216) — the touch creation surface.
+  /// Open the FAB's composer panel (#216) — the touch creation surface.
   Future<void> openComposer(WidgetTester tester) async {
     final container = ProviderScope.containerOf(
       tester.element(find.byType(TaskListView)),
@@ -323,13 +323,13 @@ void main() {
     expect(find.byKey(_offerKey), findsNothing);
   });
 
-  group('phone bottom-sheet composer', () {
+  group('phone composer panel', () {
     const phone = Size(400, 800);
 
     testWidgets('the long-press Paste toolbar offers the split, and accepting '
         'creates the tasks', (tester) async {
       // The primary mobile paste path has no Ctrl+V: it goes through the
-      // selection toolbar inside the FAB's sheet composer.
+      // selection toolbar inside the FAB's composer panel.
       final fake = await pumpQuickAdd(
         tester,
         lists: _twoLists,

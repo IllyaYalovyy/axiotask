@@ -72,6 +72,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.2.0" date="2026-09-08">
+      <description>
+        <p>
+          On the phone the new-task composer now opens at the TOP of the list,
+          pinned under the app bar: each task you add appears immediately below
+          it, the field keeps its focus and its date, and the keyboard can no
+          longer cover it.
+        </p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-09-08">
       <description>
         <p>
