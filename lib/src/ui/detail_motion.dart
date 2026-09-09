@@ -247,14 +247,44 @@ class DetailContainerTransform extends StatelessWidget {
   }
 }
 
+/// Where an open task sits in the ordering its Prev/Next walk, and WHICH
+/// ordering that is (#303).
+///
+/// The axis a step travels along is not always the same one: a top-level task
+/// walks the view's visible ordering, a subtask walks its parent's checklist.
+/// Two positions therefore only compare when they belong to the SAME axis —
+/// index 0 of a checklist is not "before" index 3 of a list, it is somewhere
+/// else entirely, and that step has no direction.
+@immutable
+class DetailAxisSlot {
+  const DetailAxisSlot(this.axisId, this.index);
+
+  /// Identity of the ordering being walked — the view for a top-level task, the
+  /// parent for a subtask's checklist.
+  final String axisId;
+
+  /// The task's place in it, counting from the start.
+  final int index;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DetailAxisSlot && other.axisId == axisId && other.index == index;
+
+  @override
+  int get hashCode => Object.hash(axisId, index);
+
+  @override
+  String toString() => 'DetailAxisSlot($axisId, $index)';
+}
+
 /// The detail's prev/next step, as a short shared-axis slide (#253).
 ///
-/// Prev and Next are movement along ONE axis — the view's own ordering — so the
-/// outgoing task leaves towards the side the incoming one came from, and the
-/// pair reads as a step through a sequence rather than as two unrelated
-/// screens. A step to a task with no place in that ordering (a subtask reached
-/// from the panel's own links) has no direction to slide along and cross-fades
-/// instead.
+/// Prev and Next are movement along ONE axis — the ordering the open task sits
+/// in — so the outgoing task leaves towards the side the incoming one came
+/// from, and the pair reads as a step through a sequence rather than as two
+/// unrelated screens. A jump that changes axis (a parent to one of its
+/// subtasks, a subtask back to its parent) or reaches a task with no place in
+/// its ordering has no direction to slide along and cross-fades instead.
 ///
 /// The outgoing panel keeps its element while it leaves — [AnimatedSwitcher]
 /// holds it by its own key — so nothing is torn down and rebuilt just to
@@ -264,9 +294,9 @@ class DetailContainerTransform extends StatelessWidget {
 class DetailSharedAxis extends StatefulWidget {
   const DetailSharedAxis({required this.slot, required this.child, super.key});
 
-  /// The open task's position in the view's visible ordering — Next raises it,
-  /// Previous lowers it. `null` for a task with no place in the ordering.
-  final int? slot;
+  /// The open task's position in the ordering it walks — Next raises the index,
+  /// Previous lowers it. `null` for a task with no place in one.
+  final DetailAxisSlot? slot;
 
   final Widget child;
 
@@ -298,9 +328,13 @@ class _DetailSharedAxisState extends State<DetailSharedAxis> {
     if (Widget.canUpdate(old.child, widget.child)) return;
     final from = old.slot;
     final to = widget.slot;
-    _direction = (from == null || to == null || from == to)
+    _direction =
+        (from == null ||
+            to == null ||
+            from.axisId != to.axisId ||
+            from.index == to.index)
         ? 0
-        : (to > from ? 1 : -1);
+        : (to.index > from.index ? 1 : -1);
   }
 
   @override

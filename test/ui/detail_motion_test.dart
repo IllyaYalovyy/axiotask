@@ -66,8 +66,19 @@ class _Host extends StatefulWidget {
   /// highlight can be measured as the user sees it.
   final bool openRowHighlight;
 
-  /// The stand-in tasks and their places in the view's ordering.
-  static const slots = {'A': 0, 'B': 1};
+  /// The stand-in tasks and where each one sits. A and B are rows of the view's
+  /// own ordering; S1 and S2 are SUBTASKS of B, sitting in B's checklist — a
+  /// different axis, which no step compares against the view's (#303).
+  static const slots = {
+    'A': DetailAxisSlot('view:all', 0),
+    'B': DetailAxisSlot('view:all', 1),
+    'S1': DetailAxisSlot('checklist:B', 0),
+    'S2': DetailAxisSlot('checklist:B', 1),
+  };
+
+  /// The ids the stand-in LIST renders — top-level only: a subtask is never a
+  /// list row (invariant #1), it is only ever reached from a panel.
+  static const rows = ['A', 'B'];
 
   @override
   State<_Host> createState() => _HostState();
@@ -82,7 +93,7 @@ class _HostState extends State<_Host> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     mainAxisSize: MainAxisSize.min,
     children: [
-      for (final id in _Host.slots.keys)
+      for (final id in _Host.rows)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Builder(
@@ -490,6 +501,82 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
 
       expect(tester.getTopLeft(find.text('DETAIL-B')).dx, greaterThan(settled));
+    });
+
+    testWidgets('a step along a CHECKLIST slides like any other (#303)', (
+      tester,
+    ) async {
+      await pumpHost(tester);
+      await tester.tap(find.text('ROW-B'));
+      await tester.pumpAndSettle();
+
+      // Into B's checklist first — a different axis, so this arrival is not the
+      // step under test.
+      final host = tester.state<_HostState>(find.byType(_Host));
+      host.select('S1');
+      await tester.pumpAndSettle();
+      final landedS1 = tester.getTopLeft(find.text('DETAIL-S1')).dx;
+
+      // Next ALONG that checklist: the trailing edge, exactly like a view step.
+      // Each panel is measured against its OWN resting place — two different
+      // labels do not have the same left edge (the test font is ~1em a
+      // character), so only a panel's displacement from where it lands means
+      // anything.
+      host.select('S2');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final movingS2 = tester.getTopLeft(find.text('DETAIL-S2')).dx;
+      await tester.pumpAndSettle();
+      final landedS2 = tester.getTopLeft(find.text('DETAIL-S2')).dx;
+      expect(
+        movingS2,
+        greaterThan(landedS2),
+        reason:
+            'a checklist is an axis too — its Next comes from the trailing '
+            'edge',
+      );
+
+      // …and Previous back up it comes from the leading edge.
+      host.select('S1');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      expect(tester.getTopLeft(find.text('DETAIL-S1')).dx, lessThan(landedS1));
+    });
+
+    testWidgets('a jump ACROSS axes has no direction and cross-fades', (
+      tester,
+    ) async {
+      await pumpHost(tester);
+      await tester.tap(find.text('ROW-B')); // the view's ordering, index 1
+      await tester.pumpAndSettle();
+
+      // A subtask of B, first in its checklist: index 0 against index 1 is not
+      // a step backwards — it is somewhere else entirely.
+      final host = tester.state<_HostState>(find.byType(_Host));
+      host.select('S1');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final movingS1 = tester.getTopLeft(find.text('DETAIL-S1')).dx;
+      expect(
+        find.text('DETAIL-B'),
+        findsOneWidget,
+        reason:
+            'it is still a transition — the old panel fades out, not blinks',
+      );
+      await tester.pumpAndSettle();
+      expect(
+        movingS1,
+        tester.getTopLeft(find.text('DETAIL-S1')).dx,
+        reason: 'nothing slides across axes',
+      );
+
+      // And back out to the parent: still no direction.
+      host.select('B');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final movingB = tester.getTopLeft(find.text('DETAIL-B')).dx;
+      await tester.pumpAndSettle();
+      expect(movingB, tester.getTopLeft(find.text('DETAIL-B')).dx);
     });
   });
 

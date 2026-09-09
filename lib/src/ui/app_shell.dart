@@ -104,27 +104,52 @@ class AppShell extends ConsumerWidget {
     // publish its claim on the gesture BEFORE the gesture happens (#263).
     final drawerOpen = ref.watch(drawerOpenProvider);
 
-    // Panel prev/next: the siblings of the open task in the CURRENT view's
-    // visible ordering (the same order the list renders). Null at a boundary,
-    // and for anything not in the ordering (a subtask, or a filtered-out task).
+    // Panel prev/next: the neighbours of the open task in the ordering the user
+    // is looking at, which is not always the same one (#303).
+    //
+    //   • a TOP-LEVEL task walks the CURRENT VIEW's visible ordering — the same
+    //     order the list renders, subtasks absent from it by invariant #1;
+    //   • a SUBTASK walks its parent's CHECKLIST as the panel shows it —
+    //     position order (newest first since #302), with completed siblings
+    //     skipped exactly while "Hide completed" hides them. Without this a
+    //     checklist row opened from the panel left both chevrons dead, and the
+    //     only way to the next subtask was back out to the parent and in again.
+    //
+    // Null at either boundary, and for a task with no place in its ordering at
+    // all — a filtered-out row, or a completed subtask the checklist hides.
     String? prevTaskId;
     String? nextTaskId;
-    // The open task's own place in that ordering (#253): the direction the
-    // detail's prev/next step travels along it. -1 for a task with no place —
-    // a subtask, or one the current filter hides.
-    var detailSlot = -1;
+    // Where it sits in that ordering, and WHICH ordering (#253/#303): the
+    // direction the detail's step travels. A jump that changes axis — a parent
+    // to one of its subtasks, a subtask back to its parent — compares nothing
+    // and cross-fades. Null for a task with no place.
+    DetailAxisSlot? detailSlot;
     if (sel.taskId != null) {
-      final ordered = visibleTasksForView(
-        allTasks: allTasks,
-        viewId: sel.viewId,
-        excludedLists: prefs.excludedLists.toSet(),
-        showCompleted: prefs.showCompleted,
-        sort: SortMode.byId(prefs.sortPerView[sel.viewId]),
-        window: dateWindowNow(),
-      );
+      final open = allTasks.where((t) => t.task.id == sel.taskId).firstOrNull;
+      final parentId = open?.task.parent;
+      final (axisId, ordered) = parentId == null
+          ? (
+              'view:${sel.viewId}',
+              visibleTasksForView(
+                allTasks: allTasks,
+                viewId: sel.viewId,
+                excludedLists: prefs.excludedLists.toSet(),
+                showCompleted: prefs.showCompleted,
+                sort: SortMode.byId(prefs.sortPerView[sel.viewId]),
+                window: dateWindowNow(),
+              ),
+            )
+          : (
+              'checklist:$parentId',
+              shownSubtasks(
+                parentId,
+                allTasks,
+                hideCompleted: prefs.hideCompletedSubtasks,
+              ),
+            );
       final i = ordered.indexWhere((t) => t.task.id == sel.taskId);
-      detailSlot = i;
       if (i >= 0) {
+        detailSlot = DetailAxisSlot(axisId, i);
         if (i > 0) prevTaskId = ordered[i - 1].task.id;
         if (i < ordered.length - 1) nextTaskId = ordered[i + 1].task.id;
       }
@@ -219,7 +244,7 @@ class AppShell extends ConsumerWidget {
       // is open (so a rect recorded by a row is only ever replayed under that
       // task) and where it sits in the view's ordering.
       detailTaskId: sel.taskId,
-      detailSlot: detailSlot < 0 ? null : detailSlot,
+      detailSlot: detailSlot,
       // The quiet sync line (#255) on the compact app bar's bottom edge. Its
       // own Consumer, so a sync starting or ending never rebuilds the shell.
       syncLine: const LiveSyncLine(),

@@ -150,10 +150,11 @@ class ListDetailScaffold extends StatelessWidget {
   /// simply fades in.
   final String? detailTaskId;
 
-  /// The open task's position in the view's visible ordering (#253), so the
-  /// detail's prev/next step knows which way along that ordering it is going.
-  /// `null` for a task with no place in it — a subtask, or a filtered-out task.
-  final int? detailSlot;
+  /// The open task's position in the ordering its prev/next walk (#253/#303) —
+  /// the view's visible rows for a top-level task, the parent's checklist for a
+  /// subtask — so a step knows which way along it the panel is going. `null`
+  /// for a task with no place in one (a filtered-out row).
+  final DetailAxisSlot? detailSlot;
 
   /// The quiet sync line (#255), OVERLAID on the compact app bar's bottom edge.
   /// A widget rather than a bool so this scaffold keeps no provider dependency
@@ -322,7 +323,7 @@ class _CompactDetailLayer extends StatefulWidget {
   final Widget? detail;
 
   final String? detailTaskId;
-  final int? detailSlot;
+  final DetailAxisSlot? detailSlot;
 
   /// Closes the detail — the same callback the scaffold's [PopScope] uses. The
   /// predictive back gesture commits through it, so a gesture-driven close and
@@ -356,7 +357,7 @@ class _CompactDetailLayerState extends State<_CompactDetailLayer>
 
   /// Its slot in the view's ordering, held with it so a prev/next step measured
   /// against a panel that is already gone still reads the right direction.
-  int? _shownSlot;
+  DetailAxisSlot? _shownSlot;
 
   /// The row rect the transform grows out of, in THIS widget's own coordinate
   /// space; `null` when the open did not come from a row.

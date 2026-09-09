@@ -46,7 +46,7 @@ import '../app/providers.dart';
 import '../model/dates.dart' show DateMove;
 import '../model/task.dart';
 import '../model/task_tree.dart';
-import '../model/task_view.dart' show orderedSubtasks;
+import '../model/task_view.dart' show orderedSubtasks, shownSubtasks;
 import '../store/stored.dart';
 import 'detail_fields.dart';
 import 'detail_subtasks.dart';
@@ -462,9 +462,13 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final hideCompleted = ref.watch(
       prefsControllerProvider.select((p) => p.hideCompletedSubtasks),
     );
-    final visibleChildren = hideCompleted
-        ? children.where((c) => c.task.status != TaskStatus.completed).toList()
-        : children;
+    // The same slice the detail's Prev/Next walks for a subtask (#303) — one
+    // spelling, so a step can never land on a row this checklist is not showing.
+    final visibleChildren = shownSubtasks(
+      task.id,
+      all,
+      hideCompleted: hideCompleted,
+    );
     // Parent (for a subtask's breadcrumb + detach) and the lists (for a
     // top-level task's List dropdown).
     final parent = subtask

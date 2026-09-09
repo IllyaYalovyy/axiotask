@@ -72,6 +72,14 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.1.0" date="2026-09-08">
+      <description>
+        <p>
+          Previous/Next in the task detail now step through a subtask's
+          checklist, so a subtask no longer strands the panel's navigation.
+        </p>
+      </description>
+    </release>
     <release version="1.0.4" date="2026-09-08">
       <description>
         <p>First packaged Linux release of the Flutter application.</p>
