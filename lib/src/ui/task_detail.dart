@@ -46,6 +46,7 @@ import '../app/providers.dart';
 import '../model/dates.dart' show DateMove;
 import '../model/task.dart';
 import '../model/task_tree.dart';
+import '../model/task_view.dart' show orderedSubtasks;
 import '../store/stored.dart';
 import 'detail_fields.dart';
 import 'detail_subtasks.dart';
@@ -454,8 +455,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
 
     final task = current.task;
     final subtask = isSubtask(task);
-    final children = all.where((t) => t.task.parent == task.id).toList()
-      ..sort((a, b) => a.task.position.compareTo(b.task.position));
+    final children = orderedSubtasks(task.id, all);
     final completedCount = children
         .where((c) => c.task.status == TaskStatus.completed)
         .length;

@@ -77,7 +77,7 @@ void main() {
     List<Override> extraOverrides = const [],
     TargetPlatform platform = TargetPlatform.linux,
   }) async {
-    final fake = FakeCommands(initial, newId: newId, newestFirst: true);
+    final fake = FakeCommands(initial, newId: newId);
     addTearDown(fake.dispose);
     await withClock(_clock, () async {
       await tester.pumpWidget(

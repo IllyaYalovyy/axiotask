@@ -11,16 +11,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'detail_harness.dart';
 
-/// The rendered top-to-bottom order of the named subtask titles (hidden ones
-/// are simply absent from [titles]).
-List<String> subtaskOrder(WidgetTester tester, List<String> titles) {
-  final present = titles.where((t) => find.text(t).evaluate().isNotEmpty);
-  final entries = [
-    for (final t in present) (t, tester.getTopLeft(find.text(t)).dy),
-  ]..sort((a, b) => a.$2.compareTo(b.$2));
-  return [for (final e in entries) e.$1];
-}
-
 void main() {
   testWidgets('the move-down button reorders the subtask (touch path)', (
     tester,

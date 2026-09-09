@@ -810,8 +810,9 @@ class SyncEngine {
     }
   }
 
-  /// Push one create: anchor a subtask after its last synced sibling, durably
-  /// record the in-flight marker BEFORE the non-idempotent insert, then on
+  /// Push one create: durably record the in-flight marker BEFORE the
+  /// non-idempotent insert (the payload names no `previous`, so Google places
+  /// the row first among its siblings — where it already sits locally), then on
   /// success `finishCreate` atomically remaps id + adopts etag/updated/position
   /// (keeping a mid-flight re-edit dirty as an update); on error KeepInflight
   /// (transient) or ClearInflight + classified failure.
@@ -853,15 +854,7 @@ class SyncEngine {
       await _store.clearInflightCreate(sent.task.id);
       return;
     }
-    // A subtask insert is anchored after its last already-synced sibling; a
-    // top-level create needs no list read at all.
-    final previous = sent.task.parent == null
-        ? null
-        : reconcile.createPreviousAnchor(
-            sent,
-            await _store.listTasks(sent.listId),
-          );
-    final payload = reconcile.createPayload(sent, previous, parentRemoteId);
+    final payload = reconcile.createPayload(sent, parentRemoteId);
     Task? remote;
     ApiError? error;
     try {

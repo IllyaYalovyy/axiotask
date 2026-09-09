@@ -14,8 +14,10 @@
 //
 // Every test here drives the REAL command service, the REAL sync engine and the
 // fake Google, then reads the order back through the REAL display pipeline
-// ([visibleTasksForView]) — the same function the list view builds its rows
-// from — so what is asserted is the order the user SEES, before and after.
+// ([visibleTasksForView] for a list, [orderedSubtasks] for a parent's
+// checklist) — the same functions the list view and the detail panel build
+// their rows from — so what is asserted is the order the user SEES, before and
+// after.
 //
 // The "newest pin" is deliberately NOT applied: it holds only the single
 // most-recent row, only while that view stays mounted. The order asserted here
@@ -74,19 +76,43 @@ class Rig {
   /// Create [title] and let the sync that lands it run, so the row ends up
   /// carrying the position GOOGLE assigned it — exactly like a row created in
   /// an earlier session.
-  Future<void> createAndSync(
+  Future<StoredTask> createAndSync(
     String title, {
     String list = 'L1',
     String? due,
+    String? parent,
   }) async {
-    await commands.createTask(listId: listIds[list]!, title: title, due: due);
+    final created = await commands.createTask(
+      listId: listIds[list]!,
+      parentId: parent,
+      title: title,
+      due: due,
+    );
     await engine.run();
+    return created;
   }
 
   /// Create [title] and leave it un-pushed (the 3-5s window before the
   /// debounced sync fires — and the whole of an offline session).
-  Future<StoredTask> create(String title, {String list = 'L1', String? due}) =>
-      commands.createTask(listId: listIds[list]!, title: title, due: due);
+  Future<StoredTask> create(
+    String title, {
+    String list = 'L1',
+    String? due,
+    String? parent,
+  }) => commands.createTask(
+    listId: listIds[list]!,
+    parentId: parent,
+    title: title,
+    due: due,
+  );
+
+  /// The subtask titles the DETAIL panel renders under [parentId], top to
+  /// bottom — through [orderedSubtasks], the same function the panel builds its
+  /// checklist from.
+  Future<List<String>> children(String parentId) async {
+    final kids = orderedSubtasks(parentId, await store.allTasks());
+    return [for (final k in kids) k.task.title];
+  }
 
   /// The titles the list view would render for [viewId], top to bottom.
   Future<List<String>> order(
@@ -242,5 +268,73 @@ void main() {
         );
       });
     });
+  });
+
+  // #302 — the same contract one level down. A new SUBTASK is created at the
+  // top of its siblings (the placeholder position sorts above them all), so the
+  // insert must name no `previous`: Google puts a `previous`-less insert first
+  // among its siblings too, and anything else teleports the row the user just
+  // typed to the bottom of the parent's checklist a few seconds later.
+  group('a subtask create sits where Google will put it', () {
+    test('the sync does not move the new subtask', () async {
+      await withClock(_clock, () async {
+        final rig = await Rig.open();
+        final parent = await rig.createAndSync('parent');
+        await rig.createAndSync('older', parent: parent.task.id);
+        await rig.createAndSync('newer', parent: parent.task.id);
+
+        await rig.create('fresh', parent: parent.task.id);
+        final before = await rig.children(parent.task.id);
+        await rig.engine.run();
+        final after = await rig.children(parent.task.id);
+
+        expect(after, [
+          'fresh',
+          'newer',
+          'older',
+        ], reason: 'a subtask insert with no `previous` lands first');
+        expect(
+          before,
+          after,
+          reason:
+              'the sync that lands the create must not re-shuffle the '
+              "parent's checklist",
+        );
+      });
+    });
+
+    // Non-happy path: OFFLINE. Every subtask queues un-pushed and one later run
+    // lands them all — a burst of rapid entry in the composer looks the same,
+    // since the debounce collects them into a single push.
+    test(
+      'offline subtask creates keep their order when the sync runs',
+      () async {
+        await withClock(_clock, () async {
+          final rig = await Rig.open();
+          final parent = await rig.createAndSync('parent');
+          await rig.createAndSync('kept', parent: parent.task.id);
+
+          await rig.create('one', parent: parent.task.id);
+          await rig.create('two', parent: parent.task.id);
+          await rig.create('three', parent: parent.task.id);
+
+          final before = await rig.children(parent.task.id);
+          await rig.engine.run();
+          final after = await rig.children(parent.task.id);
+
+          expect(after, [
+            'three',
+            'two',
+            'one',
+            'kept',
+          ], reason: 'each subtask went on top of the one before it');
+          expect(
+            before,
+            after,
+            reason: 'coming back online must not re-shuffle the checklist',
+          );
+        });
+      },
+    );
   });
 }

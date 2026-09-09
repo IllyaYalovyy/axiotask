@@ -110,6 +110,48 @@ void main() {
       },
     );
 
+    // #302 — a new subtask is created FIRST among its siblings, so the parent's
+    // checklist reads newest → oldest and the row the user just typed is right
+    // under the composer instead of below a long scroll.
+    testWidgets('a new subtask lands FIRST among its siblings', (tester) async {
+      var n = 0;
+      await pumpDetail(
+        tester,
+        taskId: 'P',
+        // Positions as Google mints them for rows it holds — 20-digit and
+        // digit-led, so the placeholder a fresh row carries has to beat them.
+        initial: [
+          row('P', 'Parent'),
+          row('s1', 'Alpha', parent: 'P', position: '00000000000000000001'),
+          row('s2', 'Beta', parent: 'P', position: '00000000000000000002'),
+        ],
+        newId: () => 'new-${++n}',
+      );
+      Future<void> add(String title) async {
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Add a subtask').first,
+          title,
+        );
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settleDetail(tester);
+      }
+
+      await add('Gamma');
+      expect(subtaskOrder(tester, ['Alpha', 'Beta', 'Gamma']), [
+        'Gamma',
+        'Alpha',
+        'Beta',
+      ]);
+
+      await add('Delta');
+      expect(subtaskOrder(tester, ['Alpha', 'Beta', 'Gamma', 'Delta']), [
+        'Delta',
+        'Gamma',
+        'Alpha',
+        'Beta',
+      ], reason: 'the newest subtask is always the top one');
+    });
+
     testWidgets('an empty add creates nothing (non-happy path)', (
       tester,
     ) async {
