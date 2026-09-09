@@ -228,6 +228,22 @@ class AppShell extends ConsumerWidget {
       haptics: ref.watch(hapticsProvider),
     );
 
+    // Where a panel LEAVES to (#310). A subtask opened out of its parent's
+    // checklist carries `?from=<parent>`, and Back walks that path back up: it
+    // re-opens the parent panel — exactly where the breadcrumb goes — and the
+    // NEXT back closes to the list. An open with no origin (a list row, a
+    // search jump onto a subtask, a restored URL that names none) closes to the
+    // list on the first back, as it always did.
+    //
+    // An origin the store no longer holds is no origin at all: a URL restored
+    // after its parent was deleted must not re-open a panel for a task that is
+    // gone. "Not loaded yet" is not "gone" — the check waits for the store to
+    // answer, exactly as the welcome above does.
+    final origin = sel.fromTaskId;
+    final originAlive =
+        origin != null &&
+        (!tasksSnapshot.hasValue || allTasks.any((t) => t.task.id == origin));
+
     // The system-back close of the detail is a go_router navigation via the
     // scaffold's PopScope — it never runs the panel's own flush-on-close, and
     // unmounting the panel disposes the focused field before a blur can persist
@@ -236,7 +252,32 @@ class AppShell extends ConsumerWidget {
     // system back exactly as on the panel's own Back button (#183/G4).
     void closeDetail() {
       ref.read(pendingEditsProvider).flushDetailClose();
-      context.go(viewPath(sel.viewId));
+      context.go(
+        originAlive
+            ? viewPath(sel.viewId, taskId: origin)
+            : viewPath(sel.viewId),
+      );
+    }
+
+    // The origin to carry when the open panel navigates to a task:
+    //
+    //   • opening a SUBTASK of the open task records that task — the checklist
+    //     row the user tapped came out of this panel, so Back returns to it;
+    //   • a step to a SIBLING keeps the origin it arrived with (Prev/Next walk
+    //     the same checklist, inside the same path back);
+    //   • anything else — the breadcrumb up to the parent, a jump across the
+    //     axis — carries none, so its Back closes to the list.
+    String? originFor(String? targetId) {
+      if (targetId == null) return null;
+      final parentId = allTasks
+          .where((t) => t.task.id == targetId)
+          .firstOrNull
+          ?.task
+          .parent;
+      if (parentId == null) return null;
+      if (parentId == sel.taskId) return sel.taskId;
+      if (parentId == origin) return origin;
+      return null;
     }
 
     final prefsCtl = ref.read(prefsControllerProvider.notifier);
@@ -249,6 +290,9 @@ class AppShell extends ConsumerWidget {
       // task) and where it sits in the view's ordering.
       detailTaskId: sel.taskId,
       detailSlot: detailSlot,
+      // …and whether a back on it re-opens the panel it came from (#310), which
+      // the compact layer must not preview as a shrink into a row.
+      detailReturnsToPanel: originAlive,
       // The quiet sync line (#255) on the compact app bar's bottom edge. Its
       // own Consumer, so a sync starting or ending never rebuilds the shell.
       syncLine: const LiveSyncLine(),
@@ -304,13 +348,27 @@ class AppShell extends ConsumerWidget {
               taskId: sel.taskId!,
               autofocusNotes: sel.focusNotes,
               onClose: closeDetail,
-              onOpenTask: (id) => context.go(viewPath(sel.viewId, taskId: id)),
+              onOpenTask: (id) => context.go(
+                viewPath(sel.viewId, taskId: id, fromTaskId: originFor(id)),
+              ),
               onPrev: prevTaskId == null
                   ? null
-                  : () => context.go(viewPath(sel.viewId, taskId: prevTaskId)),
+                  : () => context.go(
+                      viewPath(
+                        sel.viewId,
+                        taskId: prevTaskId,
+                        fromTaskId: originFor(prevTaskId),
+                      ),
+                    ),
               onNext: nextTaskId == null
                   ? null
-                  : () => context.go(viewPath(sel.viewId, taskId: nextTaskId)),
+                  : () => context.go(
+                      viewPath(
+                        sel.viewId,
+                        taskId: nextTaskId,
+                        fromTaskId: originFor(nextTaskId),
+                      ),
+                    ),
             ),
       onCloseDetail: closeDetail,
     );

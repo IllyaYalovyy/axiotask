@@ -68,6 +68,7 @@ class ListDetailScaffold extends StatelessWidget {
     this.title = '',
     this.detailTaskId,
     this.detailSlot,
+    this.detailReturnsToPanel = false,
     this.syncLine,
     this.onNewTask,
     this.composerOpen = false,
@@ -155,6 +156,16 @@ class ListDetailScaffold extends StatelessWidget {
   /// subtask — so a step knows which way along it the panel is going. `null`
   /// for a task with no place in one (a filtered-out row).
   final DetailAxisSlot? detailSlot;
+
+  /// Whether closing the open detail lands on ANOTHER panel rather than on the
+  /// list — a subtask going back to the parent it was opened from (#310).
+  ///
+  /// The compact layer needs it for the Android back GESTURE: a scrub that
+  /// previews the panel shrinking into its row promises a close that is not
+  /// going to happen, and the transform it leaves part-way through belongs to
+  /// no state at all. Such a back is handed to the PopScope ladder instead,
+  /// which performs the same navigation with the panel whole.
+  final bool detailReturnsToPanel;
 
   /// The quiet sync line (#255), OVERLAID on the compact app bar's bottom edge.
   /// A widget rather than a bool so this scaffold keeps no provider dependency
@@ -272,6 +283,7 @@ class ListDetailScaffold extends StatelessWidget {
       detail: _showingDetail ? detail : null,
       detailTaskId: detailTaskId,
       detailSlot: detailSlot,
+      detailReturnsToPanel: detailReturnsToPanel,
       onCloseDetail: onCloseDetail,
       shell: _CompactShell(
         scaffoldKey: scaffoldKey,
@@ -313,6 +325,7 @@ class _CompactDetailLayer extends StatefulWidget {
     required this.detail,
     required this.detailTaskId,
     required this.detailSlot,
+    required this.detailReturnsToPanel,
     required this.onCloseDetail,
   });
 
@@ -324,6 +337,9 @@ class _CompactDetailLayer extends StatefulWidget {
 
   final String? detailTaskId;
   final DetailAxisSlot? detailSlot;
+
+  /// Whether the close this layer would drive lands on another panel (#310).
+  final bool detailReturnsToPanel;
 
   /// Closes the detail — the same callback the scaffold's [PopScope] uses. The
   /// predictive back gesture commits through it, so a gesture-driven close and
@@ -472,6 +488,12 @@ class _CompactDetailLayerState extends State<_CompactDetailLayer>
     // which closes the detail through the same path — one rung per press,
     // with the drawer and the welcome ahead of it.
     if (backEvent.isButtonEvent) return false;
+    // A back that RE-OPENS another panel (a subtask returning to its parent,
+    // #310) is not this transform's close: the surface is not going anywhere,
+    // so there is nothing to scrub it into, and a claimed gesture would leave
+    // it stranded part-way — a half-faded, pointer-inert parent panel. The
+    // ladder below performs that navigation with the panel whole.
+    if (widget.detailReturnsToPanel) return false;
     if (!_open.isCompleted || !_motion) return false;
     _open.stop();
     _backGesture = true;
