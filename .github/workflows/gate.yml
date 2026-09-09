@@ -61,12 +61,18 @@ jobs:
       # freedesktop validator whether the shipped metainfo and desktop entry
       # parse — everything else is a string this repository writes and reads
       # itself. Absent, that suite used to run green having validated nothing.
+      #
+      # gcc / binutils are the same ruling for the RUNPATH assertions (#301):
+      # the .deb and .rpm suites link a REAL shared object with a build-tree
+      # RUNPATH and read the packaged result back with readelf. Given a text
+      # file named *.so instead, the rewrite would skip it and the assertion
+      # would pass on a packager that rewrites nothing.
       - name: Install the packaging toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-cairosvg python3-gi gir1.2-gdkpixbuf-2.0 librsvg2-common \
-            appstream desktop-file-utils
+            appstream desktop-file-utils gcc binutils
 
       - uses: subosito/flutter-action@v2
         with:

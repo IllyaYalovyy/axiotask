@@ -24,6 +24,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'elf_fixture.dart';
+
 /// Version that the RPM SHOULD carry: the `X.Y.Z` before the `+build` in
 /// pubspec. Read independently here so the test, not the script, defines truth.
 String _pubspecVersion() {
@@ -42,6 +44,10 @@ const _appName = 'axiotask';
 const _desktopSrc = 'linux/packaging/$_appId.desktop';
 const _metainfoSrc = 'linux/packaging/$_appId.metainfo.xml';
 const _hicolorSizes = <int>[16, 24, 32, 48, 64, 128, 256, 512];
+
+/// The build-tree RUNPATH the Flutter toolchain links into plugin libraries
+/// (#301): an absolute path to the directory they were compiled in.
+const _buildTreeRunpath = '/nonexistent/axiotask/linux/flutter/ephemeral';
 
 ProcessResult _runScript(List<String> args) =>
     Process.runSync('bash', ['tool/build_rpm.sh', ...args]);
@@ -202,6 +208,10 @@ void main() {
       Process.runSync('chmod', ['+x', '${bundle.path}/axiotask']);
       Directory('${bundle.path}/lib').createSync();
       File('${bundle.path}/lib/libapp.so').writeAsStringSync('so');
+      linkSharedObject(
+        path: '${bundle.path}/lib/libfake_plugin.so',
+        runpath: _buildTreeRunpath,
+      );
     });
 
     tearDown(() {
@@ -239,6 +249,33 @@ void main() {
           reason: '%files lists $f but nothing stages it',
         );
       }
+    });
+
+    // #301, the RPM half. The RUNPATH rewrite is one shared step called by
+    // both packagers; without an assertion here the RPM could quietly lose it
+    // and ship the build tree while the .deb stayed clean.
+    test('staged shared objects search only their own directory', () {
+      final r = Process.runSync('bash', [
+        'tool/build_rpm.sh',
+        '--stage',
+        root.path,
+        '--bundle',
+        bundle.path,
+      ]);
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      final staged = '${root.path}/usr/lib/$_appName/lib/libfake_plugin.so';
+      expect(
+        File(staged).existsSync(),
+        isTrue,
+        reason: 'nothing staged at $staged',
+      );
+      expect(
+        runpathOf(staged),
+        r'$ORIGIN',
+        reason:
+            'the RPM ships the directory the plugin was BUILT in as its '
+            'library search path — a path that exists on no user machine',
+      );
     });
 
     // Non-happy path: staging from a directory that holds no release binary

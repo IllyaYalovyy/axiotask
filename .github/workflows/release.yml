@@ -69,13 +69,16 @@ jobs:
       # needs and the runner image does not ship. rpm: rpmbuild, for
       # tool/build_rpm.sh. lintian: the .deb inspection. appstream and
       # desktop-file-utils: both packagers validate the metadata they are about
-      # to ship and refuse to build if it is invalid.
+      # to ship and refuse to build if it is invalid. python3: runs
+      # tool/normalize_runpath.py, the step that rewrites the bundled libraries'
+      # build-tree RUNPATH to $ORIGIN (#301) — both packagers ABORT when it is
+      # missing rather than package the build tree's search paths.
       - name: Install the Linux build and packaging toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config libgtk-3-dev \
-            rpm lintian appstream desktop-file-utils
+            rpm lintian appstream desktop-file-utils python3
 
       - run: flutter pub get
 
