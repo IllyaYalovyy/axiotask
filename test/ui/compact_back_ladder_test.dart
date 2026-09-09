@@ -221,6 +221,58 @@ void main() {
         expect(find.text('my task'), findsOneWidget);
       });
 
+      testWidgets('a subtask opened from its parent goes back to the PARENT '
+          'panel, then to the list', (tester) async {
+        // #310: the URL records where the panel was opened from, so a system
+        // back walks that path back up — and the surface it lands on is a whole
+        // panel, not one stranded part-way through the close transform.
+        await pumpPhone(
+          tester,
+          tasks: [
+            row('P', 'my task'),
+            row('S1', 'a subtask', parent: 'P', position: '000'),
+          ],
+        );
+        // Opened by TAPPING the row, so the panel has a row rect it would
+        // shrink into — the shape a close-to-the-list takes on screen.
+        await tester.tap(find.text('my task'));
+        await settle(tester);
+        await tester.tap(find.text('a subtask'));
+        await settle(tester);
+        expect(find.text('Subtask'), findsOneWidget);
+
+        await back(tester);
+
+        expect(
+          find.widgetWithText(TextField, 'my task'),
+          findsOneWidget,
+          reason: 'back re-opened the parent panel, not the list',
+        );
+        expect(
+          tester
+              .getSize(find.byKey(DetailContainerTransform.surfaceKey))
+              .height,
+          800,
+          reason:
+              'the panel owns the whole screen — it never shrank into a row',
+        );
+        // …and it is a live panel, not a surface stranded mid-transform: its
+        // checklist row still opens the subtask again.
+        await tester.tap(find.text('a subtask'));
+        await settle(tester);
+        expect(find.text('Subtask'), findsOneWidget);
+        await back(tester); // …back to the parent again
+
+        await back(tester);
+
+        expect(
+          detail,
+          findsNothing,
+          reason: 'a back on the parent — no origin of its own — closes it',
+        );
+        expect(find.text('my task'), findsOneWidget);
+      });
+
       testWidgets('the detail overflow MENU closes; the detail stays open and '
           'still works', (tester) async {
         final (fake, router) = await pumpPhone(

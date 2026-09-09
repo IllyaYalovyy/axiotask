@@ -2,8 +2,14 @@
 // URL selects the view and (optionally) a task detail (RFC-011 §7).
 //
 // Route shape:
-//   /view/:viewId            → a view's list (the ShellRoute child)
-//   /view/:viewId?task=<id>  → same view, with a task selected (detail pane)
+//   /view/:viewId                    → a view's list (the ShellRoute child)
+//   /view/:viewId?task=<id>          → same view, with a task selected
+//   /view/:viewId?task=<id>&from=<p> → …opened FROM another task's panel (#310)
+//
+// The `from` parameter is the panel the detail was opened from — a subtask
+// opened out of its parent's checklist records the parent, so Back re-opens it
+// instead of dropping to the list. It lives in the URL for the same reason the
+// selection does: a restored route has to walk the same way back (#310).
 //
 // The view id lives in the PATH (it changes the list content — the swappable
 // ShellRoute child); the selected task lives in a QUERY parameter (it only
@@ -24,6 +30,7 @@ class ShellLocation {
   const ShellLocation({
     required this.viewId,
     this.taskId,
+    this.fromTaskId,
     this.focusNotes = false,
   });
 
@@ -32,6 +39,11 @@ class ShellLocation {
 
   /// The selected task id, or `null` when the detail pane is closed.
   final String? taskId;
+
+  /// The task whose panel this one was opened from (`from=<id>`), or `null` for
+  /// an open with no origin — a list row, a search jump, a restored URL that
+  /// names none. Back returns to it before it closes to the list (#310).
+  final String? fromTaskId;
 
   /// Whether the detail pane should open with its Notes field focused (the
   /// context menu's "Edit notes"); carried in the `focus=notes` query param.
@@ -47,18 +59,28 @@ ShellLocation parseShellLocation(Uri uri) {
       ? segs[1]
       : SmartView.all.id;
   final task = uri.queryParameters['task'];
+  final from = uri.queryParameters['from'];
   return ShellLocation(
     viewId: viewId,
     taskId: (task != null && task.isNotEmpty) ? task : null,
+    fromTaskId: (from != null && from.isNotEmpty) ? from : null,
     focusNotes: uri.queryParameters['focus'] == 'notes',
   );
 }
 
-/// The path for a view, with an optional selected task and Notes-focus request.
-String viewPath(String viewId, {String? taskId, bool focusNotes = false}) {
+/// The path for a view, with an optional selected task, the panel that task was
+/// opened from ([fromTaskId], #310), and a Notes-focus request. With no selected
+/// task there is no panel to come back from, so an origin is dropped.
+String viewPath(
+  String viewId, {
+  String? taskId,
+  String? fromTaskId,
+  bool focusNotes = false,
+}) {
   if (taskId == null) return '/view/$viewId';
+  final from = fromTaskId == null ? '' : '&from=$fromTaskId';
   final notes = focusNotes ? '&focus=notes' : '';
-  return '/view/$viewId?task=$taskId$notes';
+  return '/view/$viewId?task=$taskId$from$notes';
 }
 
 /// Redirect the bare root to the given [defaultViewId]; leave every other
