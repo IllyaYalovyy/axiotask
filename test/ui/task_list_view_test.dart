@@ -428,6 +428,72 @@ void main() {
     },
   );
 
+  // #306 — a completion and a delete both reach the whole subtree (Google
+  // cascades both, verified live #106), and until this the toast named only the
+  // row the user touched: "Completed apples" after four rows changed, with an
+  // Undo whose real reach was invisible.
+  group('cascade counts in the row toasts (#306)', () {
+    testWidgets('completing a parent names the subtasks it took with it', (
+      tester,
+    ) async {
+      await pumpView(
+        tester,
+        initial: [
+          row('A', 'apples', '5'),
+          row('A1', 'wash', '1', parent: 'A'),
+          row('A2', 'peel', '2', parent: 'A'),
+          row('A3', 'slice', '3', parent: 'A'),
+        ],
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TaskRow),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await settle(tester);
+      expect(find.text('Completed "apples" and 3 subtasks'), findsOneWidget);
+
+      // …and Undo reopens all four, not just the parent.
+      await tester.tap(find.text('Undo'));
+      await settle(tester);
+      expect(find.text('apples'), findsOneWidget);
+    });
+
+    testWidgets('an ALREADY completed subtask is not counted', (tester) async {
+      // The count is what Undo would reopen. A subtask that was finished before
+      // the tick stays finished on undo, so naming it would overstate the reach.
+      await pumpView(
+        tester,
+        initial: [
+          row('A', 'apples', '5'),
+          row('A1', 'wash', '1', parent: 'A', done: true),
+          row('A2', 'peel', '2', parent: 'A'),
+        ],
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TaskRow),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await settle(tester);
+      expect(find.text('Completed "apples" and 1 subtask'), findsOneWidget);
+    });
+
+    testWidgets('a childless task keeps the plain wording', (tester) async {
+      await pumpView(tester, initial: [row('A', 'apples', '5')]);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TaskRow),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await settle(tester);
+      expect(find.text('Completed "apples"'), findsOneWidget);
+    });
+  });
+
   testWidgets('show-completed pref keeps completed tasks visible', (
     tester,
   ) async {

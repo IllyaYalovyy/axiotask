@@ -5,8 +5,12 @@
 // fade/shrink animation. Its geometry is the M3 two-line list item — see
 // [kTaskRowHeight] for the numbers and why they are what they are (#276).
 //
-// Subtasks are never rows (invariant #1) — the caller only ever hands this
-// widget a top-level task; there is no indent, connector, or expand toggle.
+// Subtasks are never rows IN A LIST (invariant #1): every view hands this
+// widget top-level tasks only, and there is no indent, connector, or expand
+// toggle anywhere in it. The one other caller is the detail panel's checklist
+// (#306), which renders its subtasks with this same widget at
+// [TaskRowDensity.subtask] — inside the panel, which is where a subtask is
+// allowed to be, and still flat.
 //
 // Dates are set through the ONE shared [QuickDateAnchor] (#243): the due /
 // "no date" segment IS the quick-date button, on every pointer. The hover- and
@@ -56,6 +60,33 @@ import 'url_detect.dart';
 const double kTaskRowHeight = 72;
 const double _rowPaddingV = 12;
 const double _titleToMeta = 4;
+
+/// The vertical padding a row draws at [TaskRowDensity.subtask] on a FINE
+/// pointer — the only place the two densities differ in geometry.
+const double _subtaskPaddingV = 8;
+
+/// The height of one `bodyMedium` title line — what the subtask density's
+/// checkbox column is sized against, so the box centres on the title exactly
+/// as the 48dp column does at the list density (#276).
+const double _subtaskTitleLine = 20;
+
+/// How tightly a row is drawn (#306).
+///
+/// [TaskRowDensity.list] is the M3 two-line item every view renders — the
+/// geometry [kTaskRowHeight] documents. [TaskRowDensity.subtask] is the SAME
+/// row at checklist weight: a `bodyMedium` title instead of `bodyLarge`, 8dp of
+/// padding instead of 12, and no 72dp floor. It is what the detail panel's
+/// subtask list renders, so a subtask carries the notes/link badges, the
+/// pending-sync dot, the quick-date segment, hover and swipe that a task row
+/// carries — one row widget, two weights, rather than a second species of row
+/// that has to grow each of those again.
+///
+/// The tightening is a FINE-POINTER change only. A finger still needs its 48dp
+/// checkbox and the [kTouchMetaBand] date target, so on a coarse pointer both
+/// densities keep the list row's geometry and only the title's type role
+/// differs — the same "compact on a mouse" rule the checkbox and the meta
+/// badges already follow.
+enum TaskRowDensity { list, subtask }
 
 /// The leading column the checkbox owns — 48dp wide on every pointer so the
 /// title's left edge never moves, and 48dp tall from the row's TOP edge, which
@@ -117,6 +148,7 @@ class TaskRow extends StatefulWidget {
     this.completionProgress,
     this.commit,
     this.haptics = const NoHaptics(),
+    this.density = TaskRowDensity.list,
     super.key,
   });
 
@@ -240,6 +272,11 @@ class TaskRow extends StatefulWidget {
   /// the list, which has nothing watching the store for it).
   final TaskCommit? commit;
 
+  /// How tightly to draw the row — see [TaskRowDensity]. The detail panel's
+  /// checklist passes [TaskRowDensity.subtask]; every list view keeps the
+  /// default.
+  final TaskRowDensity density;
+
   @override
   State<TaskRow> createState() => _TaskRowState();
 }
@@ -275,6 +312,13 @@ class _TaskRowState extends State<TaskRow> {
   // a pointer-down at x ≤ [_leftEdgeLimit] or x ≥ [_rightEdgeLimit] is ignored.
   double _leftEdgeLimit = _drawerEdgeWidth;
   double _rightEdgeLimit = double.infinity;
+
+  // The resolved density geometry (#306), recomputed each build because it
+  // depends on the pointer class as well as on [TaskRow.density]: a coarse
+  // pointer keeps the list row's padding and 48dp checkbox column at BOTH
+  // densities. Read by [_mainLine] and [_metaLine], which build after this.
+  double _paddingV = _rowPaddingV;
+  double _checkboxBox = _checkboxColumn;
 
   // Cumulative horizontal travel of the in-flight swipe (for the end decision).
   double _swipeDx = 0;
@@ -598,6 +642,18 @@ class _TaskRowState extends State<TaskRow> {
     final gestureInsets = MediaQuery.systemGestureInsetsOf(context);
     _leftEdgeLimit = math.max(_drawerEdgeWidth, gestureInsets.left);
     _rightEdgeLimit = width - gestureInsets.right;
+    // Resolve the density (#306). A subtask row drops the 72dp floor on every
+    // pointer (it is a checklist line inside a panel, not the app's primary
+    // column) but only a MOUSE gets the tighter padding and the shorter
+    // checkbox column — a finger keeps its 48dp target.
+    final subtaskDensity = widget.density == TaskRowDensity.subtask;
+    final tight = subtaskDensity && !coarsePointerPlatform(theme.platform);
+    _paddingV = tight ? _subtaskPaddingV : _rowPaddingV;
+    // The column is exactly as tall as the title line plus its padding, so the
+    // box centres on the title's centre at either density (#276).
+    _checkboxBox = tight
+        ? _subtaskPaddingV * 2 + _subtaskTitleLine
+        : _checkboxColumn;
     // The completion sequence's progress (#241): the list hands every row the
     // same animation, so a tick, a swipe-right and a bulk Complete settle
     // identically. Standing alone (no sequence around it) the row simply wears
@@ -612,7 +668,13 @@ class _TaskRowState extends State<TaskRow> {
       // out" before the show-completed filter removes it.
       opacity: completion.drive(Tween<double>(begin: 1.0, end: 0.5)),
       child: ScaleTransition(
-        scale: completion.drive(Tween<double>(begin: 1.0, end: 0.98)),
+        // The shrink is the row LEAVING — it pairs with the list's fold-away.
+        // A completed SUBTASK is not leaving: the group it sits in is where it
+        // lives (#306), so it keeps its size and stays lined up with the open
+        // rows above it. The fade still marks it done.
+        scale: subtaskDensity
+            ? const AlwaysStoppedAnimation<double>(1)
+            : completion.drive(Tween<double>(begin: 1.0, end: 0.98)),
         child: Padding(
           // Horizontal gutter only: the row's own 12dp top/bottom padding is
           // what separates it from its neighbours (#276), and stacking a
@@ -649,7 +711,11 @@ class _TaskRowState extends State<TaskRow> {
                 // list reads as an even column instead of a ragged one. Larger
                 // text scales grow past it.
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: kTaskRowHeight),
+                  // The floor is the LIST row's pitch; a subtask row takes its
+                  // natural height (#306).
+                  constraints: BoxConstraints(
+                    minHeight: subtaskDensity ? 0 : kTaskRowHeight,
+                  ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -664,7 +730,7 @@ class _TaskRowState extends State<TaskRow> {
                       // either way, so the title never shifts.
                       SizedBox(
                         width: _checkboxColumn,
-                        height: _checkboxColumn,
+                        height: _checkboxBox,
                         // The box is its own semantics node — separately
                         // focusable by TalkBack, Switch Access and the
                         // keyboard — so it has to NAME the task it would
@@ -841,7 +907,7 @@ class _TaskRowState extends State<TaskRow> {
       return Padding(
         // The same top padding the title wears, so entering rename does not
         // shift the line the user is about to type on (#276).
-        padding: const EdgeInsets.only(top: _rowPaddingV),
+        padding: EdgeInsets.only(top: _paddingV),
         child: TextField(
           controller: _editor,
           focusNode: _focus,
@@ -870,7 +936,7 @@ class _TaskRowState extends State<TaskRow> {
     // The band is now the pitch's business, not the title's.
     final listTag = widget.listTag ?? '';
     final line = Padding(
-      padding: const EdgeInsets.only(top: _rowPaddingV),
+      padding: EdgeInsets.only(top: _paddingV),
       child: LayoutBuilder(
         builder: (context, constraints) => Row(
           children: [
@@ -878,8 +944,12 @@ class _TaskRowState extends State<TaskRow> {
               child: DefaultTextStyle.merge(
                 // The M3 two-line list item's headline role. It is also the
                 // style the inline-rename TextField already used, so entering
-                // and leaving rename no longer resizes the line (#276).
-                style: theme.textTheme.bodyLarge,
+                // and leaving rename no longer resizes the line (#276). A
+                // subtask line drops one role, so a checklist reads as
+                // subordinate to the task above it (#306).
+                style: widget.density == TaskRowDensity.subtask
+                    ? theme.textTheme.bodyMedium
+                    : theme.textTheme.bodyLarge,
                 child: StrikeSweep(
                   title: _displayTitle,
                   progress: completion,
@@ -978,7 +1048,7 @@ class _TaskRowState extends State<TaskRow> {
     return Padding(
       // On touch the bottom padding IS the date button's lower half (see
       // [kTouchMetaBand]); on a mouse it is plain whitespace.
-      padding: EdgeInsets.only(bottom: coarse ? 0 : _rowPaddingV),
+      padding: EdgeInsets.only(bottom: coarse ? 0 : _paddingV),
       child: ConstrainedBox(
         constraints: BoxConstraints(minHeight: coarse ? kTouchMetaBand : 0),
         child: Wrap(

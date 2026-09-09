@@ -7,14 +7,16 @@
 //   • prev/next sibling navigation across the current view (flush edits first).
 //   • the task's own due date: a tappable badge opening the calendar plus the
 //     one-gesture quick-date strip, with the #164 cascade toast.
-//   • per-subtask due dates, edited inline from the parent's checklist.
-//   • "Hide completed" subtasks — a persisted, count-gated toggle that is UX
-//     only (never mutates the tasks).
-//   • "Un-complete all subtasks" (#89) — reopen a parent's finished children in
-//     one action (un-completing never cascades on its own).
-//   • hidden-aware subtask reorder via up/down buttons — steps are measured
-//     against the FULL sibling list so a move stays correct across a hidden
-//     completed row (#90).
+//   • the subtask checklist, rendered by the LIST'S OWN ROW at subtask density
+//     (#306): badges, the pending-sync dot, the quick-date segment, hover and
+//     the touch swipes all come from [TaskRow], not from a second row species.
+//   • DRAG reorder of the checklist (#90), one undoable move per drop — the
+//     anchor is the visible neighbour the row landed after, resolved against
+//     the FULL sibling list so a drop stays correct across the completed rows
+//     the group folds away.
+//   • completed subtasks collapsed under "N completed" at the bottom, with
+//     "Un-complete all subtasks" (#89) inside that group — reopening a parent's
+//     finished children in one action (un-completing never cascades on its own).
 //   • detach (#promoteTask): a subtask's panel can promote it back to top level.
 //   • the List dropdown, shown for top-level tasks only — a subtask always
 //     lives in its parent's list (#93). Moving lists repoints the panel to the
@@ -50,13 +52,16 @@ import '../model/task_view.dart' show orderedSubtasks, shownSubtasks;
 import '../store/stored.dart';
 import 'detail_fields.dart';
 import 'detail_subtasks.dart';
+import 'drag_lift.dart' show dragLiftProxyDecorator;
 import 'due_date_picker.dart';
 import 'haptics.dart';
 import 'list_pickers.dart';
-import 'task_actions.dart' show demoteCandidates, duplicateTask;
+import 'row_actions.dart' show TaskRowActions;
+import 'task_actions.dart' show cascadeSuffix, demoteCandidates, duplicateTask;
 import 'toast.dart';
 import 'url_detect.dart';
 import 'url_opener.dart';
+import 'visible_rows.dart' show TaskRowData;
 
 /// The detail/edit panel for one task, identified by [taskId].
 class TaskDetail extends ConsumerStatefulWidget {
@@ -253,8 +258,10 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final toasts = ref.read(toastControllerProvider);
     final token = await commands.deleteTask(task.task.id);
     if (!mounted) return;
+    // A delete takes the whole subtree with it (#106) — say how many, since
+    // Undo puts all of them back (#306).
     toasts.showUndo(
-      'Deleted "${task.task.title}"',
+      'Deleted "${task.task.title}"${cascadeSuffix(token.subtree.length)}',
       () => commands.undoDelete(token),
     );
     widget.onClose();
@@ -351,29 +358,47 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     }
   }
 
-  /// Move [subId] UP so it renders just above its visible neighbour [aboveId] —
-  /// it takes that neighbour's slot, following whatever [aboveId] itself
-  /// followed in the FULL ordered [children] (position order), so the move stays
-  /// correct across hidden completed rows when "Hide completed" is on (#90).
-  /// Issued as ONE anchored reorder (G1 #202): crossing hidden rows emits no
-  /// burst of awaited single steps and no display-order slot index.
-  Future<void> _reorderUp(
-    String subId,
-    String aboveId,
+  /// Apply a checklist DRAG from [oldIndex] to [newIndex] over the OPEN
+  /// subtasks [open], as ONE anchored reorder resolved against the FULL
+  /// sibling order [children] (#90/#306).
+  ///
+  /// The anchor is the concrete row the drop landed after — never a slot index
+  /// — so it stays correct while completed siblings sit interleaved in the
+  /// stored order but grouped away on screen (G1 #202's rule, applied to the
+  /// checklist). Dropping a row back where it started writes nothing.
+  ///
+  /// One drop, one Undo: the move's Undo puts the row back after whatever it
+  /// followed BEFORE the drag, so a mis-drop costs a tap rather than a second
+  /// drag aimed at a list that has already moved.
+  Future<void> _reorderSubtask(
+    int oldIndex,
+    int newIndex,
+    List<StoredTask> open,
     List<StoredTask> children,
   ) async {
-    final at = children.indexWhere((c) => c.task.id == aboveId);
-    if (at < 0) return;
-    // Follow whatever the neighbour above currently follows (null = the front).
-    final previousId = at == 0 ? null : children[at - 1].task.id;
-    await ref.read(commandsProvider).reorderTaskAfter(subId, previousId);
-  }
+    if (oldIndex < 0 || oldIndex >= open.length) return;
+    final moved = open[oldIndex];
+    // The row it will follow after the drop: the nearest OPEN row above the
+    // landing slot in the reduced order, or the front of the siblings.
+    final reduced = [...open]..removeAt(oldIndex);
+    final landing = newIndex.clamp(0, reduced.length);
+    final previousId = landing == 0 ? null : reduced[landing - 1].task.id;
+    // Where it sits now in the FULL sibling order — what Undo restores.
+    final at = children.indexWhere((c) => c.task.id == moved.task.id);
+    final wasAfter = at <= 0 ? null : children[at - 1].task.id;
+    // Dropped where it already was: no write, and nothing to say (#256).
+    final currentPrevious = oldIndex == 0 ? null : open[oldIndex - 1].task.id;
+    if (previousId == currentPrevious) return;
 
-  /// Move [subId] DOWN so it renders just below its visible neighbour
-  /// [belowId] — it lands directly after that neighbour in the FULL ordered
-  /// list, crossing any hidden completed rows between them in one move (#90).
-  Future<void> _reorderDown(String subId, String belowId) =>
-      ref.read(commandsProvider).reorderTaskAfter(subId, belowId);
+    final commands = ref.read(commandsProvider);
+    final toasts = ref.read(toastControllerProvider);
+    await commands.reorderTaskAfter(moved.task.id, previousId);
+    if (!mounted) return;
+    toasts.showUndo(
+      'Moved "${moved.task.title}"',
+      () => commands.reorderTaskAfter(moved.task.id, wasAfter),
+    );
+  }
 
   /// Detach [subId] from its parent, promoting it to top level directly after
   /// its former parent (#promoteTask). The row keeps its id, so the panel stays
@@ -469,6 +494,17 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
       all,
       hideCompleted: hideCompleted,
     );
+    // The checklist's two groups. The OPEN ones are the draggable list; the
+    // completed ones live under the "N completed" disclosure at the bottom,
+    // which is why [shownSubtasks] returns them in exactly that order (#306).
+    final openChildren = [
+      for (final c in visibleChildren)
+        if (c.task.status != TaskStatus.completed) c,
+    ];
+    final completedChildren = [
+      for (final c in visibleChildren)
+        if (c.task.status == TaskStatus.completed) c,
+    ];
     // Parent (for a subtask's breadcrumb + detach) and the lists (for a
     // top-level task's List dropdown).
     final parent = subtask
@@ -482,6 +518,26 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final hosts = subtask
         ? const <StoredTask>[]
         : demoteCandidates(current, all);
+    // The checklist's rows are driven by the SAME action bundle the list feeds
+    // its rows (#306), so a subtask's checkbox, title tap, quick date, calendar
+    // and link badge behave exactly like a task's. The three the list uses and
+    // this panel does not — the right-click menu, multi-select and the
+    // inline-edit request — are left null: a checklist has no bulk selection
+    // (#309) and no menu of its own, and an affordance that does nothing must
+    // not render.
+    final subtaskActions = TaskRowActions(
+      toggle: (st) {
+        // The same tick a top-level checkbox gets: a subtask is still a box the
+        // user tapped (#257).
+        _haptics.tick();
+        ref.read(commandsProvider).toggleComplete(st.task.id);
+      },
+      open: (_, st) => _navigate(() => widget.onOpenTask(st.task.id)),
+      rename: (id, title) => ref.read(commandsProvider).renameTask(id, title),
+      setDue: (id, move) => _quickDue(id, move),
+      pickDate: (st) => _pickDue(st.task.id, st.task.due),
+      openUrl: ref.read(urlOpenerProvider),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -680,52 +736,84 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                 SubtaskHeader(
                   completedCount: completedCount,
                   totalCount: children.length,
-                  hideCompleted: hideCompleted,
-                  onHideCompleted: (v) => ref
-                      .read(prefsControllerProvider.notifier)
-                      .setHideCompletedSubtasks(v),
-                  onUncompleteAll: () => _uncompleteAll(task.id, all),
                 ),
-                for (var i = 0; i < visibleChildren.length; i++)
-                  SubtaskRow(
-                    key: ValueKey(visibleChildren[i].task.id),
-                    task: visibleChildren[i].task,
-                    isFirst: i == 0,
-                    isLast: i == visibleChildren.length - 1,
-                    onToggle: () {
-                      // The same tick a top-level checkbox gets: a subtask is
-                      // still a box the user tapped (#257).
-                      _haptics.tick();
-                      ref
-                          .read(commandsProvider)
-                          .toggleComplete(visibleChildren[i].task.id);
-                    },
-                    onOpen: () => _navigate(
-                      () => widget.onOpenTask(visibleChildren[i].task.id),
+                // The OPEN checklist — a reorderable list, shrink-wrapped and
+                // non-scrolling because the panel's own ListView is what
+                // scrolls. A drag anywhere in it is one anchored, undoable
+                // move (#90).
+                if (openChildren.isNotEmpty)
+                  ReorderableListView.builder(
+                    key: const Key('subtask-reorder-list'),
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: EdgeInsets.zero,
+                    buildDefaultDragHandles: false,
+                    // The app's ONE lift, so a subtask detaches and lands
+                    // exactly like a task row does (#256).
+                    proxyDecorator: dragLiftProxyDecorator,
+                    // The lift is felt when the row detaches and again when it
+                    // lands — the two ends of a gesture the user cannot
+                    // otherwise confirm without watching (#257), exactly as
+                    // the task list reports them.
+                    onReorderStart: (_) => _haptics.tick(),
+                    onReorderEnd: (_) => _haptics.tick(),
+                    itemCount: openChildren.length,
+                    onReorderItem: (oldIndex, newIndex) => _reorderSubtask(
+                      oldIndex,
+                      newIndex,
+                      openChildren,
+                      children,
                     ),
-                    onPickDue: () => _pickDue(
-                      visibleChildren[i].task.id,
-                      visibleChildren[i].task.due,
+                    itemBuilder: (context, i) => Row(
+                      key: ValueKey(openChildren[i].task.id),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SubtaskDragHandle(
+                          index: i,
+                          id: openChildren[i].task.id,
+                        ),
+                        Expanded(
+                          child: SubtaskRow(
+                            data: TaskRowData(stored: openChildren[i]),
+                            actions: subtaskActions,
+                            haptics: _haptics,
+                            pendingEdits: _pendingEdits,
+                          ),
+                        ),
+                      ],
                     ),
-                    onSetDue: (m) => _quickDue(visibleChildren[i].task.id, m),
-                    onMoveUp: i == 0
-                        ? null
-                        : () => _reorderUp(
-                            visibleChildren[i].task.id,
-                            visibleChildren[i - 1].task.id,
-                            children,
-                          ),
-                    onMoveDown: i == visibleChildren.length - 1
-                        ? null
-                        : () => _reorderDown(
-                            visibleChildren[i].task.id,
-                            visibleChildren[i + 1].task.id,
-                          ),
                   ),
+                // The finished ones, folded away at the bottom (#306). Not
+                // draggable: their order is history, and the group they sit in
+                // is not the ordering the user is arranging.
+                if (completedCount > 0) ...[
+                  CompletedSubtasksGroup(
+                    count: completedCount,
+                    expanded: !hideCompleted,
+                    onToggle: (expanded) => ref
+                        .read(prefsControllerProvider.notifier)
+                        .setHideCompletedSubtasks(!expanded),
+                    onUncompleteAll: () => _uncompleteAll(task.id, all),
+                  ),
+                  for (final c in completedChildren)
+                    Padding(
+                      key: ValueKey(c.task.id),
+                      // Aligned with the open rows above, whose leading column
+                      // is the drag handle.
+                      padding: const EdgeInsets.only(left: 36),
+                      child: SubtaskRow(
+                        data: TaskRowData(stored: c),
+                        actions: subtaskActions,
+                        haptics: _haptics,
+                        pendingEdits: _pendingEdits,
+                      ),
+                    ),
+                ],
                 AddSubtaskField(
                   controller: _newSubtask,
                   focusNode: _newSubtaskFocus,
                   onSubmit: () => _addSubtask(current),
+                  showHint: children.isEmpty,
                 ),
               ],
               // Derived reading matter, not an edited field: it trails the

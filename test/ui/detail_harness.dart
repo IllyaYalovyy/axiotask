@@ -8,11 +8,13 @@
 
 import 'dart:async';
 
+import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/haptics.dart';
+import 'package:axiotask/src/ui/row_actions.dart' show TaskRowActions;
 import 'package:axiotask/src/ui/task_detail.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +76,7 @@ Future<FakeCommands> pumpDetail(
   Size size = const Size(1000, 2400),
   double textScale = 1.0,
   Haptics? hapticsDevice,
+  bool hideCompletedSubtasks = false,
 }) async {
   final fake = FakeCommands(initial, newId: newId);
   addTearDown(fake.dispose);
@@ -94,6 +97,9 @@ Future<FakeCommands> pumpDetail(
         if (urlOpener != null) urlOpenerProvider.overrideWithValue(urlOpener),
         if (hapticsDevice != null)
           hapticsDeviceProvider.overrideWithValue(hapticsDevice),
+        prefsProvider.overrideWithValue(
+          Prefs(hideCompletedSubtasks: hideCompletedSubtasks),
+        ),
       ],
       child: MaterialApp(
         // A caller that cares about COLOUR pins the real app theme (the panel's
@@ -148,3 +154,19 @@ List<String> subtaskOrder(WidgetTester tester, List<String> titles) {
   ]..sort((a, b) => a.$2.compareTo(b.$2));
   return [for (final e in entries) e.$1];
 }
+
+/// A [TaskRowActions] bundle whose callbacks do nothing — for the isolated
+/// widget tests that mount ONE [SubtaskRow] to inspect what it renders or
+/// announces, with no store behind it. A test that cares about an action
+/// passes its own recorder in.
+TaskRowActions inertRowActions({
+  void Function(StoredTask)? toggle,
+  void Function(String id, String title)? rename,
+}) => TaskRowActions(
+  toggle: toggle ?? (_) {},
+  open: (_, _) {},
+  rename: rename ?? (_, _) {},
+  setDue: (_, _) {},
+  pickDate: (_) {},
+  openUrl: (_) async {},
+);

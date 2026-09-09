@@ -320,10 +320,14 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
         // entry path — row tap, search jump, detail prev/next, the quick-add
         // follow, or a bare URL change — all of which move the route.
         openInDetail: widget.selectedTaskId == t.id,
-        onSelectToggle: () => a.selectToggle(t.id),
-        onContextMenu: (pos) => a.contextMenu(stored, pos),
+        onSelectToggle: a.selectToggle == null
+            ? null
+            : () => a.selectToggle!(t.id),
+        onContextMenu: a.contextMenu == null
+            ? null
+            : (pos) => a.contextMenu!(stored, pos),
         editRequested: widget.editRequest.value == t.id,
-        onEditDone: () => a.editDone(t.id),
+        onEditDone: a.editDone == null ? null : () => a.editDone!(t.id),
         // So a mid-typing inline rename survives a system-back / backgrounding,
         // like the detail panel's fields (#183/G4): the registry covers
         // backgrounding, the back handle lets the shell intercept a system back.

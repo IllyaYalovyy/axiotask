@@ -26,6 +26,24 @@ import '../model/task_tree.dart' show canNestUnder;
 import '../store/stored.dart';
 import 'quick_date_menu.dart';
 
+/// How an action that CASCADED through a task's subtree says so (#306).
+///
+/// Completing a parent completes its open subtasks and deleting one deletes
+/// them (Google does both server-side, verified live — #106), and until this
+/// existed the toast reported only the row the user touched: "Completed
+/// Groceries" after four rows changed, with an Undo whose real reach was
+/// invisible. [count] is the number of OTHER rows the call moved; 0 returns the
+/// empty string, so a leaf action's wording is unchanged.
+///
+/// Written in words rather than as "(+3)": the toast is the one place the app
+/// tells the user how far an undoable action reached, and a glyph there is a
+/// thing to decode rather than a thing to read.
+String cascadeSuffix(int count) => switch (count) {
+  <= 0 => '',
+  1 => ' and 1 subtask',
+  _ => ' and $count subtasks',
+};
+
 /// The ONE duplicate rule, shared by the desktop context menu, the detail
 /// screen's overflow and the bulk bar (#245): a fresh task titled
 /// "`<title>` (copy)" in the SAME list and under the SAME parent, so a

@@ -355,10 +355,18 @@ void main() {
           find.byKey(const Key('list-dropdown')),
           'the detail\'s List dropdown',
         );
+        // The SAME band the list row's date badge takes (#306): a subtask row
+        // is now that row, so its date carries the [kTouchMetaBand] exception
+        // documented above — with the same fallbacks behind it, the row tap
+        // (which opens the subtask's own Due field) and swipe-left.
         _expectTappable(
           tester,
-          find.byKey(const Key('sub-due-C1')),
+          find.descendant(
+            of: find.byKey(const ValueKey('C1')),
+            matching: find.byKey(const Key('row-due-segment')),
+          ),
           'a subtask\'s date button',
+          minHeight: kTouchMetaBand,
         );
 
         // A subtask still checks off — the panel is the ONLY place a subtask

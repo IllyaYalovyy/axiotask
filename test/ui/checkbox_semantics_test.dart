@@ -19,7 +19,7 @@
 // Determinism: the clock is pinned (the row's due segment derives its label
 // from `clock.now()`), and nothing animates at rest.
 
-import 'dart:ui' show CheckedState;
+import 'dart:ui' show CheckedState, Tristate;
 
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_view.dart';
@@ -27,10 +27,13 @@ import 'package:axiotask/src/ui/compact_chrome.dart';
 import 'package:axiotask/src/ui/detail_subtasks.dart';
 import 'package:axiotask/src/ui/list_toolbar.dart';
 import 'package:axiotask/src/ui/task_row.dart';
+import 'package:axiotask/src/ui/visible_rows.dart' show TaskRowData;
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'detail_harness.dart' show inertRowActions, row;
 
 final _clock = Clock.fixed(DateTime(2026, 6, 15, 12));
 
@@ -165,21 +168,15 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: SubtaskRow(
-              task: Task(
-                id: 's1',
-                position: '0',
-                title: title,
-                status: status,
-                updated: '2026-06-15T00:00:00.000Z',
+              data: TaskRowData(
+                stored: row(
+                  's1',
+                  title,
+                  parent: 'P',
+                  done: status == TaskStatus.completed,
+                ),
               ),
-              isFirst: true,
-              isLast: true,
-              onToggle: () {},
-              onOpen: () {},
-              onPickDue: () {},
-              onSetDue: (_) {},
-              onMoveUp: null,
-              onMoveDown: null,
+              actions: inertRowActions(),
             ),
           ),
         ),
@@ -220,32 +217,35 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('"Hide completed" is one named checkbox, not two stops', (
+    // #306 retired the panel's "Hide completed" checkbox — the preference is
+    // stated in Properties, and the panel gathers the finished subtasks under a
+    // "N completed" disclosure. What it announces is a BUTTON with an expansion
+    // state, not a checkbox: a screen reader that hears "checkbox" here would
+    // be told the group is a thing to tick.
+    testWidgets('the completed group announces as one expandable button', (
       tester,
     ) async {
       final handle = tester.ensureSemantics();
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SubtaskHeader(
-              completedCount: 1,
-              totalCount: 3,
-              hideCompleted: false,
-              onHideCompleted: (_) {},
+            body: CompletedSubtasksGroup(
+              count: 3,
+              expanded: false,
+              onToggle: (_) {},
               onUncompleteAll: () {},
             ),
           ),
         ),
       );
 
-      final boxes = _checkboxNodes(tester);
-      expect(boxes, hasLength(1));
-      expect(
-        boxes.single.label,
-        'Hide completed',
-        reason: 'the label sat on the PARENT node; the box itself was blank',
+      expect(_checkboxNodes(tester), isEmpty);
+      final node = tester.getSemantics(
+        find.byKey(const Key('completed-subtasks-toggle')),
       );
-      expect(boxes.single.flagsCollection.isChecked, CheckedState.isFalse);
+      expect(node.label, '3 completed subtasks');
+      expect(node.flagsCollection.isButton, isTrue);
+      expect(node.flagsCollection.isExpanded, Tristate.isFalse);
       handle.dispose();
     });
   });

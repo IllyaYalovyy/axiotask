@@ -172,8 +172,12 @@ class RowActions {
     haptics.tick();
     final token = await commands.toggleComplete(stored.task.id);
     if (!alive() || !token.wasCompleting) return;
+    // The cascade is NAMED (#306): completing a parent completes its open
+    // subtasks, and the toast has to say how many, because Undo reopens
+    // exactly that set.
     toasts.showUndo(
-      'Completed "${stored.task.title}"',
+      'Completed "${stored.task.title}"'
+      '${cascadeSuffix(token.cascadedReopenIds.length)}',
       () => commands.undoToggleComplete(token),
     );
   }
@@ -184,8 +188,10 @@ class RowActions {
     haptics.confirm(); // a removal is felt more firmly than a tick (#257)
     final token = await commands.deleteTask(t.task.id);
     if (!alive()) return;
+    // A delete takes the whole subtree with it (#106) — the toast says so, and
+    // Undo puts all of it back (#306).
     toasts.showUndo(
-      'Deleted "${t.task.title}"',
+      'Deleted "${t.task.title}"${cascadeSuffix(token.subtree.length)}',
       () => commands.undoDelete(token),
     );
   }
@@ -201,13 +207,13 @@ class TaskRowActions {
   const TaskRowActions({
     required this.toggle,
     required this.open,
-    required this.contextMenu,
-    required this.selectToggle,
     required this.rename,
     required this.setDue,
     required this.pickDate,
     required this.openUrl,
-    required this.editDone,
+    this.contextMenu,
+    this.selectToggle,
+    this.editDone,
   });
 
   /// Flip the row's completion (the checkbox, or a swipe right).
@@ -218,11 +224,15 @@ class TaskRowActions {
   /// (#253).
   final void Function(BuildContext rowContext, StoredTask) open;
 
-  /// The desktop right-click menu at a global position.
-  final void Function(StoredTask, Offset) contextMenu;
+  /// The desktop right-click menu at a global position. `null` where the rows
+  /// have no menu — the detail panel's checklist (#306), whose actions are the
+  /// subtask's own panel.
+  final void Function(StoredTask, Offset)? contextMenu;
 
-  /// Add or remove the row from the multi-selection.
-  final void Function(String id) selectToggle;
+  /// Add or remove the row from the multi-selection. `null` where the rows are
+  /// not selectable (the detail panel's checklist — bulk ops over subtasks are
+  /// #309, not built).
+  final void Function(String id)? selectToggle;
 
   /// Commit an inline rename.
   final void Function(String id, String title) rename;
@@ -236,6 +246,7 @@ class TaskRowActions {
   /// Open a URL detected in the row's notes.
   final UrlOpener openUrl;
 
-  /// The row left inline-rename mode.
-  final void Function(String id) editDone;
+  /// The row left inline-rename mode; `null` where no caller tracks an
+  /// outstanding edit request.
+  final void Function(String id)? editDone;
 }

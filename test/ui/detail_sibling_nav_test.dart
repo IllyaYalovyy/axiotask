@@ -200,9 +200,14 @@ void main() {
       expect(nextEnabled(tester), isFalse, reason: 'and that is the last one');
     });
 
-    testWidgets('with completed shown, the same step lands on it', (
+    testWidgets('with the completed group open, the walk ends on it', (
       tester,
     ) async {
+      // #306 gathers the completed subtasks at the BOTTOM of the checklist,
+      // under the "N completed" group — so the walk follows the open ones
+      // first and reaches the finished one last. The rule is unchanged: the
+      // step goes where the checklist SHOWS the row, and it now shows it
+      // there.
       final router = await pumpShell(
         tester,
         tasks: [
@@ -214,7 +219,10 @@ void main() {
       );
       await open(tester, router, 'S1');
       await tapNext(tester);
+      expect(openPanel('three'), findsOneWidget);
+      await tapNext(tester);
       expect(openPanel('two'), findsOneWidget);
+      expect(nextEnabled(tester), isFalse, reason: 'the finished one is last');
     });
 
     testWidgets('a subtask the checklist hides has no step at all', (

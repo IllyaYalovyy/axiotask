@@ -550,6 +550,11 @@ void main() {
 
         final toggle = find.byKey(const Key('haptics-toggle'));
         expect(toggle, findsOneWidget);
+        // The tab now carries a Task-detail section above Feedback (#306), so
+        // the switch can sit below the fold on a short dialog — scroll it into
+        // view before driving it.
+        await tester.ensureVisible(toggle);
+        await tester.pumpAndSettle();
         expect(
           tester.widget<SwitchListTile>(toggle).value,
           isTrue,
@@ -567,6 +572,40 @@ void main() {
         );
       },
     );
+
+    // #306 moved the detail panel's "Hide completed" checkbox out of every
+    // task's panel and into the settings, where a preference belongs: inside
+    // the panel it read as a per-task control that would only ever affect that
+    // task.
+    testWidgets('the completed-subtasks preference is stated here', (
+      tester,
+    ) async {
+      final store = PrefsStore(File(p.join(tmp.path, 'prefs.json')));
+      await pumpProps(
+        tester,
+        extraOverrides: [prefsStoreProvider.overrideWithValue(store)],
+      );
+      await tester.tap(find.text('Appearance'));
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(
+        const Key('collapse-completed-subtasks-toggle'),
+      );
+      expect(toggle, findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+      expect(
+        store.load().hideCompletedSubtasks,
+        isTrue,
+        reason: 'the choice survives a restart',
+      );
+    });
 
     testWidgets('the haptics switch is absent on a desktop pointer', (
       tester,

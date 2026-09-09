@@ -255,20 +255,35 @@ List<StoredTask> orderedSubtasks(String parentId, Iterable<StoredTask> all) =>
     all.where((t) => t.task.parent == parentId).toList()
       ..sort((a, b) => a.task.position.compareTo(b.task.position));
 
-/// The subtasks of [parentId] AS THE CHECKLIST SHOWS THEM: [orderedSubtasks],
-/// minus the completed ones while [hideCompleted] is on.
+/// The subtasks of [parentId] AS THE CHECKLIST SHOWS THEM: the OPEN ones in
+/// [orderedSubtasks] order, then — only while [hideCompleted] is off — the
+/// completed ones, also in position order.
+///
+/// Completed subtasks are GROUPED at the end rather than left interleaved
+/// (#306): the checklist gathers them under a "N completed" disclosure at the
+/// bottom, so what is left to do reads as one uninterrupted list. Position
+/// order inside each group is untouched — the grouping is display only and no
+/// row is moved on the server.
 ///
 /// The panel renders exactly this slice, and the detail's Prev/Next walk it
 /// (#303) — one spelling, so a step can never land on a row the checklist is
-/// not showing.
+/// not showing, and never in an order the checklist does not show.
 List<StoredTask> shownSubtasks(
   String parentId,
   Iterable<StoredTask> all, {
   required bool hideCompleted,
 }) {
   final ordered = orderedSubtasks(parentId, all);
-  if (!hideCompleted) return ordered;
-  return ordered.where((t) => t.task.status != TaskStatus.completed).toList();
+  final open = [
+    for (final t in ordered)
+      if (t.task.status != TaskStatus.completed) t,
+  ];
+  if (hideCompleted) return open;
+  return [
+    ...open,
+    for (final t in ordered)
+      if (t.task.status == TaskStatus.completed) t,
+  ];
 }
 
 /// The sorted top-level rows shown for [viewId] — the port of `visibleTasks` +
