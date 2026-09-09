@@ -24,21 +24,13 @@ import 'package:clock/clock.dart';
 /// Records the commands the panel fires AND performs them against its own task
 /// set, re-emitting the mutated set on the stream the panel watches.
 class FakeCommands implements Commands {
-  FakeCommands(
-    List<StoredTask> initial, {
-    String Function()? newId,
-    this.newestFirst = false,
-  }) : _tasks = [...initial],
-       _newId = newId ?? (() => 'gen');
+  FakeCommands(List<StoredTask> initial, {String Function()? newId})
+    : _tasks = [...initial],
+      _newId = newId ?? (() => 'gen');
 
   final List<StoredTask> _tasks;
   final String Function() _newId;
   final _controller = StreamController<List<StoredTask>>.broadcast();
-
-  /// Put a created row at the FRONT of the emitted set rather than the back.
-  /// The list view renders in POSITION order, so this only decides the order of
-  /// rows whose positions tie — which is what the list suites pin.
-  final bool newestFirst;
 
   /// When set, the next [setDue]/[setDueRaw] reports this cascade instead of the
   /// default no-cascade result — lets a test drive the #164 toast surface.
@@ -111,7 +103,11 @@ class FakeCommands implements Commands {
       task: Task(
         id: _newId(),
         parent: parentId,
-        position: '!new',
+        // The REAL placeholder the real command mints: distinct and DESCENDING,
+        // so successive creates sort newest-first exactly as production does. A
+        // constant here tied every new row's position and left the order of two
+        // creates undefined (#302).
+        position: nextLocalPosition(),
         title: title,
         status: TaskStatus.needsAction,
         due: due == null ? null : normalizeDue(due),
@@ -122,11 +118,7 @@ class FakeCommands implements Commands {
       localUpdated: 't',
       pendingOp: 'create',
     );
-    if (newestFirst) {
-      _tasks.insert(0, t);
-    } else {
-      _tasks.add(t);
-    }
+    _tasks.add(t);
     _emit();
     return t;
   }

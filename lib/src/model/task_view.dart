@@ -245,6 +245,16 @@ Map<String, int> computeViewCounts({
   return counts;
 }
 
+/// The subtasks of [parentId], in the order the detail panel's checklist shows
+/// them: `position` ascending, which since #302 reads newest → oldest, because
+/// a create places the row first among its siblings both locally and on Google.
+///
+/// One spelling, so the panel that renders the checklist and the tests that
+/// assert its order ask the same function.
+List<StoredTask> orderedSubtasks(String parentId, Iterable<StoredTask> all) =>
+    all.where((t) => t.task.parent == parentId).toList()
+      ..sort((a, b) => a.task.position.compareTo(b.task.position));
+
 /// The sorted top-level rows shown for [viewId] — the port of `visibleTasks` +
 /// `applySortAndOrder`.
 ///

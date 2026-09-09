@@ -409,66 +409,22 @@ void main() {
       expect(parentIsPushable(RefState.missing), isFalse);
     });
 
-    test('subtask create anchors after its last synced sibling', () {
-      final child = StoredTask(
-        task: Task(
-          id: 'new',
-          parent: 'p',
-          position: '00000000000000000000',
-          title: 'task new',
-          status: TaskStatus.needsAction,
-          updated: 'u',
-        ),
-        listId: 'L',
-        syncState: SyncState.dirty,
-        localUpdated: 'u',
-      );
-      final sibA = stored(
-        task('a').copyWith(parent: 'p', position: '00000000000000000001'),
-      );
-      final sibB = stored(
-        task('b').copyWith(parent: 'p', position: '00000000000000000002'),
-      );
-      // Unsynced sibling: it has no remote id, so it cannot be named at all.
-      final sibC = StoredTask(
-        task: Task(
-          id: 'c',
-          parent: 'p',
-          position: '00000000000000000009',
-          title: 'task c',
-          status: TaskStatus.needsAction,
-          updated: 'u',
-        ),
-        listId: 'L',
-        syncState: SyncState.dirty,
-        localUpdated: 'u',
-      );
-      // Another parent's child must never be used as the anchor.
-      final other = stored(
-        task('z').copyWith(parent: 'q', position: '00000000000000000099'),
-      );
-
-      final rows = [child, sibA, sibB, sibC, other];
-      expect(
-        createPreviousAnchor(child, rows),
-        'b',
-        reason: 'the anchor is the sibling\'s WIRE id',
-      );
-
-      final top = stored(task('top'));
-      expect(createPreviousAnchor(top, rows), isNull);
-    });
-
-    test('create_payload canonicalizes due and carries the anchor', () {
+    test('create_payload canonicalizes due and names no previous', () {
       final row = stored(task('t1').copyWith(due: '2026-03-04', parent: 'p'));
-      final payload = createPayload(row, 'b', 'remote-p');
+      final payload = createPayload(row, 'remote-p');
       expect(payload.due, '2026-03-04T00:00:00.000Z');
       expect(
         payload.parent,
         'remote-p',
         reason: 'the wire payload names Google\'s parent id, not the local one',
       );
-      expect(payload.previous, 'b');
+      expect(
+        payload.previous,
+        isNull,
+        reason:
+            'no anchor: an insert with no previous lands first among its '
+            'siblings, where the row already sits locally (#302)',
+      );
       expect(payload.status, TaskStatus.needsAction);
       expect(payload.title, 'task t1');
     });

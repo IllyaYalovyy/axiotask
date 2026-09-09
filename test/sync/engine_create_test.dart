@@ -497,10 +497,11 @@ void main() {
     expect(local.task.position, isNot('00000000000000000000'));
   });
 
-  test('subtask creates land in creation order', () async {
-    // Without `previous`, the API inserts each subtask FIRST — a batch lands on
-    // Google in reverse creation order. The previous-anchor keeps creation
-    // order.
+  test('subtask creates land newest-first on the server (#302)', () async {
+    // The insert names no `previous`, so the API puts each subtask FIRST among
+    // its siblings — the placement the local placeholder already gave it. A
+    // run of creates therefore lands on Google in reverse creation order, which
+    // IS the order the parent's checklist shows: newest on top.
     final (client, eng) = await engine(push: true);
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
@@ -528,10 +529,10 @@ void main() {
           )).items.where((t) => t.parent == 'P').toList()
           ..sort((a, b) => a.position.compareTo(b.position));
     expect(remote.map((t) => t.title).toList(), [
-      'sub 0',
-      'sub 1',
       'sub 2',
-    ], reason: 'creation order preserved on the server');
+      'sub 1',
+      'sub 0',
+    ], reason: 'each subtask went on top of the one before it');
   });
 
   test('bare due date is normalized on push, not rejected', () async {

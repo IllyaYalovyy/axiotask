@@ -137,3 +137,14 @@ Future<void> openDetailOverflow(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
 }
+
+/// The rendered top-to-bottom order of the named subtask titles (hidden ones
+/// are simply absent from [titles]) — read off the laid-out rows, so it is the
+/// order the USER sees, not the order any list happens to hold.
+List<String> subtaskOrder(WidgetTester tester, List<String> titles) {
+  final present = titles.where((t) => find.text(t).evaluate().isNotEmpty);
+  final entries = [
+    for (final t in present) (t, tester.getTopLeft(find.text(t)).dy),
+  ]..sort((a, b) => a.$2.compareTo(b.$2));
+  return [for (final e in entries) e.$1];
+}

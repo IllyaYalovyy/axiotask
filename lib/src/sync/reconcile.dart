@@ -306,44 +306,29 @@ bool mutationIsPushable(String id, Set<String> unresolvedInflight) =>
 bool parentIsPushable(RefState? parent) =>
     parent == null || parent == RefState.synced;
 
-/// For a SUBTASK, the REMOTE id of the already-synced sibling to anchor the
-/// insert after. Without a `previous` the API inserts at the top, so a batch of
-/// subtasks would land on Google in reverse creation order. `null` for a
-/// top-level create (or when no sibling has a remote id yet). The value is a
-/// wire parameter, so it is the sibling's `remote_id`, never its local id.
-String? createPreviousAnchor(StoredTask row, List<StoredTask> listRows) {
-  final parent = row.task.parent;
-  if (parent == null) return null;
-  StoredTask? best;
-  for (final t in listRows) {
-    if (t.task.parent == parent &&
-        t.task.id != row.task.id &&
-        t.remoteId != null) {
-      if (best == null || t.task.position.compareTo(best.task.position) > 0) {
-        best = t;
-      }
-    }
-  }
-  return best?.remoteId;
-}
-
 /// The insert payload for a create. [due] is canonicalized on the way out:
 /// Google 400s a bare date, and this heals any legacy/imported row that stored a
 /// non-canonical form.
 ///
-/// [parent] and [previous] are WIRE ids (the referenced rows' `remote_id`), not
-/// the local ids the row itself carries — the caller translates them at the API
-/// boundary (#224). A subtask create is only ever attempted once its parent has
-/// a remote id ([parentIsPushable]).
-NewTask createPayload(StoredTask row, String? previous, String? parent) =>
-    NewTask(
-      title: row.task.title,
-      notes: row.task.notes,
-      due: row.task.due == null ? null : normalizeDue(row.task.due!),
-      status: row.task.status,
-      parent: parent,
-      previous: previous,
-    );
+/// NO `previous` is ever sent — for a top-level row and for a subtask alike.
+/// An insert without one lands FIRST among its siblings, which is exactly where
+/// [nextLocalPosition] already put the row locally, so the pull that adopts
+/// Google's position finds the row already there and nothing re-shuffles under
+/// the user (#249, and #302 one level down). It also makes a queued batch land
+/// in reverse creation order — newest on top — matching the local order the
+/// descending placeholder gives that same batch.
+///
+/// [parent] is a WIRE id (the parent row's `remote_id`), not the local id the
+/// row itself carries — the caller translates it at the API boundary (#224). A
+/// subtask create is only ever attempted once its parent has a remote id
+/// ([parentIsPushable]).
+NewTask createPayload(StoredTask row, String? parent) => NewTask(
+  title: row.task.title,
+  notes: row.task.notes,
+  due: row.task.due == null ? null : normalizeDue(row.task.due!),
+  status: row.task.status,
+  parent: parent,
+);
 
 /// What a failed create push does to the in-flight marker (§G).
 sealed class CreateFailure {
