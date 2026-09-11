@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.6" date="2026-09-10">
+    <release version="1.4.7" date="2026-09-10">
       <description>
         <p>
-          Sync now safely recovers task and list creates when a gateway loses
-          its response, avoiding an immediate duplicate create.
+          Closing a task detail now waits for pending edits to save, so a slow
+          title update cannot discard typed notes.
         </p>
       </description>
     </release>

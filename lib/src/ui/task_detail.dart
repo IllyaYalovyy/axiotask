@@ -44,6 +44,7 @@ import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/commands.dart';
 import '../app/pending_edits.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
@@ -166,12 +167,23 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// Persist any pending title/notes edits immediately (diff-only), cancelling a
   /// scheduled debounce since it has now happened. The registry entry for the
   /// system-back close and the app-backgrounded flush.
-  Future<void> _flushEdits() async {
+  Future<void> _flushEdits() {
     _debounce?.cancel();
+    // This can outlive the panel: system Back and a lifecycle change can
+    // independently unmount us while a command is pending. Take everything
+    // the saves need while mounted, before the first await, rather than
+    // reaching through controllers, [_current], or [ref] afterwards.
+    final task = _current?.task;
+    if (task == null) return Future.value();
+    final title = _title.text.trim();
+    final notes = _notes.text;
+    final saveTitle = title.isNotEmpty && title != task.title;
+    final saveNotes = notes != (task.notes ?? '');
+    if (!saveTitle && !saveNotes) return Future.value();
+    final commands = ref.read(commandsProvider);
     // Field commands write whole rows, so keep these saves ordered before a
     // dependent action leaves the task.
-    await _saveTitle();
-    await _saveNotes();
+    return _saveFieldValues(task, title, notes, commands);
   }
 
   /// Schedule (or restart) a debounced save after the current keystroke burst —
@@ -215,23 +227,51 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     if (!_notesFocus.hasFocus && _notes.text != notes) _notes.text = notes;
   }
 
-  Future<void> _saveTitle() async {
+  Future<void> _saveTitle() {
     final task = _current?.task;
-    if (task == null) return;
+    if (task == null) return Future.value();
     final value = _title.text.trim();
+    final commands = ref.read(commandsProvider);
+    return _saveTitleValue(task, value, commands);
+  }
+
+  Future<void> _saveTitleValue(
+    Task task,
+    String value,
+    Commands commands,
+  ) async {
     // Diff-only: an unchanged (or empty) title never queues a write. The
     // empty-⇒-delete inline-rename rule lives on the row (T7.2), not here; the
     // empty-subtask discard rule handles abandonment on close.
     if (value.isEmpty || value == task.title) return;
-    await ref.read(commandsProvider).renameTask(task.id, value);
+    await commands.renameTask(task.id, value);
   }
 
-  Future<void> _saveNotes() async {
+  Future<void> _saveNotes() {
     final task = _current?.task;
-    if (task == null) return;
+    if (task == null) return Future.value();
     final value = _notes.text;
+    final commands = ref.read(commandsProvider);
+    return _saveNotesValue(task, value, commands);
+  }
+
+  Future<void> _saveNotesValue(
+    Task task,
+    String value,
+    Commands commands,
+  ) async {
     if (value == (task.notes ?? '')) return; // diff-only
-    await ref.read(commandsProvider).setNotes(task.id, value);
+    await commands.setNotes(task.id, value);
+  }
+
+  Future<void> _saveFieldValues(
+    Task task,
+    String title,
+    String notes,
+    Commands commands,
+  ) async {
+    await _saveTitleValue(task, title, commands);
+    await _saveNotesValue(task, notes, commands);
   }
 
   /// The haptic vocabulary this panel speaks (#257), already pref-gated.

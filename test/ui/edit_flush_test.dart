@@ -8,6 +8,7 @@
 // Plus the debounced save-on-change (a focused field left mid-edit persists
 // without a blur) and the quick-add draft committed on background.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:axiotask/src/app/app.dart';
@@ -25,6 +26,22 @@ import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import 'detail_harness.dart';
+
+/// Holds a title save until the test releases it, while retaining the normal
+/// state mutation. This exposes the close-after-first-await lifecycle race.
+class DelayedRenameCommands extends FakeCommands {
+  DelayedRenameCommands(super.tasks);
+
+  final release = Completer<void>();
+  bool started = false;
+
+  @override
+  Future<void> renameTask(String id, String title) async {
+    started = true;
+    await release.future;
+    await super.renameTask(id, title);
+  }
+}
 
 void main() {
   late Directory tmp;
@@ -47,6 +64,7 @@ void main() {
     required List<StoredTask> initialTasks,
     List<StoredTaskList> initialLists = const [],
     TargetPlatform? platform,
+    FakeCommands? commands,
   }) async {
     // Compact form factor — the phone chrome where the system-back path is the
     // one that closes a full-screen detail.
@@ -59,8 +77,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final fake = FakeCommands(List.of(initialTasks));
-    addTearDown(fake.dispose);
+    final fake = commands ?? FakeCommands(List.of(initialTasks));
+    if (commands == null) addTearDown(fake.dispose);
     final store = seenPrefs();
     final router = buildAppRouter(initialViewId: 'all');
     await tester.pumpWidget(
@@ -122,6 +140,91 @@ void main() {
       'draft notes',
     );
   });
+
+  testWidgets(
+    'Back waits for a pending title save and preserves notes (#317)',
+    (tester) async {
+      final fake = DelayedRenameCommands([row('T1', 'original')]);
+      addTearDown(fake.dispose);
+      final (_, router) = await pumpShell(
+        tester,
+        initialTasks: fake.tasks,
+        initialLists: [list('L1', 'My Tasks')],
+        commands: fake,
+      );
+
+      router.go(viewPath('all', taskId: 'T1'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'original'),
+        'new title',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Notes'),
+        'new notes',
+      );
+
+      final handled = await tester.binding.handlePopRoute();
+      // Let the normal close animation finish while the title command remains
+      // pending. Before #317 this disposed the panel before its notes save.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(handled, isTrue);
+      expect(fake.started, isTrue, reason: 'the title save is in flight');
+      expect(
+        find.widgetWithText(TextField, 'new title'),
+        findsOneWidget,
+        reason: 'system Back must not unmount the editor before its flush',
+      );
+
+      fake.release.complete();
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'new title'), findsNothing);
+      expect(fake.tasks.single.task.title, 'new title');
+      expect(fake.tasks.single.task.notes, 'new notes');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'panel Back waits for a pending title save and preserves notes (#317)',
+    (tester) async {
+      final fake = DelayedRenameCommands([row('T1', 'original')]);
+      addTearDown(fake.dispose);
+      final (_, router) = await pumpShell(
+        tester,
+        initialTasks: fake.tasks,
+        initialLists: [list('L1', 'My Tasks')],
+        commands: fake,
+      );
+
+      router.go(viewPath('all', taskId: 'T1'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'original'),
+        'new title',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Notes'),
+        'new notes',
+      );
+
+      await tester.tap(find.byTooltip('Back'));
+      // The visible panel Back takes its own close funnel; hold it past the
+      // normal close animation just as a slow command can in production.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(fake.started, isTrue, reason: 'the title save is in flight');
+      expect(find.widgetWithText(TextField, 'new title'), findsOneWidget);
+
+      fake.release.complete();
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'new title'), findsNothing);
+      expect(fake.tasks.single.task.title, 'new title');
+      expect(fake.tasks.single.task.notes, 'new notes');
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('lifecycle-paused with a dirty title persists it (#183)', (
     tester,

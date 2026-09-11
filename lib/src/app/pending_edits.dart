@@ -34,7 +34,7 @@ class PendingEdits {
   // backgrounded path ([flushAll]) must only SAVE: it must never silently delete
   // a task the user merely stepped away from. So the close funnel lives here,
   // invoked by [flushDetailClose] alone and never by [flushAll].
-  VoidCallback? _detailClose;
+  Future<void> Function()? _detailClose;
 
   /// Register [flush] as the current persist-now action for [key].
   void register(PendingEdit key, VoidCallback flush) => _flushers[key] = flush;
@@ -47,10 +47,11 @@ class PendingEdits {
 
   /// Register the detail panel's flush-and-discard funnel (the system-back
   /// close path — see [_detailClose]).
-  void registerDetailClose(VoidCallback flush) => _detailClose = flush;
+  void registerDetailClose(Future<void> Function() flush) =>
+      _detailClose = flush;
 
   /// Retract the detail-close funnel — a no-op once a newer panel replaced it.
-  void unregisterDetailClose(VoidCallback flush) {
+  void unregisterDetailClose(Future<void> Function() flush) {
     if (identical(_detailClose, flush)) _detailClose = null;
   }
 
@@ -60,7 +61,9 @@ class PendingEdits {
   /// Run the detail panel's flush-and-discard funnel (the system-back that
   /// closes the panel), so an abandoned blank subtask is discarded on system
   /// back exactly as on the panel's own Back button (G4 #183).
-  void flushDetailClose() => _detailClose?.call();
+  Future<void> flushDetailClose() async {
+    await _detailClose?.call();
+  }
 
   /// Persist every registered editor's pending edits (the backgrounded path).
   /// Deliberately SAVE-only: it never runs the detail-close discard funnel, so

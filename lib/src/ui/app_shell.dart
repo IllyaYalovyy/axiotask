@@ -250,13 +250,15 @@ class AppShell extends ConsumerWidget {
     // it. Run the panel's flush-AND-DISCARD funnel BEFORE navigating away, so a
     // mid-typing edit is saved AND an abandoned blank subtask is discarded on
     // system back exactly as on the panel's own Back button (#183/G4).
-    void closeDetail() {
-      ref.read(pendingEditsProvider).flushDetailClose();
-      context.go(
-        originAlive
-            ? viewPath(sel.viewId, taskId: origin)
-            : viewPath(sel.viewId),
-      );
+    Future<void> closeDetail() async {
+      // Capture navigation while this shell is live, then wait for the detail's
+      // snapshot-backed close funnel before the route can unmount it (#317).
+      final router = GoRouter.of(context);
+      final destination = originAlive
+          ? viewPath(sel.viewId, taskId: origin)
+          : viewPath(sel.viewId);
+      await ref.read(pendingEditsProvider).flushDetailClose();
+      router.go(destination);
     }
 
     // The origin to carry when the open panel navigates to a task:
