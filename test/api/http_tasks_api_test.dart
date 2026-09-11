@@ -749,6 +749,98 @@ void main() {
       expect(err, isA<Network>());
     });
 
+    for (final (name, status, body, insert, successReply) in [
+      (
+        'task 502',
+        502,
+        '<html>Bad gateway</html>',
+        (HttpTasksApi api) =>
+            api.insertTask('L1', const NewTask(title: 'buy milk')),
+        () => jsonReply({
+          'id': 'remote-2',
+          'title': 'buy milk',
+          'status': 'needsAction',
+          'position': '00001',
+          'updated': '2026-01-01T00:00:00Z',
+        }),
+      ),
+      (
+        'task 504',
+        504,
+        '{"error":{"code":504,"message":"Gateway Timeout"}}',
+        (HttpTasksApi api) =>
+            api.insertTask('L1', const NewTask(title: 'buy milk')),
+        () => jsonReply({
+          'id': 'remote-2',
+          'title': 'buy milk',
+          'status': 'needsAction',
+          'position': '00001',
+          'updated': '2026-01-01T00:00:00Z',
+        }),
+      ),
+      (
+        'list 502',
+        502,
+        '<html>Bad gateway</html>',
+        (HttpTasksApi api) => api.insertTasklist('Work'),
+        () => jsonReply({
+          'id': 'remote-2',
+          'title': 'Work',
+          'updated': '2026-01-01T00:00:00Z',
+        }),
+      ),
+      (
+        'list 504',
+        504,
+        '{"error":{"code":504,"message":"Gateway Timeout"}}',
+        (HttpTasksApi api) => api.insertTasklist('Work'),
+        () => jsonReply({
+          'id': 'remote-2',
+          'title': 'Work',
+          'updated': '2026-01-01T00:00:00Z',
+        }),
+      ),
+      (
+        'task 503 with an intercepted non-JSON body',
+        503,
+        '<html>Service unavailable</html>',
+        (HttpTasksApi api) =>
+            api.insertTask('L1', const NewTask(title: 'buy milk')),
+        () => jsonReply({
+          'id': 'remote-2',
+          'title': 'buy milk',
+          'status': 'needsAction',
+          'position': '00001',
+          'updated': '2026-01-01T00:00:00Z',
+        }),
+      ),
+    ]) {
+      test(
+        'committed create is not replayed after a gateway response ($name)',
+        () {
+          // A gateway may have accepted the POST before losing Google's answer.
+          // This fake records every committed request, so a second request models
+          // the duplicate that a hidden retry would create for the user.
+          final committedIds = <String>[];
+          final (:auth, :api) = _build((req, i) {
+            committedIds.add('committed-${i + 1}');
+            return i == 0 ? http.Response(body, status) : successReply();
+          }, maxRetries: 1);
+
+          final err = _settle(() async => await insert(api));
+
+          expect(err, isA<Network>());
+          expect(
+            committedIds,
+            ['committed-1'],
+            reason:
+                'the transient reaches create recovery, not a hidden replay',
+          );
+          expect(auth.requests, hasLength(1));
+        },
+      );
+    }
+
     test('insert_task_still_retries_a_transient_STATUS', () {
       // Pinning the other half of the split: a 503 is a RESPONSE saying the
       // server declined the insert, so retrying it cannot duplicate anything.

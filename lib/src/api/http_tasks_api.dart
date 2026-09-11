@@ -7,9 +7,9 @@
 //  - request/response (de)serialization,
 //  - mapping HTTP status → [ApiError] (incl. the load-bearing 403 body split),
 //  - pagination to completion on both list endpoints,
-//  - exponential backoff (honoring `Retry-After`) on 5xx / 429, and on a
-//    transport failure for the idempotent calls only — a create is never
-//    replayed at the transport level (#266).
+//  - exponential backoff (honoring `Retry-After`) on retryable rejections,
+//    and on a transport failure for the idempotent calls only — a create is
+//    never replayed after an ambiguous response (#266, #314).
 //
 // The wire rules below are verified-live invariants (RFC-009); each is pinned
 // by a named test in `http_tasks_api_test.dart`. Loosening any of them silently
@@ -126,8 +126,8 @@ class HttpTasksApi implements TasksApi {
       // lost response, not a declined one — and a create must not be replayed
       // on a lost response (#266) or the user gets a duplicate under an id this
       // device never learns. It raises here instead, so the in-flight marker
-      // survives and the next run adopts the orphan. A 429/5xx stays a genuine
-      // "the server declined" and keeps retrying, inserts included.
+      // survives and the next run adopts the orphan. Explicit rate limits and
+      // non-ambiguous 5xx rejections keep retrying, inserts included.
       final lostResponse = err is Network;
       if (!err.isTransient ||
           attempt >= maxRetries ||
@@ -168,6 +168,14 @@ class HttpTasksApi implements TasksApi {
       case 429:
         return const RateLimited();
       default:
+        // A gateway response does not establish whether Google received the
+        // request (RFC 9110 §15.6.3). The same holds for a non-JSON 5xx,
+        // which is an interception rather than a Tasks API answer. Classify
+        // both as a lost response so a non-idempotent create reaches recovery
+        // instead of being invisibly replayed (#314).
+        if (status == 502 || status == 504 || _notJson(body)) {
+          return Network('$status gateway or non-JSON response');
+        }
         if (status >= 500 && status <= 599) {
           return ServerError(status);
         }

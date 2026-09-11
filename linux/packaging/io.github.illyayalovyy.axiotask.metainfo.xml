@@ -72,15 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.3" date="2026-09-10">
+    <release version="1.4.4" date="2026-09-10">
       <description>
         <p>
-          Going back from a subtask now returns to the task you opened it from.
-          Back re-opens the parent's panel — the same place the breadcrumb goes
-          — and a second back closes to the list, so working through a
-          checklist no longer means re-opening the parent every time. A subtask
-          reached from search or from a restored window still goes straight
-          back to the list.
+          Sync now safely recovers task and list creates when a gateway loses
+          its response, avoiding an immediate duplicate create.
         </p>
       </description>
     </release>
