@@ -36,6 +36,17 @@ DateTime parseLocalDate(String due) {
   return DateTime(y, m, d);
 }
 
+/// The number of calendar days from [now] to [due].
+///
+/// The parsed values deliberately retain the Google date's Y-M-D components
+/// (#76). UTC is used only for the subtraction, so daylight-saving 23- and
+/// 25-hour local days remain one calendar day.
+int _relativeDayDifference(DateTime due, DateTime now) {
+  final dueDate = DateTime.utc(due.year, due.month, due.day);
+  final nowDate = DateTime.utc(now.year, now.month, now.day);
+  return dueDate.difference(nowDate).inDays;
+}
+
 /// How urgent a due date is, for the task row's due-badge color (port of
 /// `dateFormat.js`'s `dueClass`).
 enum DueUrgency {
@@ -56,7 +67,7 @@ DueUrgency dueUrgency(String? due) {
   final d = parseLocalDate(due);
   final n = clock.now();
   final now = DateTime(n.year, n.month, n.day);
-  final diff = d.difference(now).inDays;
+  final diff = _relativeDayDifference(d, now);
   if (diff < 0) return DueUrgency.overdue;
   if (diff == 0) return DueUrgency.today;
   return DueUrgency.none;
@@ -69,7 +80,7 @@ String formatDue(String? due) {
   final d = parseLocalDate(due);
   final n = clock.now();
   final now = DateTime(n.year, n.month, n.day);
-  final diff = d.difference(now).inDays;
+  final diff = _relativeDayDifference(d, now);
   if (diff < -1) return '${-diff}d overdue';
   if (diff == -1) return 'yesterday';
   if (diff == 0) return 'today';
@@ -108,7 +119,7 @@ String formatDueSpoken(String? due) {
   final d = parseLocalDate(due);
   final n = clock.now();
   final now = DateTime(n.year, n.month, n.day);
-  final diff = d.difference(now).inDays;
+  final diff = _relativeDayDifference(d, now);
   if (diff < -1) return '${-diff} days ago';
   if (diff == -1) return 'yesterday';
   if (diff == 0) return 'today';

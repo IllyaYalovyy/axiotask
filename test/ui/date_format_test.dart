@@ -104,6 +104,66 @@ void main() {
     });
   });
 
+  group('relative calendar days across DST (#316)', () {
+    test('keep visual, spoken, and urgency labels on their calendar day', () {
+      // These are local midnights on either side of the Los Angeles DST
+      // boundaries. The offset assertions make a UTC test host fail loudly
+      // instead of producing a false-green transition regression.
+      final cases = [
+        (
+          now: DateTime(2026, 3, 8),
+          due: '2026-03-09',
+          visible: 'tomorrow',
+          spoken: 'tomorrow',
+          urgency: DueUrgency.none,
+          crossesOffset: true,
+        ),
+        (
+          now: DateTime(2026, 3, 9),
+          due: '2026-03-08',
+          visible: 'yesterday',
+          spoken: 'yesterday',
+          urgency: DueUrgency.overdue,
+          crossesOffset: true,
+        ),
+        (
+          now: DateTime(2026, 11, 1),
+          due: '2026-11-02',
+          visible: 'tomorrow',
+          spoken: 'tomorrow',
+          urgency: DueUrgency.none,
+          crossesOffset: true,
+        ),
+        (
+          now: DateTime(2026, 6, 15),
+          due: '2026-06-15',
+          visible: 'today',
+          spoken: 'today',
+          urgency: DueUrgency.today,
+          crossesOffset: false,
+        ),
+      ];
+
+      for (final testCase in cases) {
+        final dueDate = parseLocalDate(testCase.due);
+        if (testCase.crossesOffset) {
+          expect(
+            testCase.now.timeZoneOffset,
+            isNot(dueDate.timeZoneOffset),
+            reason:
+                'run this transition regression with TZ=America/Los_Angeles',
+          );
+        }
+
+        withClock(Clock.fixed(testCase.now), () {
+          expect(formatDue(testCase.due), testCase.visible);
+          expect(formatDueSpoken(testCase.due), testCase.spoken);
+          expect(dueUrgency(testCase.due), testCase.urgency);
+        });
+      }
+    });
+  });
+
   group('formatAbsoluteLocal (#218)', () {
     // Sync timestamps are stored as UTC instants but READ by a human sitting in
     // a local timezone. Rendering the UTC wall-clock would show a sync that just

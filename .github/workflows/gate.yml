@@ -158,7 +158,7 @@ jobs:
       # assertion; the re-render claim is checked by the local gate on the
       # reference machine. See dart_test.yaml.
       - name: flutter test --coverage
-        run: flutter test --coverage --exclude-tags reference-toolchain
+        run: TZ=America/Los_Angeles flutter test --coverage --exclude-tags reference-toolchain
 
       # Two ratchets, both printed, either one a failure. They only ever move
       # UP: a drop means new lib/ code arrived without the test the TDD mandate
