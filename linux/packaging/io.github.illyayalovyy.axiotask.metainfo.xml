@@ -72,7 +72,7 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.2" date="2026-09-10">
+    <release version="1.4.3" date="2026-09-10">
       <description>
         <p>
           Going back from a subtask now returns to the task you opened it from.

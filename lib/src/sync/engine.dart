@@ -73,6 +73,19 @@ import 'sync_error.dart';
 
 /// Counters and the list-metadata flag from a single sync run.
 class SyncOutcome {
+  /// A transient pull failure that left this run's remote view incomplete.
+  ///
+  /// The engine still returns so applied rows remain visible and incomplete
+  /// pages cannot ghost-delete unseen rows, but the scheduler must not call
+  /// this a successful sync.
+  SyncError? incompletePullError;
+
+  /// Keep the first failed pull call: it is enough to classify the run using
+  /// the existing error taxonomy.
+  void noteIncompletePull(ApiError error) {
+    incompletePullError ??= SyncApiError(error);
+  }
+
   /// Tasks pulled from the server (new or updated locally).
   int pulled = 0;
 
@@ -204,6 +217,7 @@ class SyncEngine {
     }
     started.stop();
     final runError = error == null ? null : SyncError.coerce(error);
+    final recordedFailure = runError ?? out.incompletePullError;
     SyncError? logError;
     try {
       await _store.writeSyncLog(
@@ -211,7 +225,7 @@ class SyncEngine {
         pushed: out.pushed,
         conflicts: out.conflicts,
         durationMs: started.elapsedMilliseconds,
-        failure: runError?.failureKind,
+        failure: recordedFailure?.failureKind,
       );
     } catch (e) {
       // Whatever the underlying exception type, a failed write to the store IS
@@ -587,7 +601,7 @@ class SyncEngine {
       final List<Task> rawRemote;
       final bool complete;
       try {
-        final fetched = await _fetchAllTasks(listRemoteId);
+        final fetched = await _fetchAllTasks(listRemoteId, out);
         rawRemote = fetched.$1;
         complete = fetched.$2;
       } on ApiError catch (e) {
@@ -1110,7 +1124,10 @@ class SyncEngine {
     try {
       lists = await _client.listTasklists();
     } on ApiError catch (e) {
-      if (e.isTransient) return;
+      if (e.isTransient) {
+        out.noteIncompletePull(e);
+        return;
+      }
       rethrow;
     }
 
@@ -1204,7 +1221,7 @@ class SyncEngine {
     List<InflightBase> inflight,
     SyncOutcome out,
   ) async {
-    final (rawTasks, complete) = await _fetchAllTasks(list.id);
+    final (rawTasks, complete) = await _fetchAllTasks(list.id, out);
     // Everything below this line works in LOCAL id space (#224): a remote row
     // we already hold resolves to its own local id, an unseen one is minted a
     // fresh local UUID here and keeps it for good.
@@ -1330,7 +1347,10 @@ class SyncEngine {
   /// Fetch all pages of tasks for a list. Returns `(tasks, complete)`;
   /// `complete` is false if a transient error interrupted pagination (never
   /// treated as a wipe).
-  Future<(List<Task>, bool)> _fetchAllTasks(String listId) async {
+  Future<(List<Task>, bool)> _fetchAllTasks(
+    String listId,
+    SyncOutcome out,
+  ) async {
     final all = <Task>[];
     String? pageToken;
     while (true) {
@@ -1338,7 +1358,10 @@ class SyncEngine {
       try {
         page = await _client.listTasks(listId, pageToken: pageToken);
       } on ApiError catch (e) {
-        if (e.isTransient) return (all, false);
+        if (e.isTransient) {
+          out.noteIncompletePull(e);
+          return (all, false);
+        }
         rethrow;
       }
       all.addAll(page.items);

@@ -9,6 +9,7 @@
 
 import 'dart:io';
 
+import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/fake_tasks_api.dart';
 import 'package:axiotask/src/api/tasks_api.dart' show TasksApi;
 import 'package:axiotask/src/app/auth_sync_runtime.dart';
@@ -25,6 +26,7 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' show ProviderContainer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -147,6 +149,62 @@ void main() {
     await env.runtime.refresh();
 
     expect(env.runtime.scheduler.status.totalSyncs, 1);
+  });
+
+  test('offline refresh does not claim success and a complete follow-up heals '
+      'the status (#313)', () async {
+    // This is the real AuthSyncRuntime path used by Sync now and
+    // pull-to-refresh: the user must see an offline failure, never a fresh
+    // successful-sync time merely because the engine kept its local data.
+    final env = await makeEnv(
+      tokenProvider: FakeTokenProvider.withToken('access-1'),
+      autoSyncOnStart: false,
+    );
+    await env.runtime.restoreAndAutoSync();
+
+    env.client.failNext(Method.listTasklists, () => const Network('offline'));
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 9, 10, 12)),
+      env.runtime.refresh,
+    );
+    expect(env.runtime.scheduler.status.lastSynced, isNull);
+    expect(
+      env.runtime.scheduler.status.lastError,
+      "Can't reach Google right now — the details are in the log.",
+    );
+    expect(env.runtime.scheduler.status.totalSyncs, 0);
+
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 9, 10, 12, 1)),
+      env.runtime.refresh,
+    );
+    const firstSuccess = '2026-09-10T12:01:00.000000Z';
+    expect(env.runtime.scheduler.status.lastSynced, firstSuccess);
+    expect(env.runtime.scheduler.status.lastError, isNull);
+
+    // A transport failure cannot prove that the user resolved a prior
+    // reauthentication requirement. It also cannot replace the known-good
+    // timestamp with a false success.
+    env.runtime.auth.setNeedsReauth(true);
+    env.client.failNext(Method.listTasklists, () => const Network('offline'));
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 9, 10, 12, 2)),
+      env.runtime.refresh,
+    );
+    expect(env.runtime.scheduler.status.lastSynced, firstSuccess);
+    expect(env.runtime.auth.needsReauth, isTrue);
+    expect(env.runtime.scheduler.status.lastError, isNotNull);
+
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 9, 10, 12, 3)),
+      env.runtime.refresh,
+    );
+    expect(
+      env.runtime.scheduler.status.lastSynced,
+      '2026-09-10T12:03:00.000000Z',
+    );
+    expect(env.runtime.scheduler.status.lastError, isNull);
+    expect(env.runtime.auth.needsReauth, isFalse);
   });
 
   test('a successful manual Sync now clears needs-reauth (scheduler contract, '

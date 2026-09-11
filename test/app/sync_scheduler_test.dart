@@ -217,6 +217,27 @@ void main() {
       ]);
     });
 
+    test(
+      'an incomplete offline pull finishes failed, never successful (#313)',
+      () async {
+        final h = await makeHarness();
+        final seen = <SyncRunEvent>[];
+        final sub = h.scheduler.runs.listen(seen.add);
+        addTearDown(sub.cancel);
+
+        h.client.failNext(Method.listTasklists, () => const Network('offline'));
+        await h.scheduler.runSync();
+        await pumpEventQueue();
+
+        expect(h.scheduler.status.lastSynced, isNull);
+        expect(h.scheduler.status.lastError, isNotNull);
+        expect(seen, [
+          const SyncRunEvent.started(),
+          const SyncRunEvent.finished(changed: false, failed: true),
+        ]);
+      },
+    );
+
     test('the public surface emits the sanitized projection — no raw error '
         'text ever rides a snapshot (#131/#187)', () async {
       final h = await makeHarness(push: true);

@@ -25,6 +25,7 @@ import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
+import 'package:axiotask/src/sync/sync_error.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'sync_fixture.dart';
@@ -333,6 +334,11 @@ void main() {
     // un-fetched pages' tasks must NOT be mistaken for server-side deletions.
     client.failListTasksPage(1, () => const ServerError(503));
     final out2 = await eng.run();
+    expect(
+      out2.incompletePullError,
+      const SyncApiError(ServerError(503)),
+      reason: 'the scheduler must learn that the second page never arrived',
+    );
     expect(
       out2.deleted,
       0,

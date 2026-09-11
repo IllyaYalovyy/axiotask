@@ -443,7 +443,12 @@ class SyncScheduler {
       final moved =
           outcome != null &&
           (outcome.pulled > 0 || outcome.pushed > 0 || outcome.deleted > 0);
-      _emitRun(SyncRunEvent.finished(changed: moved, failed: outcome == null));
+      _emitRun(
+        SyncRunEvent.finished(
+          changed: moved,
+          failed: outcome == null || outcome.incompletePullError != null,
+        ),
+      );
     }
 
     if (error != null) throw error;
@@ -470,7 +475,8 @@ class SyncScheduler {
   }
 
   void _recordOutcome(SyncOutcome? outcome, SyncError? error) {
-    if (outcome != null) {
+    final failure = error ?? outcome?.incompletePullError;
+    if (outcome != null && failure == null) {
       _status.lastSynced = nowUtcString();
       // A working sync proves the session is alive again (e.g. after re-login,
       // or a mis-flagged transient).
@@ -506,7 +512,7 @@ class SyncScheduler {
       return;
     }
 
-    final e = error!;
+    final e = failure!;
     if (e.isAuthExpired) {
       // The refresh token is dead — stop the background retry churn and tell the
       // user what to actually do. Its own state, distinct from needs-attention.
