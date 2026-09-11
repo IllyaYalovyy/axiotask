@@ -16,6 +16,7 @@
 
 import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/fake_tasks_api.dart';
+import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
@@ -23,6 +24,7 @@ import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
 import 'package:axiotask/src/sync/sync_error.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'sync_fixture.dart';
@@ -163,6 +165,50 @@ void main() {
     expect(tasks[0].remoteId, startsWith('remote-'));
   });
 
+  test(
+    'a rename during list creation learns the id and patches, not reinserts',
+    () async {
+      final (client, eng) = await engine(push: true);
+      final commands = Commands(eng.store, newId: () => 'local-L');
+      final created = await withClock(
+        Clock.fixed(DateTime.utc(2026, 1, 2)),
+        () => commands.createList('First title'),
+      );
+      var raced = false;
+      client.setOnCall((_, method) async {
+        if (method != Method.insertTasklist || raced) return;
+        raced = true;
+        await withClock(
+          Clock.fixed(DateTime.utc(2026, 1, 3)),
+          () => commands.renameList(created.list.id, 'Latest title'),
+        );
+      });
+
+      await eng.run();
+      client.clearOnCall();
+      expect(raced, isTrue, reason: 'the rename raced the list insert');
+      final local = await listById(eng.store, created.list.id);
+      expect(
+        local.remoteId,
+        isNotNull,
+        reason: 'the insert identity is learned',
+      );
+      expect(client.callCount(Method.insertTasklist), 1);
+
+      await eng.run();
+      expect(
+        client.callCount(Method.insertTasklist),
+        1,
+        reason: 'the newer title is a PATCH, never a second list insert',
+      );
+      expect((await client.listTasklists()).single.title, 'Latest title');
+      expect(
+        (await listById(eng.store, created.list.id)).syncState,
+        SyncState.clean,
+      );
+    },
+  );
+
   test('push_list_rename', () async {
     final (client, eng) = await engine(push: true);
     await seedSyncedList(client, eng.store, 'L1', 'Old Name');
@@ -178,6 +224,49 @@ void main() {
     expect(page.any((l) => l.id == 'L1' && l.title == 'New Name'), isTrue);
     final l = await listById(eng.store, 'L1');
     expect(l.syncState, SyncState.clean);
+  });
+
+  test('a newer rename during a list acknowledgment stays queued', () async {
+    // Regression #312/R1: the PATCH response confirms the title that was sent,
+    // not a later rename made while that request was in flight.  If the old
+    // acknowledgement clears the whole row, the next pull overwrites the
+    // later title and the user loses it.
+    final (client, eng) = await engine(push: true);
+    final commands = Commands(eng.store);
+    await seedSyncedList(client, eng.store, 'L1', 'Original');
+    await eng.run();
+
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 1, 2)),
+      () => commands.renameList('L1', 'First rename'),
+    );
+    var raced = false;
+    client.setOnCall((_, method) async {
+      if (method != Method.patchTasklist || raced) return;
+      raced = true;
+      await withClock(
+        Clock.fixed(DateTime.utc(2026, 1, 3)),
+        () => commands.renameList('L1', 'Latest rename'),
+      );
+    });
+
+    await eng.run();
+    client.clearOnCall();
+    expect(raced, isTrue, reason: 'the second rename raced the first PATCH');
+
+    final pending = await listById(eng.store, 'L1');
+    expect(pending.list.title, 'Latest rename');
+    expect(pending.syncState, SyncState.dirty);
+    expect(pending.pendingOp, 'update');
+
+    await eng.run();
+    final local = await listById(eng.store, 'L1');
+    final remote = (await client.listTasklists()).singleWhere(
+      (list) => list.id == 'L1',
+    );
+    expect(local.list.title, 'Latest rename');
+    expect(local.syncState, SyncState.clean);
+    expect(remote.title, 'Latest rename');
   });
 
   test('push_list_delete', () async {

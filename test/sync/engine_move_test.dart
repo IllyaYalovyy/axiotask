@@ -16,11 +16,13 @@
 
 import 'package:axiotask/src/api/api_error.dart';
 import 'package:axiotask/src/api/fake_tasks_api.dart';
+import 'package:axiotask/src/app/commands.dart';
 import 'package:axiotask/src/model/task.dart';
 import 'package:axiotask/src/store/database.dart' show AppDatabase;
 import 'package:axiotask/src/store/store.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/sync/engine.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'sync_fixture.dart';
@@ -176,6 +178,90 @@ void main() {
     expect(client.callCount(Method.moveTask), 1);
     // Pending move cleared after successful push.
     expect(await eng.store.pendingMoves(), isEmpty);
+  });
+
+  test(
+    'a newer drag during a move acknowledgment reaches the server',
+    () async {
+      // Regression #312/R2: clearing by task id alone erases a replacement move
+      // queued during the old move request.  The rendered local order and the
+      // fake server must both end at the user's second drag.
+      final (client, eng) = await engine(push: true);
+      final commands = Commands(eng.store);
+      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+      client.seedTask('L1', 'A', 'a', '1');
+      client.seedTask('L1', 'B', 'b', '2');
+      client.seedTask('L1', 'C', 'c', '3');
+      await eng.run();
+      final c = await localIdOf(eng.store, 'C');
+      final b = await localIdOf(eng.store, 'B');
+
+      await withClock(
+        Clock.fixed(DateTime.utc(2026, 6, 2)),
+        () => commands.reorderTaskAfter(c, null),
+      );
+      var raced = false;
+      client.setOnCall((_, method) async {
+        if (method != Method.moveTask || raced) return;
+        raced = true;
+        await withClock(
+          Clock.fixed(DateTime.utc(2026, 6, 3)),
+          () => commands.reorderTaskAfter(c, b),
+        );
+      });
+
+      await eng.run();
+      client.clearOnCall();
+      expect(raced, isTrue, reason: 'the second drag raced the first move');
+      expect(
+        serverId(
+          (await eng.store.findTaskAny(
+            (await eng.store.pendingMoves()).single.previousId!,
+          ))!,
+        ),
+        'B',
+        reason: 'the replacement intent remains queued',
+      );
+
+      await eng.run();
+      expect(await localOrder(eng, 'L1'), ['A', 'B', 'C']);
+      expect(await remoteOrder(client, 'L1'), ['A', 'B', 'C']);
+    },
+  );
+
+  test('a rejected older move leaves a newer drag pending for retry', () async {
+    // The non-happy path of #312: a permanent refusal for the move that was
+    // sent must not discard or revert the drag the user made during its await.
+    final (client, eng) = await engine(push: true);
+    final commands = Commands(eng.store);
+    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
+    client.seedTask('L1', 'A', 'a', '1');
+    client.seedTask('L1', 'B', 'b', '2');
+    client.seedTask('L1', 'C', 'c', '3');
+    await eng.run();
+    final c = await localIdOf(eng.store, 'C');
+    final b = await localIdOf(eng.store, 'B');
+    await withClock(
+      Clock.fixed(DateTime.utc(2026, 6, 2)),
+      () => commands.reorderTaskAfter(c, null),
+    );
+    client.failNextForId(Method.moveTask, 'C', () => const NotFound());
+    client.setOnCall((_, method) async {
+      if (method != Method.moveTask) return;
+      await withClock(
+        Clock.fixed(DateTime.utc(2026, 6, 3)),
+        () => commands.reorderTaskAfter(c, b),
+      );
+    });
+
+    await eng.run();
+    client.clearOnCall();
+    expect((await eng.store.pendingMoves()).single.previousId, b);
+    expect(await localOrder(eng, 'L1'), ['A', 'B', 'C']);
+
+    await eng.run();
+    expect(await eng.store.pendingMoves(), isEmpty);
+    expect(await remoteOrder(client, 'L1'), ['A', 'B', 'C']);
   });
 
   test('push move disabled when push off', () async {

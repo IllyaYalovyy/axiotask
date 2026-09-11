@@ -255,7 +255,7 @@ void main() {
       // again, forever. The etag and `updated` are the server's answer and have
       // to land too, or the following pull reads the row as remotely changed.
       final s = await pushingList();
-      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z');
+      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z', _t0);
       final row = (await s.findListAny('L1'))!;
       expect(row.syncState, SyncState.clean);
       expect(row.pendingOp, isNull);
@@ -278,7 +278,7 @@ void main() {
       // may carry no etag at all. COALESCE keeps the stored one — nulling it
       // would drop the only version marker the row has.
       final s = await pushingList();
-      await s.markListClean('L1', null, '2026-02-01T00:00:00Z');
+      await s.markListClean('L1', null, '2026-02-01T00:00:00Z', _t0);
       final row = (await s.findListAny('L1'))!;
       expect(row.list.etag, 'e1');
       expect(row.syncState, SyncState.clean, reason: 'the push still landed');
@@ -298,13 +298,43 @@ void main() {
           remoteId: 'g-L2',
         ),
       );
-      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z');
+      await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z', _t0);
       final other = (await s.findListAny('L2'))!;
       expect(other.syncState, SyncState.dirty);
       expect(other.pendingOp, 'update');
       expect(other.list.etag, 'x1');
       expect(other.list.updated, _t0);
     });
+
+    test(
+      'an older acknowledgement does not revive a newer list tombstone',
+      () async {
+        // A list delete can race a sent rename.  Its newer revision must remain
+        // a tombstone so the delete is eventually pushed, rather than becoming a
+        // clean visible list merely because the old PATCH succeeded.
+        final s = await pushingList();
+        await s.upsertList(
+          StoredTaskList(
+            list: TaskList(
+              id: 'L1',
+              title: 'Renamed',
+              etag: 'e1',
+              updated: _t0,
+            ),
+            syncState: SyncState.deleted,
+            localUpdated: '2026-01-02T00:00:00Z',
+            pendingOp: 'delete',
+            remoteId: 'g-L1',
+          ),
+        );
+
+        await s.markListClean('L1', 'e2', '2026-02-01T00:00:00Z', _t0);
+        final tombstone = (await s.drainDirtyLists()).single;
+        expect(tombstone.syncState, SyncState.deleted);
+        expect(tombstone.pendingOp, 'delete');
+        expect(tombstone.remoteId, 'g-L1');
+      },
+    );
   });
 
   group('apply_pushed_task', () {

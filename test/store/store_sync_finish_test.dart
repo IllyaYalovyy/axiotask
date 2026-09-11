@@ -625,6 +625,7 @@ void main() {
         'remote-L',
         'eL',
         '2026-02-01T00:00:00Z',
+        _t0,
       );
 
       // The list KEEPS its id (#224) and merely learns Google's, landing clean
@@ -668,7 +669,7 @@ void main() {
       );
 
       await expectLater(
-        s.finishListCreate('local-L', 'remote-L', 'eL', _t0),
+        s.finishListCreate('local-L', 'remote-L', 'eL', _t0, _t0),
         throwsA(anything),
       );
       final still = (await s.allLists()).firstWhere(

@@ -437,6 +437,7 @@ class SyncEngine {
           existing.id,
           existing.etag,
           existing.updated,
+          l.localUpdated,
         );
         out.listsChanged = true;
         continue;
@@ -448,6 +449,7 @@ class SyncEngine {
           remoteList.id,
           remoteList.etag,
           remoteList.updated,
+          l.localUpdated,
         );
         out.pushed += 1;
         out.listsChanged = true;
@@ -473,7 +475,12 @@ class SyncEngine {
               listRemoteId,
               l.list.title,
             );
-            await _store.markListClean(l.list.id, remote.etag, remote.updated);
+            await _store.markListClean(
+              l.list.id,
+              remote.etag,
+              remote.updated,
+              l.localUpdated,
+            );
             out.pushed += 1;
             out.listsChanged = true;
           } on ApiError catch (e) {
@@ -779,6 +786,7 @@ class SyncEngine {
             adoptBody: adoption == MoveAdoption.body,
             adoptMeta: adoption == MoveAdoption.metaOnly,
             expectedLocalUpdated: before?.localUpdated ?? landed.updated,
+            expectedMove: mv,
           );
           out.pushed += 1;
           break;
@@ -790,8 +798,9 @@ class SyncEngine {
         }
         switch (failure) {
           case MoveFailure.dropIntent:
-            await _store.clearMove(mv.taskId);
-            await _revertLocalMove(before);
+            if (await _store.clearMove(mv.taskId, expected: mv)) {
+              await _revertLocalMove(before);
+            }
           case MoveFailure.retry:
             break; // transient — keep the intent, retry next run
           case MoveFailure.abort:
@@ -800,8 +809,9 @@ class SyncEngine {
             // No row ref: the intent is dropped right below, so there is
             // nothing that would be re-sent for a streak to count (#270).
             _applyPushFailure(PushFailure.reject, error, out, null, 'move');
-            await _store.clearMove(mv.taskId);
-            await _revertLocalMove(before);
+            if (await _store.clearMove(mv.taskId, expected: mv)) {
+              await _revertLocalMove(before);
+            }
           case MoveFailure.dropPreviousAndRetry:
             break; // handled above
         }
@@ -1384,11 +1394,13 @@ class SyncEngine {
       case ListPullKeepLocal():
         return (localized.id, false);
       case ListPullAdoptLocalCreate(:final localId):
+        final local = locals.firstWhere((row) => row.list.id == localId);
         await _store.finishListCreate(
           localId,
           list.id,
           list.etag,
           list.updated,
+          local.localUpdated,
         );
         return (localId, true);
       case ListPullUpsert(:final changed):

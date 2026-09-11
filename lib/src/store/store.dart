@@ -1223,13 +1223,17 @@ class Store {
     String id,
     String? newEtag,
     String serverUpdated,
+    String expectedLocalUpdated,
   ) async {
     await _db.customUpdate(
-      "UPDATE task_lists SET sync_state = 'clean', pending_op = NULL, "
-      'etag = COALESCE(?, etag), updated = ? WHERE id = ?',
+      'UPDATE task_lists SET etag = COALESCE(?1, etag), updated = ?2, '
+      "sync_state = CASE WHEN local_updated = ?3 THEN 'clean' ELSE sync_state END, "
+      'pending_op = CASE WHEN local_updated = ?3 THEN NULL ELSE pending_op END '
+      'WHERE id = ?4',
       variables: [
         Variable<String>(newEtag),
         Variable<String>(serverUpdated),
+        Variable<String>(expectedLocalUpdated),
         Variable<String>(id),
       ],
       updates: {_db.taskLists},
@@ -1246,15 +1250,21 @@ class Store {
     String remoteId,
     String? etag,
     String serverUpdated,
+    String expectedLocalUpdated,
   ) async {
     await _db.customUpdate(
-      "UPDATE task_lists SET remote_id = ?1, sync_state = 'clean', "
-      'pending_op = NULL, etag = COALESCE(?2, etag), updated = ?3 '
-      'WHERE id = ?4',
+      'UPDATE task_lists SET remote_id = ?1, etag = COALESCE(?2, etag), '
+      'updated = ?3, '
+      "sync_state = CASE WHEN sync_state = 'deleted' THEN 'deleted' "
+      "                  WHEN local_updated = ?4 THEN 'clean' ELSE sync_state END, "
+      "pending_op = CASE WHEN sync_state = 'deleted' THEN 'delete' "
+      '                  WHEN local_updated = ?4 THEN NULL ELSE \'update\' END '
+      'WHERE id = ?5',
       variables: [
         Variable<String>(remoteId),
         Variable<String>(etag),
         Variable<String>(serverUpdated),
+        Variable<String>(expectedLocalUpdated),
         Variable<String>(localId),
       ],
       updates: {_db.taskLists},
@@ -1328,13 +1338,24 @@ class Store {
   }
 
   /// Clear a pending move after it has been pushed (or remapped away).
-  Future<void> clearMove(String taskId) async {
-    await _db.customUpdate(
-      'DELETE FROM pending_moves WHERE task_id = ?',
-      variables: [Variable<String>(taskId)],
+  Future<bool> clearMove(String taskId, {PendingMove? expected}) async {
+    final cleared = await _db.customUpdate(
+      expected == null
+          ? 'DELETE FROM pending_moves WHERE task_id = ?'
+          : 'DELETE FROM pending_moves WHERE task_id = ?1 AND list_id = ?2 '
+                'AND parent_id IS ?3 AND previous_id IS ?4',
+      variables: expected == null
+          ? [Variable<String>(taskId)]
+          : [
+              Variable<String>(taskId),
+              Variable<String>(expected.listId),
+              Variable<String>(expected.parentId),
+              Variable<String>(expected.previousId),
+            ],
       updates: {_db.pendingMoves},
       updateKind: UpdateKind.delete,
     );
+    return cleared != 0;
   }
 
   /// Land a pushed move as ONE atomic pair (MIGRATION-PLAN §5): clear the
@@ -1366,10 +1387,11 @@ class Store {
     required bool adoptBody,
     required bool adoptMeta,
     required String expectedLocalUpdated,
+    PendingMove? expectedMove,
   }) async {
     assert(!(adoptBody && adoptMeta));
     await _db.transaction(() async {
-      await clearMove(taskId);
+      await clearMove(taskId, expected: expectedMove);
       if (adoptBody) {
         await applyPushedTask(remote, expectedLocalUpdated);
       } else if (adoptMeta) {
