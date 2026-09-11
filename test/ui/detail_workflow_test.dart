@@ -46,24 +46,42 @@ void main() {
       expect(next, 1);
     });
 
-    testWidgets('navigating flushes an edited title before leaving', (
+    testWidgets('navigating flushes title and notes before reopening', (
       tester,
     ) async {
-      final fake = await pumpDetail(
+      final fake = FakeCommands([row('P', 'first')]);
+      addTearDown(fake.dispose);
+      await pumpDetail(
         tester,
         taskId: 'P',
         initial: [row('P', 'first')],
         onNext: () {},
+        commands: fake,
       );
-      // Type into the title but do NOT blur — then hit Next.
+      // Type into both fields but do NOT blur — then navigate away.
       await tester.enterText(
         find.widgetWithText(TextField, 'first'),
         'edited first',
       );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Notes'),
+        'edited notes',
+      );
       await tester.tap(find.widgetWithIcon(IconButton, Icons.chevron_right));
       await settleDetail(tester);
-      // The in-progress edit was saved on the way out (no lost keystrokes).
-      expect(fake.renamed, ['P=edited first']);
+      // The in-progress edits survived navigation in the persisted command
+      // state; opening the detail again is what the user sees afterward.
+      expect(fake.tasks.single.task.title, 'edited first');
+      expect(fake.tasks.single.task.notes, 'edited notes');
+
+      await pumpDetail(
+        tester,
+        taskId: 'P',
+        initial: fake.tasks,
+        commands: fake,
+      );
+      expect(find.widgetWithText(TextField, 'edited first'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'edited notes'), findsOneWidget);
     });
   });
 
@@ -179,6 +197,14 @@ void main() {
           lists: [list('L1', 'Work'), list('L2', 'Personal')],
           opened: opened,
         );
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Move me'),
+          'Moved with title',
+        );
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Notes'),
+          'Moved with notes',
+        );
         await tester.tap(find.byKey(const Key('list-dropdown')));
         await tester.pumpAndSettle();
         // Bounded from here on: the move raises an Undo toast, and since #258
@@ -193,10 +219,10 @@ void main() {
         expect(find.text('Moved to Personal'), findsOneWidget);
         // moveTaskToList recreates under a fresh id; the panel follows it.
         expect(opened, ['P-moved']);
-        expect(
-          fake.tasks.firstWhere((t) => t.task.id == 'P-moved').listId,
-          'L2',
-        );
+        final moved = fake.tasks.firstWhere((t) => t.task.id == 'P-moved');
+        expect(moved.listId, 'L2');
+        expect(moved.task.title, 'Moved with title');
+        expect(moved.task.notes, 'Moved with notes');
       },
     );
 

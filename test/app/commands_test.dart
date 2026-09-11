@@ -246,6 +246,27 @@ void main() {
   });
 
   group('renameTask', () {
+    // #311: title and notes are separate auto-save fields in the detail panel.
+    // Their concurrent writes must preserve both user-visible values rather
+    // than letting one stale whole-row snapshot restore the other field.
+    test('concurrent title and notes edits preserve both fields', () async {
+      final store = await freshStore();
+      final commands = Commands(store);
+      await seedList(store, 'L1');
+      await seedTask(store, 'T1', 'L1', 'Original');
+
+      await Future.wait([
+        commands.renameTask('T1', 'New title'),
+        commands.setNotes('T1', 'New notes'),
+      ]);
+
+      final saved = (await store.findTaskAny('T1'))!;
+      expect(saved.task.title, 'New title');
+      expect(saved.task.notes, 'New notes');
+      expect(saved.syncState, SyncState.dirty);
+      expect(saved.pendingOp, 'update');
+    });
+
     // rename_task_updates_title_and_marks_dirty
     test('retitles a synced task and queues it as an update', () async {
       final store = await freshStore();
@@ -725,6 +746,7 @@ void main() {
 
         await commands.createTask(listId: 'L1', title: 'offline task');
         await commands.renameTask('local-1', 'edited offline');
+        await commands.setNotes('local-1', 'kept while offline');
         await commands.toggleComplete('local-1');
 
         final t = (await store.findTaskAny('local-1'))!;
@@ -732,6 +754,7 @@ void main() {
         // Still a create — never flipped to update (which would 404-delete it).
         expect(t.pendingOp, 'create');
         expect(t.task.title, 'edited offline');
+        expect(t.task.notes, 'kept while offline');
         expect(t.task.status, TaskStatus.completed);
       },
     );

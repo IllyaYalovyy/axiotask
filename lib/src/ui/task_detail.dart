@@ -38,6 +38,8 @@
 // feedback surface that out-stacks THIS panel, where a ScaffoldMessenger
 // SnackBar would render behind it and be unreachable.
 
+import 'dart:async' show unawaited;
+
 import 'package:async/async.dart' show RestartableTimer;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -164,10 +166,12 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// Persist any pending title/notes edits immediately (diff-only), cancelling a
   /// scheduled debounce since it has now happened. The registry entry for the
   /// system-back close and the app-backgrounded flush.
-  void _flushEdits() {
+  Future<void> _flushEdits() async {
     _debounce?.cancel();
-    _saveTitle();
-    _saveNotes();
+    // Field commands write whole rows, so keep these saves ordered before a
+    // dependent action leaves the task.
+    await _saveTitle();
+    await _saveNotes();
   }
 
   /// Schedule (or restart) a debounced save after the current keystroke burst —
@@ -185,7 +189,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// The debounce fired: persist if still mounted (the panel may have closed
   /// between the last keystroke and the timer).
   void _onDebounce() {
-    if (mounted) _flushEdits();
+    if (mounted) unawaited(_flushEdits());
   }
 
   /// Seed the fields from [task], or refresh an UNFOCUSED field when the store
@@ -211,7 +215,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     if (!_notesFocus.hasFocus && _notes.text != notes) _notes.text = notes;
   }
 
-  void _saveTitle() {
+  Future<void> _saveTitle() async {
     final task = _current?.task;
     if (task == null) return;
     final value = _title.text.trim();
@@ -219,15 +223,15 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     // empty-⇒-delete inline-rename rule lives on the row (T7.2), not here; the
     // empty-subtask discard rule handles abandonment on close.
     if (value.isEmpty || value == task.title) return;
-    ref.read(commandsProvider).renameTask(task.id, value);
+    await ref.read(commandsProvider).renameTask(task.id, value);
   }
 
-  void _saveNotes() {
+  Future<void> _saveNotes() async {
     final task = _current?.task;
     if (task == null) return;
     final value = _notes.text;
     if (value == (task.notes ?? '')) return; // diff-only
-    ref.read(commandsProvider).setNotes(task.id, value);
+    await ref.read(commandsProvider).setNotes(task.id, value);
   }
 
   /// The haptic vocabulary this panel speaks (#257), already pref-gated.
@@ -251,8 +255,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
 
   Future<void> _delete(StoredTask task) async {
     // Flush any pending field edits before the row goes away.
-    _saveTitle();
-    _saveNotes();
+    await _flushEdits();
     _haptics.confirm(); // #257 — a removal is felt, like the list's own delete
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
@@ -271,9 +274,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// Everything that leaves this panel (close, prev/next, breadcrumb, opening a
   /// subtask) funnels through here so a blank subtask never lingers — yet one
   /// with children of its own is always kept.
-  void _flushAndDiscard() {
-    _saveTitle();
-    _saveNotes();
+  Future<void> _flushAndDiscard() async {
+    await _flushEdits();
     _discardIfEmptySubtask();
   }
 
@@ -297,8 +299,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final empty =
         t.parent != null &&
         t.status != TaskStatus.completed &&
-        t.title.trim().isEmpty &&
-        (t.notes ?? '').trim().isEmpty &&
+        _title.text.trim().isEmpty &&
+        _notes.text.trim().isEmpty &&
         (t.due ?? '').isEmpty &&
         !all.any((c) => c.task.parent == t.id);
     if (empty) {
@@ -307,13 +309,13 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     }
   }
 
-  void _close() {
-    _flushAndDiscard();
+  Future<void> _close() async {
+    await _flushAndDiscard();
     widget.onClose();
   }
 
-  void _navigate(VoidCallback go) {
-    _flushAndDiscard();
+  Future<void> _navigate(VoidCallback go) async {
+    await _flushAndDiscard();
     go();
   }
 
@@ -404,8 +406,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// its former parent (#promoteTask). The row keeps its id, so the panel stays
   /// open on it — now showing the top-level affordances.
   Future<void> _detach(String subId, String parentId) async {
-    _saveTitle();
-    _saveNotes();
+    await _flushEdits();
     await ref
         .read(commandsProvider)
         .moveTask(subId, parentId: null, previousId: parentId);
@@ -417,7 +418,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// copy is taken from the LIVE title, so duplicating mid-rename copies what is
   /// on screen rather than the last-saved value.
   Future<void> _duplicate(StoredTask t) async {
-    _flushEdits();
+    await _flushEdits();
     final typed = _title.text.trim();
     await duplicateTask(
       ref.read(commandsProvider),
@@ -434,7 +435,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// a childless top-level task with a legal host — see [demoteCandidates]).
   Future<void> _demote(StoredTask t, List<StoredTask> candidates) async {
     if (candidates.isEmpty) return;
-    _flushEdits();
+    await _flushEdits();
+    if (!mounted) return;
     final parentId = await showParentPicker(context, candidates: candidates);
     if (parentId == null || !mounted) return;
     await ref.read(commandsProvider).moveTask(t.task.id, parentId: parentId);
@@ -450,6 +452,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     String targetListId,
     String targetTitle,
   ) async {
+    await _flushEdits();
+    if (!mounted) return;
     final commands = ref.read(commandsProvider);
     final toasts = ref.read(toastControllerProvider);
     final token = await commands.moveTaskToList(id, targetListId);

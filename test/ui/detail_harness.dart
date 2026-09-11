@@ -77,9 +77,10 @@ Future<FakeCommands> pumpDetail(
   double textScale = 1.0,
   Haptics? hapticsDevice,
   bool hideCompletedSubtasks = false,
+  FakeCommands? commands,
 }) async {
-  final fake = FakeCommands(initial, newId: newId);
-  addTearDown(fake.dispose);
+  final fake = commands ?? FakeCommands(initial, newId: newId);
+  if (commands == null) addTearDown(fake.dispose);
   // A tall surface so the whole panel lays out and every subtask row is built
   // (a lazy ListView culls children below the fold, hiding them from finders).
   // A caller probing narrow/large-text layout overrides it.

@@ -59,10 +59,14 @@ class TaskEditCommands extends CommandUnit {
   /// Retitle a task and mark it dirty. [dirtyOp] preserves a `create` for a
   /// still-unsynced row so an offline create+edit never flips to `update`.
   Future<void> renameTask(String id, String title) async {
-    final t = await _findTask(id);
-    await _store.upsertTask(
-      _markDirty(t, t.task.copyWith(title: title), nowUtcString()),
-    );
+    // The read and whole-row write must share a transaction: notes autosave
+    // can otherwise read the same old row and write it back after this title.
+    await _store.transaction(() async {
+      final t = await _findTask(id);
+      await _store.upsertTask(
+        _markDirty(t, t.task.copyWith(title: title), nowUtcString()),
+      );
+    });
   }
 
   /// Overwrite a task's notes and mark it dirty (`''` clears the field, matching
@@ -70,14 +74,18 @@ class TaskEditCommands extends CommandUnit {
   /// panel's notes auto-save routes here. [dirtyOp] preserves a `create` for a
   /// still-unsynced row.
   Future<void> setNotes(String id, String notes) async {
-    final t = await _findTask(id);
-    await _store.upsertTask(
-      _markDirty(
-        t,
-        t.task.copyWith(notes: notes.isEmpty ? null : notes),
-        nowUtcString(),
-      ),
-    );
+    // See [renameTask]: this is a whole-row replacement, so its read must be
+    // atomic with the write to preserve a simultaneous title autosave.
+    await _store.transaction(() async {
+      final t = await _findTask(id);
+      await _store.upsertTask(
+        _markDirty(
+          t,
+          t.task.copyWith(notes: notes.isEmpty ? null : notes),
+          nowUtcString(),
+        ),
+      );
+    });
   }
 
   /// Flip a task's completion. Completing a PARENT cascades completion to its
