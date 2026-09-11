@@ -101,6 +101,17 @@ class TaskDetail extends ConsumerStatefulWidget {
   ConsumerState<TaskDetail> createState() => _TaskDetailState();
 }
 
+/// The title and notes that remain saved once a close flush finishes.
+///
+/// This deliberately does not rely on the provider's next rebuild: command
+/// writes may complete before the stream delivers its refreshed task snapshot.
+class _FlushedDetailFields {
+  const _FlushedDetailFields({required this.title, required this.notes});
+
+  final String title;
+  final String notes;
+}
+
 class _TaskDetailState extends ConsumerState<TaskDetail> {
   final TextEditingController _title = TextEditingController();
   final TextEditingController _notes = TextEditingController();
@@ -167,7 +178,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// Persist any pending title/notes edits immediately (diff-only), cancelling a
   /// scheduled debounce since it has now happened. The registry entry for the
   /// system-back close and the app-backgrounded flush.
-  Future<void> _flushEdits() {
+  Future<_FlushedDetailFields?> _flushEdits() {
     _debounce?.cancel();
     // This can outlive the panel: system Back and a lifecycle change can
     // independently unmount us while a command is pending. Take everything
@@ -177,13 +188,21 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     if (task == null) return Future.value();
     final title = _title.text.trim();
     final notes = _notes.text;
+    // An empty title is rejected by [_saveTitleValue], so the task retains its
+    // already-saved title. Keep that post-flush value explicitly: a provider
+    // update from a successful asynchronous save may not have rebuilt this
+    // panel before the close path decides whether to discard a blank draft.
+    final saved = _FlushedDetailFields(
+      title: title.isEmpty ? task.title : title,
+      notes: notes,
+    );
     final saveTitle = title.isNotEmpty && title != task.title;
     final saveNotes = notes != (task.notes ?? '');
-    if (!saveTitle && !saveNotes) return Future.value();
+    if (!saveTitle && !saveNotes) return Future.value(saved);
     final commands = ref.read(commandsProvider);
     // Field commands write whole rows, so keep these saves ordered before a
     // dependent action leaves the task.
-    return _saveFieldValues(task, title, notes, commands);
+    return _saveFieldValues(task, title, notes, commands).then((_) => saved);
   }
 
   /// Schedule (or restart) a debounced save after the current keystroke burst —
@@ -315,8 +334,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// subtask) funnels through here so a blank subtask never lingers — yet one
   /// with children of its own is always kept.
   Future<void> _flushAndDiscard() async {
-    await _flushEdits();
-    _discardIfEmptySubtask();
+    final saved = await _flushEdits();
+    _discardIfEmptySubtask(saved);
   }
 
   // The id already sent to discard, so running the flush-and-discard funnel
@@ -331,7 +350,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
   /// open (not completed) and WITHOUT children of its own is debris — remove it.
   /// A subtask with children is never touched: deleting it cascades the whole
   /// subtree away, silently and with no undo token.
-  void _discardIfEmptySubtask() {
+  void _discardIfEmptySubtask(_FlushedDetailFields? saved) {
     final all =
         ref.read(allTasksProvider).asData?.value ?? const <StoredTask>[];
     final t = _current?.task;
@@ -339,8 +358,8 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     final empty =
         t.parent != null &&
         t.status != TaskStatus.completed &&
-        _title.text.trim().isEmpty &&
-        _notes.text.trim().isEmpty &&
+        (saved?.title ?? _title.text.trim()).isEmpty &&
+        (saved?.notes ?? _notes.text).trim().isEmpty &&
         (t.due ?? '').isEmpty &&
         !all.any((c) => c.task.parent == t.id);
     if (empty) {

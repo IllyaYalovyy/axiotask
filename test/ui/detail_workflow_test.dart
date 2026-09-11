@@ -171,6 +171,38 @@ void main() {
       expect(fake.deleted, isEmpty);
     });
 
+    testWidgets(
+      'clearing an existing subtask title keeps its saved title on close',
+      (tester) async {
+        final fake = await pumpDetail(
+          tester,
+          taskId: 'S',
+          initial: [
+            row('P', 'Parent'),
+            row('S', 'Existing work', parent: 'P'),
+          ],
+        );
+
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Existing work'),
+          '',
+        );
+        await tester.tap(find.byTooltip('Back'));
+        await settleDetail(tester);
+
+        expect(fake.tasks.where((t) => t.task.id == 'S'), hasLength(1));
+        expect(
+          fake.tasks.firstWhere((t) => t.task.id == 'S').task.title,
+          'Existing work',
+        );
+
+        // Closing the real panel unmounts it before this subtask is reopened.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpDetail(tester, taskId: 'S', initial: fake.tasks);
+        expect(find.widgetWithText(TextField, 'Existing work'), findsOneWidget);
+      },
+    );
+
     testWidgets('a top-level empty task is NOT auto-discarded', (tester) async {
       // The rule is subtask-only — a blank top-level task the user opened and
       // closed is theirs to keep.

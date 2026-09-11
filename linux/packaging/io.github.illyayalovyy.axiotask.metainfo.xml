@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.7" date="2026-09-10">
+    <release version="1.4.8" date="2026-09-10">
       <description>
         <p>
-          Closing a task detail now waits for pending edits to save, so a slow
-          title update cannot discard typed notes.
+          Clearing a subtask title now keeps its saved title instead of
+          silently deleting the subtask when the detail closes.
         </p>
       </description>
     </release>
