@@ -14,10 +14,12 @@
 // move. These tests pin that — a data change derives exactly once, and a row
 // interaction derives not at all.
 
+import 'package:axiotask/src/app/local_calendar_day.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
 import 'package:axiotask/src/ui/visible_rows.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,6 +29,61 @@ import 'detail_harness.dart' show FakeCommands, list, row;
 import 'toast_harness.dart' show wrapWithToast;
 
 void main() {
+  testWidgets('Missed rows and its count roll over at the local day boundary', (
+    tester,
+  ) async {
+    // This prevents an overnight-open app from leaving a due-today task out of
+    // Missed (and its sidebar badge at zero) until some unrelated store write.
+    // The task has a child to retain the effective-date path while task streams
+    // stay completely unchanged across the boundary.
+    var now = DateTime(2026, 9, 10, 23, 59);
+    await withClock(Clock(() => now), () async {
+      final fake = FakeCommands([
+        row('parent', 'report', due: '2026-09-10'),
+        row('child', 'evidence', parent: 'parent', due: '2026-09-11'),
+      ]);
+      addTearDown(fake.dispose);
+      final seen = <List<String>>[];
+      final counts = <int>[];
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            prefsProvider.overrideWithValue(const Prefs()),
+            allTasksProvider.overrideWith((ref) => fake.tasksStream),
+            listsProvider.overrideWith(
+              (ref) => Stream.value([list('L1', 'My Tasks')]),
+            ),
+          ],
+          child: LocalCalendarDayLifecycleObserver(
+            child: MaterialApp(
+              home: Consumer(
+                builder: (context, ref, _) {
+                  seen.add([
+                    for (final row
+                        in ref.watch(visibleRowsProvider('missed')).rows)
+                      row.id,
+                  ]);
+                  counts.add(ref.watch(viewCountsProvider)['missed'] ?? 0);
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(seen.last, isEmpty);
+      expect(counts.last, 0);
+
+      now = DateTime(2026, 9, 11);
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(seen.last, ['parent']);
+      expect(counts.last, 1);
+    });
+  });
+
   testWidgets('a row interaction re-derives nothing', (tester) async {
     final fake = FakeCommands([
       row('A', 'apples'),

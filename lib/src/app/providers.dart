@@ -31,6 +31,7 @@ import 'app_version.dart';
 import 'backup_service.dart';
 import 'commands.dart';
 import 'config_controller.dart';
+import 'local_calendar_day.dart';
 import 'local_data_reset.dart';
 import 'prefs.dart';
 import 'prefs_controller.dart';
@@ -136,7 +137,7 @@ final viewCountsProvider = Provider<Map<String, int>>((ref) {
     allTasks: all,
     listIds: [for (final l in lists) l.list.id],
     excludedLists: excluded,
-    window: dateWindowNow(),
+    window: dateWindow(ref.watch(localCalendarDayProvider)),
   );
 });
 

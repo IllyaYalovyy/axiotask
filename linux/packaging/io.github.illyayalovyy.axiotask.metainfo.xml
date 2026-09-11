@@ -72,7 +72,7 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.5" date="2026-09-10">
+    <release version="1.4.6" date="2026-09-10">
       <description>
         <p>
           Sync now safely recovers task and list creates when a gateway loses

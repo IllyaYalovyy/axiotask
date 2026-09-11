@@ -17,6 +17,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app/local_calendar_day.dart';
 import '../app/prefs_controller.dart';
 import '../app/providers.dart';
 import '../model/effective_due.dart';
@@ -144,7 +145,7 @@ final visibleRowsProvider = Provider.family<VisibleRows, String>((ref, viewId) {
     excludedLists: prefs.excludedLists.toSet(),
     showCompleted: prefs.showCompleted,
     sort: SortMode.byId(prefs.sortPerView[viewId]),
-    window: dateWindowNow(),
+    window: dateWindow(ref.watch(localCalendarDayProvider)),
     newestId: newestId,
     hasData: tasksAsync.asData != null,
   );

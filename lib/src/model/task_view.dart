@@ -84,8 +84,10 @@ String _ymd(DateTime d) =>
     '-${d.day.toString().padLeft(2, '0')}';
 
 /// Build the [DateWindow] for the current calendar day (via package:clock).
-DateWindow dateWindowNow() {
-  final n = clock.now();
+DateWindow dateWindowNow() => dateWindow(clock.now());
+
+/// Build a window from a supplied local calendar value.
+DateWindow dateWindow(DateTime n) {
   DateTime day(int add) => DateTime(n.year, n.month, n.day + add);
   return DateWindow(
     today: _ymd(day(0)),

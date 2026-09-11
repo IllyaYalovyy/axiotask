@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../ui/haptics.dart';
 import '../ui/theme.dart';
 import '../ui/toast.dart';
+import 'local_calendar_day.dart';
 import 'pending_edits.dart';
 import 'providers.dart';
 
@@ -39,11 +40,13 @@ class AxiotaskApp extends ConsumerWidget {
       // every modal overlay — dialogs, the detail panel, pickers (#172). The
       // lifecycle flusher wraps it all so a backgrounded app persists any
       // in-progress field edits before the OS can kill the process (#183).
-      builder: (context, child) => PendingEditsLifecycleFlusher(
-        child: ToastOverlay(
-          controller: toasts,
-          haptics: haptics,
-          child: child ?? const SizedBox.shrink(),
+      builder: (context, child) => LocalCalendarDayLifecycleObserver(
+        child: PendingEditsLifecycleFlusher(
+          child: ToastOverlay(
+            controller: toasts,
+            haptics: haptics,
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
       ),
     );
