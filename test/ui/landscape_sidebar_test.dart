@@ -21,10 +21,13 @@ import 'package:axiotask/src/model/task_list.dart';
 import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/auth/auth_sync_footer.dart';
 import 'package:axiotask/src/ui/auth/auth_sync_status.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+
+import '../support/fake_commands.dart';
 
 /// A landscape phone past the expand breakpoint (the reported Pixel geometry,
 /// rounded to the size named in #235).
@@ -69,6 +72,7 @@ void main() {
     List<StoredTask> tasks = const [],
     String view = 'focus',
     double textScaleFactor = 1.0,
+    FakeCommands? commands,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
@@ -82,8 +86,11 @@ void main() {
         overrides: [
           prefsProvider.overrideWithValue(store.load()),
           prefsStoreProvider.overrideWithValue(store),
-          allTasksProvider.overrideWith((ref) => Stream.value(tasks)),
+          allTasksProvider.overrideWith(
+            (ref) => commands?.tasksStream ?? Stream.value(tasks),
+          ),
           listsProvider.overrideWith((ref) => Stream.value(lists)),
+          if (commands != null) commandsProvider.overrideWithValue(commands),
           sidebarFooterProvider.overrideWithValue(
             AuthSyncFooter(
               status: const AuthSyncStatus(
@@ -123,6 +130,65 @@ void main() {
   }
 
   group('landscape phone (#235)', () {
+    testWidgets('rotating Android keeps the task FAB available for capture', (
+      tester,
+    ) async {
+      // This protects #324: an expanded touch shell used to drop the FAB while
+      // the touch-only composer still suppressed the desktop quick-add field.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final commands = FakeCommands([task('T1', 'Existing work', 'L1')]);
+      addTearDown(commands.dispose);
+
+      await pumpShell(
+        tester,
+        size: _portrait,
+        view: 'all',
+        lists: [list('L1', 'Work')],
+        commands: commands,
+      );
+      final fab = find.byType(FloatingActionButton);
+      final field = find.widgetWithText(TextField, 'Add a task');
+      expect(fab.hitTestable(), findsOneWidget);
+      expect(field, findsNothing);
+
+      // Rotate the same running app into the expanded touch shell.
+      tester.view.physicalSize = _landscape;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Existing work'), findsOneWidget);
+      expect(field, findsNothing);
+      expect(
+        fab.hitTestable(),
+        findsOneWidget,
+        reason: 'touch capture remains available after the shell expands',
+      );
+
+      await tester.tap(fab);
+      await tester.pumpAndSettle();
+      expect(field.hitTestable(), findsOneWidget);
+      await tester.enterText(field, 'Created in landscape');
+      await tester.tap(find.byKey(const Key('quick-add-submit')));
+      await tester.pumpAndSettle();
+      expect(
+        commands.tasks.map((t) => t.task.title),
+        contains('Created in landscape'),
+      );
+      expect(find.text('Created in landscape'), findsOneWidget);
+
+      // Returning to compact preserves the active draft and keeps a single
+      // reachable composer surface rather than reintroducing a second FAB.
+      await tester.enterText(field, 'Draft survives rotation');
+      tester.view.physicalSize = _portrait;
+      await tester.pumpAndSettle();
+      expect(field.hitTestable(), findsOneWidget);
+      expect(
+        tester.widget<TextField>(field).controller!.text,
+        'Draft survives rotation',
+      );
+      expect(fab, findsNothing);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
     testWidgets(
       'the expanded sidebar reaches every smart view AND the lists at rest',
       (tester) async {

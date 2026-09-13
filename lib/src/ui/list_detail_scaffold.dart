@@ -175,14 +175,14 @@ class ListDetailScaffold extends StatelessWidget {
   /// row. `null` on a layout that shows no sync at all.
   final Widget? syncLine;
 
-  /// The compact FAB action — opens the touch composer (never creates an empty
-  /// task). `null` hides the FAB entirely: the fine-pointer layout has its
-  /// always-visible quick-add bar instead (#216), and bare goldens pass nothing.
+  /// The touch FAB action — opens the composer (never creates an empty task).
+  /// `null` hides it entirely: the fine-pointer layout has its always-visible
+  /// quick-add bar instead (#216), and bare goldens pass nothing.
   final VoidCallback? onNewTask;
 
   /// Whether the touch composer is currently on screen (#234). The FAB and the
   /// composer are ONE surface: while the composer is up there is no FAB, so it
-  /// can never render over the sheet it opened. Ignored when expanded.
+  /// can never render over the panel it opened.
   final bool composerOpen;
 
   /// The key for the compact [Scaffold], so the shell can close the drawer after
@@ -244,27 +244,50 @@ class ListDetailScaffold extends StatelessWidget {
         onPopInvokedWithResult: (didPop, _) {
           if (!didPop && _showingDetail) onCloseDetail?.call();
         },
-        child: expanded ? _buildExpanded() : _buildCompact(),
+        child: expanded ? _buildExpanded(context) : _buildCompact(),
       ),
     );
   }
 
-  Widget _buildExpanded() {
+  Widget _buildExpanded(BuildContext context) {
+    final showFab =
+        onNewTask != null &&
+        !_showingDetail &&
+        coarsePointerPlatform(Theme.of(context).platform);
     return Scaffold(
       body: SafeArea(
-        child: ResizableExpanded(
-          sidebar: sidebar,
-          list: list,
-          detail: _showingDetail ? detail : null,
-          sidebarWidth: sidebarWidth.clamp(minSidebarWidth, maxSidebarWidth),
-          detailFraction: detailFraction.clamp(
-            minDetailFraction,
-            maxDetailFraction,
-          ),
-          onSidebarWidthChanged: onSidebarWidthChanged,
-          onDetailFractionChanged: onDetailFractionChanged,
-          onResetSidebarWidth: onResetSidebarWidth,
-          onResetDetailFraction: onResetDetailFraction,
+        child: Stack(
+          children: [
+            ResizableExpanded(
+              sidebar: sidebar,
+              list: list,
+              detail: _showingDetail ? detail : null,
+              sidebarWidth: sidebarWidth.clamp(
+                minSidebarWidth,
+                maxSidebarWidth,
+              ),
+              detailFraction: detailFraction.clamp(
+                minDetailFraction,
+                maxDetailFraction,
+              ),
+              onSidebarWidthChanged: onSidebarWidthChanged,
+              onDetailFractionChanged: onDetailFractionChanged,
+              onResetSidebarWidth: onResetSidebarWidth,
+              onResetDetailFraction: onResetDetailFraction,
+            ),
+            if (showFab)
+              Positioned(
+                // The expanded touch FAB belongs to the task-list region, not
+                // the permanent sidebar. A detail owns its own interaction, so
+                // it suppresses this surface entirely.
+                right: NewTaskFab.margin,
+                bottom: NewTaskFab.margin,
+                child: NewTaskFab(
+                  visible: !composerOpen,
+                  onPressed: onNewTask!,
+                ),
+              ),
+          ],
         ),
       ),
     );

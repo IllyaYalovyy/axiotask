@@ -370,9 +370,9 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     final physics = mobile ? const AlwaysScrollableScrollPhysics() : null;
     // The "new task" FAB floats over the bottom of the list; pad the scroll so
     // the LAST row can clear it (never hidden under the FAB — #234). The
-    // padding tracks the FAB exactly: the shell builds one only in the compact
-    // layout, and only for a coarse pointer (#216), so a narrow mouse-driven
-    // window spends no room on a clearance it does not need.
+    // padding tracks the FAB exactly: the shell builds one for a coarse pointer
+    // at either adaptive width (#216), so a mouse-driven window spends no room
+    // on a clearance it does not need.
     // …and the collapsing app bar floats over the TOP of it (#305): the shell
     // paints it over this pane rather than above it, so what keeps the first
     // row clear of the bar is padding INSIDE the scroll view. The rows then
@@ -382,7 +382,7 @@ class _TaskListBodyState extends ConsumerState<TaskListBody> {
     final chromeInset = CompactChromeScope.maybeOf(context)?.insetTop ?? 0;
     final listPadding = EdgeInsets.only(
       top: chromeInset,
-      bottom: mobile && coarsePointerPlatform(Theme.of(context).platform)
+      bottom: coarsePointerPlatform(Theme.of(context).platform)
           ? NewTaskFab.clearance
           : 0,
     );
