@@ -16,6 +16,7 @@ import 'package:axiotask/src/store/stored.dart';
 import 'package:axiotask/src/ui/bulk_bar.dart';
 import 'package:axiotask/src/ui/router.dart';
 import 'package:axiotask/src/ui/sidebar.dart';
+import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -161,6 +162,59 @@ void main() {
     // … and the live window title followed the view.
     expect(title.titles.last, 'Focus — axiotask');
   });
+
+  testWidgets(
+    'Support axiotask closes the phone drawer and opens Sponsors without changing the view',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final opened = <String>[];
+      final title = _FakeTitle();
+      final store = prefs()
+        ..save(const Prefs(onboardingSeen: true, view: 'focus'));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            prefsProvider.overrideWithValue(store.load()),
+            prefsStoreProvider.overrideWithValue(store),
+            windowTitleControllerProvider.overrideWithValue(title),
+            allTasksProvider.overrideWith((ref) => Stream.value(const [])),
+            listsProvider.overrideWith((ref) => Stream.value(const [])),
+            urlOpenerProvider.overrideWithValue((url) async => opened.add(url)),
+          ],
+          child: const AxiotaskApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      final support = find.byKey(const Key('support-axiotask'));
+      final drawerSidebar = find.byKey(const Key('sidebar-lists-reorderable'));
+      expect(support, findsOneWidget);
+      expect(
+        tester.getTopLeft(support).dy,
+        lessThan(
+          tester
+              .getTopLeft(
+                find.descendant(
+                  of: drawerSidebar,
+                  matching: find.text('Focus'),
+                ),
+              )
+              .dy,
+        ),
+      );
+
+      await tester.tap(support);
+      await tester.pumpAndSettle();
+      expect(opened, [sponsorsUrl]);
+      expect(drawerSidebar, findsNothing);
+      expect(store.load().view, 'focus');
+      expect(title.titles.last, 'Focus — axiotask');
+    },
+  );
 
   testWidgets('a task route opens the detail; the back button closes it', (
     tester,

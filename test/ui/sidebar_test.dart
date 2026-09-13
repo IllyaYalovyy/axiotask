@@ -114,6 +114,53 @@ void main() {
     expect(cap.selected, ['upcoming']);
   });
 
+  testWidgets(
+    'empty dark workspace puts Support axiotask before Focus with a touch target',
+    (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(brightness: Brightness.dark),
+          home: Scaffold(
+            body: Sidebar(
+              selectedViewId: 'all',
+              counts: const {},
+              lists: const [],
+              excludedLists: const {},
+              onSelectView: (_) {},
+              onCreateList: (_, {localOnly = false}) {},
+              onRenameList: (_, _) {},
+              onDeleteList: (_) {},
+              onToggleExclude: (_) {},
+              onReorderLists: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      final support = find.byKey(const Key('support-axiotask'));
+      final focus = find.text('Focus');
+      expect(support, findsOneWidget);
+      expect(focus, findsOneWidget);
+      expect(
+        tester.getTopLeft(support).dy,
+        lessThan(tester.getTopLeft(focus).dy),
+        reason: 'the donation action is the first navigation entry',
+      );
+      expect(tester.getSize(support).height, greaterThanOrEqualTo(48));
+      expect(find.text('Donate via GitHub Sponsors'), findsOneWidget);
+      final heart = find.byIcon(Icons.favorite_outline);
+      final icon = tester.widget<Icon>(heart);
+      final color = icon.color!;
+      final surface = Theme.of(tester.element(heart)).colorScheme.surface;
+      final contrast =
+          (color.computeLuminance() + 0.05) /
+          (surface.computeLuminance() + 0.05);
+      expect(contrast, greaterThanOrEqualTo(3.0));
+    },
+  );
+
   testWidgets('a count badge shows when > 0 and is hidden at zero', (
     tester,
   ) async {
@@ -424,9 +471,14 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
+        // …and the menu it opens wraps its longest entry rather than overflowing.
+        await tester.scrollUntilVisible(
+          find.byIcon(Icons.more_vert),
+          200,
+          scrollable: find.byType(Scrollable),
+        );
         expect(find.byIcon(Icons.visibility_off_outlined), findsOneWidget);
         expect(find.text('128'), findsOneWidget);
-        // …and the menu it opens wraps its longest entry rather than overflowing.
         await tester.tap(find.byIcon(Icons.more_vert));
         await tester.pumpAndSettle();
         expect(find.text('Include in smart views'), findsOneWidget);

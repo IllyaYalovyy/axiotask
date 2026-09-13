@@ -190,7 +190,7 @@ void main() {
     });
 
     testWidgets(
-      'the expanded sidebar reaches every smart view AND the lists at rest',
+      'the expanded sidebar puts Support first and keeps every destination reachable',
       (tester) async {
         final store = await pumpShell(
           tester,
@@ -203,16 +203,15 @@ void main() {
         expect(sidebar, findsOneWidget);
         expect(find.byTooltip('Open navigation menu'), findsNothing);
 
-        // Every destination the portrait drawer offers is here and touchable.
-        for (final label in [
-          'Focus',
-          'Upcoming',
-          'Missed',
-          'Unscheduled',
-          'All Tasks',
-          'Lists',
-          'E2E-Test',
-        ]) {
+        // Support is the first action at rest, before the smart views.
+        expect(reachable('Support axiotask'), findsOneWidget);
+        expect(reachable('Focus'), findsOneWidget);
+
+        // The new two-line support row can move lower destinations below a
+        // short landscape viewport, but the one scroll surface keeps them
+        // reachable.
+        await scrollSidebar(tester, -400);
+        for (final label in ['All Tasks', 'Lists', 'E2E-Test']) {
           expect(
             reachable(label),
             findsOneWidget,
@@ -239,8 +238,8 @@ void main() {
     );
 
     testWidgets(
-      'at a 1.3 system text scale nothing is dropped — All Tasks stays at rest '
-      'and the footer is still reachable by scrolling',
+      'at a 1.3 system text scale nothing is dropped — Support stays at rest '
+      'and the rest remains reachable by scrolling',
       (tester) async {
         // The non-happy path: a larger system font inflates the footer, which is
         // exactly what squeezed the navigation off the screen.
@@ -251,14 +250,12 @@ void main() {
           textScaleFactor: 1.3,
         );
 
-        expect(
-          reachable('All Tasks'),
-          findsOneWidget,
-          reason: 'the fifth smart view must survive a 1.3 text scale',
-        );
+        expect(reachable('Support axiotask'), findsOneWidget);
 
-        // The footer/chrome may scroll out of view when space is this tight —
-        // but they must be reachable, not lost.
+        // Smart views, lists, and footer may scroll out of view when space is
+        // this tight — but they must be reachable, not lost.
+        await scrollSidebar(tester, -200);
+        expect(reachable('All Tasks'), findsOneWidget);
         await scrollSidebar(tester, -400);
         expect(reachable('E2E-Test'), findsOneWidget);
         expect(reachable('Sync now'), findsOneWidget);
@@ -317,6 +314,7 @@ void main() {
       expect(store.load().view, 'L1');
       expect(find.text('Buy milk'), findsOneWidget);
       // … and its sidebar row is reachable and shows as the selected one.
+      await scrollSidebar(tester, -400);
       expect(reachable('E2E-Test'), findsOneWidget);
       // Every Material over the row's label — the row's own coloured one, and
       // the transparent one the row's state layer paints its ink on (#259).

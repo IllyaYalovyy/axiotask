@@ -29,6 +29,7 @@ import 'task_detail.dart';
 import 'task_list_view.dart';
 import 'theme.dart' show coarsePointerPlatform;
 import 'toast.dart';
+import 'url_opener.dart';
 import 'view_motion.dart';
 import 'views.dart';
 
@@ -214,6 +215,10 @@ class AppShell extends ConsumerWidget {
         );
       },
       footer: footer,
+      onOpenSponsors: () async {
+        closeDrawer();
+        await ref.read(urlOpenerProvider)(sponsorsUrl);
+      },
       onOpenProperties: () {
         closeDrawer(); // don't leave the drawer stacked over the dialog (#166)
         showProperties(context);

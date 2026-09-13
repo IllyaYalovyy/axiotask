@@ -23,6 +23,9 @@ import 'state_layer.dart';
 import 'task_row_parts.dart' show touchTarget;
 import 'views.dart';
 
+/// The external GitHub Sponsors destination for the main navigation action.
+const sponsorsUrl = 'https://github.com/sponsors/IllyaYalovyy';
+
 /// What exclusion means, in the one wording the row's glyph, its tooltip, its
 /// screen-reader label and the menu entry that sets it all share.
 const _excludedLabel = 'Excluded from smart views';
@@ -43,6 +46,7 @@ class Sidebar extends StatelessWidget {
     required this.onReorderLists,
     this.onExportList,
     this.footer,
+    this.onOpenSponsors,
     this.onOpenProperties,
     this.onToggleTheme,
     this.isDark = false,
@@ -94,6 +98,9 @@ class Sidebar extends StatelessWidget {
   /// The auth/sync footer, held at the bottom while there is room and scrolled
   /// with the rest when there is not. `null` hides it (auth wiring pending).
   final Widget? footer;
+
+  /// Open the Support axiotask destination in the system browser.
+  final VoidCallback? onOpenSponsors;
 
   /// Open the Properties dialog. `null` hides the chrome row (e.g. in the
   /// standalone sidebar tests that do not wire it).
@@ -152,6 +159,7 @@ class Sidebar extends StatelessWidget {
                 counts: counts,
                 attentionCount: attentionCount,
                 hasLists: lists.isNotEmpty,
+                onOpenSponsors: onOpenSponsors,
                 onSelectView: onSelectView,
                 onCreateList: () => _createList(context),
               ),
@@ -304,6 +312,7 @@ class _Header extends StatelessWidget {
     required this.counts,
     required this.attentionCount,
     required this.hasLists,
+    required this.onOpenSponsors,
     required this.onSelectView,
     required this.onCreateList,
   });
@@ -312,6 +321,7 @@ class _Header extends StatelessWidget {
   final Map<String, int> counts;
   final int attentionCount;
   final bool hasLists;
+  final VoidCallback? onOpenSponsors;
   final ValueChanged<String> onSelectView;
   final VoidCallback onCreateList;
 
@@ -321,6 +331,7 @@ class _Header extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _SupportRow(onTap: onOpenSponsors),
         for (final v in SmartView.values)
           _NavRow(
             icon: v.icon,
@@ -378,6 +389,61 @@ class _Header extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// The first main-menu entry. It deliberately is not a selectable task view:
+/// opening the external link leaves the active view unchanged.
+class _SupportRow extends StatelessWidget {
+  const _SupportRow({required this.onTap});
+
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final content = Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
+        children: [
+          Icon(Icons.favorite_outline, size: 20, color: colors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Support axiotask',
+                  style: TextStyle(color: colors.onSurface),
+                ),
+                Text(
+                  'Donate via GitHub Sponsors',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.open_in_new, size: 18, color: colors.onSurfaceVariant),
+        ],
+      ),
+    );
+    return Padding(
+      key: const Key('support-axiotask'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        child: onTap == null
+            ? content
+            : StateLayer(
+                borderRadius: BorderRadius.circular(16),
+                onTap: onTap!,
+                child: content,
+              ),
+      ),
     );
   }
 }

@@ -506,6 +506,14 @@ void main() {
         _expectNoOverflow(tester, 'the drawer');
 
         final drawer = find.byType(Drawer);
+        _expectTappable(
+          tester,
+          find.descendant(
+            of: drawer,
+            matching: find.byKey(const Key('support-axiotask')),
+          ),
+          'the drawer\'s Support axiotask action',
+        );
         expect(
           find.descendant(of: drawer, matching: find.text('Groceries')),
           findsOneWidget,
@@ -517,6 +525,17 @@ void main() {
             matching: find.byKey(const Key('sidebar-add-list')),
           ),
           'the drawer\'s add-list button',
+        );
+        await tester.scrollUntilVisible(
+          find.descendant(
+            of: drawer,
+            matching: find.byKey(const Key('open-properties')),
+          ),
+          200,
+          scrollable: find.descendant(
+            of: drawer,
+            matching: find.byType(Scrollable),
+          ),
         );
         _expectTappable(
           tester,

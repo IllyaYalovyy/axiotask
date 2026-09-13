@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.15" date="2026-09-13">
+    <release version="1.4.16" date="2026-09-13">
       <description>
         <p>
-          Read-only sync mode stays visible before downloads and after errors;
-          first-launch capture instructions match the visible entry point.
+          Support axiotask is now the first entry in the main menu, with a
+          direct link to GitHub Sponsors.
         </p>
       </description>
     </release>
