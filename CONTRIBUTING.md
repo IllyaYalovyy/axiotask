@@ -61,7 +61,7 @@ Versioning
 axiotask follows Semantic Versioning (https://semver.org). The version starts
 at 0.1.0 and is shown to users in the About dialog.
 
-The version is declared in exactly ONE place:
+The release version is declared in exactly ONE place:
 
   pubspec.yaml    # version: X.Y.Z+B (B = build number, bump with every version change)
 
@@ -74,11 +74,13 @@ the same version.
 - Minor (X.Y+1.0) — new user-facing features
 - Major (X+1.0.0) — breaking changes to data or behaviour
 
-The build number B increments with every version change. The AppStream
-metainfo (linux/packaging/*.metainfo.xml) gets a matching <release> entry for
-every minor and major version; patch versions update the newest entry's
-version attribute. 1.0.0 is the first release (2026-09-07); there is no
-pre-1.0 reservation any more.
+The build number B increments with every version change. Update the
+display-only About mirror in `lib/src/app/app_version.dart` to the same
+`X.Y.Z` at the same time; `test/app/app_version_test.dart` guards this manual
+mirror. The AppStream metainfo (linux/packaging/*.metainfo.xml) gets a
+matching <release> entry for every minor and major version; patch versions
+update the newest entry's version attribute. 1.0.0 is the first release
+(2026-09-07); there is no pre-1.0 reservation any more.
 
 Push Policy
 
