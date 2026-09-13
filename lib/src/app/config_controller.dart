@@ -10,10 +10,12 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'config.dart';
 
 /// Holds the mutable sync toggles backed by a `config.json` file.
-class ConfigController {
+class ConfigController extends ChangeNotifier {
   ConfigController({required this.path, required AppConfig initial})
     : _google = initial.google,
       _pushEnabled = initial.sync.pushEnabled,
@@ -53,6 +55,7 @@ class ConfigController {
       SyncConfig(pushEnabled: value, autoSyncOnStart: _autoSyncOnStart),
     );
     _pushEnabled = value;
+    notifyListeners();
   }
 
   /// Persist `auto_sync_on_start = [value]` durably, THEN flip in memory (#171).
@@ -62,5 +65,6 @@ class ConfigController {
       SyncConfig(pushEnabled: _pushEnabled, autoSyncOnStart: value),
     );
     _autoSyncOnStart = value;
+    notifyListeners();
   }
 }

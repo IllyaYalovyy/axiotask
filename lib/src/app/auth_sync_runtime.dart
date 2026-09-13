@@ -132,6 +132,9 @@ class AuthSyncRuntime {
   /// live auth/status streams (seeded then subscribed), the four action seams,
   /// and the real sidebar footer.
   List<Override> get overrides => [
+    // Runtime tests and production mount this same controller as the source
+    // for live sync-mode presentation in the sidebar/footer.
+    configControllerProvider.overrideWithValue(_config),
     authSnapshotProvider.overrideWith((ref) => _authSnapshots()),
     // Whether this install means to reach Google at all — the gate between a
     // loud missing-credentials state and a legitimately quiet local-only one

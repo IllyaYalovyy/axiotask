@@ -194,7 +194,6 @@ Future<BootstrapResult> bootstrap({
       overrides: [
         instancePrefixProvider.overrideWithValue(prefix),
         appDatabaseProvider.overrideWithValue(database),
-        configControllerProvider.overrideWithValue(configController),
         prefsStoreProvider.overrideWithValue(prefsStore),
         // Snapshot the loaded prefs for the widget tree (theme + initial view).
         prefsProvider.overrideWithValue(prefsStore.load()),

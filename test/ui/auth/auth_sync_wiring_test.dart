@@ -15,6 +15,8 @@ import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
+import 'package:axiotask/src/app/sync_status.dart';
+import 'package:axiotask/src/auth/auth_controller.dart';
 import 'package:axiotask/src/auth/auth_error.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart' show OAuthConfig;
 import 'package:axiotask/src/auth/desktop_token_provider.dart';
@@ -26,9 +28,11 @@ import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/motion.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
+import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/toast.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:axiotask/src/ui/views.dart';
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -96,6 +100,65 @@ void main() {
     await settle(tester);
   }
 
+  testWidgets(
+    'the live footer names read-only downloads and follows the setting change',
+    (tester) async {
+      // Default sync is deliberately download-only. The footer must make that
+      // limitation visible after a successful pull, otherwise “Synced” reads
+      // as though a local edit had reached Google. Switching the persisted
+      // setting to read-write must remove that warning without a restart.
+      final config = ConfigController(
+        path: File(p.join(tmp.path, 'config.json')),
+        initial: const AppConfig(),
+      );
+      final synced = SyncStatus()
+        ..lastSynced = '2026-09-13T12:00:00Z'
+        ..lastPulled = 1;
+
+      await withClock(Clock.fixed(DateTime.utc(2026, 9, 13, 12)), () async {
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              configControllerProvider.overrideWithValue(config),
+              authSnapshotProvider.overrideWith(
+                (ref) => Stream.value(
+                  const AuthSnapshot(isAuthenticated: true, needsReauth: false),
+                ),
+              ),
+              syncStatusViewProvider.overrideWithValue(
+                SyncStatusView.of(synced),
+              ),
+              syncRunEventsProvider.overrideWith((ref) => const Stream.empty()),
+            ],
+            child: MaterialApp(
+              theme: buildLightTheme(),
+              home: const Scaffold(
+                body: SizedBox(width: 280, child: SidebarAuthSyncFooter()),
+              ),
+            ),
+          ),
+        );
+        await settle(tester);
+
+        expect(
+          find.text('Read-only · edits stay on this device'),
+          findsOneWidget,
+        );
+        expect(find.text('Last downloaded just now'), findsOneWidget);
+        expect(find.textContaining('Synced'), findsNothing);
+
+        await config.setPushEnabled(true);
+        await tester.pump();
+
+        expect(
+          find.text('Read-only · edits stay on this device'),
+          findsNothing,
+        );
+        expect(find.text('Synced just now'), findsOneWidget);
+      });
+    },
+  );
+
   testWidgets('signed out, the footer offers Sign in and reads Offline', (
     tester,
   ) async {
@@ -134,8 +197,9 @@ void main() {
     // Sign out is offered and the status text livened from "Offline".
     expect(find.byKey(const Key('auth-footer-signout')), findsOneWidget);
     expect(find.text('Offline'), findsNothing);
-    // Sign-in kicked off a first sync, so the status reads "Synced …".
-    expect(find.textContaining('Synced'), findsOneWidget);
+    // Sign-in kicked off a first download. Default sync is read-only, so the
+    // status must not claim that local changes were uploaded.
+    expect(find.textContaining('Last downloaded'), findsOneWidget);
     expect(runtime.scheduler.status.totalSyncs, 1);
   });
 
@@ -276,7 +340,7 @@ void main() {
     // The real refresh action reached the server and lit the status.
     expect(runtime.scheduler.status.totalSyncs, 1);
     expect(client.callCount(Method.listTasklists), greaterThan(0));
-    expect(find.textContaining('Synced'), findsOneWidget);
+    expect(find.textContaining('Last downloaded'), findsOneWidget);
   });
 
   testWidgets('pull-to-refresh triggers a sync when a session is live', (

@@ -23,7 +23,10 @@
 // nowhere.
 
 import 'dart:async';
+import 'dart:io';
 
+import 'package:axiotask/src/app/config.dart';
+import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
 import 'package:axiotask/src/app/sync_status.dart';
@@ -325,6 +328,12 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
+            configControllerProvider.overrideWithValue(
+              ConfigController(
+                path: File('unused-config.json'),
+                initial: const AppConfig(),
+              ),
+            ),
             syncRunEventsProvider.overrideWith((ref) => events.stream),
           ],
           child: MaterialApp(
