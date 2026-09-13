@@ -12,6 +12,7 @@ Future<void> _pump(
   required VoidCallback onDismiss,
   TextScaler textScaler = TextScaler.noScaling,
   Size size = const Size(400, 800),
+  TargetPlatform platform = TargetPlatform.linux,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -19,6 +20,8 @@ Future<void> _pump(
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     MaterialApp(
+      key: ValueKey(platform),
+      theme: ThemeData(platform: platform),
       home: MediaQuery(
         data: MediaQueryData(size: size, textScaler: textScaler),
         child: OnboardingIntro(onDismiss: onDismiss),
@@ -28,6 +31,22 @@ Future<void> _pump(
 }
 
 void main() {
+  testWidgets('names the visible capture entry point for each pointer class', (
+    tester,
+  ) async {
+    // The failure this prevents: the first-run phone welcome directs a new
+    // user to an inline field that is hidden until they tap the FAB.
+    await _pump(tester, onDismiss: () {}, platform: TargetPlatform.android);
+    expect(find.textContaining('Tap + to add a task.'), findsOneWidget);
+    expect(find.textContaining('“tomorrow”'), findsOneWidget);
+    expect(find.textContaining('quick-add field'), findsNothing);
+
+    await _pump(tester, onDismiss: () {}, platform: TargetPlatform.linux);
+    expect(find.textContaining('quick-add field'), findsOneWidget);
+    expect(find.textContaining('“tomorrow”'), findsOneWidget);
+    expect(find.textContaining('Tap + to add a task.'), findsNothing);
+  });
+
   testWidgets('renders the welcome copy and dismisses on the button', (
     tester,
   ) async {

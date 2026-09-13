@@ -1,7 +1,7 @@
 // The first-launch welcome intro — the surviving half of the reference's
 // Cheatsheet component (the keyboard-shortcut overlay itself dies with the
 // keyboard layer; this onboarding MOMENT is worth keeping). It teaches the one
-// gesture that matters on day one: capture a task in the quick-add field, and
+// gesture that matters on day one: find the visible capture entry point, then
 // end the text with a date to schedule it.
 //
 // Shown once, on an empty workspace, until dismissed — the gating lives in the
@@ -10,6 +10,8 @@
 // and reusable. Visuals are fresh Material 3 (Q3), not a pixel port.
 
 import 'package:flutter/material.dart';
+
+import 'theme.dart';
 
 /// A full-surface welcome overlay shown on first launch. [onDismiss] fires when
 /// the user taps "Start using axiotask" (the shell then persists onboardingSeen).
@@ -23,6 +25,13 @@ class OnboardingIntro extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    // Match the composer's presentation condition: coarse pointers open it
+    // from the FAB, while a fine pointer has the visible inline field. Width
+    // does not decide — a narrow desktop still has quick-add (#216).
+    final captureInstruction = coarsePointerPlatform(theme.platform)
+        ? 'Tap + to add a task. End the title with “tomorrow” to schedule it.'
+        : 'Capture a task in the quick-add field at the top. End the title '
+              'with “tomorrow” to schedule it.';
 
     // A scrim over the whole app so the welcome reads as a modal moment. The
     // barrier is inert (no dismiss-on-tap): the intro is left only via its
@@ -65,9 +74,7 @@ class OnboardingIntro extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Capture a task in the quick-add field at the top. End the '
-                          'text with a date — like “tomorrow” or 2026-08-03 — and '
-                          'axiotask schedules it for you automatically.',
+                          captureInstruction,
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: colors.onSurfaceVariant,
                           ),

@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.11" date="2026-09-13">
+    <release version="1.4.12" date="2026-09-13">
       <description>
         <p>
-          Read-only sync now clearly says that local edits remain on this
-          device, and successful downloads no longer imply uploads.
+          First-launch capture instructions now match the visible entry point:
+          the phone's + button or the desktop quick-add field.
         </p>
       </description>
     </release>
