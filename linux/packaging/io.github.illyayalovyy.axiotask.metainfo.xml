@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.14" date="2026-09-13">
+    <release version="1.4.15" date="2026-09-13">
       <description>
         <p>
-          First-launch capture instructions now match the visible entry point:
-          the phone's + button or the desktop quick-add field.
+          Read-only sync mode stays visible before downloads and after errors;
+          first-launch capture instructions match the visible entry point.
         </p>
       </description>
     </release>

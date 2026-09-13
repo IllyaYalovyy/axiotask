@@ -240,7 +240,7 @@ class _StatusRow extends StatelessWidget {
             ],
           ],
         ),
-        if (!pushEnabled && status.status == FooterStatus.synced) ...[
+        if (!pushEnabled && status.isAuthenticated) ...[
           const SizedBox(height: 4),
           TextButton.icon(
             key: const Key('auth-footer-read-only-settings'),

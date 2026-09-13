@@ -159,6 +159,62 @@ void main() {
     },
   );
 
+  for (final hasError in [false, true]) {
+    testWidgets(
+      'the live footer keeps read-only mode visible ${hasError ? 'after a sync error' : 'before its first download'}',
+      (tester) async {
+        // Upload mode is a persistent configuration fact, not the outcome of
+        // the last pull. This catches the old synced-only condition that hid
+        // the Settings route in both routine states.
+        final config = ConfigController(
+          path: File(p.join(tmp.path, 'config.json')),
+          initial: const AppConfig(),
+        );
+        final status = SyncStatus();
+        if (hasError) {
+          status.lastSynced = '2026-09-13T12:00:00Z';
+          status.lastError = 'Network unavailable';
+        }
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              configControllerProvider.overrideWithValue(config),
+              authSnapshotProvider.overrideWith(
+                (ref) => Stream.value(
+                  const AuthSnapshot(isAuthenticated: true, needsReauth: false),
+                ),
+              ),
+              syncStatusViewProvider.overrideWithValue(
+                SyncStatusView.of(status),
+              ),
+              syncRunEventsProvider.overrideWith((ref) => const Stream.empty()),
+            ],
+            child: MaterialApp(
+              theme: buildLightTheme(),
+              home: const Scaffold(
+                body: SizedBox(width: 280, child: SidebarAuthSyncFooter()),
+              ),
+            ),
+          ),
+        );
+        await settle(tester);
+
+        expect(find.text(hasError ? 'Sync error' : 'Ready'), findsOneWidget);
+        expect(find.text('Sync now'), findsOneWidget);
+        expect(
+          find.text('Read-only · edits stay on this device'),
+          findsOneWidget,
+          reason: 'a connected session must expose its upload mode',
+        );
+        expect(
+          find.byKey(const Key('auth-footer-read-only-settings')),
+          findsOneWidget,
+        );
+      },
+    );
+  }
+
   testWidgets('signed out, the footer offers Sign in and reads Offline', (
     tester,
   ) async {
