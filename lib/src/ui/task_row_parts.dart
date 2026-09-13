@@ -26,10 +26,10 @@ import 'theme.dart' show coarsePointerPlatform;
 /// no aim at all.
 const double kTouchMetaBand = 32;
 
-/// The height of ONE meta item's content — the meta text line. Every badge in
-/// the meta [Wrap] occupies exactly this, so the notes icon, the link badge and
-/// the date all sit on one optical line whether or not the band around them is
-/// taller (the touch date target).
+/// The minimum height of ONE meta item's content — the meta text line. Every
+/// badge in the meta [Wrap] is at least this tall, so the notes icon, the link
+/// badge and the date all sit on one optical line at the default text scale.
+/// Text-bearing items may grow for the user's effective text scaler.
 const double kMetaLineHeight = 20;
 
 /// The size of a meta-line icon: paired with the 14sp meta text, so the glyph
@@ -92,12 +92,13 @@ class LinkBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           // A finger gets the whole meta band as a target; the mouse keeps it
           // compact (F19 #198's 48dp audit — see [metaTouchTarget]). No padding
-          // of its own: every meta item is exactly one [kMetaLineHeight] text
-          // line, flush with the line's leading edge (#276).
+          // of its own: every meta item starts at one [kMetaLineHeight] text
+          // line, flush with the line's leading edge (#276), and text expands
+          // it when accessibility scaling needs more room (#320).
           child: metaTouchTarget(
             theme.platform,
-            SizedBox(
-              height: kMetaLineHeight,
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: kMetaLineHeight),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -170,8 +171,8 @@ class SubtaskProgress extends StatelessWidget {
       child: Semantics(
         label: '$done of $total subtasks complete',
         excludeSemantics: true,
-        child: SizedBox(
-          height: kMetaLineHeight,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: kMetaLineHeight),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -247,8 +248,8 @@ Widget touchTarget(TargetPlatform platform, Widget child) {
 /// by a few dp). The extra height below is pure hit area.
 Widget metaTouchTarget(TargetPlatform platform, Widget child) {
   if (!coarsePointerPlatform(platform)) return child;
-  return SizedBox(
-    height: kTouchMetaBand,
+  return ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: kTouchMetaBand),
     child: Align(
       alignment: AlignmentDirectional.topStart,
       widthFactor: 1,

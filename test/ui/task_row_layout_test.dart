@@ -17,6 +17,7 @@
 import 'package:axiotask/src/ui/task_row.dart';
 import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _clock = Clock.fixed(DateTime(2026, 6, 15, 12));
@@ -32,12 +33,13 @@ Future<void> _pumpRow(
   int subtaskTotal = 0,
   List<String>? picked,
   Size size = const Size(400, 600),
+  TextScaler textScaler = TextScaler.noScaling,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(platform: platform),
       home: MediaQuery(
-        data: MediaQueryData(size: size),
+        data: MediaQueryData(size: size, textScaler: textScaler),
         child: Scaffold(
           // Unbounded height, exactly as the list gives a row.
           body: Column(
@@ -57,6 +59,7 @@ Future<void> _pumpRow(
                   onToggle: () {},
                   onRename: (_) {},
                   onPickDate: picked == null ? null : () => picked.add(title),
+                  onOpenUrl: notes == null ? null : (_) {},
                 ),
               ),
             ],
@@ -78,6 +81,29 @@ Rect _dueLabel(WidgetTester tester) => tester.getRect(
       )
       .first,
 );
+
+/// The rendered paragraph must be at least as tall as its own painted glyphs.
+/// This catches a fixed-height ancestor clipping text without a RenderFlex
+/// exception, which was the #320 accessibility regression.
+void _expectTextFitsPaintedLine(WidgetTester tester, String text) {
+  final rich = find.descendant(
+    of: find.text(text),
+    matching: find.byType(RichText),
+  );
+  final paragraph = tester.renderObject<RenderParagraph>(rich);
+  final painter = TextPainter(
+    text: paragraph.text,
+    textDirection: paragraph.textDirection,
+    textScaler: paragraph.textScaler,
+    maxLines: paragraph.maxLines,
+  )..layout(maxWidth: paragraph.size.width);
+  addTearDown(painter.dispose);
+  expect(
+    paragraph.size.height,
+    greaterThanOrEqualTo(painter.height),
+    reason: '$text must have room for all of its enlarged glyphs',
+  );
+}
 
 void main() {
   for (final platform in [TargetPlatform.linux, TargetPlatform.android]) {
@@ -278,4 +304,39 @@ void main() {
     expect(row.contains(label.topLeft), isTrue);
     expect(row.contains(label.bottomRight - const Offset(1, 1)), isTrue);
   });
+
+  for (final platform in [TargetPlatform.linux, TargetPlatform.android]) {
+    for (final scale in [1.3, 2.0]) {
+      testWidgets(
+        'scaled due, progress, and link count fit on ${platform.name} at $scale×',
+        (tester) async {
+          final picked = <String>[];
+          await _pumpRow(
+            tester,
+            platform: platform,
+            due: null,
+            notes: 'https://one.example https://two.example',
+            subtaskDone: 2,
+            subtaskTotal: 5,
+            picked: picked,
+            textScaler: TextScaler.linear(scale),
+          );
+
+          expect(tester.takeException(), isNull);
+          for (final text in ['no date', '2/5', '+1']) {
+            _expectTextFitsPaintedLine(tester, text);
+          }
+          // The enlarged date remains a usable quick-date target, including on
+          // touch where its target formerly had a fixed 32dp height.
+          expect(
+            tester.getRect(find.byKey(const Key('row-due-segment'))).height,
+            greaterThanOrEqualTo(20 * scale),
+          );
+          await tester.tap(find.byKey(const Key('row-due-segment')));
+          await tester.pump(const Duration(milliseconds: 350));
+          expect(picked, ['buy milk']);
+        },
+      );
+    }
+  }
 }

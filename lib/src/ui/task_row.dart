@@ -1161,9 +1161,12 @@ class _TaskRowState extends State<TaskRow> {
       target: CommitTarget.due,
       child: child,
     );
-    // Always exactly one meta text line tall, so the date sits on the same
-    // optical line as the notes and link badges beside it (#276).
-    child = SizedBox(height: kMetaLineHeight, child: child);
+    // The default line stays 20dp tall, while enlarged text receives the
+    // height it paints at the effective text scaler (#320).
+    child = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: kMetaLineHeight),
+      child: child,
+    );
     if (widget.onPickDate == null) return child;
     // A touch pointer gets the whole meta band as its hit target (F19 #198 — a
     // finger can't reliably land on ~20dp of text; see [metaTouchTarget] for why
