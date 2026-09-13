@@ -188,6 +188,89 @@ void main() {
       );
     });
 
+    // #79: completion from the detail checklist used to discard its
+    // CompleteToken. With completed subtasks hidden, that made a mistaken
+    // checkbox tap remove the row with no immediate way to restore it. The
+    // rendered Undo must restore the same row on each supported platform.
+    for (final platform in [TargetPlatform.android, TargetPlatform.linux]) {
+      testWidgets(
+        'completing a hidden subtask by checkbox offers Undo on $platform',
+        (tester) async {
+          final fake = await pumpDetail(
+            tester,
+            taskId: 'P',
+            theme: ThemeData(platform: platform),
+            hideCompletedSubtasks: true,
+            initial: [
+              row('P', 'parent'),
+              row('C1', 'call the venue', parent: 'P'),
+            ],
+          );
+
+          await tester.tap(
+            find.descendant(
+              of: find.byKey(const ValueKey('C1')),
+              matching: find.byType(Checkbox),
+            ),
+          );
+          await settleDetail(tester);
+
+          expect(
+            fake.tasks.firstWhere((t) => t.task.id == 'C1').task.status,
+            TaskStatus.completed,
+          );
+          expect(find.text('call the venue'), findsNothing);
+          expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
+
+          await tester.tap(find.widgetWithText(TextButton, 'Undo'));
+          await settleDetail(tester);
+
+          expect(
+            fake.tasks.firstWhere((t) => t.task.id == 'C1').task.status,
+            TaskStatus.needsAction,
+          );
+          expect(find.text('call the venue'), findsOneWidget);
+        },
+      );
+    }
+
+    testWidgets('completing a hidden subtask by Android swipe offers Undo', (
+      tester,
+    ) async {
+      final fake = await pumpDetail(
+        tester,
+        taskId: 'P',
+        theme: ThemeData(platform: TargetPlatform.android),
+        hideCompletedSubtasks: true,
+        initial: [
+          row('P', 'parent'),
+          row('C1', 'call the venue', parent: 'P'),
+        ],
+      );
+
+      await tester.dragFrom(
+        tester.getCenter(find.text('call the venue')),
+        const Offset(160, 0),
+      );
+      await settleDetail(tester);
+
+      expect(
+        fake.tasks.firstWhere((t) => t.task.id == 'C1').task.status,
+        TaskStatus.completed,
+      );
+      expect(find.text('call the venue'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Undo'));
+      await settleDetail(tester);
+
+      expect(
+        fake.tasks.firstWhere((t) => t.task.id == 'C1').task.status,
+        TaskStatus.needsAction,
+      );
+      expect(find.text('call the venue'), findsOneWidget);
+    });
+
     testWidgets('tapping a subtask title opens its own panel', (tester) async {
       final opened = <String>[];
       await pumpDetail(

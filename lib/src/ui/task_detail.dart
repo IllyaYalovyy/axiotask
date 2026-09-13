@@ -526,6 +526,23 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     widget.onOpenTask(token.newRootId);
   }
 
+  /// Complete a checklist row with the same short-lived recovery surface as a
+  /// main-list row. A reopen is deliberately silent: only a completion can
+  /// make an item disappear while completed subtasks are hidden.
+  Future<void> _toggleSubtask(StoredTask stored) async {
+    _haptics.tick();
+    final commands = ref.read(commandsProvider);
+    final token = await commands.toggleComplete(stored.task.id);
+    if (!mounted || !token.wasCompleting) return;
+    ref
+        .read(toastControllerProvider)
+        .showUndo(
+          'Completed "${stored.task.title}"'
+          '${cascadeSuffix(token.cascadedReopenIds.length)}',
+          () => commands.undoToggleComplete(token),
+        );
+  }
+
   @override
   Widget build(BuildContext context) {
     final all =
@@ -589,12 +606,7 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
     // (#309) and no menu of its own, and an affordance that does nothing must
     // not render.
     final subtaskActions = TaskRowActions(
-      toggle: (st) {
-        // The same tick a top-level checkbox gets: a subtask is still a box the
-        // user tapped (#257).
-        _haptics.tick();
-        ref.read(commandsProvider).toggleComplete(st.task.id);
-      },
+      toggle: (st) => unawaited(_toggleSubtask(st)),
       open: (_, st) => _navigate(() => widget.onOpenTask(st.task.id)),
       rename: (id, title) => ref.read(commandsProvider).renameTask(id, title),
       setDue: (id, move) => _quickDue(id, move),
