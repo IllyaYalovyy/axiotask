@@ -194,17 +194,19 @@ void main() {
       final drawerSidebar = find.byKey(const Key('sidebar-lists-reorderable'));
       expect(support, findsOneWidget);
       expect(
-        tester.getTopLeft(support).dy,
-        lessThan(
+        tester.getCenter(support).dy,
+        closeTo(
           tester
-              .getTopLeft(
+              .getCenter(
                 find.descendant(
                   of: drawerSidebar,
-                  matching: find.text('Focus'),
+                  matching: find.byKey(const Key('open-properties')),
                 ),
               )
               .dy,
+          1,
         ),
+        reason: 'Support and Properties share the drawer utility row',
       );
 
       await tester.tap(support);

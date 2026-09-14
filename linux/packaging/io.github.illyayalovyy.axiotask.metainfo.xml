@@ -72,11 +72,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
-    <release version="1.4.16" date="2026-09-13">
+    <release version="1.4.17" date="2026-09-13">
       <description>
         <p>
-          Support axiotask is now the first entry in the main menu, with a
-          direct link to GitHub Sponsors.
+          Support axiotask now sits beside Properties in the sidebar footer,
+          with a direct link to GitHub Sponsors.
         </p>
       </description>
     </release>

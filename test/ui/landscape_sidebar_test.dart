@@ -190,7 +190,7 @@ void main() {
     });
 
     testWidgets(
-      'the expanded sidebar puts Support first and keeps every destination reachable',
+      'the expanded sidebar keeps every destination and footer utility reachable',
       (tester) async {
         final store = await pumpShell(
           tester,
@@ -203,13 +203,11 @@ void main() {
         expect(sidebar, findsOneWidget);
         expect(find.byTooltip('Open navigation menu'), findsNothing);
 
-        // Support is the first action at rest, before the smart views.
-        expect(reachable('Support axiotask'), findsOneWidget);
+        // Smart views begin navigation; Support is in the bottom utility row.
         expect(reachable('Focus'), findsOneWidget);
 
-        // The new two-line support row can move lower destinations below a
-        // short landscape viewport, but the one scroll surface keeps them
-        // reachable.
+        // The footer can move lower destinations below a short landscape
+        // viewport, but the one scroll surface keeps them reachable.
         await scrollSidebar(tester, -400);
         for (final label in ['All Tasks', 'Lists', 'E2E-Test']) {
           expect(
@@ -228,6 +226,16 @@ void main() {
           findsOneWidget,
           reason: 'the add-list affordance must not be dropped either',
         );
+        expect(
+          find
+              .descendant(
+                of: sidebar,
+                matching: find.byKey(const Key('support-axiotask')),
+              )
+              .hitTestable(),
+          findsOneWidget,
+          reason: 'the bottom Support utility remains reachable by scrolling',
+        );
 
         // …and they are real destinations: tapping the list navigates to it.
         await tester.tap(reachable('E2E-Test'));
@@ -238,8 +246,8 @@ void main() {
     );
 
     testWidgets(
-      'at a 1.3 system text scale nothing is dropped — Support stays at rest '
-      'and the rest remains reachable by scrolling',
+      'at a 1.3 system text scale nothing is dropped and the footer utilities '
+      'remain reachable by scrolling',
       (tester) async {
         // The non-happy path: a larger system font inflates the footer, which is
         // exactly what squeezed the navigation off the screen.
@@ -250,8 +258,6 @@ void main() {
           textScaleFactor: 1.3,
         );
 
-        expect(reachable('Support axiotask'), findsOneWidget);
-
         // Smart views, lists, and footer may scroll out of view when space is
         // this tight — but they must be reachable, not lost.
         await scrollSidebar(tester, -200);
@@ -260,6 +266,15 @@ void main() {
         expect(reachable('E2E-Test'), findsOneWidget);
         expect(reachable('Sync now'), findsOneWidget);
         expect(reachable('Properties'), findsOneWidget);
+        expect(
+          find
+              .descendant(
+                of: sidebar,
+                matching: find.byKey(const Key('support-axiotask')),
+              )
+              .hitTestable(),
+          findsOneWidget,
+        );
         expect(tester.takeException(), isNull);
       },
     );

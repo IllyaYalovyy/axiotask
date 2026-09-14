@@ -113,6 +113,9 @@ Widget _shellAt(
             onDeleteList: (_) {},
             onToggleExclude: (_) {},
             onReorderLists: (_) {},
+            onOpenSponsors: () {},
+            onOpenProperties: () {},
+            onToggleTheme: () {},
           ),
           destinations: [
             for (final v in SmartView.values)

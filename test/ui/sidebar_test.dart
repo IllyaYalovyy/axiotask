@@ -115,7 +115,7 @@ void main() {
   });
 
   testWidgets(
-    'empty dark workspace puts Support axiotask before Focus with a touch target',
+    'empty dark workspace puts Support axiotask beside Properties with a touch target',
     (tester) async {
       tester.platformDispatcher.textScaleFactorTestValue = 1.3;
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
@@ -134,6 +134,9 @@ void main() {
               onDeleteList: (_) {},
               onToggleExclude: (_) {},
               onReorderLists: (_) {},
+              onOpenSponsors: () {},
+              onOpenProperties: () {},
+              onToggleTheme: () {},
             ),
           ),
         ),
@@ -143,21 +146,22 @@ void main() {
       final focus = find.text('Focus');
       expect(support, findsOneWidget);
       expect(focus, findsOneWidget);
+      final properties = find.byKey(const Key('open-properties'));
+      expect(properties, findsOneWidget);
       expect(
-        tester.getTopLeft(support).dy,
-        lessThan(tester.getTopLeft(focus).dy),
-        reason: 'the donation action is the first navigation entry',
+        tester.getCenter(support).dy,
+        closeTo(tester.getCenter(properties).dy, 1),
+        reason: 'Support and Properties share the bottom utility row',
+      );
+      expect(
+        tester.getCenter(support).dx,
+        greaterThan(tester.getCenter(properties).dx),
+        reason: 'the compact heart sits beside Properties, not in navigation',
       );
       expect(tester.getSize(support).height, greaterThanOrEqualTo(48));
-      expect(find.text('Donate via GitHub Sponsors'), findsOneWidget);
-      final heart = find.byIcon(Icons.favorite_outline);
-      final icon = tester.widget<Icon>(heart);
-      final color = icon.color!;
-      final surface = Theme.of(tester.element(heart)).colorScheme.surface;
-      final contrast =
-          (color.computeLuminance() + 0.05) /
-          (surface.computeLuminance() + 0.05);
-      expect(contrast, greaterThanOrEqualTo(3.0));
+      expect(find.text('Donate via GitHub Sponsors'), findsNothing);
+      expect(find.byTooltip('Support axiotask'), findsOneWidget);
+      expect(find.bySemanticsLabel('Support axiotask'), findsOneWidget);
     },
   );
 

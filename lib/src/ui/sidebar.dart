@@ -120,13 +120,14 @@ class Sidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // The pinned-when-there-is-room bottom cluster: the auth/sync footer and the
-    // Properties/theme row.
+    // Properties/support/theme row.
     final bottom = <Widget>[
       if (footer != null) ...[const Divider(height: 1), footer!],
       if (onOpenProperties != null) ...[
         const Divider(height: 1),
         _ChromeRow(
           onOpenProperties: onOpenProperties!,
+          onOpenSponsors: onOpenSponsors,
           onToggleTheme: onToggleTheme,
           isDark: isDark,
         ),
@@ -159,7 +160,6 @@ class Sidebar extends StatelessWidget {
                 counts: counts,
                 attentionCount: attentionCount,
                 hasLists: lists.isNotEmpty,
-                onOpenSponsors: onOpenSponsors,
                 onSelectView: onSelectView,
                 onCreateList: () => _createList(context),
               ),
@@ -257,17 +257,19 @@ class Sidebar extends StatelessWidget {
   }
 }
 
-/// The chrome row at the very bottom: the Properties launcher and the
-/// sun/moon theme toggle (the reference's sidebar footer row). NO Fresh-sync
-/// here — that lives only inside Properties (destructive, behind a confirm).
+/// The chrome row at the very bottom: Properties, Support axiotask, and the
+/// sun/moon theme toggle. NO Fresh-sync here — that lives only inside
+/// Properties (destructive, behind a confirm).
 class _ChromeRow extends StatelessWidget {
   const _ChromeRow({
     required this.onOpenProperties,
+    required this.onOpenSponsors,
     required this.onToggleTheme,
     required this.isDark,
   });
 
   final VoidCallback onOpenProperties;
+  final VoidCallback? onOpenSponsors;
   final VoidCallback? onToggleTheme;
   final bool isDark;
 
@@ -285,6 +287,22 @@ class _ChromeRow extends StatelessWidget {
               label: const Align(
                 alignment: Alignment.centerLeft,
                 child: Text('Properties'),
+              ),
+            ),
+          ),
+          Semantics(
+            label: 'Support axiotask',
+            button: true,
+            onTap: onOpenSponsors,
+            child: Tooltip(
+              message: 'Support axiotask',
+              excludeFromSemantics: true,
+              child: ExcludeSemantics(
+                child: IconButton(
+                  key: const Key('support-axiotask'),
+                  icon: const Icon(Icons.favorite_outline, size: 18),
+                  onPressed: onOpenSponsors,
+                ),
               ),
             ),
           ),
@@ -312,7 +330,6 @@ class _Header extends StatelessWidget {
     required this.counts,
     required this.attentionCount,
     required this.hasLists,
-    required this.onOpenSponsors,
     required this.onSelectView,
     required this.onCreateList,
   });
@@ -321,7 +338,6 @@ class _Header extends StatelessWidget {
   final Map<String, int> counts;
   final int attentionCount;
   final bool hasLists;
-  final VoidCallback? onOpenSponsors;
   final ValueChanged<String> onSelectView;
   final VoidCallback onCreateList;
 
@@ -331,7 +347,6 @@ class _Header extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SupportRow(onTap: onOpenSponsors),
         for (final v in SmartView.values)
           _NavRow(
             icon: v.icon,
@@ -389,61 +404,6 @@ class _Header extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-/// The first main-menu entry. It deliberately is not a selectable task view:
-/// opening the external link leaves the active view unchanged.
-class _SupportRow extends StatelessWidget {
-  const _SupportRow({required this.onTap});
-
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final content = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Row(
-        children: [
-          Icon(Icons.favorite_outline, size: 20, color: colors.primary),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Support axiotask',
-                  style: TextStyle(color: colors.onSurface),
-                ),
-                Text(
-                  'Donate via GitHub Sponsors',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Icon(Icons.open_in_new, size: 18, color: colors.onSurfaceVariant),
-        ],
-      ),
-    );
-    return Padding(
-      key: const Key('support-axiotask'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: onTap == null
-            ? content
-            : StateLayer(
-                borderRadius: BorderRadius.circular(16),
-                onTap: onTap!,
-                child: content,
-              ),
-      ),
     );
   }
 }
