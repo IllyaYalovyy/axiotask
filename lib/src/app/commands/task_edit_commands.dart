@@ -26,6 +26,7 @@ class TaskEditCommands extends CommandUnit {
     required String listId,
     String? parentId,
     required String title,
+    String? notes,
     String? due,
   }) async {
     if (parentId != null) {
@@ -43,6 +44,7 @@ class TaskEditCommands extends CommandUnit {
         parent: parentId,
         position: nextLocalPosition(),
         title: title,
+        notes: notes?.isEmpty ?? true ? null : notes,
         status: TaskStatus.needsAction,
         due: due == null ? null : normalizeDue(due),
         updated: now,

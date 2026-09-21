@@ -21,6 +21,10 @@
 import 'package:flutter/foundation.dart';
 
 class ComposerDraft extends ChangeNotifier {
+  bool _detailsExpanded = false;
+
+  /// Whether the optional notes field is visible for this draft.
+  bool get detailsExpanded => _detailsExpanded;
   String? _pickedDue;
 
   /// A date set EXPLICITLY on the draft — the composer's date button or its
@@ -67,6 +71,12 @@ class ComposerDraft extends ChangeNotifier {
     notifyListeners();
   }
 
+  void showDetails() {
+    if (_detailsExpanded) return;
+    _detailsExpanded = true;
+    notifyListeners();
+  }
+
   /// The drafted title has left the composer — it became a task, or a run of
   /// tasks through the paste split. The phrase-silence belonged to that text and
   /// goes with it; the AIM is what the user set for the adds that FOLLOW and
@@ -76,6 +86,11 @@ class ComposerDraft extends ChangeNotifier {
   /// whose title just went away, even when the aim itself did not move.
   void titleConsumed() {
     _dateIgnoredFor = '';
+    notifyListeners();
+  }
+
+  void detailsConsumed() {
+    _detailsExpanded = false;
     notifyListeners();
   }
 

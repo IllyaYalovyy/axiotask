@@ -63,9 +63,15 @@ abstract class ComposerController implements Listenable {
   /// The single text field every composer surface attaches to.
   TextEditingController get text;
 
+  TextEditingController get notes;
+
+  FocusNode get notesFocusNode;
+
   /// The draft AIM — the picked due date, the silenced date phrase, and the
   /// destination list.
   ComposerDraft get draft;
+
+  void showDetails();
 
   /// The view the composer is currently aimed at.
   String get viewId;
@@ -190,6 +196,14 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
   final TextEditingController text = TextEditingController();
 
   @override
+  final TextEditingController notes = TextEditingController();
+
+  @override
+  final FocusNode notesFocusNode = FocusNode();
+
+  Future<StoredTask?>? _creating;
+
+  @override
   final ComposerDraft draft = ComposerDraft();
 
   @override
@@ -269,6 +283,8 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     draft.removeListener(_notifier.notify);
     _notifier.dispose();
     text.dispose();
+    notes.dispose();
+    notesFocusNode.dispose();
     draft.dispose();
     // The FocusNode is owned by quickAddFocusProvider (app-wide) — not disposed
     // here.
@@ -282,6 +298,14 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
 
   @override
   void dismissPreview() => draft.keepAsText(text.text);
+
+  @override
+  void showDetails() {
+    draft.showDetails();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) notesFocusNode.requestFocus();
+    });
+  }
 
   @override
   void setDue(DateMove move) {
@@ -317,9 +341,16 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
   /// the field. Returns the created task, or null when there is nothing to
   /// create (empty draft, or no list to create in). Shared by the Enter/+
   /// submit and the app-backgrounded flush (#183).
-  Future<StoredTask?> _createFromDraft() async {
+  Future<StoredTask?> _createFromDraft() {
+    final active = _creating;
+    if (active != null) return active;
+    return _creating = _createDraftOnce();
+  }
+
+  Future<StoredTask?> _createDraftOnce() async {
     final title = text.text.trim();
     if (title.isEmpty) return null; // never create an empty task
+    final draftNotes = notes.text;
 
     // Resolve the date from the current input BEFORE any await (the field is
     // only cleared after the create lands).
@@ -334,16 +365,28 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     final target = targetListIn(_lists);
     if (target == null) return null; // no list to create in
 
-    final stored = await ref
-        .read(commandsProvider)
-        .createTask(listId: target, title: title, due: due);
-    if (!mounted) return stored;
-    ref.read(newestTaskProvider.notifier).pin(stored.task.id);
-    text.clear();
-    // The title became a task; the AIM — the picked date and destination — is
-    // what the user set for the adds that FOLLOW, and stays (#264).
-    draft.titleConsumed();
-    return stored;
+    try {
+      final stored = await ref
+          .read(commandsProvider)
+          .createTask(
+            listId: target,
+            title: title,
+            notes: draftNotes,
+            due: due,
+          );
+      if (!mounted) return stored;
+      ref.read(newestTaskProvider.notifier).pin(stored.task.id);
+      text.clear();
+      notes.clear();
+      draft.titleConsumed();
+      draft.detailsConsumed();
+      return stored;
+    } catch (error) {
+      if (mounted) ref.read(toastControllerProvider).showError('$error');
+      return null;
+    } finally {
+      _creating = null;
+    }
   }
 
   /// The quick-add's entry in the pending-edits registry — commit the draft on
@@ -659,6 +702,10 @@ class ComposerBar extends ConsumerWidget {
       listenable: controller,
       builder: (context, _) => QuickAddBar(
         controller: controller.text,
+        notesController: controller.notes,
+        notesFocusNode: controller.notesFocusNode,
+        detailsExpanded: controller.draft.detailsExpanded,
+        onAddDetails: controller.showDetails,
         focusNode: focus,
         dateIgnoredFor: controller.draft.dateIgnoredFor,
         pickedDue: controller.draft.pickedDue,

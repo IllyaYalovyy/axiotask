@@ -191,6 +191,23 @@ void main() {
       expect(t.due, '2026-06-15T00:00:00.000Z');
     });
 
+    test('stores initial multiline notes in the create write', () async {
+      final store = await freshStore();
+      final commands = Commands(store, newId: () => 'T1');
+      await seedList(store, 'L1');
+
+      await commands.createTask(
+        listId: 'L1',
+        title: 'Plan launch',
+        notes: 'First paragraph.\n\nSecond paragraph.',
+      );
+
+      expect(
+        (await store.listTasks('L1')).single.task.notes,
+        'First paragraph.\n\nSecond paragraph.',
+      );
+    });
+
     test('no list to create in is a no-op guarded by the caller', () async {
       // createTask itself trusts its listId; the empty/absent-target guard lives
       // in the quick-add UI (covered in the widget suite).

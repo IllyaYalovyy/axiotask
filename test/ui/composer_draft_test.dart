@@ -300,6 +300,40 @@ void main() {
   });
 
   group('desktop — the always-visible bar', () {
+    testWidgets('Add details creates one task with literal multiline notes', (
+      tester,
+    ) async {
+      final fake = await pumpList(
+        tester,
+        initial: const [],
+        lists: [list('L1', 'My Tasks'), list('L2', 'Work')],
+        platform: TargetPlatform.linux,
+      );
+
+      await tester.enterText(_field, 'Prepare launch');
+      await tester.tap(find.byKey(const Key('quick-add-details')));
+      await settleList(tester);
+      final notes = find.byKey(const Key('quick-add-notes'));
+      expect(
+        notes,
+        findsOneWidget,
+        reason: 'details are visible without a menu',
+      );
+      await tester.enterText(notes, 'First paragraph.\n\nSecond paragraph.');
+      await tester.tap(find.byKey(const Key('quick-add-list-picker')));
+      await settleList(tester);
+      await tester.tap(find.byKey(const Key('quick-add-list-L2')));
+      await settleList(tester);
+      await tester.tap(find.byKey(_submit));
+      await settleList(tester);
+
+      final created = taskNamed(fake, 'Prepare launch');
+      expect(created.listId, 'L2');
+      expect(created.task.notes, 'First paragraph.\n\nSecond paragraph.');
+      expect(fake.tasks, hasLength(1), reason: 'newlines are notes, not tasks');
+      expect(find.byKey(const Key('quick-add-notes')), findsNothing);
+    });
+
     testWidgets('a date picked in the bar survives the submit that used it '
         '(#264)', (tester) async {
       final fake = await pumpList(

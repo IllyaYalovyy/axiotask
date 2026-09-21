@@ -97,6 +97,7 @@ class FakeCommands implements Commands {
     required String listId,
     String? parentId,
     required String title,
+    String? notes,
     String? due,
   }) async {
     final t = StoredTask(
@@ -109,6 +110,7 @@ class FakeCommands implements Commands {
         // creates undefined (#302).
         position: nextLocalPosition(),
         title: title,
+        notes: notes?.isEmpty ?? true ? null : notes,
         status: TaskStatus.needsAction,
         due: due == null ? null : normalizeDue(due),
         updated: 't',

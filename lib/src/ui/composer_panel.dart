@@ -97,6 +97,10 @@ class TopComposerPanel extends ConsumerWidget {
           children: [
             QuickAddBar(
               controller: controller.text,
+              notesController: controller.notes,
+              notesFocusNode: controller.notesFocusNode,
+              detailsExpanded: controller.draft.detailsExpanded,
+              onAddDetails: controller.showDetails,
               focusNode: focusNode,
               dateIgnoredFor: controller.draft.dateIgnoredFor,
               pickedDue: controller.draft.pickedDue,

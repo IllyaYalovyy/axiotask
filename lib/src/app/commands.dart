@@ -88,12 +88,14 @@ class Commands {
     required String listId,
     String? parentId,
     required String title,
+    String? notes,
     String? due,
   }) async {
     final created = await _edit.createTask(
       listId: listId,
       parentId: parentId,
       title: title,
+      notes: notes,
       due: due,
     );
     _notifyMutation();
