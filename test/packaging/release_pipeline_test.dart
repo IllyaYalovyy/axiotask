@@ -294,6 +294,25 @@ void main() {
       );
     });
 
+    test('Flatpak export has the host SVG loader in both CI workflows', () {
+      for (final path in [
+        _workflowPath,
+        '.github/workflows/distribution.yml',
+      ]) {
+        final workflow = File(path)
+            .readAsLinesSync()
+            .where((line) => !line.trimLeft().startsWith('#'))
+            .join('\n');
+        expect(
+          workflow,
+          contains('librsvg2-common'),
+          reason:
+              '$path must install the SVG loader: flatpak build-export validates '
+              'the scalable icon on the host, even when the runtime has a loader',
+        );
+      }
+    });
+
     test('a missing signing secret fails the release instead of shipping a '
         'debug-signed APK', () {
       expect(

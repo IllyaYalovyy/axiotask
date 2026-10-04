@@ -24,7 +24,7 @@ jobs:
       - name: Install packaging tools and runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev rpm appstream desktop-file-utils python3 flatpak
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev rpm appstream desktop-file-utils python3 flatpak librsvg2-common
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
       - run: flutter pub get --enforce-lockfile
