@@ -1,11 +1,12 @@
 # The release pipeline (#300): `git tag v1.2.3 && git push --tags` is the whole
 # publishing procedure. Everything below happens automatically and produces one
-# GitHub release carrying three installable artifacts and their checksums.
+# GitHub release carrying four installable artifacts and their checksums.
 #
 #   axiotask-<version>-<build>.x86_64.rpm   Fedora and friends (tool/build_rpm.sh)
 #   axiotask_<version>-<build>_amd64.deb    Debian/Ubuntu      (tool/build_deb.sh)
+#   axiotask-<version>.flatpak              Linux sandbox
 #   axiotask-<version>.apk                  Android sideload / Obtainium
-#   SHA256SUMS                              checksums for all three
+#   SHA256SUMS                              checksums for all four
 #
 # Nothing here is reversible: the tag, the assets and their checksums are public
 # the moment this finishes, and package managers may already have fetched them.
@@ -41,7 +42,7 @@ permissions:
 jobs:
   release:
     name: build and publish the release assets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +61,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.47.5'
           cache: true
 
       - name: Record the toolchain this release was built with
@@ -78,9 +80,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config libgtk-3-dev \
-            rpm lintian appstream desktop-file-utils python3
+            rpm lintian appstream desktop-file-utils python3 flatpak
 
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
 
       # The desktop OAuth client, compiled into the Linux build so an RPM/DEB
       # install can sign in out of the box (#229). Written through the
@@ -110,6 +112,14 @@ jobs:
       # be a second, differently-verified binary in the same release.
       - name: Package the RPM
         run: bash tool/build_rpm.sh --bundle build/linux/x64/release/bundle
+
+      - name: Install the pinned Flatpak runtime and SDK
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+      - name: Package and verify the Flatpak
+        run: bash tool/build_flatpak.sh --bundle build/linux/x64/release/bundle
 
       - name: Package the DEB
         run: bash tool/build_deb.sh --bundle build/linux/x64/release/bundle
@@ -175,8 +185,8 @@ jobs:
       - name: Verify the APK is NOT debug-signed
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
-          "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee certs.txt
-          if grep -qi 'CN=Android Debug' certs.txt; then
+          "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee dist/ANDROID_SIGNING_CERT.txt
+          if grep -qi 'CN=Android Debug' dist/ANDROID_SIGNING_CERT.txt; then
             echo "::error::the APK was signed with the debug key — the ANDROID_KEYSTORE_* secrets did not reach the build"
             exit 1
           fi
@@ -184,8 +194,21 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum axiotask*.rpm axiotask*.deb axiotask*.apk > SHA256SUMS
+          sha256sum axiotask*.rpm axiotask*.deb axiotask*.flatpak axiotask*.apk ANDROID_SIGNING_CERT.txt > SHA256SUMS
           cat SHA256SUMS
+
+      - name: Retain verified distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-${{ github.ref_name }}
+          path: |
+            dist/axiotask*.rpm
+            dist/axiotask*.deb
+            dist/axiotask*.flatpak
+            dist/axiotask*.apk
+            dist/SHA256SUMS
+            dist/ANDROID_SIGNING_CERT.txt
+          if-no-files-found: error
 
       - name: Publish the release
         uses: softprops/action-gh-release@v2
@@ -193,7 +216,9 @@ jobs:
           files: |
             dist/axiotask*.rpm
             dist/axiotask*.deb
+            dist/axiotask*.flatpak
             dist/axiotask*.apk
             dist/SHA256SUMS
+            dist/ANDROID_SIGNING_CERT.txt
           generate_release_notes: true
           fail_on_unmatched_files: true

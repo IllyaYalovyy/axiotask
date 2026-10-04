@@ -1,0 +1,60 @@
+name: distribution
+
+on:
+  push:
+    branches: [main, flutter]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: RPM and Flatpak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - name: Install packaging tools and runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config libgtk-3-dev rpm appstream desktop-file-utils python3 flatpak
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+      - run: flutter pub get --enforce-lockfile
+      - name: Configure desktop OAuth when available
+        env:
+          CLIENT_ID: ${{ secrets.AXIOTASK_GOOGLE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.AXIOTASK_GOOGLE_CLIENT_SECRET }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ]; then
+            jq -n --arg id "$CLIENT_ID" --arg secret "$CLIENT_SECRET" \
+              '{AXIOTASK_GOOGLE_CLIENT_ID: $id, AXIOTASK_GOOGLE_CLIENT_SECRET: $secret}' > tool/oauth_credentials.json
+          fi
+      - name: Build Linux release
+        run: |
+          source tool/oauth_defines.sh
+          oauth_define_args
+          flutter build linux --release "${OAUTH_DEFINES[@]}"
+      - name: Package RPM
+        run: bash tool/build_rpm.sh --bundle build/linux/x64/release/bundle
+      - name: Package and verify Flatpak
+        run: bash tool/build_flatpak.sh --bundle build/linux/x64/release/bundle
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum axiotask*.rpm axiotask*.flatpak > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-distribution
+          path: |
+            dist/*.rpm
+            dist/*.flatpak
+            dist/SHA256SUMS
+          if-no-files-found: error

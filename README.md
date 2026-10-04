@@ -12,7 +12,7 @@ contracts, and the sync semantics oracle until parity is reached.
 
 ## Install
 
-Every `v*` tag publishes a GitHub release with three installable artifacts and
+Every `v*` tag publishes a GitHub release with four installable artifacts and
 their checksums:
 https://github.com/IllyaYalovyy/axiotask/releases
 
@@ -20,6 +20,11 @@ https://github.com/IllyaYalovyy/axiotask/releases
 - **Debian / Ubuntu** — `sudo apt install ./axiotask_<version>_amd64.deb`
   (`apt install` of a local *file path* resolves the dependencies; `dpkg -i`
   leaves them unsatisfied). Ubuntu 24.04 / Debian 13 and newer.
+- **Flatpak (Linux x86_64)** — add Flathub for the GNOME runtime, then install
+  the downloaded bundle:
+  `flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`,
+  `flatpak install --user ./axiotask-<version>.flatpak`.
+  Launch with `flatpak run io.github.illyayalovyy.axiotask`.
 - **Android** — download `axiotask-<version>.apk` and open it (sideloading
   needs "install unknown apps" for your browser or file manager). For update
   notifications, add the repository to
@@ -163,7 +168,7 @@ Google Cloud project.
 
 Publishing is one command, and `.github/workflows/release.yml` does the rest —
 Linux release bundle, RPM, DEB (lintian + a real install in an `ubuntu:24.04`
-container), release-signed APK, `SHA256SUMS`, and a GitHub release with
+container), Flatpak (runtime dependency verification), release-signed APK, `SHA256SUMS`, and a GitHub release with
 generated notes:
 
 ```
@@ -186,7 +191,10 @@ than publish one. One-time operator setup:
 `ANDROID_KEYSTORE_KEY_ALIAS`, `ANDROID_KEYSTORE_KEY_PASSWORD` and
 `AXIOTASK_GOOGLE_CLIENT_ID` / `AXIOTASK_GOOGLE_CLIENT_SECRET` as repository
 secrets, plus the release certificate's SHA-1 registered on the Google Cloud
-project.
+project for Android package `com.axiotask.app`. Each release includes
+`ANDROID_SIGNING_CERT.txt` with the public certificate fingerprints. Keep a
+private backup of the keystore and passwords: future APK updates require the
+same signing key.
 
 The desktop entry (`linux/packaging/io.github.illyayalovyy.axiotask.desktop`)
 and the AppStream metainfo
@@ -258,3 +266,11 @@ Locally:
   migration plan are specified by RFC before implementation.
 
 See `CONTRIBUTING.md` for commit identity, versioning, and RFC rules.
+
+Linux CI packages are also available under Actions → distribution → Artifacts
+for pushes and pull requests. These builds use repository OAuth secrets when
+available; pull requests from forks require local OAuth configuration to sign in.
+The gate's `android-debug-apk` artifact is for development. Version tags publish
+the signed distribution APK. Build a Flatpak locally with
+`bash tool/build_flatpak.sh --bundle build/linux/x64/release/bundle` after
+installing `org.gnome.Platform//49` and `org.gnome.Sdk//49` from Flathub.

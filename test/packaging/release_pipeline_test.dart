@@ -15,7 +15,7 @@
 //   - A STALE SOFTWARE-CENTRE VERSION: the AppStream <release> list is what
 //     GNOME Software shows as "what's new". Releasing with the newest entry
 //     behind pubspec advertises the previous version's notes forever.
-//   - AN INCOMPLETE RELEASE: three assets (RPM, DEB, APK) plus SHA256SUMS. A
+//   - AN INCOMPLETE RELEASE: four assets (RPM, DEB, Flatpak, APK) plus SHA256SUMS. A
 //     dropped asset means a platform silently gets no release at all, and a
 //     missing checksum file leaves a sideloaded APK unverifiable.
 //   - A DEBUG-SIGNED "RELEASE" APK: Play Services authorization identifies the
@@ -25,7 +25,7 @@
 //     stay for local builds, but it must be LOUD.
 //   - A LEAKED SIGNING KEY: key.properties and any keystore must be ignored by
 //     git; committing one hands over the ability to ship a malicious update.
-//   - NO INSTALL INSTRUCTIONS: three assets nobody knows what to do with.
+//   - NO INSTALL INSTRUCTIONS: four assets nobody knows what to do with.
 //
 // Pure file reads plus the guard script run against a throwaway tree — no
 // clock, no network, no build.
@@ -187,6 +187,7 @@ void main() {
         'flutter build linux --release',
         'build_rpm.sh',
         'build_deb.sh',
+        'build_flatpak.sh',
         'flutter build apk --release',
       ]) {
         final at = wf.indexOf(build);
@@ -201,8 +202,12 @@ void main() {
       }
     });
 
-    test('builds both Linux packages from the ONE release bundle', () {
-      for (final script in ['build_rpm.sh', 'build_deb.sh']) {
+    test('builds all Linux packages from the ONE release bundle', () {
+      for (final script in [
+        'build_rpm.sh',
+        'build_deb.sh',
+        'build_flatpak.sh',
+      ]) {
         expect(
           wf,
           matches(RegExp('$script[^\n]*--bundle')),
@@ -268,14 +273,14 @@ void main() {
       );
     });
 
-    test('publishes exactly the three assets plus SHA256SUMS', () {
+    test('publishes all four assets plus SHA256SUMS', () {
       expect(
         wf,
         contains('softprops/action-gh-release'),
         reason: 'the ratified publishing action',
       );
       expect(wf, contains('SHA256SUMS'));
-      for (final ext in ['.rpm', '.deb', '.apk']) {
+      for (final ext in ['.rpm', '.deb', '.flatpak', '.apk']) {
         expect(
           wf,
           contains(ext),

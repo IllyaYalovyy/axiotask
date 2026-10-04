@@ -90,6 +90,10 @@ Widget _shellWithDetail(Size size, {ThemeData? theme}) => MediaQuery(
           onDeleteList: (_) {},
           onToggleExclude: (_) {},
           onReorderLists: (_) {},
+          onOpenSponsors: () {},
+          onOpenProperties: () {},
+          onToggleTheme: () {},
+          isDark: theme?.brightness == Brightness.dark,
         ),
         destinations: [
           for (final v in SmartView.values)
