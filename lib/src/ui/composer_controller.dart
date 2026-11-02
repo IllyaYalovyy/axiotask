@@ -344,7 +344,10 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
   Future<StoredTask?> _createFromDraft() {
     final active = _creating;
     if (active != null) return active;
-    return _creating = _createDraftOnce();
+    // Clear the in-flight marker even when an empty draft or missing list
+    // returns before the write. Otherwise that completed null future blocks
+    // every later submission for the lifetime of this composer.
+    return _creating = _createDraftOnce().whenComplete(() => _creating = null);
   }
 
   Future<StoredTask?> _createDraftOnce() async {
@@ -384,8 +387,6 @@ class _ComposerHostState extends ConsumerState<ComposerHost>
     } catch (error) {
       if (mounted) ref.read(toastControllerProvider).showError('$error');
       return null;
-    } finally {
-      _creating = null;
     }
   }
 
