@@ -6,6 +6,14 @@ You can keep working offline and see whether your changes have reached Google.
 
 Linux (Fedora GNOME) is the current focus. Android support is in development.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="test/goldens/linux/quick_capture_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="test/goldens/linux/quick_capture_light.png">
+  <img alt="Axiotask showing quick capture, smart views, and task details with synthetic tasks." src="test/goldens/linux/quick_capture_light.png">
+</picture>
+
+*Quick capture, smart views, and task details with synthetic demo data.*
+
 ## Build on Linux
 
 Install [Flutter 3.44.8](https://docs.flutter.dev/install/archive), add its `bin`
