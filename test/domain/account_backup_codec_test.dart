@@ -34,9 +34,9 @@ void main() {
   test(
     'validator rejects version, bounds, references, and deeper hierarchy',
     () {
-      final valid =
-          jsonDecode(codec.encode(_snapshot(), exportedAt: exportedAt))
-              as Map<String, Object?>;
+      final valid = jsonDecode(
+        codec.encode(_snapshot(), exportedAt: exportedAt),
+      ) as Map<String, Object?>;
 
       expect(
         () =>
@@ -118,9 +118,9 @@ void main() {
   });
 
   test('hostile credential and storage fields are rejected, not imported', () {
-    final valid =
-        jsonDecode(codec.encode(_snapshot(), exportedAt: exportedAt))
-            as Map<String, Object?>;
+    final valid = jsonDecode(
+      codec.encode(_snapshot(), exportedAt: exportedAt),
+    ) as Map<String, Object?>;
     for (final field in const <String>[
       'authorization',
       'refreshToken',

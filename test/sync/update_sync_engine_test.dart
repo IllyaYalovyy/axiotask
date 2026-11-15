@@ -31,74 +31,71 @@ void main() {
   const subject = AccountSubject('synthetic-update-sync-subject');
   final startedAt = DateTime.utc(2026, 8, 15, 14);
 
-  test(
-    'RUN-013 publishes complete task content before list title and never replays',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final harness = await _UpdateHarness.open(
-        remote: remote,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      final seeded = await harness.seedRemote(
-        listTitle: 'Original list',
-        taskTitle: 'Original task',
-        notes: 'Original notes',
-        due: TaskDate(2026, 8, 20),
-      );
+  test('RUN-013 publishes complete task content before list title and never replays', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Original list',
+      taskTitle: 'Original task',
+      notes: 'Original notes',
+      due: TaskDate(2026, 8, 20),
+    );
 
-      await harness.renameList(seeded.listId, 'Renamed list');
-      await harness.updateTask(
-        seeded.taskId,
-        title: 'Updated task',
-        notes: null,
-        status: TaskStatus.completed,
-        due: null,
-      );
-      final report = await harness.run();
-      final updateCalls = remote.calls
-          .where(
-            (call) =>
-                call.operation == FakeGoogleTasksMethod.patchTask ||
-                call.operation == FakeGoogleTasksMethod.renameTaskList,
-          )
-          .toList(growable: false);
+    await harness.renameList(seeded.listId, 'Renamed list');
+    await harness.updateTask(
+      seeded.taskId,
+      title: 'Updated task',
+      notes: null,
+      status: TaskStatus.completed,
+      due: null,
+    );
+    final report = await harness.run();
+    final updateCalls = remote.calls
+        .where(
+          (call) =>
+              call.operation == FakeGoogleTasksMethod.patchTask ||
+              call.operation == FakeGoogleTasksMethod.renameTaskList,
+        )
+        .toList(growable: false);
 
-      expect(report.outcome, SyncRunOutcome.succeeded);
-      expect(report.updateOperations, 2);
-      expect(updateCalls.map((call) => call.operation), <FakeGoogleTasksMethod>[
-        FakeGoogleTasksMethod.patchTask,
-        FakeGoogleTasksMethod.renameTaskList,
-      ]);
-      expect(updateCalls.first.body, <String, Object?>{
-        'title': 'Updated task',
-        'notes': null,
-        'status': 'completed',
-        'due': null,
-      });
-      expect(updateCalls.first.headers['if-match'], isNotEmpty);
-      expect(updateCalls.last.body, <String, Object?>{'title': 'Renamed list'});
-      expect(
-        (await DesiredStateDao(
-          harness.database,
-        ).readTask(harness.accountId, seeded.taskId))?.state,
-        DesiredStateLifecycle.confirmed,
-      );
-      expect(
-        (await DesiredStateDao(
-          harness.database,
-        ).readTaskList(harness.accountId, seeded.listId))?.state,
-        DesiredStateLifecycle.confirmed,
-      );
+    expect(report.outcome, SyncRunOutcome.succeeded);
+    expect(report.updateOperations, 2);
+    expect(updateCalls.map((call) => call.operation), <FakeGoogleTasksMethod>[
+      FakeGoogleTasksMethod.patchTask,
+      FakeGoogleTasksMethod.renameTaskList,
+    ]);
+    expect(updateCalls.first.body, <String, Object?>{
+      'title': 'Updated task',
+      'notes': null,
+      'status': 'completed',
+      'due': null,
+    });
+    expect(updateCalls.first.headers['if-match'], isNotEmpty);
+    expect(updateCalls.last.body, <String, Object?>{'title': 'Renamed list'});
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTask(harness.accountId, seeded.taskId))?.state,
+      DesiredStateLifecycle.confirmed,
+    );
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTaskList(harness.accountId, seeded.listId))?.state,
+      DesiredStateLifecycle.confirmed,
+    );
 
-      harness.clock.advance(const Duration(minutes: 1));
-      await harness.run();
-      expect(remote.callCount(FakeGoogleTasksMethod.patchTask), 1);
-      expect(remote.callCount(FakeGoogleTasksMethod.renameTaskList), 1);
-    },
-  );
+    harness.clock.advance(const Duration(minutes: 1));
+    await harness.run();
+    expect(remote.callCount(FakeGoogleTasksMethod.patchTask), 1);
+    expect(remote.callCount(FakeGoogleTasksMethod.renameTaskList), 1);
+  });
 
   test(
     'no-op task and list writes confirm without a remote mutation',
@@ -364,9 +361,8 @@ void main() {
       );
 
       expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final desired = await DesiredStateDao(
-        harness.database,
-      ).readTask(harness.accountId, seeded.taskId);
+      final desired = await DesiredStateDao(harness.database)
+          .readTask(harness.accountId, seeded.taskId);
       final projected = (await harness.snapshot()).tasks.single;
 
       expect(projected.title, 'Generation two');
@@ -521,9 +517,8 @@ void main() {
           }
         },
       );
-      final desiredBeforeRecovery = await DesiredStateDao(
-        harness.database,
-      ).readTask(harness.accountId, seeded.taskId);
+      final desiredBeforeRecovery = await DesiredStateDao(harness.database)
+          .readTask(harness.accountId, seeded.taskId);
 
       expect(failed.outcome, SyncRunOutcome.failed);
       expect(desiredBeforeRecovery?.state, DesiredStateLifecycle.inFlight);
@@ -948,9 +943,8 @@ void main() {
 
       final report = await harness.run();
       final projected = (await harness.snapshot()).tasks.single;
-      final desired = await DesiredStateDao(
-        harness.database,
-      ).readTask(harness.accountId, seeded.taskId);
+      final desired = await DesiredStateDao(harness.database)
+          .readTask(harness.accountId, seeded.taskId);
 
       expect(report.outcome, SyncRunOutcome.succeeded);
       expect(report.googleWonReplacements, 1);
@@ -1330,166 +1324,155 @@ void main() {
     },
   );
 
-  test(
-    'REC-004/P8 parent completion publishes Google-cascaded child state in the same run',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final harness = await _UpdateHarness.open(
-        remote: remote,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      final seeded = await harness.seedRemote(
-        listTitle: 'Parent completion list',
-        taskTitle: 'Open parent',
-      );
-      final child = await harness.seedTask(
-        seeded.listRemoteId,
-        title: 'Open child',
-        parentId: seeded.taskRemoteId,
-      );
-      await harness.run();
+  test('REC-004/P8 parent completion publishes Google-cascaded child state in the same run', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Parent completion list',
+      taskTitle: 'Open parent',
+    );
+    final child = await harness.seedTask(
+      seeded.listRemoteId,
+      title: 'Open child',
+      parentId: seeded.taskRemoteId,
+    );
+    await harness.run();
 
-      await harness.updateTask(
-        seeded.taskId,
-        title: 'Open parent',
-        notes: null,
-        status: TaskStatus.completed,
-        due: null,
-      );
-      final report = await harness.run();
-      final snapshot = await harness.snapshot();
-      final projectedChild = snapshot.tasks.singleWhere(
-        (task) => task.remoteId?.value == child.id.value,
-      );
+    await harness.updateTask(
+      seeded.taskId,
+      title: 'Open parent',
+      notes: null,
+      status: TaskStatus.completed,
+      due: null,
+    );
+    final report = await harness.run();
+    final snapshot = await harness.snapshot();
+    final projectedChild = snapshot.tasks.singleWhere(
+      (task) => task.remoteId?.value == child.id.value,
+    );
 
-      expect(report.outcome, SyncRunOutcome.succeeded);
-      expect(projectedChild.status, TaskStatus.completed);
-      expect(
-        remote.calls
-            .where((call) => call.operation == FakeGoogleTasksMethod.listTasks)
-            .length,
-        greaterThanOrEqualTo(2),
-        reason: 'the post-mutation read must observe Google cascade state',
-      );
-    },
-  );
+    expect(report.outcome, SyncRunOutcome.succeeded);
+    expect(projectedChild.status, TaskStatus.completed);
+    expect(
+      remote.calls
+          .where((call) => call.operation == FakeGoogleTasksMethod.listTasks)
+          .length,
+      greaterThanOrEqualTo(2),
+      reason: 'the post-mutation read must observe Google cascade state',
+    );
+  });
 
-  test(
-    'REC-011/REC-012 cross-list MOVE preserves a subtree and adopts canonical order',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final harness = await _UpdateHarness.open(
-        remote: remote,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      final seeded = await harness.seedRemote(
-        listTitle: 'Source',
-        taskTitle: 'Moving root',
-      );
-      final child = await harness.seedTask(
-        seeded.listRemoteId,
-        title: 'Moving child',
-        parentId: seeded.taskRemoteId,
-      );
-      final destination = switch (await remote.createTaskList(
-        const CreateTaskListOperation(title: 'Destination'),
-      )) {
-        CommittedMutation<RemoteTaskList>(:final value) => value,
-        _ => throw StateError('Synthetic destination setup failed.'),
-      };
-      final anchor = await harness.seedTask(destination.id, title: 'Anchor');
-      await harness.run();
-      final before = await harness.snapshot();
-      final destinationId = before.taskLists
-          .singleWhere((list) => list.remoteId?.value == destination.id.value)
-          .id;
-      final anchorId = before.tasks
-          .singleWhere((task) => task.remoteId?.value == anchor.id.value)
-          .id;
-      final childId = before.tasks
-          .singleWhere((task) => task.remoteId?.value == child.id.value)
-          .id;
+  test('REC-011/REC-012 cross-list MOVE preserves a subtree and adopts canonical order', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final harness = await _UpdateHarness.open(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final seeded = await harness.seedRemote(
+      listTitle: 'Source',
+      taskTitle: 'Moving root',
+    );
+    final child = await harness.seedTask(
+      seeded.listRemoteId,
+      title: 'Moving child',
+      parentId: seeded.taskRemoteId,
+    );
+    final destination = switch (await remote.createTaskList(
+      const CreateTaskListOperation(title: 'Destination'),
+    )) {
+      CommittedMutation<RemoteTaskList>(:final value) => value,
+      _ => throw StateError('Synthetic destination setup failed.'),
+    };
+    final anchor = await harness.seedTask(destination.id, title: 'Anchor');
+    await harness.run();
+    final before = await harness.snapshot();
+    final destinationId = before.taskLists
+        .singleWhere((list) => list.remoteId?.value == destination.id.value)
+        .id;
+    final anchorId = before.tasks
+        .singleWhere((task) => task.remoteId?.value == anchor.id.value)
+        .id;
+    final childId = before.tasks
+        .singleWhere((task) => task.remoteId?.value == child.id.value)
+        .id;
 
-      await harness.moveTask(
-        seeded.taskId,
-        destinationTaskListId: destinationId,
-        previousTaskId: anchorId,
-      );
-      await harness.updateTask(
-        seeded.taskId,
-        title: 'Moved and edited',
-        notes: 'Independent content facet',
-        status: TaskStatus.needsAction,
-        due: null,
-      );
-      final report = await harness.run();
-      final moveCall = remote.calls.lastWhere(
-        (call) => call.operation == FakeGoogleTasksMethod.moveTask,
-      );
-      final after = await harness.snapshot();
-      final root = after.tasks.singleWhere((task) => task.id == seeded.taskId);
-      final projectedChild = after.tasks.singleWhere(
-        (task) => task.id == childId,
-      );
+    await harness.moveTask(
+      seeded.taskId,
+      destinationTaskListId: destinationId,
+      previousTaskId: anchorId,
+    );
+    await harness.updateTask(
+      seeded.taskId,
+      title: 'Moved and edited',
+      notes: 'Independent content facet',
+      status: TaskStatus.needsAction,
+      due: null,
+    );
+    final report = await harness.run();
+    final moveCall = remote.calls.lastWhere(
+      (call) => call.operation == FakeGoogleTasksMethod.moveTask,
+    );
+    final after = await harness.snapshot();
+    final root = after.tasks.singleWhere((task) => task.id == seeded.taskId);
+    final projectedChild = after.tasks.singleWhere(
+      (task) => task.id == childId,
+    );
 
-      expect(report.outcome, SyncRunOutcome.succeeded);
-      expect(report.moveOperations, 1);
-      expect(report.updateOperations, 0);
-      expect(moveCall.query['destinationTasklist'], destination.id.value);
-      expect(moveCall.query['previous'], anchor.id.value);
-      expect(root.taskListId, destinationId);
-      expect(root.parentTaskId, isNull);
-      expect(root.title, 'Moved and edited');
-      expect(projectedChild.taskListId, destinationId);
-      expect(projectedChild.parentTaskId, seeded.taskId);
-      expect(
-        after.tasks.indexWhere((task) => task.id == anchorId),
-        lessThan(after.tasks.indexWhere((task) => task.id == seeded.taskId)),
-      );
-      expect(
-        (await DesiredStateDao(
-          harness.database,
-        ).readTask(harness.accountId, seeded.taskId))?.state,
-        DesiredStateLifecycle.pending,
-      );
-      harness.clock.advance(const Duration(minutes: 1));
-      final contentReport = await harness.run();
-      expect(contentReport.updateOperations, 1);
-      expect(
-        (await DesiredStateDao(
-          harness.database,
-        ).readTask(harness.accountId, seeded.taskId))?.state,
-        DesiredStateLifecycle.confirmed,
-      );
-      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 1);
+    expect(report.outcome, SyncRunOutcome.succeeded);
+    expect(report.moveOperations, 1);
+    expect(report.updateOperations, 0);
+    expect(moveCall.query['destinationTasklist'], destination.id.value);
+    expect(moveCall.query['previous'], anchor.id.value);
+    expect(root.taskListId, destinationId);
+    expect(root.parentTaskId, isNull);
+    expect(root.title, 'Moved and edited');
+    expect(projectedChild.taskListId, destinationId);
+    expect(projectedChild.parentTaskId, seeded.taskId);
+    expect(
+      after.tasks.indexWhere((task) => task.id == anchorId),
+      lessThan(after.tasks.indexWhere((task) => task.id == seeded.taskId)),
+    );
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTask(harness.accountId, seeded.taskId))?.state,
+      DesiredStateLifecycle.pending,
+    );
+    harness.clock.advance(const Duration(minutes: 1));
+    final contentReport = await harness.run();
+    expect(contentReport.updateOperations, 1);
+    expect(
+      (await DesiredStateDao(
+        harness.database,
+      ).readTask(harness.accountId, seeded.taskId))?.state,
+      DesiredStateLifecycle.confirmed,
+    );
+    expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 1);
 
-      await harness.moveTask(
-        seeded.taskId,
-        destinationTaskListId: seeded.listId,
-      );
-      harness.clock.advance(const Duration(minutes: 1));
-      final repeatedMove = await harness.run();
-      final returned = await harness.snapshot();
-      expect(repeatedMove.moveOperations, 1);
-      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 2);
-      expect(
-        returned.tasks
-            .singleWhere((task) => task.id == seeded.taskId)
-            .taskListId,
-        seeded.listId,
-      );
-      expect(
-        returned.tasks.singleWhere((task) => task.id == childId).taskListId,
-        seeded.listId,
-      );
-    },
-  );
+    await harness.moveTask(seeded.taskId, destinationTaskListId: seeded.listId);
+    harness.clock.advance(const Duration(minutes: 1));
+    final repeatedMove = await harness.run();
+    final returned = await harness.snapshot();
+    expect(repeatedMove.moveOperations, 1);
+    expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 2);
+    expect(
+      returned.tasks.singleWhere((task) => task.id == seeded.taskId).taskListId,
+      seeded.listId,
+    );
+    expect(
+      returned.tasks.singleWhere((task) => task.id == childId).taskListId,
+      seeded.listId,
+    );
+  });
 
   test(
     'REC-008/REC-009 concurrent remote placement wins without oscillation',
@@ -2028,9 +2011,10 @@ final class _UpdateHarness {
     diagnostics: diagnostics,
   ).run(SyncRunRequest(accountId: accountId));
 
-  Future<CachedTasksSnapshot> snapshot() => DatabaseTasksRepository(
-    database,
-  ).watchTasks(TasksQuery(accountId: accountId)).first;
+  Future<CachedTasksSnapshot> snapshot() =>
+      DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: accountId))
+          .first;
 
   Future<void> close() => database.close();
 }

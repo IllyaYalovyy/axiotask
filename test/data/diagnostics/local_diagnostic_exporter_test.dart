@@ -38,9 +38,8 @@ void main() {
     );
 
     final receipt = await exporter.export(history.records);
-    final output = File(
-      '${directory.path}/${receipt.fileName}',
-    ).readAsStringSync();
+    final output = File('${directory.path}/${receipt.fileName}')
+        .readAsStringSync();
 
     expect(output, contains('sync.synthetic_failure'));
     expect(output, contains('failed_count'));
@@ -77,9 +76,8 @@ void main() {
       );
 
       final receipt = await exporter.export(history.records);
-      final output = File(
-        '${directory.path}/${receipt.fileName}',
-      ).readAsStringSync();
+      final output = File('${directory.path}/${receipt.fileName}')
+          .readAsStringSync();
 
       expect(output, contains(taskCanary));
       expect(output, isNot(contains('credential-export-canary')));

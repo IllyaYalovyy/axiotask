@@ -176,8 +176,7 @@ final class AccountBackupViewModel extends ChangeNotifier {
         } on Object {
           _state = AccountBackupViewState(
             importResult: result,
-            error:
-                'Restore was accepted locally, but immediate sync could not be scheduled. Use Refresh.',
+            error: 'Restore was accepted locally, but immediate sync could not be scheduled. Use Refresh.',
           );
         }
       }

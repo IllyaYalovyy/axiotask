@@ -45,15 +45,12 @@ void main() {
     final settings = DatabaseSyncSettingsRepository(database);
     await settings.setSyncEnabled(account, false);
     final lists = DatabaseTaskListsRepository(database: database, clock: clock);
-    final list =
-        (await lists.createTaskList(
-                  CreateTaskListCommand(
-                    accountId: account,
-                    title: 'Synthetic capture list',
-                  ),
-                )
-                as Success<TaskListId>)
-            .value;
+    final list = (await lists.createTaskList(
+      CreateTaskListCommand(
+        accountId: account,
+        title: 'Synthetic capture list',
+      ),
+    ) as Success<TaskListId>).value;
     var tasks = DatabaseTasksRepository(database, clock: clock);
     var viewModel = TasksViewModel(
       accountId: account,

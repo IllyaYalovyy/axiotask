@@ -300,9 +300,8 @@ final class GoogleTasksDecoder {
   RemoteDate? _optionalDue(Map<String, Object?> row) {
     final value = _optionalString(row, 'due');
     if (value == null) return null;
-    final match = RegExp(
-      r'^(\d{4})-(\d{2})-(\d{2})T00:00:00\.000Z$',
-    ).firstMatch(value);
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})T00:00:00\.000Z$')
+        .firstMatch(value);
     if (match == null) {
       throw const _DecodeFailure(
         'google_tasks.malformed_due',

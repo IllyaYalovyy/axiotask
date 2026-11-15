@@ -1,3 +1,6 @@
+@Timeout(Duration(minutes: 5))
+library;
+
 import 'dart:convert';
 import 'dart:io';
 
@@ -33,11 +36,11 @@ void main() {
           .transform(utf8.decoder)
           .transform(const LineSplitter())
           .firstWhere((line) => line == 'PAGE_COMMITTED')
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(minutes: 2));
 
       await boundary;
       expect(process.kill(ProcessSignal.sigkill), isTrue);
-      await process.exitCode.timeout(const Duration(seconds: 30));
+      await process.exitCode.timeout(const Duration(minutes: 2));
       await stderrDone;
 
       final database = await AppDatabase.openFile(databaseFile);
@@ -45,9 +48,9 @@ void main() {
       final accounts = await database.allAccounts();
       expect(accounts, hasLength(1));
       final account = AccountId(accounts.single.id);
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       final facts = await SyncHealthDao(database).watchFacts(account).first;
 
       expect(snapshot.taskLists.single.title, 'Committed process page');

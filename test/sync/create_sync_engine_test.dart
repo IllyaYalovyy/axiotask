@@ -328,163 +328,156 @@ void main() {
     },
   );
 
-  test(
-    'REL-013 uncertain create retries without content matching and diagnoses duplicate risk',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final remoteList = switch (await remote.createTaskList(
-        const CreateTaskListOperation(title: 'Confirmed list'),
-      )) {
-        CommittedMutation<RemoteTaskList>(:final value) => value.id,
-        _ => throw StateError('Synthetic list setup failed.'),
-      };
-      final service = _CreateInterceptService(remote);
-      final releaseHistory = InMemoryDiagnosticHistory();
-      final developmentHistory = InMemoryDiagnosticHistory();
-      final harness = await _CreateHarness.open(
-        remote: service,
-        subject: subject,
-        startedAt: startedAt,
-        diagnostics: _FanoutDiagnosticSink(<DiagnosticSink>[
-          ProductionDiagnosticSink(releaseHistory),
-          SensitiveDevelopmentDiagnosticSink(developmentHistory),
-        ]),
-      );
-      addTearDown(harness.close);
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final confirmedList = (await harness.snapshot()).taskLists.singleWhere(
-        (list) => list.remoteId?.value == remoteList.value,
-      );
-      final provisional = await harness.createTask(
-        confirmedList.id,
-        'Identical visible content',
-      );
-      service.uncertainNextTaskAfterCommit = true;
+  test('REL-013 uncertain create retries without content matching and diagnoses duplicate risk', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final remoteList = switch (await remote.createTaskList(
+      const CreateTaskListOperation(title: 'Confirmed list'),
+    )) {
+      CommittedMutation<RemoteTaskList>(:final value) => value.id,
+      _ => throw StateError('Synthetic list setup failed.'),
+    };
+    final service = _CreateInterceptService(remote);
+    final releaseHistory = InMemoryDiagnosticHistory();
+    final developmentHistory = InMemoryDiagnosticHistory();
+    final harness = await _CreateHarness.open(
+      remote: service,
+      subject: subject,
+      startedAt: startedAt,
+      diagnostics: _FanoutDiagnosticSink(<DiagnosticSink>[
+        ProductionDiagnosticSink(releaseHistory),
+        SensitiveDevelopmentDiagnosticSink(developmentHistory),
+      ]),
+    );
+    addTearDown(harness.close);
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+    final confirmedList = (await harness.snapshot()).taskLists.singleWhere(
+      (list) => list.remoteId?.value == remoteList.value,
+    );
+    final provisional = await harness.createTask(
+      confirmedList.id,
+      'Identical visible content',
+    );
+    service.uncertainNextTaskAfterCommit = true;
 
-      final uncertain = await harness.run();
+    final uncertain = await harness.run();
 
-      expect(uncertain.outcome, SyncRunOutcome.failed);
-      expect(
-        (await DesiredStateDao(
-          harness.database,
-        ).readTask(harness.accountId, provisional))?.state,
-        DesiredStateLifecycle.uncertain,
-      );
-      expect(remote.callCount(FakeGoogleTasksMethod.createTask), 1);
-
-      harness.clock.advance(const Duration(minutes: 1));
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final matching = (await harness.snapshot()).tasks
-          .where((task) => task.title == 'Identical visible content')
-          .toList(growable: false);
-      expect(matching, hasLength(2));
-      expect(matching.map((task) => task.id).toSet(), hasLength(2));
-      expect(
-        matching.singleWhere((task) => task.id == provisional).remoteId,
-        isNotNull,
-      );
-      expect(
-        matching.singleWhere((task) => task.id != provisional).remoteId,
-        isNotNull,
-      );
-      expect(remote.callCount(FakeGoogleTasksMethod.createTask), 2);
-      final releaseRecord = releaseHistory.records.singleWhere(
-        (record) => record.code == 'sync.create_recovery_duplicate_possible',
-      );
-      final developmentRecord = developmentHistory.records.singleWhere(
-        (record) => record.code == 'sync.create_recovery_duplicate_possible',
-      );
-      expect(releaseRecord.fields, containsPair('resource_kind', 'task'));
-      expect(releaseRecord.fields, isNot(contains('title')));
-      expect(
-        developmentRecord.fields,
-        allOf(
-          containsPair('resource_kind', 'task'),
-          containsPair('title', 'Identical visible content'),
-        ),
-      );
-    },
-  );
-
-  test(
-    'REL-013 repeated response loss retries the original generation and preserves a newer edit',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final remoteList = switch (await remote.createTaskList(
-        const CreateTaskListOperation(title: 'Recovery list'),
-      )) {
-        CommittedMutation<RemoteTaskList>(:final value) => value.id,
-        _ => throw StateError('Synthetic list setup failed.'),
-      };
-      final service = _CreateInterceptService(remote)
-        ..uncertainTaskResponsesAfterCommit = 2;
-      final harness = await _CreateHarness.open(
-        remote: service,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final list = (await harness.snapshot()).taskLists.singleWhere(
-        (candidate) => candidate.remoteId?.value == remoteList.value,
-      );
-      final task = await harness.createTask(list.id, 'Generation one');
-
-      expect((await harness.run()).outcome, SyncRunOutcome.failed);
-      expect(
-        await DatabaseTasksRepository(
-          harness.database,
-          clock: harness.clock,
-        ).apply(
-          SetTaskTitleCommand(
-            accountId: harness.accountId,
-            taskId: task,
-            title: 'Generation two',
-          ),
-        ),
-        isA<Success<void>>(),
-      );
-
-      harness.clock.advance(const Duration(minutes: 1));
-      expect((await harness.run()).outcome, SyncRunOutcome.failed);
-      harness.clock.advance(const Duration(minutes: 1));
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-
-      harness.clock.advance(const Duration(minutes: 1));
-      final updatedReport = await harness.run();
-      expect(
-        updatedReport.outcome,
-        SyncRunOutcome.succeeded,
-        reason: updatedReport.failure?.code,
-      );
-
-      final projected = (await harness.snapshot()).tasks.singleWhere(
-        (candidate) => candidate.id == task,
-      );
-      final desired = await DesiredStateDao(
+    expect(uncertain.outcome, SyncRunOutcome.failed);
+    expect(
+      (await DesiredStateDao(
         harness.database,
-      ).readTask(harness.accountId, task);
-      expect(projected.remoteId, isNotNull);
-      expect(projected.title, 'Generation two');
-      expect(desired?.generation, 2);
-      expect(desired?.state, DesiredStateLifecycle.confirmed);
-      expect(desired?.baseTitle, 'Generation two');
-      expect(remote.callCount(FakeGoogleTasksMethod.createTask), 3);
-      expect(remote.callCount(FakeGoogleTasksMethod.patchTask), 1);
-      expect(
-        (await harness.database
-                .customSelect(
-                  'SELECT COUNT(*) AS count FROM desired_state_attempts '
-                  "WHERE account_id = ${harness.accountId.value} AND state = 'uncertain'",
-                )
-                .getSingle())
-            .read<int>('count'),
-        2,
-      );
-    },
-  );
+      ).readTask(harness.accountId, provisional))?.state,
+      DesiredStateLifecycle.uncertain,
+    );
+    expect(remote.callCount(FakeGoogleTasksMethod.createTask), 1);
+
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+    final matching = (await harness.snapshot()).tasks
+        .where((task) => task.title == 'Identical visible content')
+        .toList(growable: false);
+    expect(matching, hasLength(2));
+    expect(matching.map((task) => task.id).toSet(), hasLength(2));
+    expect(
+      matching.singleWhere((task) => task.id == provisional).remoteId,
+      isNotNull,
+    );
+    expect(
+      matching.singleWhere((task) => task.id != provisional).remoteId,
+      isNotNull,
+    );
+    expect(remote.callCount(FakeGoogleTasksMethod.createTask), 2);
+    final releaseRecord = releaseHistory.records.singleWhere(
+      (record) => record.code == 'sync.create_recovery_duplicate_possible',
+    );
+    final developmentRecord = developmentHistory.records.singleWhere(
+      (record) => record.code == 'sync.create_recovery_duplicate_possible',
+    );
+    expect(releaseRecord.fields, containsPair('resource_kind', 'task'));
+    expect(releaseRecord.fields, isNot(contains('title')));
+    expect(
+      developmentRecord.fields,
+      allOf(
+        containsPair('resource_kind', 'task'),
+        containsPair('title', 'Identical visible content'),
+      ),
+    );
+  });
+
+  test('REL-013 repeated response loss retries the original generation and preserves a newer edit', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final remoteList = switch (await remote.createTaskList(
+      const CreateTaskListOperation(title: 'Recovery list'),
+    )) {
+      CommittedMutation<RemoteTaskList>(:final value) => value.id,
+      _ => throw StateError('Synthetic list setup failed.'),
+    };
+    final service = _CreateInterceptService(remote)
+      ..uncertainTaskResponsesAfterCommit = 2;
+    final harness = await _CreateHarness.open(
+      remote: service,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+    final list = (await harness.snapshot()).taskLists.singleWhere(
+      (candidate) => candidate.remoteId?.value == remoteList.value,
+    );
+    final task = await harness.createTask(list.id, 'Generation one');
+
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    expect(
+      await DatabaseTasksRepository(
+        harness.database,
+        clock: harness.clock,
+      ).apply(
+        SetTaskTitleCommand(
+          accountId: harness.accountId,
+          taskId: task,
+          title: 'Generation two',
+        ),
+      ),
+      isA<Success<void>>(),
+    );
+
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+
+    harness.clock.advance(const Duration(minutes: 1));
+    final updatedReport = await harness.run();
+    expect(
+      updatedReport.outcome,
+      SyncRunOutcome.succeeded,
+      reason: updatedReport.failure?.code,
+    );
+
+    final projected = (await harness.snapshot()).tasks.singleWhere(
+      (candidate) => candidate.id == task,
+    );
+    final desired = await DesiredStateDao(harness.database)
+        .readTask(harness.accountId, task);
+    expect(projected.remoteId, isNotNull);
+    expect(projected.title, 'Generation two');
+    expect(desired?.generation, 2);
+    expect(desired?.state, DesiredStateLifecycle.confirmed);
+    expect(desired?.baseTitle, 'Generation two');
+    expect(remote.callCount(FakeGoogleTasksMethod.createTask), 3);
+    expect(remote.callCount(FakeGoogleTasksMethod.patchTask), 1);
+    expect(
+      (await harness.database
+              .customSelect(
+                'SELECT COUNT(*) AS count FROM desired_state_attempts '
+                "WHERE account_id = ${harness.accountId.value} AND state = 'uncertain'",
+              )
+              .getSingle())
+          .read<int>('count'),
+      2,
+    );
+  });
 
   test(
     'REL-013 recovered list create releases its provisional task dependency',
@@ -607,9 +600,10 @@ void main() {
         );
       }
       final hostOneList =
-          (await DatabaseTasksRepository(
-                hosts.hosts[0].store,
-              ).watchTasks(TasksQuery(accountId: accounts[0])).first).taskLists
+          (await DatabaseTasksRepository(hosts.hosts[0].store)
+                  .watchTasks(TasksQuery(accountId: accounts[0]))
+                  .first)
+              .taskLists
               .singleWhere(
                 (candidate) => candidate.remoteId?.value == remoteList.value,
               );
@@ -649,9 +643,9 @@ void main() {
 
       for (var index = 0; index < 2; index += 1) {
         final matching =
-            (await DatabaseTasksRepository(
-                  hosts.hosts[index].store,
-                ).watchTasks(TasksQuery(accountId: accounts[index])).first)
+            (await DatabaseTasksRepository(hosts.hosts[index].store)
+                    .watchTasks(TasksQuery(accountId: accounts[index]))
+                    .first)
                 .tasks
                 .where((task) => task.title == 'Same content on every host')
                 .toList(growable: false);
@@ -667,83 +661,79 @@ void main() {
     },
   );
 
-  test(
-    'REL-013 newer cross-list move waits for create recovery then applies by bound ID',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final sourceRemote = switch (await remote.createTaskList(
-        const CreateTaskListOperation(title: 'Source'),
-      )) {
-        CommittedMutation<RemoteTaskList>(:final value) => value.id,
-        _ => throw StateError('Synthetic source setup failed.'),
-      };
-      final destinationRemote = switch (await remote.createTaskList(
-        const CreateTaskListOperation(title: 'Destination'),
-      )) {
-        CommittedMutation<RemoteTaskList>(:final value) => value.id,
-        _ => throw StateError('Synthetic destination setup failed.'),
-      };
-      final service = _CreateInterceptService(remote)
-        ..uncertainTaskResponsesAfterCommit = 1;
-      final harness = await _CreateHarness.open(
-        remote: service,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final initial = await harness.snapshot();
-      final source = initial.taskLists.singleWhere(
-        (candidate) => candidate.remoteId?.value == sourceRemote.value,
-      );
-      final destination = initial.taskLists.singleWhere(
-        (candidate) => candidate.remoteId?.value == destinationRemote.value,
-      );
-      final task = await harness.createTask(source.id, 'Move after recovery');
+  test('REL-013 newer cross-list move waits for create recovery then applies by bound ID', () async {
+    final remote = FakeGoogleTasksService();
+    addTearDown(remote.close);
+    final sourceRemote = switch (await remote.createTaskList(
+      const CreateTaskListOperation(title: 'Source'),
+    )) {
+      CommittedMutation<RemoteTaskList>(:final value) => value.id,
+      _ => throw StateError('Synthetic source setup failed.'),
+    };
+    final destinationRemote = switch (await remote.createTaskList(
+      const CreateTaskListOperation(title: 'Destination'),
+    )) {
+      CommittedMutation<RemoteTaskList>(:final value) => value.id,
+      _ => throw StateError('Synthetic destination setup failed.'),
+    };
+    final service = _CreateInterceptService(remote)
+      ..uncertainTaskResponsesAfterCommit = 1;
+    final harness = await _CreateHarness.open(
+      remote: service,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+    final initial = await harness.snapshot();
+    final source = initial.taskLists.singleWhere(
+      (candidate) => candidate.remoteId?.value == sourceRemote.value,
+    );
+    final destination = initial.taskLists.singleWhere(
+      (candidate) => candidate.remoteId?.value == destinationRemote.value,
+    );
+    final task = await harness.createTask(source.id, 'Move after recovery');
 
-      expect((await harness.run()).outcome, SyncRunOutcome.failed);
-      expect(
-        await DatabaseTasksRepository(
-          harness.database,
-          clock: harness.clock,
-        ).apply(
-          MoveTaskCommand(
-            accountId: harness.accountId,
-            taskId: task,
-            destinationTaskListId: destination.id,
-          ),
-        ),
-        isA<Success<void>>(),
-      );
-      harness.clock.advance(const Duration(minutes: 1));
-      expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final afterBinding = await DesiredStateDao(
+    expect((await harness.run()).outcome, SyncRunOutcome.failed);
+    expect(
+      await DatabaseTasksRepository(
         harness.database,
-      ).readTask(harness.accountId, task);
-      expect(afterBinding?.state, DesiredStateLifecycle.pending);
-      expect(afterBinding?.structureDirty, isTrue);
-      expect(afterBinding?.baseTaskListId, source.id);
-      expect(afterBinding?.taskListId, destination.id);
-      harness.clock.advance(const Duration(minutes: 1));
-      final moved = await harness.run();
+        clock: harness.clock,
+      ).apply(
+        MoveTaskCommand(
+          accountId: harness.accountId,
+          taskId: task,
+          destinationTaskListId: destination.id,
+        ),
+      ),
+      isA<Success<void>>(),
+    );
+    harness.clock.advance(const Duration(minutes: 1));
+    expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
+    final afterBinding = await DesiredStateDao(harness.database)
+        .readTask(harness.accountId, task);
+    expect(afterBinding?.state, DesiredStateLifecycle.pending);
+    expect(afterBinding?.structureDirty, isTrue);
+    expect(afterBinding?.baseTaskListId, source.id);
+    expect(afterBinding?.taskListId, destination.id);
+    harness.clock.advance(const Duration(minutes: 1));
+    final moved = await harness.run();
 
-      expect(
-        moved.moveOperations,
-        1,
-        reason:
-            'outcome=${moved.outcome.name} failure=${moved.failure?.code} '
-            'calls=${remote.callCount(FakeGoogleTasksMethod.moveTask)}',
-      );
-      final projected = (await harness.snapshot()).tasks.singleWhere(
-        (candidate) => candidate.id == task,
-      );
-      expect(projected.remoteId, isNotNull);
-      expect(projected.taskListId, destination.id);
-      expect(remote.callCount(FakeGoogleTasksMethod.createTask), 2);
-      expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 1);
-    },
-  );
+    expect(
+      moved.moveOperations,
+      1,
+      reason:
+          'outcome=${moved.outcome.name} failure=${moved.failure?.code} '
+          'calls=${remote.callCount(FakeGoogleTasksMethod.moveTask)}',
+    );
+    final projected = (await harness.snapshot()).tasks.singleWhere(
+      (candidate) => candidate.id == task,
+    );
+    expect(projected.remoteId, isNotNull);
+    expect(projected.taskListId, destination.id);
+    expect(remote.callCount(FakeGoogleTasksMethod.createTask), 2);
+    expect(remote.callCount(FakeGoogleTasksMethod.moveTask), 1);
+  });
 
   test(
     'REL-013 newer delete retains authority after recovered create binding',
@@ -821,9 +811,8 @@ void main() {
           );
 
       expect((await harness.run()).outcome, SyncRunOutcome.succeeded);
-      final desired = await DesiredStateDao(
-        harness.database,
-      ).readTask(harness.accountId, task);
+      final desired = await DesiredStateDao(harness.database)
+          .readTask(harness.accountId, task);
       final projected = (await harness.snapshot()).tasks.single;
 
       expect(projected.id, task);
@@ -987,9 +976,10 @@ void main() {
         DesiredStateLifecycle.confirmed,
       );
       expect(
-        (await DatabaseTasksRepository(
-              database,
-            ).watchTasks(TasksQuery(accountId: account)).first).taskLists
+        (await DatabaseTasksRepository(database)
+                .watchTasks(TasksQuery(accountId: account))
+                .first)
+            .taskLists
             .singleWhere((candidate) => candidate.id == list)
             .remoteId,
         isNotNull,
@@ -1031,14 +1021,12 @@ void main() {
               .value;
       final task =
           (await DatabaseTasksRepository(database, clock: clock).createTask(
-                    CreateTaskCommand(
-                      accountId: account,
-                      taskListId: list,
-                      title: 'Restart task',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
+            CreateTaskCommand(
+              accountId: account,
+              taskListId: list,
+              title: 'Restart task',
+            ),
+          ) as Success<TaskId>).value;
 
       expect(
         (await _engine(
@@ -1068,9 +1056,9 @@ void main() {
         ).run(SyncRunRequest(accountId: account))).outcome,
         SyncRunOutcome.succeeded,
       );
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       expect(snapshot.taskLists.single.id, list);
       expect(snapshot.tasks.single.id, task);
       expect(snapshot.taskLists.single.remoteId, isNotNull);
@@ -1170,9 +1158,10 @@ final class _CreateHarness {
   Future<SyncRunReport> run() =>
       engine.run(SyncRunRequest(accountId: accountId));
 
-  Future<CachedTasksSnapshot> snapshot() => DatabaseTasksRepository(
-    database,
-  ).watchTasks(TasksQuery(accountId: accountId)).first;
+  Future<CachedTasksSnapshot> snapshot() =>
+      DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: accountId))
+          .first;
 
   Future<void> close() => database.close();
 }

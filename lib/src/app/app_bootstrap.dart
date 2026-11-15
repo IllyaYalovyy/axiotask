@@ -12,22 +12,20 @@ import 'axiotask_app.dart';
 import 'tasks_feature_runtime.dart';
 
 typedef AxiotaskRuntimeOpener = Future<AxiotaskRuntime> Function();
-typedef AccountBackupPageBuilder =
-    Widget Function(
-      BuildContext context,
-      AccountId accountId,
-      AccountBackupRepository repository,
-      AccountBackupRestoreRepository restoreRepository,
-      SyncHealthRepository syncHealthRepository,
-      Future<void> Function()? importCommitted,
-    );
-typedef LocalDataRecoveryPageBuilder =
-    Widget Function(
-      BuildContext context,
-      AccountId accountId,
-      LocalDataRecoveryService recovery,
-      SyncHealthRepository syncHealthRepository,
-    );
+typedef AccountBackupPageBuilder = Widget Function(
+  BuildContext context,
+  AccountId accountId,
+  AccountBackupRepository repository,
+  AccountBackupRestoreRepository restoreRepository,
+  SyncHealthRepository syncHealthRepository,
+  Future<void> Function()? importCommitted,
+);
+typedef LocalDataRecoveryPageBuilder = Widget Function(
+  BuildContext context,
+  AccountId accountId,
+  LocalDataRecoveryService recovery,
+  SyncHealthRepository syncHealthRepository,
+);
 
 final class AxiotaskBootstrap extends StatefulWidget {
   const AxiotaskBootstrap({

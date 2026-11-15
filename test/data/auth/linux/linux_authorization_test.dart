@@ -389,32 +389,29 @@ void main() {
       },
     );
 
-    test(
-      'expired resource request refreshes, validates, and persists rotation before dispatch',
-      () async {
-        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
-          ..expireAuthorizationCodeAccess = true
-          ..rotateRefreshToken = true;
-        final credentials = MemoryCredentialStore();
-        final adapter = createAdapter(
-          endpoint: endpoint,
-          credentials: credentials,
-          subjects: MemoryPinnedSubjectStore(),
-        );
-        addTearDown(adapter.close);
-        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
-        final service = _tasksService(adapter);
-        addTearDown(service.close);
+    test('expired resource request refreshes, validates, and persists rotation before dispatch', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+        ..expireAuthorizationCodeAccess = true
+        ..rotateRefreshToken = true;
+      final credentials = MemoryCredentialStore();
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: credentials,
+        subjects: MemoryPinnedSubjectStore(),
+      );
+      addTearDown(adapter.close);
+      expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+      final service = _tasksService(adapter);
+      addTearDown(service.close);
 
-        final result = await service.listTaskLists();
+      final result = await service.listTaskLists();
 
-        expect(result, isA<Success<RemotePage<RemoteTaskList>>>());
-        expect(endpoint.tokenCalls, 2);
-        expect(endpoint.tasksCalls, 1);
-        expect(credentials.bundle?.refreshToken, 'rotated-refresh');
-        expect(adapter.currentState, isA<TasksAuthorized>());
-      },
-    );
+      expect(result, isA<Success<RemotePage<RemoteTaskList>>>());
+      expect(endpoint.tokenCalls, 2);
+      expect(endpoint.tasksCalls, 1);
+      expect(credentials.bundle?.refreshToken, 'rotated-refresh');
+      expect(adapter.currentState, isA<TasksAuthorized>());
+    });
 
     test('concurrent expired requests share one durable refresh', () async {
       final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
@@ -447,37 +444,34 @@ void main() {
       expect(endpoint.tasksCalls, 2);
     });
 
-    test(
-      'expired resource request preserves invalid_grant and dispatches no Tasks call',
-      () async {
-        final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
-          ..expireAuthorizationCodeAccess = true;
-        final adapter = createAdapter(
-          endpoint: endpoint,
-          credentials: MemoryCredentialStore(),
-          subjects: MemoryPinnedSubjectStore(),
-        );
-        addTearDown(adapter.close);
-        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
-        endpoint.rejectRefresh = true;
-        final service = _tasksService(adapter);
-        addTearDown(service.close);
+    test('expired resource request preserves invalid_grant and dispatches no Tasks call', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[])
+        ..expireAuthorizationCodeAccess = true;
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: MemoryCredentialStore(),
+        subjects: MemoryPinnedSubjectStore(),
+      );
+      addTearDown(adapter.close);
+      expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+      endpoint.rejectRefresh = true;
+      final service = _tasksService(adapter);
+      addTearDown(service.close);
 
-        final result = await service.listTaskLists();
+      final result = await service.listTaskLists();
 
-        expect(result, isA<Failed<RemotePage<RemoteTaskList>>>());
-        expect(
-          (result as Failed<RemotePage<RemoteTaskList>>).failure.code,
-          'auth.refresh_rejected',
-        );
-        expect(
-          result.failure.authorizationRecovery,
-          AuthorizationRecovery.reauthorize,
-        );
-        expect(endpoint.tasksCalls, 0);
-        expect(adapter.currentState, isA<AuthorizationRejected>());
-      },
-    );
+      expect(result, isA<Failed<RemotePage<RemoteTaskList>>>());
+      expect(
+        (result as Failed<RemotePage<RemoteTaskList>>).failure.code,
+        'auth.refresh_rejected',
+      );
+      expect(
+        result.failure.authorizationRecovery,
+        AuthorizationRecovery.reauthorize,
+      );
+      expect(endpoint.tasksCalls, 0);
+      expect(adapter.currentState, isA<AuthorizationRejected>());
+    });
 
     test('resource 401 reaches the strict Tasks adapter unchanged', () async {
       final endpoint = StatefulTokenAndTasksEndpoint(<String>[])

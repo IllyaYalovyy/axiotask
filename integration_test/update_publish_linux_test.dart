@@ -75,23 +75,21 @@ void main() {
         ),
       );
       expect(
-        (await engine(
-          database,
-        ).run(SyncRunRequest(accountId: account))).outcome,
+        (await engine(database).run(SyncRunRequest(accountId: account)))
+            .outcome,
         SyncRunOutcome.succeeded,
       );
-      final initial = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final initial = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       final listId = initial.taskLists
           .singleWhere((list) => list.remoteId?.value == remoteList.id.value)
           .id;
       final taskId = initial.tasks
           .singleWhere((task) => task.remoteId?.value == remoteTask.id.value)
           .id;
-      await DatabaseSyncSettingsRepository(
-        database,
-      ).setSyncEnabled(account, false);
+      await DatabaseSyncSettingsRepository(database)
+          .setSyncEnabled(account, false);
       await database.close();
 
       database = await AppDatabase.openFile(file);

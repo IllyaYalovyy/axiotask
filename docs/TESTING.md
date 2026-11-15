@@ -922,6 +922,8 @@ source-list path after a stable-ID cross-list move, deletes its uniquely
 prefixed scratch lists, confirms zero prefix matches, and deletes/verifies only
 its separate probe credential bundle.
 
-There is deliberately no hosted CI. The same local gate is run before every
-commit, followed by staged-diff review; the repository privacy check is repeated
-before every push.
+GitHub Actions runs the unattended suites on every push and pull request,
+including Linux native integration, Android native probes, and synthetic desktop
+captures. See [CI and artifacts](CI.md) for coverage, artifacts, and the live
+Google tests that still require local interactive execution. The local quality
+gate and staged-diff review remain useful before committing.

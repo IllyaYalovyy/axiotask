@@ -31,32 +31,27 @@ final class OnboardingView extends StatelessWidget {
       _OnboardingPoint(
         icon: Icons.link,
         title: 'Connect to Google Tasks',
-        body:
-            'Use Connect in the sync status area to authorize your Google Tasks account.',
+        body: 'Use Connect in the sync status area to authorize your Google Tasks account.',
       ),
       _OnboardingPoint(
         icon: Icons.verified_outlined,
         title: 'Sync stays truthful',
-        body:
-            'Connected does not mean synced. Axiotask shows when it is checking, synced, pending, or needs attention.',
+        body: 'Connected does not mean synced. Axiotask shows when it is checking, synced, pending, or needs attention.',
       ),
       _OnboardingPoint(
         icon: Icons.cloud_off_outlined,
         title: 'Work through an outage',
-        body:
-            'Cached tasks stay available offline. New changes remain pending until Google can confirm them.',
+        body: 'Cached tasks stay available offline. New changes remain pending until Google can confirm them.',
       ),
       _OnboardingPoint(
         icon: Icons.add_task_outlined,
         title: 'Capture without breaking flow',
-        body:
-            'Use Add task for a quick capture. Your chosen Google list stays visible before you save.',
+        body: 'Use Add task for a quick capture. Your chosen Google list stays visible before you save.',
       ),
       _OnboardingPoint(
         icon: Icons.settings_backup_restore_outlined,
         title: 'Recover safely',
-        body:
-            'Recovery is available from the app header and explains what it can and cannot change before you continue.',
+        body: 'Recovery is available from the app header and explains what it can and cannot change before you continue.',
       ),
     ];
     return Semantics(
@@ -116,9 +111,9 @@ final class OnboardingView extends StatelessWidget {
                           autofocus: true,
                           onPressed: isSaving ? null : onDismiss,
                           style: FilledButton.styleFrom(
-                            foregroundColor: Theme.of(
-                              context,
-                            ).colorScheme.onPrimary,
+                            foregroundColor: Theme.of(context)
+                                .colorScheme
+                                .onPrimary,
                           ),
                           child: isSaving
                               ? const SizedBox.square(
@@ -171,16 +166,14 @@ final class _OnboardingPoint extends StatelessWidget {
             children: <Widget>[
               Text(
                 title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(color: Theme.of(context).colorScheme.onSurface),
               ),
               const SizedBox(height: 4),
               Text(
                 body,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: Theme.of(context).colorScheme.onSurface),
               ),
             ],
           ),

@@ -83,65 +83,55 @@ void main() {
     },
   );
 
-  test(
-    'RUN-016 expiry strips content and makes delete eligible exactly at boundary',
-    () async {
-      final fixture = await _seedGraph(database);
-      final repository = DatabaseTasksRepository(database, clock: clock);
-      final receipt =
-          (await repository.deleteTask(
-                    DeleteTaskCommand(
-                      accountId: fixture.accountA,
-                      taskId: fixture.parent,
-                    ),
-                  )
-                  as Success<TaskDeleteReceipt>)
-              .value;
+  test('RUN-016 expiry strips content and makes delete eligible exactly at boundary', () async {
+    final fixture = await _seedGraph(database);
+    final repository = DatabaseTasksRepository(database, clock: clock);
+    final receipt = (await repository.deleteTask(
+      DeleteTaskCommand(accountId: fixture.accountA, taskId: fixture.parent),
+    ) as Success<TaskDeleteReceipt>).value;
 
-      clock.advance(const Duration(seconds: 29, milliseconds: 999));
-      expect(
-        await DeleteStateDao(database).cleanupExpiredTaskDeletes(
-          accountId: fixture.accountA,
-          now: clock.now(),
-        ),
-        0,
-      );
-      expect(
-        (await DeleteStateDao(
-          database,
-        ).readTaskDelete(fixture.accountA, fixture.parent))?.snapshotAvailable,
-        isTrue,
-      );
-
-      clock.advance(const Duration(milliseconds: 1));
-      expect(clock.now(), receipt.notBefore);
-      expect(
-        await DeleteStateDao(database).cleanupExpiredTaskDeletes(
-          accountId: fixture.accountA,
-          now: clock.now(),
-        ),
-        1,
-      );
-      final tombstone = await DeleteStateDao(
+    clock.advance(const Duration(seconds: 29, milliseconds: 999));
+    expect(
+      await DeleteStateDao(database).cleanupExpiredTaskDeletes(
+        accountId: fixture.accountA,
+        now: clock.now(),
+      ),
+      0,
+    );
+    expect(
+      (await DeleteStateDao(
         database,
-      ).readTaskDelete(fixture.accountA, fixture.parent);
-      expect(tombstone?.snapshotAvailable, isFalse);
-      expect(tombstone?.snapshotTaskIds, isEmpty);
-      final undo = await repository.undoTaskDelete(
-        UndoTaskDeleteCommand(
-          accountId: fixture.accountA,
-          taskId: fixture.parent,
-        ),
-      );
-      expect((undo as Failed<void>).failure.code, 'task.delete_undo_expired');
-      expect(
-        await DeleteStateDao(
-          database,
-        ).readNextEligibleDelete(accountId: fixture.accountA, now: clock.now()),
-        isNotNull,
-      );
-    },
-  );
+      ).readTaskDelete(fixture.accountA, fixture.parent))?.snapshotAvailable,
+      isTrue,
+    );
+
+    clock.advance(const Duration(milliseconds: 1));
+    expect(clock.now(), receipt.notBefore);
+    expect(
+      await DeleteStateDao(database).cleanupExpiredTaskDeletes(
+        accountId: fixture.accountA,
+        now: clock.now(),
+      ),
+      1,
+    );
+    final tombstone = await DeleteStateDao(database)
+        .readTaskDelete(fixture.accountA, fixture.parent);
+    expect(tombstone?.snapshotAvailable, isFalse);
+    expect(tombstone?.snapshotTaskIds, isEmpty);
+    final undo = await repository.undoTaskDelete(
+      UndoTaskDeleteCommand(
+        accountId: fixture.accountA,
+        taskId: fixture.parent,
+      ),
+    );
+    expect((undo as Failed<void>).failure.code, 'task.delete_undo_expired');
+    expect(
+      await DeleteStateDao(
+        database,
+      ).readNextEligibleDelete(accountId: fixture.accountA, now: clock.now()),
+      isNotNull,
+    );
+  });
 
   test(
     'RUN-016 restart cleanup preserves target and unrelated scope',
@@ -203,23 +193,20 @@ void main() {
       claimedAt: clock.now(),
     );
     expect(
-      await DeleteStateDao(
-        reopened,
-      ).readTaskDeleteState(fixture.accountA, fixture.parent),
+      await DeleteStateDao(reopened)
+          .readTaskDeleteState(fixture.accountA, fixture.parent),
       DesiredStateLifecycle.inFlight,
     );
     await reopened.close();
 
     reopened = await AppDatabase.openFile(file);
     addTearDown(reopened.close);
-    await DatabaseReadSyncStore(
-      reopened,
-    ).recoverDeletes(accountId: fixture.accountA, recoveredAt: clock.now());
+    await DatabaseReadSyncStore(reopened)
+        .recoverDeletes(accountId: fixture.accountA, recoveredAt: clock.now());
 
     expect(
-      await DeleteStateDao(
-        reopened,
-      ).readTaskDeleteState(fixture.accountA, fixture.parent),
+      await DeleteStateDao(reopened)
+          .readTaskDeleteState(fixture.accountA, fixture.parent),
       DesiredStateLifecycle.uncertain,
     );
     expect(
@@ -259,9 +246,9 @@ void main() {
       ]);
       expect(accountA.tasks.map((task) => task.id), <TaskId>[fixture.sibling]);
       expect(
-        await DeleteStateDao(
-          database,
-        ).watchAvailableTaskUndos(fixture.accountA).first,
+        await DeleteStateDao(database)
+            .watchAvailableTaskUndos(fixture.accountA)
+            .first,
         isEmpty,
       );
       expect(
@@ -278,16 +265,13 @@ void main() {
     () async {
       final fixture = await _seedGraph(database);
       final tasks = DatabaseTasksRepository(database, clock: clock);
-      final provisional =
-          (await tasks.createTask(
-                    CreateTaskCommand(
-                      accountId: fixture.accountA,
-                      taskListId: fixture.listB,
-                      title: 'Never published',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
+      final provisional = (await tasks.createTask(
+        CreateTaskCommand(
+          accountId: fixture.accountA,
+          taskListId: fixture.listB,
+          title: 'Never published',
+        ),
+      ) as Success<TaskId>).value;
       await tasks.deleteTask(
         DeleteTaskCommand(accountId: fixture.accountA, taskId: provisional),
       );
@@ -299,9 +283,8 @@ void main() {
       );
 
       expect(
-        await DeleteStateDao(
-          database,
-        ).readTaskDeleteState(fixture.accountA, provisional),
+        await DeleteStateDao(database)
+            .readTaskDeleteState(fixture.accountA, provisional),
         DesiredStateLifecycle.confirmed,
       );
       expect(
@@ -323,15 +306,9 @@ void main() {
         database: database,
         clock: clock,
       );
-      final provisional =
-          (await lists.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: account,
-                      title: 'Never published',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
+      final provisional = (await lists.createTaskList(
+        CreateTaskListCommand(accountId: account, title: 'Never published'),
+      ) as Success<TaskListId>).value;
 
       await lists.deleteTaskList(
         DeleteTaskListCommand(accountId: account, taskListId: provisional),
@@ -344,9 +321,8 @@ void main() {
         DesiredStateLifecycle.confirmed,
       );
       expect(
-        await DeleteStateDao(
-          database,
-        ).readNextEligibleDelete(accountId: account, now: clock.now()),
+        await DeleteStateDao(database)
+            .readNextEligibleDelete(accountId: account, now: clock.now()),
         isNull,
       );
       expect(

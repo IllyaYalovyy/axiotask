@@ -59,9 +59,9 @@ void main() {
     }
     final taskIds = <TaskId>[];
     for (var index = 0; index < harness.hosts.length; index += 1) {
-      final snapshot = await DatabaseTasksRepository(
-        harness.hosts[index].store,
-      ).watchTasks(TasksQuery(accountId: accountIds[index])).first;
+      final snapshot = await DatabaseTasksRepository(harness.hosts[index].store)
+          .watchTasks(TasksQuery(accountId: accountIds[index]))
+          .first;
       taskIds.add(
         snapshot.tasks
             .singleWhere(
@@ -121,9 +121,9 @@ void main() {
     );
 
     for (var index = 0; index < harness.hosts.length; index += 1) {
-      final snapshot = await DatabaseTasksRepository(
-        harness.hosts[index].store,
-      ).watchTasks(TasksQuery(accountId: accountIds[index])).first;
+      final snapshot = await DatabaseTasksRepository(harness.hosts[index].store)
+          .watchTasks(TasksQuery(accountId: accountIds[index]))
+          .first;
       final projected = snapshot.tasks.single;
       expect(projected.title, 'Host one newer');
       expect(projected.notes, isNull);

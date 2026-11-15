@@ -77,9 +77,8 @@ void main() {
         AuthorizationAdapterFailureKind.rejected,
       ]) {
         expect(
-          mapAuthorizationFailure(
-            AuthorizationAdapterFailure(kind: kind),
-          ).authorizationRecovery,
+          mapAuthorizationFailure(AuthorizationAdapterFailure(kind: kind))
+              .authorizationRecovery,
           AuthorizationRecovery.reauthorize,
         );
       }

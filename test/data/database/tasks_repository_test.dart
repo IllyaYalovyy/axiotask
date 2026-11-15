@@ -456,9 +456,9 @@ void main() {
 
       final reopened = await AppDatabase.openFile(file);
       addTearDown(reopened.close);
-      final snapshot = await DatabaseTasksRepository(
-        reopened,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(reopened)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       expect(snapshot.taskLists.single.id, list);
       expect(
         snapshot.taskLists.single.remoteId,

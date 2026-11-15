@@ -51,9 +51,8 @@ void main() {
       expect(parent.remoteId, const TaskRemoteId('parent'));
       expect(child.remoteId, const TaskRemoteId('child'));
 
-      final desired = await DesiredStateDao(
-        database,
-      ).readTask(fixture.account, fixture.parent);
+      final desired = await DesiredStateDao(database)
+          .readTask(fixture.account, fixture.parent);
       expect(desired?.taskListId, fixture.secondList);
       expect(desired?.structureDirty, isTrue);
       expect(desired?.contentDirty, isFalse);

@@ -436,9 +436,9 @@ Future<bool> _runRestoreImportSmoke({
         'restore smoke publication failed: ${published.failure?.code}',
       );
     }
-    final snapshot = await DatabaseTasksRepository(
-      database,
-    ).watchTasks(TasksQuery(accountId: accountId)).first;
+    final snapshot = await DatabaseTasksRepository(database)
+        .watchTasks(TasksQuery(accountId: accountId))
+        .first;
     final list = snapshot.taskLists.singleWhere(
       (candidate) => candidate.title == listTitle,
     );
@@ -463,9 +463,8 @@ Future<bool> _runRestoreImportSmoke({
     return true;
   } finally {
     try {
-      final matching = (await _allTaskLists(
-        service,
-      )).where((list) => list.title == listTitle);
+      final matching = (await _allTaskLists(service))
+          .where((list) => list.title == listTitle);
       for (final list in matching) {
         if (!createdLists.contains(list.id)) createdLists.add(list.id);
       }

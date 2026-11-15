@@ -232,9 +232,8 @@ void main() {
     final database = AppDatabase.inMemory();
     addTearDown(database.close);
     final account = AccountId(await database.createAccount(subject.value));
-    await SyncHealthDao(
-      database,
-    ).writeFacts(account, const PersistedSyncFacts(syncEnabled: false));
+    await SyncHealthDao(database)
+        .writeFacts(account, const PersistedSyncFacts(syncEnabled: false));
     final stopped = SyncEngine(
       store: DatabaseReadSyncStore(database),
       googleTasks: remote,
@@ -247,9 +246,8 @@ void main() {
     expect(stoppedReport.ineligibleReason, SyncRunIneligibleReason.syncStopped);
     expect(remote.listTaskListCalls, 0);
 
-    await SyncHealthDao(
-      database,
-    ).writeFacts(account, const PersistedSyncFacts());
+    await SyncHealthDao(database)
+        .writeFacts(account, const PersistedSyncFacts());
     final mismatch = SyncEngine(
       store: DatabaseReadSyncStore(database),
       googleTasks: remote,
@@ -389,9 +387,8 @@ void main() {
       );
       addTearDown(harness.close);
       expect(
-        (await harness.engine.run(
-          SyncRunRequest(accountId: harness.accountId),
-        )).outcome,
+        (await harness.engine.run(SyncRunRequest(accountId: harness.accountId)))
+            .outcome,
         SyncRunOutcome.succeeded,
       );
       harness.clock.advance(const Duration(minutes: 1));
@@ -482,89 +479,79 @@ void main() {
     },
   );
 
-  test(
-    'REC-023 protects decoded hierarchy evidence and persists safe failure only',
-    () async {
-      final history = InMemoryDiagnosticHistory();
-      final remote = _ScriptedReadService(
-        taskListPages: <RemotePage<RemoteTaskList>>[
-          _listPage(<RemoteTaskList>[
-            _remoteList('list-a', 'Hierarchy'),
-            _remoteList('list-b', 'Unrelated'),
+  test('REC-023 protects decoded hierarchy evidence and persists safe failure only', () async {
+    final history = InMemoryDiagnosticHistory();
+    final remote = _ScriptedReadService(
+      taskListPages: <RemotePage<RemoteTaskList>>[
+        _listPage(<RemoteTaskList>[
+          _remoteList('list-a', 'Hierarchy'),
+          _remoteList('list-b', 'Unrelated'),
+        ]),
+      ],
+      taskPages: <String, List<RemotePage<RemoteTask>>>{
+        'list-a': <RemotePage<RemoteTask>>[
+          _taskPage(<RemoteTask>[
+            _remoteTask('parent', 'Protected parent'),
+            _remoteTask('child', 'Protected child', parent: 'parent'),
+            _remoteTask('grandchild', 'Protected grandchild', parent: 'child'),
           ]),
         ],
-        taskPages: <String, List<RemotePage<RemoteTask>>>{
-          'list-a': <RemotePage<RemoteTask>>[
-            _taskPage(<RemoteTask>[
-              _remoteTask('parent', 'Protected parent'),
-              _remoteTask('child', 'Protected child', parent: 'parent'),
-              _remoteTask(
-                'grandchild',
-                'Protected grandchild',
-                parent: 'child',
-              ),
-            ]),
-          ],
-          'list-b': <RemotePage<RemoteTask>>[
-            _taskPage(<RemoteTask>[
-              _remoteTask('unrelated-task', 'Visible unrelated task'),
-            ]),
-          ],
-        },
-      );
-      final harness = await _Harness.create(
-        remote: remote,
-        subject: subject,
-        startedAt: startedAt,
-      );
-      addTearDown(harness.close);
-      final engine = SyncEngine(
-        store: DatabaseReadSyncStore(harness.database),
-        googleTasks: remote,
-        authorization: const SyntheticAuthorization(subject),
-        clock: harness.clock,
-        random: SequenceRandomSource(List<int>.generate(32, (i) => i + 1)),
-        diagnostics: SensitiveDevelopmentDiagnosticSink(history),
-      );
+        'list-b': <RemotePage<RemoteTask>>[
+          _taskPage(<RemoteTask>[
+            _remoteTask('unrelated-task', 'Visible unrelated task'),
+          ]),
+        ],
+      },
+    );
+    final harness = await _Harness.create(
+      remote: remote,
+      subject: subject,
+      startedAt: startedAt,
+    );
+    addTearDown(harness.close);
+    final engine = SyncEngine(
+      store: DatabaseReadSyncStore(harness.database),
+      googleTasks: remote,
+      authorization: const SyntheticAuthorization(subject),
+      clock: harness.clock,
+      random: SequenceRandomSource(List<int>.generate(32, (i) => i + 1)),
+      diagnostics: SensitiveDevelopmentDiagnosticSink(history),
+    );
 
-      final report = await engine.run(
-        SyncRunRequest(accountId: harness.accountId),
-      );
+    final report = await engine.run(
+      SyncRunRequest(accountId: harness.accountId),
+    );
 
-      expect(report.failure?.code, 'sync.unsupported_task_depth');
-      expect(remote.mutationCalls, 0);
-      expect(
-        (await harness.snapshot()).tasks.map((task) => task.title),
-        contains('Visible unrelated task'),
-      );
-      final record = history.records.singleWhere(
-        (record) => record.code == 'sync.unsupported_task_depth',
-      );
-      expect(record.fields['decoded_scope'], contains('Protected grandchild'));
-      expect(record.fields['decoded_scope'], contains('grandchild'));
-      final facts = await harness.healthFacts();
-      expect(
-        facts.latestFailure?.diagnosticCode,
-        'sync.unsupported_task_depth',
-      );
-      expect(facts.latestFailure.toString(), isNot(contains('Protected')));
+    expect(report.failure?.code, 'sync.unsupported_task_depth');
+    expect(remote.mutationCalls, 0);
+    expect(
+      (await harness.snapshot()).tasks.map((task) => task.title),
+      contains('Visible unrelated task'),
+    );
+    final record = history.records.singleWhere(
+      (record) => record.code == 'sync.unsupported_task_depth',
+    );
+    expect(record.fields['decoded_scope'], contains('Protected grandchild'));
+    expect(record.fields['decoded_scope'], contains('grandchild'));
+    final facts = await harness.healthFacts();
+    expect(facts.latestFailure?.diagnosticCode, 'sync.unsupported_task_depth');
+    expect(facts.latestFailure.toString(), isNot(contains('Protected')));
 
-      final releaseHistory = InMemoryDiagnosticHistory();
-      await SyncEngine(
-        store: DatabaseReadSyncStore(harness.database),
-        googleTasks: remote,
-        authorization: const SyntheticAuthorization(subject),
-        clock: harness.clock,
-        random: SequenceRandomSource(List<int>.generate(32, (i) => 64 + i)),
-        diagnostics: ProductionDiagnosticSink(releaseHistory),
-      ).run(SyncRunRequest(accountId: harness.accountId));
-      final releaseRecord = releaseHistory.records.singleWhere(
-        (record) => record.code == 'sync.unsupported_task_depth',
-      );
-      expect(releaseRecord.fields, isNot(contains('decoded_scope')));
-      expect(releaseRecord.renderedText, isNot(contains('Protected')));
-    },
-  );
+    final releaseHistory = InMemoryDiagnosticHistory();
+    await SyncEngine(
+      store: DatabaseReadSyncStore(harness.database),
+      googleTasks: remote,
+      authorization: const SyntheticAuthorization(subject),
+      clock: harness.clock,
+      random: SequenceRandomSource(List<int>.generate(32, (i) => 64 + i)),
+      diagnostics: ProductionDiagnosticSink(releaseHistory),
+    ).run(SyncRunRequest(accountId: harness.accountId));
+    final releaseRecord = releaseHistory.records.singleWhere(
+      (record) => record.code == 'sync.unsupported_task_depth',
+    );
+    expect(releaseRecord.fields, isNot(contains('decoded_scope')));
+    expect(releaseRecord.renderedText, isNot(contains('Protected')));
+  });
 
   test(
     'Google sibling-order change supersedes pending local hierarchy',
@@ -759,9 +746,9 @@ void main() {
 
       database = await AppDatabase.openFile(file);
       addTearDown(database.close);
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       final facts = await SyncHealthDao(database).watchFacts(account).first;
       expect(snapshot.taskLists.single.title, 'Committed page');
       expect(snapshot.completeness, CacheCompleteness.incomplete);
@@ -886,9 +873,10 @@ final class _Harness {
   final SyncEngine engine;
   final _RecordingObserver observer;
 
-  Future<CachedTasksSnapshot> snapshot() => DatabaseTasksRepository(
-    database,
-  ).watchTasks(TasksQuery(accountId: accountId)).first;
+  Future<CachedTasksSnapshot> snapshot() =>
+      DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: accountId))
+          .first;
 
   Future<PersistedSyncFacts> healthFacts() =>
       SyncHealthDao(database).watchFacts(accountId).first;

@@ -29,8 +29,9 @@ enum DesiredStateTransactionBoundary {
   beforeRemoteCommit,
 }
 
-typedef DesiredStateTransactionControl =
-    FutureOr<void> Function(DesiredStateTransactionBoundary boundary);
+typedef DesiredStateTransactionControl = FutureOr<void> Function(
+  DesiredStateTransactionBoundary boundary,
+);
 
 final class DesiredStatePersistenceException implements Exception {
   const DesiredStatePersistenceException(this.code);

@@ -39,9 +39,9 @@ void main() {
         clock: clock,
       );
       final snapshots = <CachedTasksSnapshot>[];
-      final subscription = DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).listen(snapshots.add);
+      final subscription = DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .listen(snapshots.add);
       addTearDown(subscription.cancel);
       await pumpEventQueue();
 
@@ -70,9 +70,9 @@ void main() {
         await database.createAccount('synthetic-rollback'),
       );
       final snapshots = <CachedTasksSnapshot>[];
-      final subscription = DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).listen(snapshots.add);
+      final subscription = DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .listen(snapshots.add);
       addTearDown(subscription.cancel);
       await pumpEventQueue();
 
@@ -149,9 +149,8 @@ void main() {
         clock.advance(const Duration(seconds: 1));
       }
 
-      final desired = await DesiredStateDao(
-        database,
-      ).readTaskList(account, list);
+      final desired = await DesiredStateDao(database)
+          .readTaskList(account, list);
       expect(desired?.generation, 3);
       expect(desired?.title, 'Local v3');
       expect(desired?.baseTitle, 'Remote v0');
@@ -159,9 +158,9 @@ void main() {
       expect(desired?.baseObservedPublicationId, 'publication-v0');
       expect(await DesiredStateDao(database).countForAccount(account), 1);
       expect((await _workCounts(database, account)).pending, 1);
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       expect(snapshot.taskLists.single.title, 'Local v3');
     },
   );
@@ -212,13 +211,12 @@ void main() {
         collectionEtag: null,
       );
 
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       final base = await cache.readTaskListRemoteBase(account, list);
-      final desired = await DesiredStateDao(
-        database,
-      ).readTaskList(account, list);
+      final desired = await DesiredStateDao(database)
+          .readTaskList(account, list);
       expect(snapshot.taskLists.single.title, 'Local pending');
       expect(base?.title, 'Remote after');
       expect(desired?.baseTitle, 'Remote before');
@@ -292,186 +290,170 @@ void main() {
     },
   );
 
-  test(
-    'no database transaction remains open while a claimed request waits (DUR-006)',
-    () async {
-      final account = AccountId(
-        await database.createAccount('synthetic-no-network-tx'),
-      );
-      final repository = DatabaseTaskListsRepository(
-        database: database,
-        clock: clock,
-      );
-      final created = await repository.createTaskList(
-        CreateTaskListCommand(accountId: account, title: 'Before request'),
-      );
-      final list = (created as Success<TaskListId>).value;
-      final attempt = await DesiredStateDao(database).claimTaskList(
+  test('no database transaction remains open while a claimed request waits (DUR-006)', () async {
+    final account = AccountId(
+      await database.createAccount('synthetic-no-network-tx'),
+    );
+    final repository = DatabaseTaskListsRepository(
+      database: database,
+      clock: clock,
+    );
+    final created = await repository.createTaskList(
+      CreateTaskListCommand(accountId: account, title: 'Before request'),
+    );
+    final list = (created as Success<TaskListId>).value;
+    final attempt = await DesiredStateDao(database).claimTaskList(
+      accountId: account,
+      taskListId: list,
+      claimedAt: clock.now(),
+    );
+    final heldRequest = Completer<void>();
+
+    final rename = repository.renameTaskList(
+      RenameTaskListCommand(
         accountId: account,
         taskListId: list,
-        claimedAt: clock.now(),
-      );
-      final heldRequest = Completer<void>();
+        title: 'While request waits',
+      ),
+    );
+    expect(await rename, isA<Success<void>>());
+    expect(attempt.state, DesiredStateLifecycle.inFlight);
+    expect(heldRequest.isCompleted, isFalse);
+  });
 
-      final rename = repository.renameTaskList(
-        RenameTaskListCommand(
-          accountId: account,
-          taskListId: list,
-          title: 'While request waits',
-        ),
-      );
-      expect(await rename, isA<Success<void>>());
-      expect(attempt.state, DesiredStateLifecycle.inFlight);
-      expect(heldRequest.isCompleted, isFalse);
-    },
-  );
-
-  test(
-    'remote acknowledgement binds ID, base, and result atomically (DUR-005/009)',
-    () async {
-      final account = AccountId(await database.createAccount('synthetic-ack'));
-      final repository = DatabaseTaskListsRepository(
-        database: database,
-        clock: clock,
-      );
-      final created = await repository.createTaskList(
-        CreateTaskListCommand(accountId: account, title: 'Created offline'),
-      );
-      final list = (created as Success<TaskListId>).value;
-      final attempt = await DesiredStateDao(database).claimTaskList(
-        accountId: account,
-        taskListId: list,
-        claimedAt: clock.now(),
-      );
-      for (final failureBoundary in <DesiredStateTransactionBoundary>[
-        DesiredStateTransactionBoundary.afterRemoteIdentityWrite,
-        DesiredStateTransactionBoundary.afterRemoteBaseWrite,
-        DesiredStateTransactionBoundary.beforeRemoteCommit,
-      ]) {
-        final failingDao = DesiredStateDao(
-          database,
-          transactionControl: (boundary) {
-            if (boundary == failureBoundary) {
-              throw const DesiredStatePersistenceException(
-                'synthetic_ack_rollback',
-              );
-            }
-          },
-        );
-        await expectLater(
-          failingDao.acknowledgeTaskList(
-            accountId: account,
-            attemptId: attempt.id,
-            remoteId: const TaskListRemoteId('bound-list'),
-            title: 'Canonical title',
-            etag: 'etag-1',
-            remoteUpdatedAt: clock.now(),
-            observedPublicationId: 'mutation-ack-1',
-            acknowledgedAt: clock.now(),
-          ),
-          throwsA(isA<DesiredStatePersistenceException>()),
-        );
-        expect(
-          (await DesiredStateDao(database).readTaskList(account, list))?.state,
-          DesiredStateLifecycle.inFlight,
-        );
-        expect(
-          await CacheDao(database).readTaskListRemoteBase(account, list),
-          isNull,
-        );
-        final failedSnapshot = await DatabaseTasksRepository(
-          database,
-        ).watchTasks(TasksQuery(accountId: account)).first;
-        expect(failedSnapshot.taskLists.single.remoteId, isNull);
-      }
-
-      await DesiredStateDao(database).acknowledgeTaskList(
-        accountId: account,
-        attemptId: attempt.id,
-        remoteId: const TaskListRemoteId('bound-list'),
-        title: 'Canonical title',
-        etag: 'etag-1',
-        remoteUpdatedAt: clock.now(),
-        observedPublicationId: 'mutation-ack-1',
-        acknowledgedAt: clock.now(),
-      );
-      final base = await CacheDao(
+  test('remote acknowledgement binds ID, base, and result atomically (DUR-005/009)', () async {
+    final account = AccountId(await database.createAccount('synthetic-ack'));
+    final repository = DatabaseTaskListsRepository(
+      database: database,
+      clock: clock,
+    );
+    final created = await repository.createTaskList(
+      CreateTaskListCommand(accountId: account, title: 'Created offline'),
+    );
+    final list = (created as Success<TaskListId>).value;
+    final attempt = await DesiredStateDao(database).claimTaskList(
+      accountId: account,
+      taskListId: list,
+      claimedAt: clock.now(),
+    );
+    for (final failureBoundary in <DesiredStateTransactionBoundary>[
+      DesiredStateTransactionBoundary.afterRemoteIdentityWrite,
+      DesiredStateTransactionBoundary.afterRemoteBaseWrite,
+      DesiredStateTransactionBoundary.beforeRemoteCommit,
+    ]) {
+      final failingDao = DesiredStateDao(
         database,
-      ).readTaskListRemoteBase(account, list);
-      expect(base?.remoteId, const TaskListRemoteId('bound-list'));
-      expect(base?.title, 'Canonical title');
-      expect(base?.etag, 'etag-1');
+        transactionControl: (boundary) {
+          if (boundary == failureBoundary) {
+            throw const DesiredStatePersistenceException(
+              'synthetic_ack_rollback',
+            );
+          }
+        },
+      );
+      await expectLater(
+        failingDao.acknowledgeTaskList(
+          accountId: account,
+          attemptId: attempt.id,
+          remoteId: const TaskListRemoteId('bound-list'),
+          title: 'Canonical title',
+          etag: 'etag-1',
+          remoteUpdatedAt: clock.now(),
+          observedPublicationId: 'mutation-ack-1',
+          acknowledgedAt: clock.now(),
+        ),
+        throwsA(isA<DesiredStatePersistenceException>()),
+      );
       expect(
-        (await DesiredStateDao(
-          database,
-        ).readAttempt(account, attempt.id))?.state,
-        DesiredStateLifecycle.confirmed,
+        (await DesiredStateDao(database).readTaskList(account, list))?.state,
+        DesiredStateLifecycle.inFlight,
       );
-      expect((await _workCounts(database, account)).total, 0);
-    },
-  );
+      expect(
+        await CacheDao(database).readTaskListRemoteBase(account, list),
+        isNull,
+      );
+      final failedSnapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
+      expect(failedSnapshot.taskLists.single.remoteId, isNull);
+    }
 
-  test(
-    'restart preserves provisional identity, coalesced rename, and stopped editing',
-    () async {
-      final root = await Directory.systemTemp.createTemp(
-        'axiotask-s14a-restart-',
-      );
-      addTearDown(() => root.delete(recursive: true));
-      final file = File('${root.path}/offline.sqlite');
-      await database.close();
+    await DesiredStateDao(database).acknowledgeTaskList(
+      accountId: account,
+      attemptId: attempt.id,
+      remoteId: const TaskListRemoteId('bound-list'),
+      title: 'Canonical title',
+      etag: 'etag-1',
+      remoteUpdatedAt: clock.now(),
+      observedPublicationId: 'mutation-ack-1',
+      acknowledgedAt: clock.now(),
+    );
+    final base = await CacheDao(database).readTaskListRemoteBase(account, list);
+    expect(base?.remoteId, const TaskListRemoteId('bound-list'));
+    expect(base?.title, 'Canonical title');
+    expect(base?.etag, 'etag-1');
+    expect(
+      (await DesiredStateDao(database).readAttempt(account, attempt.id))?.state,
+      DesiredStateLifecycle.confirmed,
+    );
+    expect((await _workCounts(database, account)).total, 0);
+  });
 
-      var reopened = await AppDatabase.openFile(file);
-      final account = AccountId(
-        await reopened.createAccount('synthetic-restart'),
-      );
-      await reopened.customStatement(
-        'INSERT INTO account_preferences (account_id, sync_enabled) VALUES (?, 0)',
-        <Object>[account.value],
-      );
-      var repository = DatabaseTaskListsRepository(
-        database: reopened,
-        clock: clock,
-      );
-      final create = await repository.createTaskList(
-        CreateTaskListCommand(accountId: account, title: 'Offline first'),
-      );
-      final id = (create as Success<TaskListId>).value;
-      await repository.renameTaskList(
-        RenameTaskListCommand(
-          accountId: account,
-          taskListId: id,
-          title: 'Offline renamed',
-        ),
-      );
-      await reopened.close();
+  test('restart preserves provisional identity, coalesced rename, and stopped editing', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'axiotask-s14a-restart-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final file = File('${root.path}/offline.sqlite');
+    await database.close();
 
-      reopened = await AppDatabase.openFile(file);
-      addTearDown(reopened.close);
-      repository = DatabaseTaskListsRepository(
-        database: reopened,
-        clock: clock,
-      );
-      final snapshot = await DatabaseTasksRepository(
-        reopened,
-      ).watchTasks(TasksQuery(accountId: account)).first;
-      final desired = await DesiredStateDao(reopened).readTaskList(account, id);
-      expect(snapshot.taskLists.single.id, id);
-      expect(snapshot.taskLists.single.remoteId, isNull);
-      expect(snapshot.taskLists.single.title, 'Offline renamed');
-      expect(desired?.generation, 2);
-      expect((await _workCounts(reopened, account)).pending, 1);
+    var reopened = await AppDatabase.openFile(file);
+    final account = AccountId(
+      await reopened.createAccount('synthetic-restart'),
+    );
+    await reopened.customStatement(
+      'INSERT INTO account_preferences (account_id, sync_enabled) VALUES (?, 0)',
+      <Object>[account.value],
+    );
+    var repository = DatabaseTaskListsRepository(
+      database: reopened,
+      clock: clock,
+    );
+    final create = await repository.createTaskList(
+      CreateTaskListCommand(accountId: account, title: 'Offline first'),
+    );
+    final id = (create as Success<TaskListId>).value;
+    await repository.renameTaskList(
+      RenameTaskListCommand(
+        accountId: account,
+        taskListId: id,
+        title: 'Offline renamed',
+      ),
+    );
+    await reopened.close();
 
-      final secondRename = await repository.renameTaskList(
-        RenameTaskListCommand(
-          accountId: account,
-          taskListId: id,
-          title: 'Still stopped',
-        ),
-      );
-      expect(secondRename, isA<Success<void>>());
-    },
-  );
+    reopened = await AppDatabase.openFile(file);
+    addTearDown(reopened.close);
+    repository = DatabaseTaskListsRepository(database: reopened, clock: clock);
+    final snapshot = await DatabaseTasksRepository(reopened)
+        .watchTasks(TasksQuery(accountId: account))
+        .first;
+    final desired = await DesiredStateDao(reopened).readTaskList(account, id);
+    expect(snapshot.taskLists.single.id, id);
+    expect(snapshot.taskLists.single.remoteId, isNull);
+    expect(snapshot.taskLists.single.title, 'Offline renamed');
+    expect(desired?.generation, 2);
+    expect((await _workCounts(reopened, account)).pending, 1);
+
+    final secondRename = await repository.renameTaskList(
+      RenameTaskListCommand(
+        accountId: account,
+        taskListId: id,
+        title: 'Still stopped',
+      ),
+    );
+    expect(secondRename, isA<Success<void>>());
+  });
 
   test(
     'account validation and absence of a local-only command fail closed',
@@ -517,52 +499,49 @@ void main() {
     },
   );
 
-  test(
-    'resolved attempt compaction preserves unresolved current evidence (DUR-011)',
-    () async {
-      final account = AccountId(
-        await database.createAccount('synthetic-compact'),
-      );
-      final repository = DatabaseTaskListsRepository(
-        database: database,
-        clock: clock,
-      );
-      final created = await repository.createTaskList(
-        CreateTaskListCommand(accountId: account, title: 'Compact'),
-      );
-      final list = (created as Success<TaskListId>).value;
-      final dao = DesiredStateDao(database);
-      final attempt = await dao.claimTaskList(
+  test('resolved attempt compaction preserves unresolved current evidence (DUR-011)', () async {
+    final account = AccountId(
+      await database.createAccount('synthetic-compact'),
+    );
+    final repository = DatabaseTaskListsRepository(
+      database: database,
+      clock: clock,
+    );
+    final created = await repository.createTaskList(
+      CreateTaskListCommand(accountId: account, title: 'Compact'),
+    );
+    final list = (created as Success<TaskListId>).value;
+    final dao = DesiredStateDao(database);
+    final attempt = await dao.claimTaskList(
+      accountId: account,
+      taskListId: list,
+      claimedAt: clock.now(),
+    );
+    await dao.transitionAttempt(
+      accountId: account,
+      attemptId: attempt.id,
+      state: DesiredStateLifecycle.superseded,
+      transitionedAt: clock.now(),
+    );
+    await repository.renameTaskList(
+      RenameTaskListCommand(
         accountId: account,
         taskListId: list,
-        claimedAt: clock.now(),
-      );
-      await dao.transitionAttempt(
-        accountId: account,
-        attemptId: attempt.id,
-        state: DesiredStateLifecycle.superseded,
-        transitionedAt: clock.now(),
-      );
-      await repository.renameTaskList(
-        RenameTaskListCommand(
-          accountId: account,
-          taskListId: list,
-          title: 'Newest pending',
-        ),
-      );
+        title: 'Newest pending',
+      ),
+    );
 
-      expect(
-        await dao.compactResolvedAttempts(
-          accountId: account,
-          resolvedBeforeOrAt: clock.now(),
-        ),
-        1,
-      );
-      expect(await dao.readAttempt(account, attempt.id), isNull);
-      expect((await dao.readTaskList(account, list))?.title, 'Newest pending');
-      expect((await _workCounts(database, account)).pending, 1);
-    },
-  );
+    expect(
+      await dao.compactResolvedAttempts(
+        accountId: account,
+        resolvedBeforeOrAt: clock.now(),
+      ),
+      1,
+    );
+    expect(await dao.readAttempt(account, attempt.id), isNull);
+    expect((await dao.readTaskList(account, list))?.title, 'Newest pending');
+    expect((await _workCounts(database, account)).pending, 1);
+  });
 }
 
 Future<SyncWorkCounts> _workCounts(

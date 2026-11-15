@@ -65,9 +65,8 @@ void main() {
 
       database = await AppDatabase.openFile(file);
       addTearDown(database.close);
-      final desired = await DesiredStateDao(
-        database,
-      ).readTaskList(account, (committed as Success<TaskListId>).value);
+      final desired = await DesiredStateDao(database)
+          .readTaskList(account, (committed as Success<TaskListId>).value);
       expect(desired?.state, DesiredStateLifecycle.pending);
       expect(
         (await SyncHealthDao(
@@ -145,15 +144,9 @@ void main() {
       );
       final desired = DesiredStateDao(database);
 
-      final createList =
-          (await repository.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: account,
-                      title: 'Create generation 1',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
+      final createList = (await repository.createTaskList(
+        CreateTaskListCommand(accountId: account, title: 'Create generation 1'),
+      ) as Success<TaskListId>).value;
       final createAttempt = await desired.claimTaskList(
         accountId: account,
         taskListId: createList,
@@ -234,9 +227,8 @@ void main() {
       );
 
       final recoveredAt = startedAt.add(const Duration(minutes: 2));
-      final recovered = await DatabaseReadSyncStore(
-        database,
-      ).recoverStartup(accountId: account, recoveredAt: recoveredAt);
+      final recovered = await DatabaseReadSyncStore(database)
+          .recoverStartup(accountId: account, recoveredAt: recoveredAt);
       expect(recovered.recoveredAttempts, 3);
       expect(recovered.recoverableCreateAttemptIds, <int>[createAttempt.id]);
       expect(await _attemptEvidence(database, account), <int, List<Object?>>{

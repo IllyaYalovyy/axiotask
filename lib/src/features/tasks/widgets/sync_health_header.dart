@@ -182,9 +182,8 @@ final class _Summary extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               'Last successful sync: ${health.lastSuccessLabel}',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: visual.foreground),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: visual.foreground),
             ),
           ],
         ),

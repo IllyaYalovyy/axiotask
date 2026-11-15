@@ -35,9 +35,8 @@ void main() {
     final account = AccountId(
       await database.createAccount('synthetic-linux-task-details'),
     );
-    await DatabaseSyncSettingsRepository(
-      database,
-    ).setSyncEnabled(account, false);
+    await DatabaseSyncSettingsRepository(database)
+        .setSyncEnabled(account, false);
     final cache = CacheDao(database);
     final list = await cache.putTaskList(
       accountId: account,

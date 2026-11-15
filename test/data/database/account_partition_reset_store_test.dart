@@ -16,66 +16,61 @@ void main() {
   setUp(() => database = AppDatabase.inMemory());
   tearDown(() => database.close());
 
-  test(
-    'PAR-DATA-003 resets every selected partition class and preserves another account',
-    () async {
-      final selected = AccountId(
-        await database.createAccount('selected-subject'),
-      );
-      final other = AccountId(await database.createAccount('other-subject'));
-      await _seedPartition(database, selected, 'selected');
-      await _seedPartition(database, other, 'other');
-      final store = DatabaseAccountPartitionResetStore(database);
+  test('PAR-DATA-003 resets every selected partition class and preserves another account', () async {
+    final selected = AccountId(
+      await database.createAccount('selected-subject'),
+    );
+    final other = AccountId(await database.createAccount('other-subject'));
+    await _seedPartition(database, selected, 'selected');
+    await _seedPartition(database, other, 'other');
+    final store = DatabaseAccountPartitionResetStore(database);
 
-      final preview = await store.preview(selected);
-      expect(preview.cachedListCount, 1);
-      expect(preview.cachedTaskCount, 1);
-      expect(preview.pendingChangeCount, 1);
-      expect(preview.uncertainChangeCount, 1);
-      expect(preview.undoRecordCount, greaterThanOrEqualTo(1));
-      expect(preview.accountPreferenceCount, 3);
-      expect(preview.syncHistoryCount, greaterThanOrEqualTo(2));
-      expect(preview.importManifestCount, 1);
+    final preview = await store.preview(selected);
+    expect(preview.cachedListCount, 1);
+    expect(preview.cachedTaskCount, 1);
+    expect(preview.pendingChangeCount, 1);
+    expect(preview.uncertainChangeCount, 1);
+    expect(preview.undoRecordCount, greaterThanOrEqualTo(1));
+    expect(preview.accountPreferenceCount, 3);
+    expect(preview.syncHistoryCount, greaterThanOrEqualTo(2));
+    expect(preview.importManifestCount, 1);
 
-      await store.resetPartition(selected);
+    await store.resetPartition(selected);
 
-      final accounts = await database.allAccounts();
+    final accounts = await database.allAccounts();
+    expect(
+      accounts.singleWhere((row) => row.id == selected.value).googleSubject,
+      'selected-subject',
+    );
+    for (final table in _partitionTables) {
       expect(
-        accounts.singleWhere((row) => row.id == selected.value).googleSubject,
-        'selected-subject',
+        await _count(database, table, selected),
+        0,
+        reason: '$table must be discarded for the selected account',
       );
-      for (final table in _partitionTables) {
-        expect(
-          await _count(database, table, selected),
-          0,
-          reason: '$table must be discarded for the selected account',
-        );
-        expect(
-          await _count(database, table, other),
-          greaterThan(0),
-          reason: '$table must remain for the other account',
-        );
-      }
-
-      final emptyFacts = await SyncHealthDao(
-        database,
-      ).watchFacts(selected).first;
-      final emptyHealth = projectSyncHealth(
-        facts: emptyFacts,
-        runtime: const SyncRuntimeFacts(
-          authorization: SyncAuthorization.usable,
-          connectivity: SyncConnectivity.unknown,
-          activity: SyncActivity.idle,
-          verificationRequired: false,
-        ),
-        now: DateTime.utc(2026, 8, 16, 12),
+      expect(
+        await _count(database, table, other),
+        greaterThan(0),
+        reason: '$table must remain for the other account',
       );
-      expect(emptyHealth.outcome, isNot(SyncHealthOutcome.good));
+    }
 
-      await store.resetPartition(selected);
-      expect((await database.allAccounts()).length, 2);
-    },
-  );
+    final emptyFacts = await SyncHealthDao(database).watchFacts(selected).first;
+    final emptyHealth = projectSyncHealth(
+      facts: emptyFacts,
+      runtime: const SyncRuntimeFacts(
+        authorization: SyncAuthorization.usable,
+        connectivity: SyncConnectivity.unknown,
+        activity: SyncActivity.idle,
+        verificationRequired: false,
+      ),
+      now: DateTime.utc(2026, 8, 16, 12),
+    );
+    expect(emptyHealth.outcome, isNot(SyncHealthOutcome.good));
+
+    await store.resetPartition(selected);
+    expect((await database.allAccounts()).length, 2);
+  });
 
   test('transaction failure rolls the complete partition back', () async {
     final account = AccountId(await database.createAccount('rollback-subject'));

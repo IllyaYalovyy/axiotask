@@ -35,34 +35,31 @@ void main() {
     expect(model.state.bulkSelectedTaskIds, isEmpty);
   });
 
-  test(
-    'bulk result with pending Google work clears selection and remains actionable',
-    () async {
-      final repository = _BulkRepository();
-      final edits = <String>[];
-      final model = _model(
-        repository,
-        localEditCommitted: () async => edits.add('committed'),
-      )..start();
-      addTearDown(model.dispose);
-      repository.tasks.add(_snapshot);
-      repository.health.add(_pendingHealth);
-      await Future<void>.delayed(Duration.zero);
-      model.beginBulkSelection(const TaskId(11));
-      model.toggleBulkSelection(const TaskId(13));
+  test('bulk result with pending Google work clears selection and remains actionable', () async {
+    final repository = _BulkRepository();
+    final edits = <String>[];
+    final model = _model(
+      repository,
+      localEditCommitted: () async => edits.add('committed'),
+    )..start();
+    addTearDown(model.dispose);
+    repository.tasks.add(_snapshot);
+    repository.health.add(_pendingHealth);
+    await Future<void>.delayed(Duration.zero);
+    model.beginBulkSelection(const TaskId(11));
+    model.toggleBulkSelection(const TaskId(13));
 
-      await model.completeBulkSelection();
-      repository.summaries.add(_summary);
-      await Future<void>.delayed(Duration.zero);
+    await model.completeBulkSelection();
+    repository.summaries.add(_summary);
+    await Future<void>.delayed(Duration.zero);
 
-      expect(repository.commands.single, isA<BulkCompleteTasksCommand>());
-      expect(model.state.bulkSelectedTaskIds, isEmpty);
-      expect(model.state.latestBulkOperation, same(_summary));
-      expect(model.state.transientFeedback, isNull);
-      expect(model.state.bulkCommandFailureMessage, isNull);
-      expect(edits, <String>['committed']);
-    },
-  );
+    expect(repository.commands.single, isA<BulkCompleteTasksCommand>());
+    expect(model.state.bulkSelectedTaskIds, isEmpty);
+    expect(model.state.latestBulkOperation, same(_summary));
+    expect(model.state.transientFeedback, isNull);
+    expect(model.state.bulkCommandFailureMessage, isNull);
+    expect(edits, <String>['committed']);
+  });
 
   test(
     'settled bulk success clears after its deterministic short deadline',

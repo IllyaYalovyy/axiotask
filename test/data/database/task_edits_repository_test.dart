@@ -142,9 +142,8 @@ void main() {
         ),
       );
 
-      final desired = await DesiredStateDao(
-        database,
-      ).readTask(account, seeded.task);
+      final desired = await DesiredStateDao(database)
+          .readTask(account, seeded.task);
       expect(desired?.generation, 4);
       expect(desired?.title, 'Local title');
       expect(desired?.notes, '');
@@ -204,9 +203,8 @@ void main() {
       final snapshot = await repository
           .watchTasks(TasksQuery(accountId: account))
           .first;
-      final base = await CacheDao(
-        database,
-      ).readTaskRemoteBase(account, seeded.task);
+      final base = await CacheDao(database)
+          .readTaskRemoteBase(account, seeded.task);
       expect(snapshot.tasks.single.title, 'Local pending');
       expect(snapshot.tasks.single.notes, 'Remote notes');
       expect(snapshot.tasks.single.status, TaskStatus.needsAction);
@@ -289,19 +287,15 @@ void main() {
       final account = AccountId(await database.createAccount('synthetic-ack'));
       final list = await _putRemoteList(database, account, 'ack-list');
       final repository = DatabaseTasksRepository(database, clock: clock);
-      final task =
-          (await repository.createTask(
-                    CreateTaskCommand(
-                      accountId: account,
-                      taskListId: list,
-                      title: 'Offline',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
-      final attempt = await DesiredStateDao(
-        database,
-      ).claimTask(accountId: account, taskId: task, claimedAt: clock.now());
+      final task = (await repository.createTask(
+        CreateTaskCommand(
+          accountId: account,
+          taskListId: list,
+          title: 'Offline',
+        ),
+      ) as Success<TaskId>).value;
+      final attempt = await DesiredStateDao(database)
+          .claimTask(accountId: account, taskId: task, claimedAt: clock.now());
       for (final boundary in <DesiredStateTransactionBoundary>[
         DesiredStateTransactionBoundary.afterRemoteIdentityWrite,
         DesiredStateTransactionBoundary.afterRemoteBaseWrite,
@@ -352,17 +346,14 @@ void main() {
     final seeded = await _putRemoteTask(database, accountA);
     final listB = await _putRemoteList(database, accountB, 'list-b');
     final repository = DatabaseTasksRepository(database, clock: clock);
-    final child =
-        (await repository.createTask(
-                  CreateTaskCommand(
-                    accountId: accountA,
-                    taskListId: seeded.list,
-                    parentTaskId: seeded.task,
-                    title: 'Child',
-                  ),
-                )
-                as Success<TaskId>)
-            .value;
+    final child = (await repository.createTask(
+      CreateTaskCommand(
+        accountId: accountA,
+        taskListId: seeded.list,
+        parentTaskId: seeded.task,
+        title: 'Child',
+      ),
+    ) as Success<TaskId>).value;
 
     final crossAccount = await repository.createTask(
       CreateTaskCommand(
@@ -389,75 +380,65 @@ void main() {
     );
   });
 
-  test(
-    'task attempt lifecycle compacts without losing newer work (DUR-006/007/011)',
-    () async {
-      final account = AccountId(
-        await database.createAccount('synthetic-task-compact'),
-      );
-      final list = await _putRemoteList(database, account, 'compact-list');
-      final repository = DatabaseTasksRepository(database, clock: clock);
-      final task =
-          (await repository.createTask(
-                    CreateTaskCommand(
-                      accountId: account,
-                      taskListId: list,
-                      title: 'First',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
-      final dao = DesiredStateDao(database);
-      final attempt = await dao.claimTask(
-        accountId: account,
-        taskId: task,
-        claimedAt: clock.now(),
-      );
-      expect(
-        await repository.apply(
-          SetTaskTitleCommand(
-            accountId: account,
-            taskId: task,
-            title: 'While the request boundary is idle',
-          ),
+  test('task attempt lifecycle compacts without losing newer work (DUR-006/007/011)', () async {
+    final account = AccountId(
+      await database.createAccount('synthetic-task-compact'),
+    );
+    final list = await _putRemoteList(database, account, 'compact-list');
+    final repository = DatabaseTasksRepository(database, clock: clock);
+    final task = (await repository.createTask(
+      CreateTaskCommand(accountId: account, taskListId: list, title: 'First'),
+    ) as Success<TaskId>).value;
+    final dao = DesiredStateDao(database);
+    final attempt = await dao.claimTask(
+      accountId: account,
+      taskId: task,
+      claimedAt: clock.now(),
+    );
+    expect(
+      await repository.apply(
+        SetTaskTitleCommand(
+          accountId: account,
+          taskId: task,
+          title: 'While the request boundary is idle',
         ),
-        isA<Success<void>>(),
-      );
-      await dao.transitionAttempt(
+      ),
+      isA<Success<void>>(),
+    );
+    await dao.transitionAttempt(
+      accountId: account,
+      attemptId: attempt.id,
+      state: DesiredStateLifecycle.superseded,
+      transitionedAt: clock.now(),
+    );
+    await expectLater(
+      dao.transitionAttempt(
         accountId: account,
         attemptId: attempt.id,
-        state: DesiredStateLifecycle.superseded,
+        state: DesiredStateLifecycle.inFlight,
         transitionedAt: clock.now(),
-      );
-      await expectLater(
-        dao.transitionAttempt(
-          accountId: account,
-          attemptId: attempt.id,
-          state: DesiredStateLifecycle.inFlight,
-          transitionedAt: clock.now(),
-        ),
-        throwsA(isA<DesiredStateInvariantException>()),
-      );
+      ),
+      throwsA(isA<DesiredStateInvariantException>()),
+    );
 
-      expect(
-        await dao.compactResolvedAttempts(
-          accountId: account,
-          resolvedBeforeOrAt: clock.now(),
-        ),
-        1,
-      );
-      expect(await dao.readAttempt(account, attempt.id), isNull);
-      expect(
-        (await dao.readTask(account, task))?.title,
-        'While the request boundary is idle',
-      );
-      expect(
-        (await dao.readTask(account, task))?.state,
-        DesiredStateLifecycle.pending,
-      );
-      expect((await _workCounts(database, account)).pending, 1);
-    },
-  );
+    expect(
+      await dao.compactResolvedAttempts(
+        accountId: account,
+        resolvedBeforeOrAt: clock.now(),
+      ),
+      1,
+    );
+    expect(await dao.readAttempt(account, attempt.id), isNull);
+    expect(
+      (await dao.readTask(account, task))?.title,
+      'While the request boundary is idle',
+    );
+    expect(
+      (await dao.readTask(account, task))?.state,
+      DesiredStateLifecycle.pending,
+    );
+    expect((await _workCounts(database, account)).pending, 1);
+  });
 
   test(
     'restart preserves provisional identity and pending whole content',
@@ -475,16 +456,9 @@ void main() {
       );
       final list = await _putRemoteList(reopened, account, 'restart-list');
       var repository = DatabaseTasksRepository(reopened, clock: clock);
-      final task =
-          (await repository.createTask(
-                    CreateTaskCommand(
-                      accountId: account,
-                      taskListId: list,
-                      title: 'First',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
+      final task = (await repository.createTask(
+        CreateTaskCommand(accountId: account, taskListId: list, title: 'First'),
+      ) as Success<TaskId>).value;
       await repository.apply(
         SetTaskNotesCommand(
           accountId: account,

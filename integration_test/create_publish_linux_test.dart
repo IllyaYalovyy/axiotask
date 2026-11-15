@@ -48,25 +48,16 @@ void main() {
         clock: clock,
       );
       final tasks = DatabaseTasksRepository(database, clock: clock);
-      final list =
-          (await lists.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: account,
-                      title: 'Resume list',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
-      final task =
-          (await tasks.createTask(
-                    CreateTaskCommand(
-                      accountId: account,
-                      taskListId: list,
-                      title: 'Resume task',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
+      final list = (await lists.createTaskList(
+        CreateTaskListCommand(accountId: account, title: 'Resume list'),
+      ) as Success<TaskListId>).value;
+      final task = (await tasks.createTask(
+        CreateTaskCommand(
+          accountId: account,
+          taskListId: list,
+          title: 'Resume task',
+        ),
+      ) as Success<TaskId>).value;
       final remote = FakeGoogleTasksService();
       final authorization = const SyntheticAuthorization(subject);
       final coordinator = SyncCoordinator(

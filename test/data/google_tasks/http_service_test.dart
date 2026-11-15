@@ -254,46 +254,37 @@ void main() {
       );
     });
 
-    test(
-      'AUTH-006 classifies only the observed malformed-bearer shape as refreshable',
-      () async {
-        final server = await ScriptedServer.start((request) async {
-          request.response.statusCode = HttpStatus.unauthorized;
-          request.response.headers
-            ..contentType = ContentType.json
-            ..set(
-              HttpHeaders.wwwAuthenticateHeader,
-              'Bearer realm="synthetic"',
-            );
-          request.response.write(
-            jsonEncode(<String, Object>{
-              'error': <String, Object>{
-                'code': 401,
-                'errors': <Object>[
-                  <String, Object>{'reason': 'authError'},
-                ],
-                'message': 'Synthetic malformed credential.',
-                'status': 'UNAUTHENTICATED',
-              },
-            }),
-          );
-          await request.response.close();
-        });
-        addTearDown(server.close);
-        final service = _service(server: server);
-        addTearDown(service.close);
-
-        final result = await service.listTaskLists();
-
-        final failure = (result as Failed<RemotePage<RemoteTaskList>>).failure;
-        expect(failure.code, 'google_tasks.unauthorized');
-        expect(failure.category, FailureCategory.authorization);
-        expect(
-          failure.authorizationRecovery,
-          AuthorizationRecovery.refreshOnce,
+    test('AUTH-006 classifies only the observed malformed-bearer shape as refreshable', () async {
+      final server = await ScriptedServer.start((request) async {
+        request.response.statusCode = HttpStatus.unauthorized;
+        request.response.headers
+          ..contentType = ContentType.json
+          ..set(HttpHeaders.wwwAuthenticateHeader, 'Bearer realm="synthetic"');
+        request.response.write(
+          jsonEncode(<String, Object>{
+            'error': <String, Object>{
+              'code': 401,
+              'errors': <Object>[
+                <String, Object>{'reason': 'authError'},
+              ],
+              'message': 'Synthetic malformed credential.',
+              'status': 'UNAUTHENTICATED',
+            },
+          }),
         );
-      },
-    );
+        await request.response.close();
+      });
+      addTearDown(server.close);
+      final service = _service(server: server);
+      addTearDown(service.close);
+
+      final result = await service.listTaskLists();
+
+      final failure = (result as Failed<RemotePage<RemoteTaskList>>).failure;
+      expect(failure.code, 'google_tasks.unauthorized');
+      expect(failure.category, FailureCategory.authorization);
+      expect(failure.authorizationRecovery, AuthorizationRecovery.refreshOnce);
+    });
 
     test('AUTH-006 unknown auth-like responses remain unclassified', () async {
       var call = 0;

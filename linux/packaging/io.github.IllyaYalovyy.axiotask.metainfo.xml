@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.IllyaYalovyy.axiotask</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Axiotask</name>
+  <summary>Manage Google Tasks with offline editing</summary>
+  <description>
+    <p>Axiotask is a native Google Tasks client. Browse cached lists and tasks,
+    edit offline, and track pending changes as they synchronize with Google.</p>
+    <ul>
+      <li>Organize tasks with subtasks, notes, due dates, and smart views</li>
+      <li>Capture tasks quickly, search your lists, and edit tasks in bulk</li>
+      <li>Export and restore account backups</li>
+    </ul>
+    <p>A Google account and an internet connection are required to connect
+    and synchronize. Previously downloaded tasks remain available offline.</p>
+  </description>
+  <launchable type="desktop-id">io.github.IllyaYalovyy.axiotask.desktop</launchable>
+  <developer id="io.github.illyayalovyy"><name>Illya Yalovyy</name></developer>
+  <url type="homepage">https://github.com/IllyaYalovyy/axiotask</url>
+  <url type="bugtracker">https://github.com/IllyaYalovyy/axiotask/issues</url>
+  <url type="vcs-browser">https://github.com/IllyaYalovyy/axiotask</url>
+  <categories><category>Office</category><category>ProjectManagement</category></categories>
+  <keywords><keyword>tasks</keyword><keyword>todo</keyword><keyword>google</keyword></keywords>
+  <provides><binary>axiotask</binary></provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.5.4" type="stable" date="2026-11-15">
+      <description><p>Prepare Linux desktop distribution with the restored
+      Axiotask branding and updated application identity.</p></description>
+    </release>
+  </releases>
+</component>

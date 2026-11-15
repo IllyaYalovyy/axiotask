@@ -29,33 +29,30 @@ void main() {
   const subject = AccountSubject('synthetic-foreground-read-subject');
   final now = DateTime.utc(2026, 8, 15, 12);
 
-  test(
-    'RUN-005 warm startup stays Pending until authorization and full verification',
-    () async {
-      final authorization = _DelayedAuthorization(subject);
-      final harness = await _Harness.create(
-        authorization: authorization,
-        now: now,
-        priorSuccess: now.subtract(const Duration(minutes: 1)),
-      );
-      addTearDown(harness.close);
+  test('RUN-005 warm startup stays Pending until authorization and full verification', () async {
+    final authorization = _DelayedAuthorization(subject);
+    final harness = await _Harness.create(
+      authorization: authorization,
+      now: now,
+      priorSuccess: now.subtract(const Duration(minutes: 1)),
+    );
+    addTearDown(harness.close);
 
-      final run = harness.coordinator.start();
-      await pumpEventQueue();
+    final run = harness.coordinator.start();
+    await pumpEventQueue();
 
-      expect(
-        harness.coordinator.currentFacts.authorization,
-        SyncAuthorization.refreshing,
-      );
-      expect(harness.coordinator.currentFacts.verificationRequired, isTrue);
-      expect(harness.remote.listCalls, 0);
-      authorization.completeRestore();
-      await run;
+    expect(
+      harness.coordinator.currentFacts.authorization,
+      SyncAuthorization.refreshing,
+    );
+    expect(harness.coordinator.currentFacts.verificationRequired, isTrue);
+    expect(harness.remote.listCalls, 0);
+    authorization.completeRestore();
+    await run;
 
-      expect(harness.remote.listCalls, 1);
-      expect((await harness.health()).outcome, SyncHealthOutcome.good);
-    },
-  );
+    expect(harness.remote.listCalls, 1);
+    expect((await harness.health()).outcome, SyncHealthOutcome.good);
+  });
 
   test('resume and Refresh each request foreground verification', () async {
     final lifecycle = FakeLifecycle();
@@ -126,9 +123,9 @@ void main() {
 
       await harness.coordinator.start();
 
-      final facts = await SyncHealthDao(
-        harness.database,
-      ).watchFacts(harness.accountId).first;
+      final facts = await SyncHealthDao(harness.database)
+          .watchFacts(harness.accountId)
+          .first;
       final health = await harness.health();
       expect(facts.lastSuccessfulSyncAt, priorSuccess);
       expect(facts.requiredScopeIncomplete, isTrue);
@@ -163,39 +160,36 @@ void main() {
       remote.releaseFirstList();
       await startup;
 
-      final facts = await SyncHealthDao(
-        harness.database,
-      ).watchFacts(harness.accountId).first;
+      final facts = await SyncHealthDao(harness.database)
+          .watchFacts(harness.accountId)
+          .first;
       expect(facts.latestFailure?.diagnosticCode, 'sync.run_timeout');
       expect((await harness.health()).outcome, SyncHealthOutcome.failed);
     },
   );
 
-  test(
-    'RUN-009 Stop aborts an active read and persists Inactive without cache loss',
-    () async {
-      final remote = _ScriptedReadService(blockFirstList: true);
-      final harness = await _Harness.create(
-        authorization: const SyntheticAuthorization(subject),
-        now: now,
-        remote: remote,
-      );
-      addTearDown(harness.close);
+  test('RUN-009 Stop aborts an active read and persists Inactive without cache loss', () async {
+    final remote = _ScriptedReadService(blockFirstList: true);
+    final harness = await _Harness.create(
+      authorization: const SyntheticAuthorization(subject),
+      now: now,
+      remote: remote,
+    );
+    addTearDown(harness.close);
 
-      unawaited(harness.coordinator.start());
-      await remote.firstListRequested;
-      final stop = harness.coordinator.stop();
-      await remote.cancellationObserved;
-      await stop;
+    unawaited(harness.coordinator.start());
+    await remote.firstListRequested;
+    final stop = harness.coordinator.stop();
+    await remote.cancellationObserved;
+    await stop;
 
-      final facts = await SyncHealthDao(
-        harness.database,
-      ).watchFacts(harness.accountId).first;
-      expect(facts.syncEnabled, isFalse);
-      expect((await harness.health()).outcome, SyncHealthOutcome.inactive);
-      expect(remote.listCalls, 1);
-    },
-  );
+    final facts = await SyncHealthDao(harness.database)
+        .watchFacts(harness.accountId)
+        .first;
+    expect(facts.syncEnabled, isFalse);
+    expect((await harness.health()).outcome, SyncHealthOutcome.inactive);
+    expect(remote.listCalls, 1);
+  });
 
   test(
     'malformed remote data becomes application Failed and never Good',

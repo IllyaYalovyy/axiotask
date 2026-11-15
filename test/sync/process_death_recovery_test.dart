@@ -157,9 +157,9 @@ void main() {
 
       final after = await _killWorker('finalize_after_commit');
       await _withDatabase(after.databaseFile, (database, account) async {
-        final beforeRecovery = await SyncHealthDao(
-          database,
-        ).watchFacts(account).first;
+        final beforeRecovery = await SyncHealthDao(database)
+            .watchFacts(account)
+            .first;
         expect(
           beforeRecovery.lastSuccessfulSyncAt,
           DateTime.utc(2026, 8, 15, 12, 30),
@@ -168,9 +168,9 @@ void main() {
           accountId: account,
           recoveredAt: DateTime.utc(2026, 8, 15, 13),
         );
-        final afterRecovery = await SyncHealthDao(
-          database,
-        ).watchFacts(account).first;
+        final afterRecovery = await SyncHealthDao(database)
+            .watchFacts(account)
+            .first;
         expect(
           afterRecovery.lastSuccessfulSyncAt,
           beforeRecovery.lastSuccessfulSyncAt,
@@ -266,7 +266,7 @@ Future<_KilledDatabase> _killWorker(
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .firstWhere((line) => line == 'DURABLE_BOUNDARY')
-        .timeout(const Duration(seconds: 30));
+        .timeout(const Duration(minutes: 2));
   } on Object {
     process.kill(ProcessSignal.sigkill);
     await process.exitCode;
@@ -274,7 +274,7 @@ Future<_KilledDatabase> _killWorker(
     fail('Worker $mode did not reach its boundary: $stderr');
   }
   expect(process.kill(ProcessSignal.sigkill), isTrue);
-  await process.exitCode.timeout(const Duration(seconds: 30));
+  await process.exitCode.timeout(const Duration(minutes: 2));
   await stderrDone;
   final wal = File('${databaseFile.path}-wal');
   final shm = File('${databaseFile.path}-shm');

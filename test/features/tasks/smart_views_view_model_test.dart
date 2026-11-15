@@ -249,17 +249,16 @@ final class _PreferencesRepository implements PreferencesRepository {
   Stream<ListPreferences> watchListPreferences(
     AccountId accountId,
     TaskListId taskListId,
-  ) => watchAllListPreferences(
-    accountId,
-  ).map((values) => values[taskListId] ?? const ListPreferences.defaults());
+  ) => watchAllListPreferences(accountId)
+      .map((values) => values[taskListId] ?? const ListPreferences.defaults());
 
   @override
   Stream<ViewPreferences> watchViewPreferences(
     AccountId accountId,
     ViewKey viewKey,
-  ) => watchAllViewPreferences(
-    accountId,
-  ).map((values) => values[viewKey] ?? const ViewPreferences.defaults());
+  ) =>
+      watchAllViewPreferences(accountId)
+          .map((values) => values[viewKey] ?? const ViewPreferences.defaults());
 
   @override
   Future<Outcome<void>> setListPreferences(

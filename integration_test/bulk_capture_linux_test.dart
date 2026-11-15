@@ -50,15 +50,12 @@ void main() {
         database: database,
         clock: clock,
       );
-      final list =
-          (await lists.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: account,
-                      title: 'Synthetic bulk target',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
+      final list = (await lists.createTaskList(
+        CreateTaskListCommand(
+          accountId: account,
+          title: 'Synthetic bulk target',
+        ),
+      ) as Success<TaskListId>).value;
       var tasks = DatabaseTasksRepository(database, clock: clock);
       var viewModel = TasksViewModel(
         accountId: account,
@@ -108,9 +105,8 @@ void main() {
       final remote = FakeGoogleTasksService();
       final partial = _RejectSecondTaskService(remote);
       const authorization = SyntheticAuthorization(subject);
-      await DatabaseSyncSettingsRepository(
-        database,
-      ).setSyncEnabled(account, true);
+      await DatabaseSyncSettingsRepository(database)
+          .setSyncEnabled(account, true);
       final report =
           await SyncEngine(
             store: DatabaseReadSyncStore(database),

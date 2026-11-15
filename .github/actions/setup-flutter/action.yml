@@ -1,0 +1,20 @@
+name: Set up Axiotask Flutter
+description: Install the pinned SDK and Linux build dependencies
+runs:
+  using: composite
+  steps:
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.50.0'
+        channel: stable
+        cache: true
+    - name: Install Linux dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+          libsecret-1-dev libstdc++-14-dev liblzma-dev xvfb dbus-x11 \
+          gnome-keyring libgl1-mesa-dri desktop-file-utils appstream ripgrep
+    - name: Resolve locked dependencies
+      shell: bash
+      run: flutter pub get --enforce-lockfile

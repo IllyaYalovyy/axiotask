@@ -288,9 +288,9 @@ void main() {
       expect(find.text('Edited while sync is stopped'), findsOneWidget);
       expect(find.text('Sync stopped'), findsOneWidget);
       expect(find.text('1 unresolved'), findsOneWidget);
-      final stoppedFacts = await SyncHealthDao(
-        second.database,
-      ).watchFacts(second.viewModel.accountId).first;
+      final stoppedFacts = await SyncHealthDao(second.database)
+          .watchFacts(second.viewModel.accountId)
+          .first;
       expect(
         stoppedFacts.requiredScopeIncomplete,
         isFalse,

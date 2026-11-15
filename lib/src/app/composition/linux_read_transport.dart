@@ -28,8 +28,10 @@ final class LinuxReadConfiguration {
       clientSecret.isNotEmpty;
 }
 
-typedef LinuxCredentialStoreFactory =
-    CredentialStore Function(String namespace, DiagnosticSink diagnostics);
+typedef LinuxCredentialStoreFactory = CredentialStore Function(
+  String namespace,
+  DiagnosticSink diagnostics,
+);
 
 /// Injectable platform edges for deterministic composition tests.
 ///

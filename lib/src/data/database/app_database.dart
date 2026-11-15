@@ -71,9 +71,8 @@ class AppDatabase extends _$AppDatabase {
   );
 
   Future<int> createAccount(String googleSubject) {
-    return into(
-      accounts,
-    ).insert(AccountsCompanion.insert(googleSubject: googleSubject));
+    return into(accounts)
+        .insert(AccountsCompanion.insert(googleSubject: googleSubject));
   }
 
   Future<List<Account>> allAccounts() {
@@ -107,9 +106,8 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<WalCheckpointResult> checkpoint() async {
-    final row = await customSelect(
-      'PRAGMA wal_checkpoint(TRUNCATE)',
-    ).getSingle();
+    final row = await customSelect('PRAGMA wal_checkpoint(TRUNCATE)')
+        .getSingle();
     final values = row.data.values.toList(growable: false);
     if (values.length != 3 || values.any((value) => value is! int)) {
       throw StateError('Unexpected SQLite checkpoint result.');

@@ -99,8 +99,9 @@ final class SyncCoordinatorRun {
   final SyncRequestRetryObserver retryObserver;
 }
 
-typedef CoordinatedSyncRun =
-    Future<SyncRunReport> Function(SyncCoordinatorRun request);
+typedef CoordinatedSyncRun = Future<SyncRunReport> Function(
+  SyncCoordinatorRun request,
+);
 
 abstract interface class TaskDeleteEligibilityStore {
   Future<int> cleanupExpiredTaskDeletes({

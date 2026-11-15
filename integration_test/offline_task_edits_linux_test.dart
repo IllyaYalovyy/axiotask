@@ -37,9 +37,8 @@ void main() {
     final account = AccountId(
       await database.createAccount('synthetic-linux-task-offline'),
     );
-    await DatabaseSyncSettingsRepository(
-      database,
-    ).setSyncEnabled(account, false);
+    await DatabaseSyncSettingsRepository(database)
+        .setSyncEnabled(account, false);
     final list =
         (await DatabaseTaskListsRepository(
                   database: database,
@@ -53,16 +52,9 @@ void main() {
                 as Success<TaskListId>)
             .value;
     var tasks = DatabaseTasksRepository(database, clock: clock);
-    final task =
-        (await tasks.createTask(
-                  CreateTaskCommand(
-                    accountId: account,
-                    taskListId: list,
-                    title: 'Draft',
-                  ),
-                )
-                as Success<TaskId>)
-            .value;
+    final task = (await tasks.createTask(
+      CreateTaskCommand(accountId: account, taskListId: list, title: 'Draft'),
+    ) as Success<TaskId>).value;
     await tasks.apply(
       UpdateTaskContentCommand(
         accountId: account,

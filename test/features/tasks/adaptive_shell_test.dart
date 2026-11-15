@@ -504,9 +504,8 @@ void main() {
     expect(find.byKey(const Key('task-detail-title')), findsNothing);
     expect(find.text('Long-note parent'), findsOneWidget);
     expect(
-      Focus.of(
-        tester.element(find.byKey(const Key('desktop-task-row-21'))),
-      ).hasFocus,
+      Focus.of(tester.element(find.byKey(const Key('desktop-task-row-21'))))
+          .hasFocus,
       isTrue,
     );
   });
@@ -1020,9 +1019,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(fixture.viewModel.state.taskDueChangeUndos, hasLength(1));
       expect(
-        TaskDetailViewModel.fromTasks(
-          fixture.viewModel,
-        ).state?.dueChangeUndo?.groupId,
+        TaskDetailViewModel.fromTasks(fixture.viewModel)
+            .state
+            ?.dueChangeUndo
+            ?.groupId,
         41,
       );
       expect(find.text('Date changed for 2 related tasks'), findsOneWidget);
@@ -1358,9 +1358,8 @@ void main() {
             platform: TargetPlatform.linux,
           ),
           builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: const TextScaler.linear(2)),
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
             child: child!,
           ),
           home: AdaptiveShell(viewModel: fixture.viewModel),
@@ -1406,18 +1405,16 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
       expect(
-        Focus.of(
-          tester.element(find.byKey(const Key('desktop-task-row-11'))),
-        ).hasFocus,
+        Focus.of(tester.element(find.byKey(const Key('desktop-task-row-11'))))
+            .hasFocus,
         isTrue,
       );
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.pump();
       expect(
-        Focus.of(
-          tester.element(find.byKey(const Key('desktop-task-row-13'))),
-        ).hasFocus,
+        Focus.of(tester.element(find.byKey(const Key('desktop-task-row-13'))))
+            .hasFocus,
         isTrue,
       );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -1430,9 +1427,8 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
       expect(
-        Focus.of(
-          tester.element(find.byKey(const Key('desktop-detail-pane'))),
-        ).hasFocus,
+        Focus.of(tester.element(find.byKey(const Key('desktop-detail-pane'))))
+            .hasFocus,
         isTrue,
       );
 
@@ -1530,9 +1526,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: const TextScaler.linear(2)),
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
             child: child!,
           ),
           home: AdaptiveShell(viewModel: scaled.viewModel),
@@ -1803,9 +1798,8 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(textScaler: const TextScaler.linear(1.8)),
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: const TextScaler.linear(1.8)),
               child: child!,
             ),
             home: AdaptiveShell(viewModel: fixture.viewModel),
@@ -2012,9 +2006,8 @@ void main() {
                 platform: TargetPlatform.linux,
               ),
               builder: (context, child) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(textScaler: TextScaler.linear(textScale)),
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(textScale)),
                 child: child!,
               ),
               home: AdaptiveShell(viewModel: fixture.viewModel),

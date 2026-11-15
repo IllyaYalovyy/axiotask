@@ -275,40 +275,37 @@ void main() {
     },
   );
 
-  test(
-    'list create waits for durable repository success and suppresses duplicate taps',
-    () async {
-      final tasks = _TasksRepository();
-      final health = _HealthRepository();
-      final lists = _TaskListsRepository();
-      final durable = Completer<Outcome<TaskListId>>();
-      lists.createResult = durable.future;
-      var committedNotifications = 0;
-      final viewModel = TasksViewModel(
-        accountId: const AccountId(1),
-        tasksRepository: tasks,
-        taskListsRepository: lists,
-        syncHealthRepository: health,
-        localEditCommitted: () async {
-          committedNotifications += 1;
-        },
-      );
-      addTearDown(viewModel.dispose);
+  test('list create waits for durable repository success and suppresses duplicate taps', () async {
+    final tasks = _TasksRepository();
+    final health = _HealthRepository();
+    final lists = _TaskListsRepository();
+    final durable = Completer<Outcome<TaskListId>>();
+    lists.createResult = durable.future;
+    var committedNotifications = 0;
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: tasks,
+      taskListsRepository: lists,
+      syncHealthRepository: health,
+      localEditCommitted: () async {
+        committedNotifications += 1;
+      },
+    );
+    addTearDown(viewModel.dispose);
 
-      final first = viewModel.createTaskList('Offline list');
-      final duplicate = viewModel.createTaskList('Duplicate tap');
-      expect(viewModel.state.isListCommandPending, isTrue);
-      expect(lists.createCalls, 1);
-      expect(committedNotifications, 0);
-      durable.complete(const Outcome<TaskListId>.success(TaskListId(19)));
-      await Future.wait(<Future<void>>[first, duplicate]);
+    final first = viewModel.createTaskList('Offline list');
+    final duplicate = viewModel.createTaskList('Duplicate tap');
+    expect(viewModel.state.isListCommandPending, isTrue);
+    expect(lists.createCalls, 1);
+    expect(committedNotifications, 0);
+    durable.complete(const Outcome<TaskListId>.success(TaskListId(19)));
+    await Future.wait(<Future<void>>[first, duplicate]);
 
-      expect(viewModel.state.isListCommandPending, isFalse);
-      expect(viewModel.state.listCommandFailureMessage, isNull);
-      expect(committedNotifications, 1);
-      expect(lists.created.single.title, 'Offline list');
-    },
-  );
+    expect(viewModel.state.isListCommandPending, isFalse);
+    expect(viewModel.state.listCommandFailureMessage, isNull);
+    expect(committedNotifications, 1);
+    expect(lists.created.single.title, 'Offline list');
+  });
 
   test(
     'list persistence failure is visible and never schedules sync',

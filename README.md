@@ -16,7 +16,7 @@ Linux (Fedora GNOME) is the current focus. Android support is in development.
 
 ## Build on Linux
 
-Install [Flutter 3.44.8](https://docs.flutter.dev/install/archive), add its `bin`
+Install [Flutter 3.50.0](https://docs.flutter.dev/install/archive), add its `bin`
 directory to `PATH`, and install the Fedora dependencies:
 
 ```bash
@@ -68,8 +68,11 @@ The destination must not already exist. To uninstall, or before reinstalling:
 ```
 
 To run directly from source, use `./scripts/linux_app.sh run`.
+For downloadable CI builds, see [CI and artifacts](docs/CI.md).
 
 ## Development
 
 Run `./scripts/quality.sh` for the standard checks.
 See [testing](docs/TESTING.md) and [architecture](docs/ARCHITECTURE.md) for details.
+
+Licensed under [GPL-3.0-or-later](LICENSE).

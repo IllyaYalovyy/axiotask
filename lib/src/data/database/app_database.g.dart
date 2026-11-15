@@ -4137,9 +4137,8 @@ class $DesiredStateRowsTable extends DesiredStateRows
         true,
         check: () =>
             baseObservedPublicationId.isNull() |
-            ComparableExpr(
-              baseObservedPublicationId.length,
-            ).isBiggerThanValue(0),
+            ComparableExpr(baseObservedPublicationId.length)
+                .isBiggerThanValue(0),
         type: DriftSqlType.string,
         requiredDuringInsert: false,
       );
@@ -14893,10 +14892,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   ];
 }
 
-typedef $$AccountsTableCreateCompanionBuilder =
-    AccountsCompanion Function({Value<int> id, required String googleSubject});
-typedef $$AccountsTableUpdateCompanionBuilder =
-    AccountsCompanion Function({Value<int> id, Value<String> googleSubject});
+typedef $$AccountsTableCreateCompanionBuilder = AccountsCompanion Function({
+  Value<int> id,
+  required String googleSubject,
+});
+typedef $$AccountsTableUpdateCompanionBuilder = AccountsCompanion Function({
+  Value<int> id,
+  Value<String> googleSubject,
+});
 
 class $$AccountsTableFilterComposer
     extends Composer<_$AppDatabase, $AccountsTable> {
@@ -14982,19 +14985,14 @@ class $$AccountsTableTableManager
               $$AccountsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$AccountsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                Value<String> googleSubject = const Value.absent(),
-              }) => AccountsCompanion(id: id, googleSubject: googleSubject),
-          createCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                required String googleSubject,
-              }) => AccountsCompanion.insert(
-                id: id,
-                googleSubject: googleSubject,
-              ),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> googleSubject = const Value.absent(),
+          }) => AccountsCompanion(id: id, googleSubject: googleSubject),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String googleSubject,
+          }) => AccountsCompanion.insert(id: id, googleSubject: googleSubject),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),

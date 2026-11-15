@@ -44,15 +44,9 @@ void main() {
         clock: clock,
       );
       final tasks = DatabaseTasksRepository(database, clock: clock);
-      final list =
-          (await lists.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: account,
-                      title: 'Offline Linux list',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
+      final list = (await lists.createTaskList(
+        CreateTaskListCommand(accountId: account, title: 'Offline Linux list'),
+      ) as Success<TaskListId>).value;
       await tasks.createTask(
         CreateTaskCommand(
           accountId: account,

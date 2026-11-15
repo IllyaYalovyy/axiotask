@@ -43,9 +43,8 @@ void main() {
           .parentTaskId,
       fixture.parent,
     );
-    var desired = await DesiredStateDao(
-      database,
-    ).readTask(fixture.account, fixture.task);
+    var desired = await DesiredStateDao(database)
+        .readTask(fixture.account, fixture.task);
     expect(desired?.parentTaskId, fixture.parent);
     expect(desired?.structureDirty, isTrue);
     expect(desired?.contentDirty, isFalse);
@@ -65,9 +64,8 @@ void main() {
           .parentTaskId,
       isNull,
     );
-    desired = await DesiredStateDao(
-      database,
-    ).readTask(fixture.account, fixture.task);
+    desired = await DesiredStateDao(database)
+        .readTask(fixture.account, fixture.task);
     expect(desired?.parentTaskId, isNull);
     expect(desired?.generation, 2);
   });
@@ -114,17 +112,13 @@ void main() {
     );
     final repository = DatabaseTasksRepository(database, clock: clock);
 
-    Future<String> reject(TaskId parent) async =>
-        ((await repository.apply(
-                  DemoteTaskCommand(
-                    accountId: fixture.account,
-                    taskId: fixture.task,
-                    parentTaskId: parent,
-                  ),
-                ))
-                as Failed<void>)
-            .failure
-            .code;
+    Future<String> reject(TaskId parent) async => ((await repository.apply(
+      DemoteTaskCommand(
+        accountId: fixture.account,
+        taskId: fixture.task,
+        parentTaskId: parent,
+      ),
+    )) as Failed<void>).failure.code;
 
     expect(await reject(crossList), 'task.parent_cross_list');
     expect(await reject(crossAccount), 'task.parent_cross_account');

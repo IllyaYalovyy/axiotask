@@ -152,9 +152,9 @@ final class _AccountBackupViewState extends State<AccountBackupView> {
                           child: Text(
                             accountBackupPrivateDataWarning,
                             style: TextStyle(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onErrorContainer,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onErrorContainer,
                               fontWeight: FontWeight.w600,
                             ),
                           ),

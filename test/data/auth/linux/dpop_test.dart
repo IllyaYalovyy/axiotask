@@ -218,9 +218,9 @@ void main() {
 }
 
 Map<String, dynamic> decodeProof(String encoded) {
-  return JsonWebSignature.fromCompactSerialization(
-        encoded,
-      ).unverifiedPayload.jsonContent
+  return JsonWebSignature.fromCompactSerialization(encoded)
+          .unverifiedPayload
+          .jsonContent
       as Map<String, dynamic>;
 }
 

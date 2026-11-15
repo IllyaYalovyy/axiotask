@@ -86,9 +86,8 @@ final class TaskDetailsPane extends StatelessWidget {
                     child: Text(
                       task.title,
                       key: const Key('task-detail-title'),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),

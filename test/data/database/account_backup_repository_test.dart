@@ -46,36 +46,24 @@ void main() {
       );
       final tasks = DatabaseTasksRepository(database, clock: clock);
 
-      final listA =
-          (await lists.createTaskList(
-                    CreateTaskListCommand(
-                      accountId: accountA,
-                      title: 'Offline list A',
-                    ),
-                  )
-                  as Success<TaskListId>)
-              .value;
-      final parent =
-          (await tasks.createTask(
-                    CreateTaskCommand(
-                      accountId: accountA,
-                      taskListId: listA,
-                      title: 'Offline parent edited',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
-      final child =
-          (await tasks.createTask(
-                    CreateTaskCommand(
-                      accountId: accountA,
-                      taskListId: listA,
-                      parentTaskId: parent,
-                      title: 'Offline child',
-                    ),
-                  )
-                  as Success<TaskId>)
-              .value;
+      final listA = (await lists.createTaskList(
+        CreateTaskListCommand(accountId: accountA, title: 'Offline list A'),
+      ) as Success<TaskListId>).value;
+      final parent = (await tasks.createTask(
+        CreateTaskCommand(
+          accountId: accountA,
+          taskListId: listA,
+          title: 'Offline parent edited',
+        ),
+      ) as Success<TaskId>).value;
+      final child = (await tasks.createTask(
+        CreateTaskCommand(
+          accountId: accountA,
+          taskListId: listA,
+          parentTaskId: parent,
+          title: 'Offline child',
+        ),
+      ) as Success<TaskId>).value;
       expect(
         await tasks.apply(
           SetTaskNotesCommand(
@@ -144,9 +132,8 @@ void main() {
       title: 'Earlier sibling',
       position: '1000',
     );
-    await DriftRelationalPreferences(
-      database,
-    ).setSidebarOrder(account, <TaskListId>[second, first]);
+    await DriftRelationalPreferences(database)
+        .setSidebarOrder(account, <TaskListId>[second, first]);
 
     final snapshot = await backups.readProjectedAccount(account);
     final encoded = const AccountBackupCodec().encode(
@@ -194,9 +181,9 @@ void main() {
 
       expect(result.createdListCount, 1);
       expect(result.createdTaskCount, 2);
-      final snapshot = await DatabaseTasksRepository(
-        database,
-      ).watchTasks(TasksQuery(accountId: account)).first;
+      final snapshot = await DatabaseTasksRepository(database)
+          .watchTasks(TasksQuery(accountId: account))
+          .first;
       expect(snapshot.taskLists.map((list) => list.title), <String>[
         'Restored list',
       ]);
@@ -266,9 +253,9 @@ void main() {
       readiness: AccountBackupImportReadiness.ready,
       lastSuccessfulSyncAt: clock.now(),
     );
-    final snapshot = await DatabaseTasksRepository(
-      database,
-    ).watchTasks(TasksQuery(accountId: account)).first;
+    final snapshot = await DatabaseTasksRepository(database)
+        .watchTasks(TasksQuery(accountId: account))
+        .first;
     expect(snapshot.taskLists.single.title, 'Newer existing list');
     expect(snapshot.tasks.first.title, 'Newer existing task');
     expect(snapshot.tasks.last.parentTaskId, snapshot.tasks.first.id);

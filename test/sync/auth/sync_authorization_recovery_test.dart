@@ -47,9 +47,8 @@ void main() {
         <FakeAuthorizationOperation>[FakeAuthorizationOperation.refresh],
       );
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
     },
@@ -79,20 +78,20 @@ void main() {
       fixture.authorization.enqueue(
         FakeAuthorizationAttempt.refreshSuccess(subject),
       );
-      fixture.service.outcomes
-          .addAll(const <Outcome<RemotePage<RemoteTaskList>>>[
-            Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
-            Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
-          ]);
+      fixture.service.outcomes.addAll(
+        const <Outcome<RemotePage<RemoteTaskList>>>[
+          Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
+          Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
+        ],
+      );
 
       final report = await fixture.run();
 
       expect(report.outcome, SyncRunOutcome.failed);
       expect(fixture.service.calls, 2);
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isTrue,
       );
       final after = await fixture.database
@@ -127,9 +126,8 @@ void main() {
       expect(report.failure, _terminal);
       expect(fixture.service.calls, 1);
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isTrue,
       );
     },
@@ -149,9 +147,8 @@ void main() {
     expect(report.ineligibleReason, SyncRunIneligibleReason.noAuthorization);
     expect(fixture.service.calls, 0);
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
   });
@@ -174,9 +171,8 @@ void main() {
     expect(report.failure?.code, 'account.subject_mismatch');
     expect(fixture.service.calls, 1);
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
   });
@@ -207,9 +203,8 @@ void main() {
       expect(report.ineligibleReason, SyncRunIneligibleReason.accountMismatch);
       expect(fixture.service.calls, 0);
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isTrue,
       );
     },
@@ -230,9 +225,8 @@ void main() {
       expect(fixture.service.calls, 1);
       expect(fixture.authorization.operationLedger, isEmpty);
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
     },
@@ -246,13 +240,14 @@ void main() {
       fixture.authorization.enqueue(
         FakeAuthorizationAttempt.refreshSuccess(subject),
       );
-      fixture.service.outcomes
-          .addAll(const <Outcome<RemotePage<RemoteTaskList>>>[
-            Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
-            Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
-            Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
-            Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
-          ]);
+      fixture.service.outcomes.addAll(
+        const <Outcome<RemotePage<RemoteTaskList>>>[
+          Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
+          Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
+          Outcome<RemotePage<RemoteTaskList>>.failure(_transient),
+          Outcome<RemotePage<RemoteTaskList>>.failure(_refreshable),
+        ],
+      );
 
       final run = fixture.run();
       for (var retry = 0; retry < 3; retry += 1) {
@@ -266,9 +261,8 @@ void main() {
       expect(fixture.service.calls, 4);
       expect(fixture.authorization.operationLedger, isEmpty);
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
     },

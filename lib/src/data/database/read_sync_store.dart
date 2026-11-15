@@ -22,8 +22,9 @@ import 'sync_health_dao.dart';
 
 enum SyncRecoveryTransactionBoundary { beforeCommit }
 
-typedef SyncRecoveryTransactionControl =
-    FutureOr<void> Function(SyncRecoveryTransactionBoundary boundary);
+typedef SyncRecoveryTransactionControl = FutureOr<void> Function(
+  SyncRecoveryTransactionBoundary boundary,
+);
 
 final class SyncRecoveryPersistenceException implements Exception {
   const SyncRecoveryPersistenceException(this.code);

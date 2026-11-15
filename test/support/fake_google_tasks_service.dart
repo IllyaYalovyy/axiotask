@@ -162,9 +162,9 @@ final class FakeGoogleTasksService
     if (list == null) return Outcome.failure(_readNotFoundFailure());
     final offset = _pageOffset(pageToken, 'tasks:${taskListId.value}');
     if (offset == null) return Outcome.failure(_invalidPageFailure());
-    final resources = _canonicalTasks(
-      list,
-    ).map(_taskDto).toList(growable: false);
+    final resources = _canonicalTasks(list)
+        .map(_taskDto)
+        .toList(growable: false);
     if (offset > resources.length) {
       return Outcome.failure(_invalidPageFailure());
     }
@@ -1124,14 +1124,16 @@ final class FakeGoogleTasksHttpClient extends http.BaseClient {
     Map<String, Object?> Function(T value) encode,
     String kind,
   ) => switch (result) {
-    Success<RemotePage<T>>(:final value) =>
-      _jsonResponse(HttpStatus.ok, <String, Object?>{
+    Success<RemotePage<T>>(:final value) => _jsonResponse(
+      HttpStatus.ok,
+      <String, Object?>{
         'kind': kind,
         'etag': value.collectionEtag,
         if (value.nextPageToken != null)
           'nextPageToken': value.nextPageToken!.value,
         'items': value.items.map(encode).toList(growable: false),
-      }),
+      },
+    ),
     Failed<RemotePage<T>>(:final failure) => _failureResponse(failure),
   };
 
@@ -1380,9 +1382,8 @@ RemoteTaskStatus _status(Object? value) => switch (value) {
 
 RemoteDate _remoteDate(Object? value) {
   if (value is! String) throw const FormatException();
-  final match = RegExp(
-    r'^(\d{4})-(\d{2})-(\d{2})T00:00:00\.000Z$',
-  ).firstMatch(value);
+  final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})T00:00:00\.000Z$')
+      .firstMatch(value);
   if (match == null) throw const FormatException();
   final date = RemoteDate(
     int.parse(match.group(1)!),

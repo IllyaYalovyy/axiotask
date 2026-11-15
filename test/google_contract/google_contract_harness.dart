@@ -89,9 +89,9 @@ final class GoogleContractCleanupException implements Exception {
       : 'Google contract probe and cleanup both failed.';
 }
 
-bool isSafeGoogleContractPrefix(String value) => RegExp(
-  r'^axiotask-contract-probe-[0-9]{8}T[0-9]{6}Z-[a-z0-9]{6,32}$',
-).hasMatch(value);
+bool isSafeGoogleContractPrefix(String value) =>
+    RegExp(r'^axiotask-contract-probe-[0-9]{8}T[0-9]{6}Z-[a-z0-9]{6,32}$')
+        .hasMatch(value);
 
 /// A usable Tasks link is an HTTPS Google Tasks URL. Its navigation destination
 /// is intentionally a human-owned Linux approval, not an automated claim.

@@ -8,8 +8,9 @@ import 'app_database.dart';
 
 enum AccountPartitionResetBoundary { beforeDelete, beforeCommit }
 
-typedef AccountPartitionResetTransactionControl =
-    FutureOr<void> Function(AccountPartitionResetBoundary boundary);
+typedef AccountPartitionResetTransactionControl = FutureOr<void> Function(
+  AccountPartitionResetBoundary boundary,
+);
 
 /// Deletes one account's complete non-secret partition and recreates only its
 /// stable account/subject binding in the same SQLite transaction.

@@ -25,76 +25,69 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const subject = AccountSubject('first-run-google-subject');
 
-  test(
-    'first Connect verifies identity before creating an account and Google work',
-    () async {
-      final directory = Directory.systemTemp.createTempSync(
-        'axiotask-first-run-',
-      );
-      addTearDown(() => directory.deleteSync(recursive: true));
-      final file = File('${directory.path}/first-run.sqlite');
-      var database = await AppDatabase.openFile(file);
-      final initialAuthorization = FakeAuthorization()
-        ..enqueue(FakeAuthorizationAttempt.interactiveSuccess(subject));
-      final initialGoogle = FakeGoogleTasksService();
-      final restoredAuthorization = FakeAuthorization()
-        ..enqueue(FakeAuthorizationAttempt.restoreSuccess(subject));
-      final restoredGoogle = FakeGoogleTasksService();
-      final devicePreferences = InMemoryDevicePreferencesBackend();
-      final composition = _FirstRunComposition(<_TransportPlan>[
-        _TransportPlan(initialAuthorization, initialGoogle),
-        _TransportPlan(restoredAuthorization, restoredGoogle),
-      ]);
+  test('first Connect verifies identity before creating an account and Google work', () async {
+    final directory = Directory.systemTemp.createTempSync(
+      'axiotask-first-run-',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final file = File('${directory.path}/first-run.sqlite');
+    var database = await AppDatabase.openFile(file);
+    final initialAuthorization = FakeAuthorization()
+      ..enqueue(FakeAuthorizationAttempt.interactiveSuccess(subject));
+    final initialGoogle = FakeGoogleTasksService();
+    final restoredAuthorization = FakeAuthorization()
+      ..enqueue(FakeAuthorizationAttempt.restoreSuccess(subject));
+    final restoredGoogle = FakeGoogleTasksService();
+    final devicePreferences = InMemoryDevicePreferencesBackend();
+    final composition = _FirstRunComposition(<_TransportPlan>[
+      _TransportPlan(initialAuthorization, initialGoogle),
+      _TransportPlan(restoredAuthorization, restoredGoogle),
+    ]);
 
-      var runtime = await TasksFeatureRuntime.open(
-        composition,
-        injectedDatabase: database,
-        injectedDevicePreferencesBackend: devicePreferences,
-      );
-      runtime.viewModel.start();
-      await pumpEventQueue();
-      expect(
-        runtime.viewModel.state.health.outcome,
-        SyncHealthOutcome.inactive,
-      );
-      expect(runtime.viewModel.state.health.action, SyncHealthAction.connect);
-      expect(await database.allAccounts(), isEmpty);
-      expect(composition.requestedSubjects, <AccountSubject?>[null]);
+    var runtime = await TasksFeatureRuntime.open(
+      composition,
+      injectedDatabase: database,
+      injectedDevicePreferencesBackend: devicePreferences,
+    );
+    runtime.viewModel.start();
+    await pumpEventQueue();
+    expect(runtime.viewModel.state.health.outcome, SyncHealthOutcome.inactive);
+    expect(runtime.viewModel.state.health.action, SyncHealthAction.connect);
+    expect(await database.allAccounts(), isEmpty);
+    expect(composition.requestedSubjects, <AccountSubject?>[null]);
 
-      final reload = runtime.reloadRequested!;
-      await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
-      await reload;
+    final reload = runtime.reloadRequested!;
+    await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+    await reload;
 
-      final accounts = await database.allAccounts();
-      expect(accounts, hasLength(1));
-      expect(accounts.single.googleSubject, subject.value);
-      expect(initialAuthorization.operationLedger, <FakeAuthorizationOperation>[
-        FakeAuthorizationOperation.interactive,
-      ]);
-      expect(initialGoogle.calls, isEmpty);
+    final accounts = await database.allAccounts();
+    expect(accounts, hasLength(1));
+    expect(accounts.single.googleSubject, subject.value);
+    expect(initialAuthorization.operationLedger, <FakeAuthorizationOperation>[
+      FakeAuthorizationOperation.interactive,
+    ]);
+    expect(initialGoogle.calls, isEmpty);
 
-      await runtime.close();
-      database = await AppDatabase.openFile(file);
-      runtime = await TasksFeatureRuntime.open(
-        composition,
-        injectedDatabase: database,
-        injectedDevicePreferencesBackend: devicePreferences,
-      );
-      await runtime.start();
+    await runtime.close();
+    database = await AppDatabase.openFile(file);
+    runtime = await TasksFeatureRuntime.open(
+      composition,
+      injectedDatabase: database,
+      injectedDevicePreferencesBackend: devicePreferences,
+    );
+    await runtime.start();
 
-      expect(composition.requestedSubjects, <AccountSubject?>[null, subject]);
-      expect(
-        restoredAuthorization.operationLedger,
-        <FakeAuthorizationOperation>[FakeAuthorizationOperation.restore],
-      );
-      expect(restoredGoogle.callCount(FakeGoogleTasksMethod.listTaskLists), 1);
-      final health = await runtime.syncHealthRepository!
-          .watchHealth(const AccountId(1))
-          .first;
-      expect(health.outcome, SyncHealthOutcome.good);
-      await runtime.close();
-    },
-  );
+    expect(composition.requestedSubjects, <AccountSubject?>[null, subject]);
+    expect(restoredAuthorization.operationLedger, <FakeAuthorizationOperation>[
+      FakeAuthorizationOperation.restore,
+    ]);
+    expect(restoredGoogle.callCount(FakeGoogleTasksMethod.listTaskLists), 1);
+    final health = await runtime.syncHealthRepository!
+        .watchHealth(const AccountId(1))
+        .first;
+    expect(health.outcome, SyncHealthOutcome.good);
+    await runtime.close();
+  });
 
   test('cancelled, rejected, and storage failures create no account', () async {
     for (final failure in <Failure>[

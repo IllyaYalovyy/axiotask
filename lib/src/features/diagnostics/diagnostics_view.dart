@@ -248,9 +248,8 @@ final class _DiagnosticRecordCard extends StatelessWidget {
               children: <Widget>[
                 Text(
                   record.code,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 Chip(label: Text(record.subsystem.name)),
                 Chip(label: Text(record.kind.name)),

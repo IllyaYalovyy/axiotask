@@ -15,13 +15,12 @@ import '../../../core/randomness.dart';
 const String _callbackPath = '/oauth2/callback';
 const Duration linuxAuthorizationCallbackDeadline = Duration(minutes: 5);
 
-typedef AuthorizationUriBuilder =
-    Uri Function({
-      required Uri redirectUri,
-      required String state,
-      required String nonce,
-      required String codeVerifier,
-    });
+typedef AuthorizationUriBuilder = Uri Function({
+  required Uri redirectUri,
+  required String state,
+  required String nonce,
+  required String codeVerifier,
+});
 
 final class BrowserAuthorizationCode {
   const BrowserAuthorizationCode({

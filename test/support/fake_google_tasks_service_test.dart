@@ -47,10 +47,9 @@ void main() {
         final first =
             (await fake.listTaskLists() as Success<RemotePage<RemoteTaskList>>)
                 .value;
-        final second =
-            (await fake.listTaskLists(pageToken: first.nextPageToken)
-                    as Success<RemotePage<RemoteTaskList>>)
-                .value;
+        final second = (await fake.listTaskLists(
+          pageToken: first.nextPageToken,
+        ) as Success<RemotePage<RemoteTaskList>>).value;
 
         expect(first.items.map((item) => item.title), <String>[
           'Synthetic A',
@@ -70,22 +69,16 @@ void main() {
 
     test('orders parents, children, and siblings by opaque position', () async {
       final fake = FakeGoogleTasksService(taskPageSize: 2);
-      final list =
-          (await fake.createTaskList(
-                    const CreateTaskListOperation(title: 'Synthetic ordering'),
-                  )
-                  as CommittedMutation<RemoteTaskList>)
-              .value;
-      final parent =
-          (await fake.createTask(
-                    CreateTaskOperation(
-                      taskListId: list.id,
-                      title: 'Synthetic parent',
-                      status: RemoteTaskStatus.needsAction,
-                    ),
-                  )
-                  as CommittedMutation<RemoteTask>)
-              .value;
+      final list = (await fake.createTaskList(
+        const CreateTaskListOperation(title: 'Synthetic ordering'),
+      ) as CommittedMutation<RemoteTaskList>).value;
+      final parent = (await fake.createTask(
+        CreateTaskOperation(
+          taskListId: list.id,
+          title: 'Synthetic parent',
+          status: RemoteTaskStatus.needsAction,
+        ),
+      ) as CommittedMutation<RemoteTask>).value;
       await fake.createTask(
         CreateTaskOperation(
           taskListId: list.id,
@@ -103,13 +96,13 @@ void main() {
         ),
       );
 
-      final first =
-          (await fake.listTasks(list.id) as Success<RemotePage<RemoteTask>>)
-              .value;
-      final second =
-          (await fake.listTasks(list.id, pageToken: first.nextPageToken)
-                  as Success<RemotePage<RemoteTask>>)
-              .value;
+      final first = (await fake.listTasks(
+        list.id,
+      ) as Success<RemotePage<RemoteTask>>).value;
+      final second = (await fake.listTasks(
+        list.id,
+        pageToken: first.nextPageToken,
+      ) as Success<RemotePage<RemoteTask>>).value;
 
       expect(
         <String>[

@@ -2291,9 +2291,8 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 },
                 maxLines: narrow ? 2 : 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700),
               );
               final commands = state.isBulkSelectionActive
                   ? _BulkActionBar(state: state, viewModel: viewModel)

@@ -104,9 +104,8 @@ Widget _host(
 }) => MaterialApp(
   home: Builder(
     builder: (context) => MediaQuery(
-      data: MediaQuery.of(
-        context,
-      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      data: MediaQuery.of(context)
+          .copyWith(textScaler: TextScaler.linear(textScale)),
       child: Scaffold(
         body: Padding(
           padding: const EdgeInsets.all(8),

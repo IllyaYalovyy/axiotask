@@ -18,8 +18,9 @@ enum AccountBackupImportTransactionBoundary {
   beforeCommit,
 }
 
-typedef AccountBackupImportTransactionControl =
-    Future<void> Function(AccountBackupImportTransactionBoundary boundary);
+typedef AccountBackupImportTransactionControl = Future<void> Function(
+  AccountBackupImportTransactionBoundary boundary,
+);
 
 final class DatabaseAccountBackupRepository
     implements AccountBackupRepository, AccountBackupRestoreRepository {
@@ -47,12 +48,12 @@ final class DatabaseAccountBackupRepository
         .firstOrNull;
     if (account == null) throw StateError('backup_account_not_found');
 
-    final snapshot = await DatabaseTasksRepository(
-      _database,
-    ).watchTasks(TasksQuery(accountId: accountId)).first;
-    final preferences = await DriftRelationalPreferences(
-      _database,
-    ).watchAllListPreferences(accountId).first;
+    final snapshot = await DatabaseTasksRepository(_database)
+        .watchTasks(TasksQuery(accountId: accountId))
+        .first;
+    final preferences = await DriftRelationalPreferences(_database)
+        .watchAllListPreferences(accountId)
+        .first;
     final orderedLists = snapshot.taskLists.toList(growable: false)
       ..sort((left, right) {
         final leftOrder = preferences[left.id]?.sidebarOrder;

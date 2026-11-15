@@ -121,11 +121,9 @@ void defineGoogleTasksServiceContract(
           ),
         );
         expect(
-          (_success(
-                    await service.listTasks(source.id),
-                  ).items.singleWhere((task) => task.id == child.id)
-                  as RemoteLiveTask)
-              .status,
+          (_success(await service.listTasks(source.id)).items.singleWhere(
+            (task) => task.id == child.id,
+          ) as RemoteLiveTask).status,
           RemoteTaskStatus.completed,
         );
         final reopenedParent = _task(
@@ -142,11 +140,9 @@ void defineGoogleTasksServiceContract(
           ),
         );
         expect(
-          (_success(
-                    await service.listTasks(source.id),
-                  ).items.singleWhere((task) => task.id == child.id)
-                  as RemoteLiveTask)
-              .status,
+          (_success(await service.listTasks(source.id)).items.singleWhere(
+            (task) => task.id == child.id,
+          ) as RemoteLiveTask).status,
           RemoteTaskStatus.completed,
         );
 
@@ -192,9 +188,9 @@ void defineGoogleTasksServiceContract(
           <RemoteTaskId>{parent.id, child.id},
         );
         expect(
-          (destinationTasks.items.singleWhere((task) => task.id == child.id)
-                  as RemoteLiveTask)
-              .parentId,
+          (destinationTasks.items.singleWhere(
+            (task) => task.id == child.id,
+          ) as RemoteLiveTask).parentId,
           parent.id,
         );
       },

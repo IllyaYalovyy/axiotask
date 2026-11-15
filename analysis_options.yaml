@@ -12,6 +12,10 @@ analyzer:
     missing_return: error
     unused_import: error
     unused_local_variable: error
+  exclude:
+    - build/**
+    - android/**
+    - linux/**
 
 linter:
   rules:

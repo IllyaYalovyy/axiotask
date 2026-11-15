@@ -1,0 +1,220 @@
+name: Tests and commit artifacts
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep every pushed commit's run, even if another commit arrives meanwhile.
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+
+jobs:
+  quality:
+    name: Analysis, unit, widget, golden and shell tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test integration_test
+      - name: Check generated code
+        if: ${{ !cancelled() }}
+        run: ./scripts/check_generated.sh
+      - name: Analyze
+        if: ${{ !cancelled() }}
+        run: flutter analyze --fatal-infos --fatal-warnings
+      - name: Unit, widget and golden tests with coverage
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p test-results
+          flutter test --no-pub --coverage --reporter expanded 2>&1 | tee test-results/flutter-tests.log
+      - name: Deep synchronization stress tests
+        if: ${{ !cancelled() }}
+        run: ./scripts/deep_sync.sh
+      - name: All shell regression tests
+        if: ${{ !cancelled() }}
+        run: |
+          failed=0
+          for suite in test/*_test.sh; do
+            bash "$suite" || failed=1
+          done
+          exit "$failed"
+      - name: Privacy check
+        if: ${{ !cancelled() }}
+        run: ./scripts/privacy_check.sh
+      - name: Desktop metadata
+        if: ${{ !cancelled() }}
+        run: |
+          desktop-file-validate linux/packaging/*.desktop
+          appstreamcli validate --no-net linux/packaging/*.metainfo.xml
+      - name: Upload coverage and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-${{ github.sha }}
+          path: |
+            coverage/
+            test-results/
+            test/**/failures/
+          retention-days: 14
+          if-no-files-found: warn
+
+  linux-integration:
+    name: Linux native integration and screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter
+      - name: Native integration tests with Secret Service
+        run: xvfb-run -a -s '-screen 0 1920x1200x24' dbus-run-session -- ./scripts/ci_linux_integration.sh
+      - name: Capture all synthetic desktop scenarios
+        if: ${{ !cancelled() }}
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a -s '-screen 0 1920x1200x24' dbus-run-session -- ./scripts/ci_screenshots.sh
+      - name: Upload native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-evidence-${{ github.sha }}
+          path: |
+            test-results/
+            screenshots/actual/
+          retention-days: 14
+          if-no-files-found: warn
+
+  android-integration:
+    name: Android emulator native probes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-flutter
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test SQLite and preferences on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            mkdir -p test-results
+            bash -o pipefail -c 'flutter test --no-pub integration_test/database_native_probe_test.dart integration_test/preferences_native_smoke_test.dart -d emulator-5554 --reporter expanded 2>&1 | tee test-results/android-tests.log'
+      - name: Upload Android evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-evidence-${{ github.sha }}
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: warn
+
+  linux-artifact:
+    name: Publish Linux release bundle
+    needs: [quality, linux-integration, android-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-flutter
+      - run: flutter build linux --release --no-pub
+      - name: Archive executable bundle and checksum
+        run: |
+          mkdir -p dist
+          tar -C build/linux/x64/release/bundle -czf "dist/axiotask-linux-x64-${GITHUB_SHA}.tar.gz" .
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: axiotask-linux-x64-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0
+
+  android-artifact:
+    name: Publish Android development APK
+    needs: [quality, linux-integration, android-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-flutter
+      # Android production authorization and release signing are not configured.
+      - run: flutter build apk --debug --no-pub
+      - run: ./scripts/check_android_native_assets.sh
+      - name: Name APK by commit and generate checksum
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-debug.apk "dist/axiotask-android-debug-${GITHUB_SHA}.apk"
+          cd dist
+          sha256sum *.apk > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: axiotask-android-debug-${{ github.sha }}
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0
+
+  github-release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-artifact, android-artifact]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)
+          test "$RELEASE_TAG" = "v$version"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: axiotask-*
+          path: artifacts
+      - name: Prepare release assets
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p release
+          cp artifacts/axiotask-linux-x64-*/axiotask-linux-x64-*.tar.gz "release/axiotask-${RELEASE_TAG#v}-linux-x64.tar.gz"
+          cp artifacts/axiotask-android-debug-*/axiotask-android-debug-*.apk "release/axiotask-${RELEASE_TAG#v}-android-debug.apk"
+          (cd release && sha256sum *.tar.gz *.apk > SHA256SUMS)
+          cat > release-notes.md <<'NOTES'
+          Built with Flutter 3.50.0 after the automated quality, Linux integration, and Android emulator checks passed.
+
+          - Linux x64 release bundle with desktop metadata, icons, and license. Extract the archive and run `./axiotask`, keeping the `lib/` and `data/` directories alongside it.
+          - Android debug APK for development testing. Production Android authorization and release signing are not configured in this branch.
+          - SHA256SUMS verifies both downloads.
+
+          Linux requires GTK 3, libsecret, and an unlocked Secret Service. Configure the desktop Google OAuth client in `~/.config/axiotask/config.toml` using `config/axiotask.example.toml` before launching.
+          NOTES
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --title "Axiotask $RELEASE_TAG" --notes-file release-notes.md

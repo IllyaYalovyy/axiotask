@@ -36,9 +36,8 @@ void main() {
     final account = AccountId(
       await database.createAccount('synthetic-linux-offline'),
     );
-    await DatabaseSyncSettingsRepository(
-      database,
-    ).setSyncEnabled(account, false);
+    await DatabaseSyncSettingsRepository(database)
+        .setSyncEnabled(account, false);
     var lists = DatabaseTaskListsRepository(database: database, clock: clock);
     final created = await lists.createTaskList(
       CreateTaskListCommand(accountId: account, title: 'Created offline'),

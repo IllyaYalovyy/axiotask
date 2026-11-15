@@ -24,8 +24,7 @@ void main() {
                 'etag': 'list-etag',
                 'title': 'Synthetic inbox',
                 'updated': '2026-08-15T18:30:12.123Z',
-                'selfLink':
-                    'https://tasks.googleapis.com/tasks/v1/users/@me/lists/list-1',
+                'selfLink': 'https://tasks.googleapis.com/tasks/v1/users/@me/lists/list-1',
                 'futureResourceField': 42,
               },
             ],
@@ -60,8 +59,7 @@ void main() {
                 'etag': 'task-etag',
                 'title': 'Synthetic task',
                 'updated': '2026-08-15T18:31:00Z',
-                'selfLink':
-                    'https://tasks.googleapis.com/tasks/v1/lists/list-1/tasks/task-1',
+                'selfLink': 'https://tasks.googleapis.com/tasks/v1/lists/list-1/tasks/task-1',
                 'parent': 'parent-1',
                 'position': '00000000000000000001',
                 'notes': 'Synthetic notes',

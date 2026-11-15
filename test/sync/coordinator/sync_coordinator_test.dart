@@ -508,36 +508,33 @@ void main() {
     },
   );
 
-  test(
-    'PAR-DATA-003 reset cancels an active request, waits, then runs one rebuild',
-    () async {
-      final harness = _Harness(startedAt: startedAt);
-      addTearDown(harness.close);
-      final events = <String>[];
+  test('PAR-DATA-003 reset cancels an active request, waits, then runs one rebuild', () async {
+    final harness = _Harness(startedAt: startedAt);
+    addTearDown(harness.close);
+    final events = <String>[];
 
-      unawaited(harness.coordinator.start());
-      await harness.runner.waitForRuns(1);
-      final active = harness.runner.invocations.single;
+    unawaited(harness.coordinator.start());
+    await harness.runner.waitForRuns(1);
+    final active = harness.runner.invocations.single;
 
-      final reset = harness.coordinator.serializeResetAndRebuild(() async {
-        events.add('transaction');
-      });
-      await _flushMicrotasks();
-      expect(active.control.isCancellationRequested, isTrue);
-      expect(events, isEmpty);
+    final reset = harness.coordinator.serializeResetAndRebuild(() async {
+      events.add('transaction');
+    });
+    await _flushMicrotasks();
+    expect(active.control.isCancellationRequested, isTrue);
+    expect(events, isEmpty);
 
-      harness.runner.interrupt(0);
-      await harness.runner.waitForRuns(2);
-      expect(events, <String>['transaction']);
-      expect(harness.runner.invocations[1].triggers, <SyncTrigger>{
-        SyncTrigger.localDataReset,
-      });
-      expect(harness.runner.maximumActiveRuns, 1);
+    harness.runner.interrupt(0);
+    await harness.runner.waitForRuns(2);
+    expect(events, <String>['transaction']);
+    expect(harness.runner.invocations[1].triggers, <SyncTrigger>{
+      SyncTrigger.localDataReset,
+    });
+    expect(harness.runner.maximumActiveRuns, 1);
 
-      harness.runner.complete(1);
-      await reset;
-    },
-  );
+    harness.runner.complete(1);
+    await reset;
+  });
 
   test('reset transaction failure starts no Google rebuild', () async {
     final harness = _Harness(startedAt: startedAt, autoComplete: true);

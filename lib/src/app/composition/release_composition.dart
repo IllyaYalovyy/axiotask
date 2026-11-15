@@ -128,7 +128,7 @@ final class ReleaseComposition implements AppComposition {
 
   static const CompositionBoundary _boundary = CompositionBoundary(
     profile: CompositionProfile.release,
-    applicationIdentifier: 'dev.axiotask.axiotask',
+    applicationIdentifier: 'io.github.IllyaYalovyy.axiotask',
     storage: StorageBoundary(
       databaseName: 'axiotask.sqlite',
       diagnosticsFileName: 'axiotask-diagnostics-safe.json',

@@ -46,9 +46,8 @@ void main() {
       expect(refresh.deleteOperations, 0);
       expect(remote.callCount(FakeGoogleTasksMethod.deleteTask), 0);
       expect(
-        await DeleteStateDao(
-          harness.database,
-        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        await DeleteStateDao(harness.database)
+            .readTaskDeleteState(harness.accountId, seeded.parent),
         DesiredStateLifecycle.pending,
       );
 
@@ -197,9 +196,8 @@ void main() {
       expect(uncertain.outcome, SyncRunOutcome.failed);
       expect(uncertain.failure?.code, 'synthetic.delete_uncertain');
       expect(
-        await DeleteStateDao(
-          harness.database,
-        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        await DeleteStateDao(harness.database)
+            .readTaskDeleteState(harness.accountId, seeded.parent),
         DesiredStateLifecycle.uncertain,
       );
       expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
@@ -209,9 +207,8 @@ void main() {
       expect(recovered.outcome, SyncRunOutcome.succeeded);
       expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
       expect(
-        await DeleteStateDao(
-          harness.database,
-        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        await DeleteStateDao(harness.database)
+            .readTaskDeleteState(harness.accountId, seeded.parent),
         DesiredStateLifecycle.confirmed,
       );
     },
@@ -254,9 +251,8 @@ void main() {
       expect(repeatedLoss.outcome, SyncRunOutcome.failed);
       expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
       expect(
-        await DeleteStateDao(
-          harness.database,
-        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        await DeleteStateDao(harness.database)
+            .readTaskDeleteState(harness.accountId, seeded.parent),
         DesiredStateLifecycle.uncertain,
       );
       harness.clock.advance(const Duration(minutes: 1));
@@ -264,9 +260,8 @@ void main() {
       expect(recovered.outcome, SyncRunOutcome.succeeded);
       expect(backend.callCount(FakeGoogleTasksMethod.deleteTask), 1);
       expect(
-        await DeleteStateDao(
-          harness.database,
-        ).readTaskDeleteState(harness.accountId, seeded.parent),
+        await DeleteStateDao(harness.database)
+            .readTaskDeleteState(harness.accountId, seeded.parent),
         DesiredStateLifecycle.confirmed,
       );
       expect(

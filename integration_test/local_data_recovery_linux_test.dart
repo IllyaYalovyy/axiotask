@@ -40,14 +40,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Rebuilt from Google'), findsOneWidget);
-      final selected = await DatabaseTasksRepository(
-        fixture.database,
-      ).watchTasks(TasksQuery(accountId: fixture.selected)).first;
+      final selected = await DatabaseTasksRepository(fixture.database)
+          .watchTasks(TasksQuery(accountId: fixture.selected))
+          .first;
       expect(selected.taskLists.single.title, 'Rebuilt Google list');
       expect(selected.tasks.single.title, 'Rebuilt Google task');
-      final other = await DatabaseTasksRepository(
-        fixture.database,
-      ).watchTasks(TasksQuery(accountId: fixture.other)).first;
+      final other = await DatabaseTasksRepository(fixture.database)
+          .watchTasks(TasksQuery(accountId: fixture.other))
+          .first;
       expect(other.tasks.single.title, 'Other account task');
     },
   );
@@ -67,9 +67,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Local data reset; rebuild unavailable'), findsOneWidget);
-    final selected = await DatabaseTasksRepository(
-      fixture.database,
-    ).watchTasks(TasksQuery(accountId: fixture.selected)).first;
+    final selected = await DatabaseTasksRepository(fixture.database)
+        .watchTasks(TasksQuery(accountId: fixture.selected))
+        .first;
     expect(selected.taskLists, isEmpty);
     expect(selected.tasks, isEmpty);
     expect(fixture.health.outcome, SyncHealthOutcome.failed);

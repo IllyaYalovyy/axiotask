@@ -46,9 +46,8 @@ void main() {
     await fixture.coordinator.start();
 
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
     expect(fixture.runner.calls, 0);
@@ -67,9 +66,8 @@ void main() {
       await fixture.coordinator.start();
 
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isTrue,
       );
       expect((await fixture.health()).action, SyncHealthAction.reauthorize);
@@ -92,9 +90,8 @@ void main() {
       await fixture.coordinator.start();
 
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
       final health = await fixture.health();
@@ -140,9 +137,8 @@ void main() {
     await fixture.coordinator.reauthorize();
 
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
     expect(fixture.runner.calls, 0);
@@ -160,9 +156,8 @@ void main() {
     await fixture.coordinator.reauthorize();
 
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
     expect(fixture.runner.calls, 0);
@@ -187,9 +182,8 @@ void main() {
       await fixture.runner.whenCalled;
 
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
       expect(fixture.runner.calls, 1);
@@ -216,9 +210,8 @@ void main() {
     await fixture.coordinator.reauthorize();
 
     expect(
-      (await fixture.store.readEligibility(
-        fixture.accountId,
-      )).reauthorizationRequired,
+      (await fixture.store.readEligibility(fixture.accountId))
+          .reauthorizationRequired,
       isTrue,
     );
     expect(fixture.runner.calls, 0);
@@ -242,9 +235,8 @@ void main() {
       await fixture.coordinator.reauthorize();
 
       expect(
-        (await fixture.store.readEligibility(
-          fixture.accountId,
-        )).reauthorizationRequired,
+        (await fixture.store.readEligibility(fixture.accountId))
+            .reauthorizationRequired,
         isFalse,
       );
       expect(fixture.runner.calls, 0);

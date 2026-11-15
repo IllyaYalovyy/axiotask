@@ -19,76 +19,73 @@ import 'package:http/http.dart' as http;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'release composition connects, commits account, restores, then verifies Tasks',
-    () async {
-      const subject = AccountSubject('release-workflow-subject');
-      final endpoint = _GoogleEndpoint();
-      final credentials = _MemoryCredentialStore();
-      final credentialNamespaces = <String>[];
-      final composition = ReleaseComposition.create(
-        linuxReadConfiguration: const LinuxReadConfiguration(
-          clientId: 'synthetic.apps.googleusercontent.com',
-          clientSecret: 'synthetic-installed-client-secret',
-        ),
-        linuxReadTransportDependencies: LinuxReadTransportDependencies(
-          browserFlow: const _BrowserFlow(),
-          credentialStoreFactory: (namespace, diagnostics) {
-            credentialNamespaces.add(namespace);
-            return credentials;
-          },
-          identityVerifier: const _IdentityVerifier(subject),
-          httpClientFactory: () => endpoint,
-        ),
-      );
-      final directory = Directory.systemTemp.createTempSync(
-        'axiotask-release-auth-workflow-',
-      );
-      addTearDown(() => directory.deleteSync(recursive: true));
-      final databaseFile = File('${directory.path}/workflow.sqlite');
-      final preferences = InMemoryDevicePreferencesBackend();
+  test('release composition connects, commits account, restores, then verifies Tasks', () async {
+    const subject = AccountSubject('release-workflow-subject');
+    final endpoint = _GoogleEndpoint();
+    final credentials = _MemoryCredentialStore();
+    final credentialNamespaces = <String>[];
+    final composition = ReleaseComposition.create(
+      linuxReadConfiguration: const LinuxReadConfiguration(
+        clientId: 'synthetic.apps.googleusercontent.com',
+        clientSecret: 'synthetic-installed-client-secret',
+      ),
+      linuxReadTransportDependencies: LinuxReadTransportDependencies(
+        browserFlow: const _BrowserFlow(),
+        credentialStoreFactory: (namespace, diagnostics) {
+          credentialNamespaces.add(namespace);
+          return credentials;
+        },
+        identityVerifier: const _IdentityVerifier(subject),
+        httpClientFactory: () => endpoint,
+      ),
+    );
+    final directory = Directory.systemTemp.createTempSync(
+      'axiotask-release-auth-workflow-',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final databaseFile = File('${directory.path}/workflow.sqlite');
+    final preferences = InMemoryDevicePreferencesBackend();
 
-      var database = await AppDatabase.openFile(databaseFile);
-      var runtime = await TasksFeatureRuntime.open(
-        composition,
-        injectedDatabase: database,
-        injectedDevicePreferencesBackend: preferences,
-      );
-      runtime.viewModel.start();
-      final reload = runtime.reloadRequested!;
+    var database = await AppDatabase.openFile(databaseFile);
+    var runtime = await TasksFeatureRuntime.open(
+      composition,
+      injectedDatabase: database,
+      injectedDevicePreferencesBackend: preferences,
+    );
+    runtime.viewModel.start();
+    final reload = runtime.reloadRequested!;
 
-      await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
-      await reload;
+    await runtime.viewModel.handleSyncHealthAction(SyncHealthAction.connect);
+    await reload;
 
-      final accounts = await database.allAccounts();
-      expect(accounts, hasLength(1));
-      expect(accounts.single.googleSubject, subject.value);
-      expect(endpoint.authorizationCodeExchanges, 1);
-      expect(endpoint.taskListCalls, 0);
-      expect(credentials.bundle, isNotNull);
-      await runtime.close();
+    final accounts = await database.allAccounts();
+    expect(accounts, hasLength(1));
+    expect(accounts.single.googleSubject, subject.value);
+    expect(endpoint.authorizationCodeExchanges, 1);
+    expect(endpoint.taskListCalls, 0);
+    expect(credentials.bundle, isNotNull);
+    await runtime.close();
 
-      database = await AppDatabase.openFile(databaseFile);
-      runtime = await TasksFeatureRuntime.open(
-        composition,
-        injectedDatabase: database,
-        injectedDevicePreferencesBackend: preferences,
-      );
-      await runtime.start();
+    database = await AppDatabase.openFile(databaseFile);
+    runtime = await TasksFeatureRuntime.open(
+      composition,
+      injectedDatabase: database,
+      injectedDevicePreferencesBackend: preferences,
+    );
+    await runtime.start();
 
-      expect(endpoint.refreshExchanges, 1);
-      expect(endpoint.taskListCalls, 1);
-      expect(
-        credentialNamespaces,
-        everyElement('dev.axiotask.axiotask.credentials'),
-      );
-      final health = await runtime.syncHealthRepository!
-          .watchHealth(const AccountId(1))
-          .first;
-      expect(health.outcome, SyncHealthOutcome.good);
-      await runtime.close();
-    },
-  );
+    expect(endpoint.refreshExchanges, 1);
+    expect(endpoint.taskListCalls, 1);
+    expect(
+      credentialNamespaces,
+      everyElement('dev.axiotask.axiotask.credentials'),
+    );
+    final health = await runtime.syncHealthRepository!
+        .watchHealth(const AccountId(1))
+        .first;
+    expect(health.outcome, SyncHealthOutcome.good);
+    await runtime.close();
+  });
 }
 
 final class _BrowserFlow implements BrowserAuthorizationFlow {

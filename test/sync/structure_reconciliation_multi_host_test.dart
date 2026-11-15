@@ -64,9 +64,9 @@ void main() {
       final snapshots = <CachedTasksSnapshot>[];
       for (var index = 0; index < 2; index += 1) {
         snapshots.add(
-          await DatabaseTasksRepository(
-            harness.hosts[index].store,
-          ).watchTasks(TasksQuery(accountId: accountIds[index])).first,
+          await DatabaseTasksRepository(harness.hosts[index].store)
+              .watchTasks(TasksQuery(accountId: accountIds[index]))
+              .first,
         );
       }
       TaskId localTask(int host, int remoteIndex) => snapshots[host].tasks

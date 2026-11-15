@@ -18,6 +18,8 @@ generated_manifest() {
 
 generated_manifest >"$before_manifest"
 dart run build_runner build
+# Normalize generator output with the active SDK's formatter.
+find ./lib -type f -name '*.g.dart' -print0 | xargs -0 -r dart format
 generated_manifest >"$after_manifest"
 
 if ! cmp --silent "$before_manifest" "$after_manifest"; then

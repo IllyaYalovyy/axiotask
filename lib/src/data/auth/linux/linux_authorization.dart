@@ -442,7 +442,7 @@ final class LinuxAuthorization implements AuthorizationPort {
         }),
         abort: tokenClient.close,
       );
-      return _acceptClient(
+      return await _acceptClient(
         oauthClient,
         tokenClient,
         key,
@@ -523,7 +523,7 @@ final class LinuxAuthorization implements AuthorizationPort {
         oauthClient.refreshCredentials(),
         abort: oauthClient.close,
       );
-      return _acceptClient(
+      return await _acceptClient(
         oauthClient,
         tokenClient,
         key,
@@ -590,7 +590,7 @@ final class LinuxAuthorization implements AuthorizationPort {
           if (identical(_session, session)) _session = null;
         },
       );
-      return _validateRefreshedSession(session);
+      return await _validateRefreshedSession(session);
     } on _AuthorizationNetworkTimeout {
       return _fail(_networkTimeoutFailure());
     } on _AuthorizationClosed {
@@ -1084,8 +1084,7 @@ Failure _oauthFailure(
       retry: RetryClassification.permanent,
       impact: 'Google authorization cannot proceed safely.',
       action: FailureAction.reviewConfiguration,
-      safeSummary:
-          'Google rejected the DPoP proof. Review clock and implementation diagnostics.',
+      safeSummary: 'Google rejected the DPoP proof. Review clock and implementation diagnostics.',
     );
   }
   return Failure(
