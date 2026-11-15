@@ -57,15 +57,23 @@ The Linux app still requires the documented local OAuth client configuration
 until public-client onboarding is completed. These artifacts are CI builds,
 not Flathub publications. No release signing secret is needed.
 
-Pushing a `v<version>` tag publishes the tested Linux archive, explicitly labeled
-Android debug APK, and combined SHA256SUMS as a GitHub Release. The tag must match
-`pubspec.yaml`. Publication runs only after all three validation jobs and both artifact jobs succeed.
+Pushing a `v<version>` tag builds RPM, DEB, Flatpak, and a release-signed APK.
+The published release contains those four packages, `ANDROID_SIGNING_CERT.txt`,
+and `SHA256SUMS`; development artifacts remain in Actions only. Publication
+requires every validation and artifact job to pass, including package validation,
+installation of the DEB in Ubuntu 24.04, Flatpak runtime dependency checks, and
+APK application ID, non-debuggable status, and signing-certificate continuity.
+The asset-set guard rejects missing packages, extra files, or incomplete checksums.
+
+The tag must match `pubspec.yaml` and the newest AppStream release. Release notes
+come from `docs/release-notes.md`. Update these together before tagging.
 
 ## Activation
 
-Commit and push the workflow, local composite action, CI scripts, and the app
-changes they test. GitHub Actions must be enabled in the repository settings,
-with the referenced actions permitted by any organization policy. No repository
-secrets or write-token permissions are required. The first hosted run validates
-Ubuntu rendering and emulator behavior; local checks do not establish that the
-hosted environment has passed.
+GitHub Actions must be enabled. Tag builds use the existing repository secrets
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEYSTORE_KEY_ALIAS`, and `ANDROID_KEYSTORE_KEY_PASSWORD`.
+Missing signing secrets fail the build; there is no debug-key fallback.
+Only the publication job receives repository contents write permission.
+Packaging tools and the GNOME 49 Flatpak runtime/SDK are installed on disposable
+GitHub runners; the workflow does not install anything on the developer machine.

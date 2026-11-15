@@ -73,6 +73,12 @@ set_target_properties(${BINARY_NAME}
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+# shared_preferences_android brings JNI transitively, but Linux uses
+# shared_preferences_linux and never starts a JVM. Do not ship the unused JNI
+# library with its build-machine libjvm dependency in Linux packages.
+if(jni_bundled_libraries)
+  list(REMOVE_ITEM PLUGIN_BUNDLED_LIBRARIES ${jni_bundled_libraries})
+endif()
 
 
 # === Installation ===

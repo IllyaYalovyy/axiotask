@@ -49,3 +49,7 @@ integration_test/output/
 AGENTS.md
 CLAUDE.md
 CODEX.md
+
+# Distribution output and local OAuth build input
+dist/
+tool/oauth_credentials.json

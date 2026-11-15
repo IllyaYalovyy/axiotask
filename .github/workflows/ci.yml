@@ -157,7 +157,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: ./.github/actions/setup-flutter
-      # Android production authorization and release signing are not configured.
+      # Commit artifacts are development builds; tag distributions are signed below.
       - run: flutter build apk --debug --no-pub
       - run: ./scripts/check_android_native_assets.sh
       - name: Name APK by commit and generate checksum
@@ -174,44 +174,174 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  distribution:
+    name: Build and verify installable release packages
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # FIRST, before any build: does this tag describe this tree? A failure
+      # here costs a deleted tag; the same mistake caught later costs a
+      # published release that cannot be withdrawn.
+      - name: The tag must equal the pubspec version
+        run: bash tool/release_guard.sh "${GITHUB_REF_NAME}"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: ./.github/actions/setup-flutter
+
+      # clang/cmake/ninja/pkg-config/libgtk-3-dev: what `flutter build linux`
+      # needs and the runner image does not ship. rpm: rpmbuild, for
+      # tool/build_rpm.sh. lintian: the .deb inspection. appstream and
+      # desktop-file-utils: both packagers validate the metadata they are about
+      # to ship and refuse to build if it is invalid. python3: runs
+      # tool/normalize_runpath.py, the step that rewrites the bundled libraries'
+      # build-tree RUNPATH to $ORIGIN (#301) — both packagers ABORT when it is
+      # missing rather than package the build tree's search paths.
+      - name: Install the Linux build and packaging toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            rpm lintian appstream desktop-file-utils python3 flatpak librsvg2-common
+
+      - run: flutter pub get --enforce-lockfile
+
+      - name: Build the Linux release bundle
+        run: flutter build linux --release --no-pub
+
+      # Both packages are built from the ONE bundle above: a second build would
+      # be a second, differently-verified binary in the same release.
+      - name: Package the RPM
+        run: bash tool/build_rpm.sh --bundle build/linux/x64/release/bundle
+
+      - name: Install the pinned Flatpak runtime and SDK
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+      - name: Package and verify the Flatpak
+        run: bash tool/build_flatpak.sh --bundle build/linux/x64/release/bundle
+
+      - name: Package the DEB
+        run: bash tool/build_deb.sh --bundle build/linux/x64/release/bundle
+
+      # Without --fail-on, lintian prints its findings and exits 0 — which is
+      # the same as not running it.
+      - name: lintian
+        run: lintian --fail-on error,warning dist/*.deb
+
+      # The pinned Depends claim the package installs on Ubuntu 24.04. This is
+      # the only step that actually asks apt.
+      - name: Install the DEB in ubuntu:24.04
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq /dist/axiotask_*.deb
+            test -x /usr/bin/axiotask
+            test -f /usr/share/applications/io.github.IllyaYalovyy.axiotask.desktop
+            test -f /usr/share/metainfo/io.github.IllyaYalovyy.axiotask.metainfo.xml
+            if ldd /usr/lib/axiotask/axiotask | grep -q "not found"; then
+              echo "the installed binary has unresolved libraries" >&2
+              exit 1
+            fi
+            dpkg -V axiotask
+            apt-get remove -y -qq axiotask
+          '
+
+      # The APK must use the existing release keystore; never substitute a debug key.
+      - name: Write the Android signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] \
+             || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::the ANDROID_KEYSTORE_* secrets are not set — refusing to publish a debug-signed APK, which cannot sign in (RFC-010)"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/axiotask-release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/axiotask-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build the release APK
+        run: |
+          flutter build apk --release --no-pub
+          ./scripts/check_android_native_assets.sh build/app/outputs/flutter-apk/app-release.apk
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+             "dist/axiotask-${GITHUB_REF_NAME#v}.apk"
+
+      - name: Verify the APK is NOT debug-signed
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee dist/ANDROID_SIGNING_CERT.txt
+          if grep -qi 'CN=Android Debug' dist/ANDROID_SIGNING_CERT.txt; then
+            echo "::error::the APK was signed with the debug key — the ANDROID_KEYSTORE_* secrets did not reach the build"
+            exit 1
+          fi
+
+      - name: Verify Android signing continuity and release identity
+        run: |
+          curl -fsSL https://github.com/IllyaYalovyy/axiotask/releases/download/v1.5.3/ANDROID_SIGNING_CERT.txt -o "$RUNNER_TEMP/previous-cert.txt"
+          diff <(grep 'certificate SHA-256 digest:' "$RUNNER_TEMP/previous-cert.txt") <(grep 'certificate SHA-256 digest:' dist/ANDROID_SIGNING_CERT.txt)
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          test "$("$apkanalyzer" manifest application-id dist/*.apk)" = com.axiotask.app
+          test "$("$apkanalyzer" manifest debuggable dist/*.apk)" = false
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum axiotask*.rpm axiotask*.deb axiotask*.flatpak axiotask*.apk ANDROID_SIGNING_CERT.txt > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Retain verified distribution packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-${{ github.ref_name }}
+          path: |
+            dist/axiotask*.rpm
+            dist/axiotask*.deb
+            dist/axiotask*.flatpak
+            dist/axiotask*.apk
+            dist/SHA256SUMS
+            dist/ANDROID_SIGNING_CERT.txt
+          if-no-files-found: error
+
+
   github-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [quality, linux-integration, android-integration, linux-artifact, android-artifact]
+    needs: [quality, linux-integration, android-integration, linux-artifact, android-artifact, distribution]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Verify release version
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          version=$(sed -n 's/^version: \([^+]*\).*/\1/p' pubspec.yaml)
-          test "$RELEASE_TAG" = "v$version"
       - uses: actions/download-artifact@v4
         with:
-          pattern: axiotask-*
-          path: artifacts
-      - name: Prepare release assets
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          name: distribution-${{ github.ref_name }}
+          path: dist
+      - name: Verify complete release assets
         run: |
-          mkdir -p release
-          cp artifacts/axiotask-linux-x64-*/axiotask-linux-x64-*.tar.gz "release/axiotask-${RELEASE_TAG#v}-linux-x64.tar.gz"
-          cp artifacts/axiotask-android-debug-*/axiotask-android-debug-*.apk "release/axiotask-${RELEASE_TAG#v}-android-debug.apk"
-          (cd release && sha256sum *.tar.gz *.apk > SHA256SUMS)
-          cat > release-notes.md <<'NOTES'
-          Built with Flutter 3.50.0 after the automated quality, Linux integration, and Android emulator checks passed.
-
-          - Linux x64 release bundle with desktop metadata, icons, and license. Extract the archive and run `./axiotask`, keeping the `lib/` and `data/` directories alongside it.
-          - Android debug APK for development testing. Production Android authorization and release signing are not configured in this branch.
-          - SHA256SUMS verifies both downloads.
-
-          Linux requires GTK 3, libsecret, and an unlocked Secret Service. Configure the desktop Google OAuth client in `~/.config/axiotask/config.toml` using `config/axiotask.example.toml` before launching.
-          NOTES
-      - name: Publish verified assets
+          bash tool/release_guard.sh "${GITHUB_REF_NAME}"
+          python3 scripts/check_release_assets.py dist
+          (cd dist && sha256sum -c SHA256SUMS)
+      - name: Publish verified packages
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/* --verify-tag --title "Axiotask $RELEASE_TAG" --notes-file release-notes.md
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --title "Axiotask $RELEASE_TAG" --notes-file docs/release-notes.md
