@@ -66,6 +66,7 @@ void main() {
 
       await _drag(
         tester,
+        viewModel,
         from: find.byKey(Key('desktop-task-row-${third.value}')),
         to:
             tester.getTopLeft(
@@ -85,6 +86,7 @@ void main() {
 
       await _drag(
         tester,
+        viewModel,
         from: find.byKey(Key('desktop-task-row-${second.value}')),
         to: tester.getCenter(find.text('Focus').first),
       );
@@ -104,6 +106,7 @@ void main() {
       );
       await _drag(
         tester,
+        viewModel,
         from: find.byKey(Key('desktop-task-row-${first.value}')),
         to: tester.getCenter(archiveTarget),
       );
@@ -119,7 +122,8 @@ void main() {
 }
 
 Future<void> _drag(
-  WidgetTester tester, {
+  WidgetTester tester,
+  TasksViewModel viewModel, {
   required Finder from,
   required Offset to,
 }) async {
@@ -130,6 +134,15 @@ Future<void> _drag(
   await gesture.moveTo(to);
   await tester.pump();
   await gesture.up();
+  await tester.pumpAndSettle();
+  // Native database work can outlast the last scheduled animation frame.
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (viewModel.state.isTaskCommandPending &&
+      DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(viewModel.state.isTaskCommandPending, isFalse);
+  expect(viewModel.state.taskCommandFailureMessage, isNull);
   await tester.pumpAndSettle();
 }
 
