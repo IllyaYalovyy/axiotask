@@ -23,23 +23,7 @@ assert_fails_with() {
   [[ "$output" == *"$expected"* ]] || fail "missing failure: $expected"
 }
 
-[[ -x "$preflight" ]] || fail 'preflight is missing or not executable'
-assert_fails_with 'Usage:' "$preflight"
-assert_fails_with 'private configuration is missing' \
-  env AXIOTASK_STAGE7_GATE_CONFIG="$config_path" "$preflight" android-auth
-
-mkdir -p "${config_path%/*}" "$fixture_root/bin"
-printf '%s\n' \
-  'AXIOTASK_ANDROID_AUTH_CLIENT_ID=android-output-canary.apps.googleusercontent.com' \
-  'AXIOTASK_LINUX_AUTH_CLIENT_ID=linux-output-canary.apps.googleusercontent.com' \
-  'AXIOTASK_LINUX_AUTH_CLIENT_SECRET=secret-output-canary' \
-  >"$config_path"
-
-chmod 644 "$config_path"
-assert_fails_with 'permissions must be 600' \
-  env AXIOTASK_STAGE7_GATE_CONFIG="$config_path" "$preflight" android-auth
-chmod 600 "$config_path"
-
+mkdir -p "$fixture_root/bin"
 # The generated fake expands its positional arguments when the preflight runs.
 # shellcheck disable=SC2016
 printf '%s\n' \
@@ -63,6 +47,25 @@ printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/pkg-config"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/secret-tool"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fixture_root/bin/xdg-open"
 chmod +x "$fixture_root/bin/"*
+
+export PATH="$fixture_root/bin:$PATH"
+
+[[ -x "$preflight" ]] || fail 'preflight is missing or not executable'
+assert_fails_with 'Usage:' "$preflight"
+assert_fails_with 'private configuration is missing' \
+  env AXIOTASK_STAGE7_GATE_CONFIG="$config_path" "$preflight" android-auth
+
+mkdir -p "${config_path%/*}" "$fixture_root/bin"
+printf '%s\n' \
+  'AXIOTASK_ANDROID_AUTH_CLIENT_ID=android-output-canary.apps.googleusercontent.com' \
+  'AXIOTASK_LINUX_AUTH_CLIENT_ID=linux-output-canary.apps.googleusercontent.com' \
+  'AXIOTASK_LINUX_AUTH_CLIENT_SECRET=secret-output-canary' \
+  >"$config_path"
+
+chmod 644 "$config_path"
+assert_fails_with 'permissions must be 600' \
+  env AXIOTASK_STAGE7_GATE_CONFIG="$config_path" "$preflight" android-auth
+chmod 600 "$config_path"
 
 common_env=(
   env

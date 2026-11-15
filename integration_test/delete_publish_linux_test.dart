@@ -133,6 +133,10 @@ void main() {
 
       await tester.tap(find.text('Synthetic delete target'));
       await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const Key('task-detail-actions-menu')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('task-detail-actions-menu')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete task'));
@@ -155,6 +159,10 @@ void main() {
       await coordinator.whenIdle;
       viewModel.selectTask(restored.id);
       await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const Key('task-detail-actions-menu')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('task-detail-actions-menu')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete task'));
