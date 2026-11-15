@@ -126,7 +126,6 @@ jobs:
 
   linux-artifact:
     name: Publish Linux release bundle
-    needs: [quality, linux-integration, android-integration]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -149,7 +148,6 @@ jobs:
 
   android-artifact:
     name: Publish Android development APK
-    needs: [quality, linux-integration, android-integration]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -179,7 +177,7 @@ jobs:
   github-release:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-artifact, android-artifact]
+    needs: [quality, linux-integration, android-integration, linux-artifact, android-artifact]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -40,7 +40,7 @@ Physical Android device qualification and human visual acceptance remain local.
 ## Downloading builds
 
 Open the repository's **Actions → Tests and commit artifacts → run → Artifacts**.
-After all three test jobs pass, the build jobs upload:
+Build jobs run in parallel with validation and upload:
 
 - `axiotask-linux-x64-<commit>`: a `.tar.gz` containing the complete executable
   bundle, desktop metadata, icons, and license, plus `SHA256SUMS`. Extract it and
@@ -50,7 +50,8 @@ After all three test jobs pass, the build jobs upload:
 
 Build artifacts expire after 30 days. Coverage, golden failure images, native
 logs, and synthetic screenshots are uploaded even on test failure and expire
-after 14 days. Failed checks prevent publication of application builds.
+after 14 days. These CI artifacts can be available before validation finishes. Check the run
+status before using them. Failed checks prevent GitHub Release publication.
 
 The Linux app still requires the documented local OAuth client configuration
 until public-client onboarding is completed. These artifacts are CI builds,
@@ -58,7 +59,7 @@ not Flathub publications. No release signing secret is needed.
 
 Pushing a `v<version>` tag publishes the tested Linux archive, explicitly labeled
 Android debug APK, and combined SHA256SUMS as a GitHub Release. The tag must match
-`pubspec.yaml`. Publication runs only after both artifact jobs succeed.
+`pubspec.yaml`. Publication runs only after all three validation jobs and both artifact jobs succeed.
 
 ## Activation
 
