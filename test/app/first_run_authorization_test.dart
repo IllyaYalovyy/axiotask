@@ -15,8 +15,8 @@ import 'package:axiotask/src/data/preferences/device_preferences.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../support/fake_auth.dart';
 import '../support/fake_google_tasks_service.dart';

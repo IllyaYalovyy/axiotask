@@ -11,8 +11,8 @@ import 'package:axiotask/src/data/auth/linux/linux_authorization.dart';
 import 'package:axiotask/src/data/google_tasks/http_service.dart';
 import 'package:axiotask/src/features/diagnostics/development_diagnostics_view.dart';
 import 'package:axiotask/src/features/diagnostics/diagnostics_view.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   const taskCanary = 'PRIVATE_TASK_CANARY_RELEASE_84a1';

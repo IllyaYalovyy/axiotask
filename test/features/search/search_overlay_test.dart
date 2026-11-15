@@ -3,9 +3,9 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/search_repository.dart';
 import 'package:axiotask/src/features/search/search_overlay.dart';
 import 'package:axiotask/src/features/search/search_view_model.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   testWidgets('child matches identify and open their parent context by touch', (

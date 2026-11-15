@@ -6,8 +6,8 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/quick_add_view_model.dart';
 import 'package:axiotask/src/features/tasks/widgets/quick_add.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   testWidgets(

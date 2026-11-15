@@ -6,9 +6,9 @@ import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/features/diagnostics/development_diagnostics_view.dart';
 import 'package:axiotask/src/features/diagnostics/diagnostics_view.dart';
 import 'package:axiotask/src/features/diagnostics/diagnostics_view_model.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   setUpAll(_loadFlutterRoboto);

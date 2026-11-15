@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../core/diagnostics/diagnostics.dart';
 import '../data/database/schema_verifier.dart';

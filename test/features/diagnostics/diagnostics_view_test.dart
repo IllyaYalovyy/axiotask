@@ -4,8 +4,8 @@ import 'package:axiotask/src/features/diagnostics/diagnostics_view.dart';
 import 'package:axiotask/src/features/diagnostics/diagnostics_view_model.dart';
 import 'package:axiotask/src/features/tasks/widgets/sync_health_header.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   testWidgets('HLT-010 release view exposes safe empty and populated states', (

@@ -7,8 +7,8 @@ import 'package:axiotask/src/features/backup/account_backup_view.dart';
 import 'package:axiotask/src/features/backup/account_backup_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   testWidgets(

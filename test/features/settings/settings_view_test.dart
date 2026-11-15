@@ -2,9 +2,9 @@ import 'package:axiotask/src/app/visual_tokens.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/features/settings/settings_view.dart';
 import 'package:axiotask/src/features/settings/settings_view_model.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'settings_test_support.dart';
 
