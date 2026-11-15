@@ -141,11 +141,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete task'));
       await tester.pumpAndSettle();
+      await _waitUntil(tester, () => !viewModel.state.isTaskCommandPending);
       expect(find.text('“Synthetic delete target” deleted'), findsOneWidget);
       expect(remote.callCount(FakeGoogleTasksMethod.deleteTask), 0);
 
       await tester.tap(find.widgetWithText(TextButton, 'Undo'));
       await tester.pumpAndSettle();
+      await _waitUntil(tester, () => !viewModel.state.isTaskCommandPending);
       final restored =
           (await tasks.watchTasks(TasksQuery(accountId: account)).first)
               .tasks
@@ -167,13 +169,19 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete task'));
       await tester.pumpAndSettle();
+      await _waitUntil(tester, () => !viewModel.state.isTaskCommandPending);
       clock.advance(const Duration(seconds: 29, milliseconds: 999));
       await tester.pump();
       expect(remote.callCount(FakeGoogleTasksMethod.deleteTask), 0);
 
       clock.advance(const Duration(milliseconds: 1));
       await tester.pump();
-      await pumpEventQueue();
+      // Eligibility performs native database work before a sync run exists.
+      // whenIdle alone can return before that work schedules the run.
+      await _waitUntil(
+        tester,
+        () => remote.callCount(FakeGoogleTasksMethod.deleteTask) == 1,
+      );
       await coordinator.whenIdle;
 
       expect(remote.callCount(FakeGoogleTasksMethod.deleteTask), 1);
@@ -207,4 +215,12 @@ final class _DeleteEligibility implements TaskDeleteEligibilityStore {
   @override
   Future<DateTime?> nextTaskDeleteExpiry(AccountId accountId) =>
       _dao.nextTaskDeleteExpiry(accountId);
+}
+
+Future<void> _waitUntil(WidgetTester tester, bool Function() predicate) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (!predicate() && DateTime.now().isBefore(deadline)) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(predicate(), isTrue, reason: 'Native operation did not complete');
 }

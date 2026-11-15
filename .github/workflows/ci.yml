@@ -279,7 +279,10 @@ jobs:
 
       - name: Build the release APK
         run: |
-          flutter build apk --release --no-pub
+          # Flutter regenerates the registrant in release mode here, excluding
+          # integration_test. --no-pub would retain the development registrant.
+          flutter build apk --release
+          git diff --exit-code -- pubspec.lock
           ./scripts/check_android_native_assets.sh build/app/outputs/flutter-apk/app-release.apk
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
