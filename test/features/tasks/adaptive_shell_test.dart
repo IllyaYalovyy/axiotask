@@ -21,10 +21,12 @@ import 'package:axiotask/src/features/tasks/widgets/task_details.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../support/selection_toolbar.dart';
 import '../../support/touch_targets.dart';
 
 void main() {
@@ -2413,6 +2415,234 @@ void main() {
     });
   });
 
+  group('phone selection toolbar touch contract (Android audit 06)', () {
+    setUpAll(loadAndroidTextFont);
+
+    for (final viewport in selectionViewports) {
+      testWidgets('06 long press keeps every bulk control reachable at '
+          '$viewport', (tester) async {
+        final fixture = await _pumpSelectionShell(tester, viewport);
+        await _longPressRowTitle(tester, 'Cached parent');
+        await tester.pumpAndSettle();
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, {const TaskId(11)});
+        expectSelectionToolbarReachable(
+          tester,
+          count: 1,
+          reason: '$viewport after long press',
+        );
+        await _tapRowTitle(tester, 'Leaf task');
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, {
+          const TaskId(11),
+          const TaskId(13),
+        });
+        expectSelectionToolbarReachable(
+          tester,
+          count: 2,
+          reason: '$viewport with two selected',
+        );
+
+        // Every action opens by a real tap and cancels without a command.
+        for (final (control, dialog) in <(SelectionControl, String)>[
+          (completeSelectionControl, 'bulk-complete-confirmation'),
+          (rescheduleSelectionControl, 'bulk-reschedule-dialog'),
+          (moveSelectionControl, 'bulk-move-dialog'),
+          (deleteSelectionControl, 'bulk-delete-confirmation'),
+        ]) {
+          await tapSelectionControl(tester, control);
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(Key(dialog)),
+            findsOneWidget,
+            reason: '$viewport: ${control.label} opens its dialog',
+          );
+          expect(tester.takeException(), isNull, reason: '$dialog layout');
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
+          expect(find.byKey(Key(dialog)), findsNothing);
+          expect(fixture.viewModel.state.bulkSelectedTaskIds, hasLength(2));
+        }
+
+        await tapSelectionControl(tester, exitSelectionControl);
+        await tester.pumpAndSettle();
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+        expect(find.byKey(const Key('bulk-action-bar')), findsNothing);
+        expect(fixture.tasks.bulkApplied, isEmpty);
+        expect(fixture.tasks.applied, isEmpty);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    for (final viewport in <PhoneViewport>[
+      const PhoneViewport(320, PhoneOrientation.portrait, 2),
+      const PhoneViewport(320, PhoneOrientation.landscape, 2),
+      const PhoneViewport(360, PhoneOrientation.landscape, 2),
+      const PhoneViewport(443, PhoneOrientation.portrait, 1),
+    ]) {
+      testWidgets('06 every bulk action dispatches its command at $viewport', (
+        tester,
+      ) async {
+        final fixture = await _pumpSelectionShell(
+          tester,
+          viewport,
+          clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+        );
+        Future<void> selectBoth() async {
+          await _longPressRowTitle(tester, 'Cached parent');
+          await _tapRowTitle(tester, 'Leaf task');
+          expect(fixture.viewModel.state.bulkSelectedTaskIds, {
+            const TaskId(11),
+            const TaskId(13),
+          });
+          // Earlier results stay on screen as banners above the collection.
+          expectSelectionToolbarReachable(
+            tester,
+            count: 2,
+            reason: '$viewport with any earlier bulk result shown',
+          );
+        }
+
+        await selectBoth();
+        await tapSelectionControl(tester, completeSelectionControl);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Cancel').hitTestable());
+        await tester.pumpAndSettle();
+        expect(fixture.tasks.bulkApplied, isEmpty);
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, hasLength(2));
+        await tapSelectionControl(tester, completeSelectionControl);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('bulk-complete-confirm')).hitTestable(),
+        );
+        await tester.pumpAndSettle();
+        final complete =
+            fixture.tasks.bulkApplied.single as BulkCompleteTasksCommand;
+        expect(complete.taskIds, {const TaskId(11), const TaskId(13)});
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+
+        await selectBoth();
+        await tapSelectionControl(tester, rescheduleSelectionControl);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('bulk-reschedule-tomorrow')).hitTestable(),
+        );
+        await tester.pumpAndSettle();
+        final reschedule =
+            fixture.tasks.bulkApplied.last as BulkRescheduleTasksCommand;
+        expect(reschedule.taskIds, {const TaskId(11), const TaskId(13)});
+        expect(reschedule.due, TaskDate(2026, 8, 16));
+
+        await selectBoth();
+        await tapSelectionControl(tester, moveSelectionControl);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('bulk-move-list-8')).hitTestable(),
+        );
+        await tester.pumpAndSettle();
+        final move = fixture.tasks.bulkApplied.last as BulkMoveTasksCommand;
+        expect(move.taskIds, {const TaskId(11), const TaskId(13)});
+        expect(move.destinationTaskListId, const TaskListId(8));
+
+        await selectBoth();
+        await tapSelectionControl(tester, deleteSelectionControl);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const Key('bulk-delete-confirm')).hitTestable(),
+        );
+        await tester.pumpAndSettle();
+        final delete = fixture.tasks.bulkApplied.last as BulkDeleteTasksCommand;
+        expect(delete.taskIds, {const TaskId(11), const TaskId(13)});
+        expect(fixture.tasks.bulkApplied, hasLength(4));
+        fixture.tasks.groupUndoController.add(<TaskDeleteGroupUndo>[
+          TaskDeleteGroupUndo(
+            groupId: 91,
+            selectedCount: 2,
+            rootCount: 2,
+            notBefore: DateTime.utc(2026, 8, 15, 12, 0, 30),
+          ),
+        ]);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Undo all').hitTestable());
+        await tester.pumpAndSettle();
+        expect(fixture.tasks.groupUndos.single.groupId, 91);
+        expect(fixture.tasks.applied, isEmpty);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('06 a pending bulk command disables every control', (
+      tester,
+    ) async {
+      final fixture = await _pumpSelectionShell(
+        tester,
+        const PhoneViewport(320, PhoneOrientation.portrait, 1),
+      );
+      final gate = Completer<void>();
+      fixture.tasks.bulkGate = gate.future;
+      await _longPressRowTitle(tester, 'Cached parent');
+      await tester.pumpAndSettle();
+      await _tapRowTitle(tester, 'Leaf task');
+      await tapSelectionControl(tester, completeSelectionControl);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('bulk-complete-confirm')).hitTestable(),
+      );
+      // The progress indicator never settles; let the dialog close.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byType(Dialog), findsNothing);
+      expect(fixture.viewModel.state.isBulkCommandPending, isTrue);
+      expect(fixture.tasks.bulkApplied, hasLength(1));
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('bulk-action-bar')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      for (final control in selectionControls) {
+        final semantics = tester
+            .getSemantics(selectionControlFinder(control))
+            .getSemanticsData();
+        expect(
+          semantics.hasAction(SemanticsAction.tap),
+          isFalse,
+          reason: '${control.label} is disabled while the command is pending',
+        );
+        await tester.tapAt(tester.getCenter(selectionControlFinder(control)));
+        await tester.pump();
+        expect(find.byType(Dialog), findsNothing, reason: control.label);
+        expect(fixture.viewModel.state.bulkSelectedTaskIds, hasLength(2));
+      }
+      expect(fixture.tasks.bulkApplied, hasLength(1));
+
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.isBulkCommandPending, isFalse);
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+      expect(fixture.tasks.bulkApplied.single, isA<BulkCompleteTasksCommand>());
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('06 Back clears the selection without a command', (
+      tester,
+    ) async {
+      final fixture = await _pumpSelectionShell(
+        tester,
+        const PhoneViewport(320, PhoneOrientation.landscape, 2),
+      );
+      await _longPressRowTitle(tester, 'Cached parent');
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, hasLength(1));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, isEmpty);
+      expect(find.byKey(const Key('bulk-action-bar')), findsNothing);
+      expect(fixture.tasks.bulkApplied, isEmpty);
+      expect(fixture.tasks.applied, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets(
     'desktop rows keep dense controls and a readable secondary-click menu',
     variant: TargetPlatformVariant.only(TargetPlatform.linux),
@@ -2509,12 +2739,51 @@ Finder _rowOverflow(int taskId, String title) => find.descendant(
   matching: find.byTooltip('Task actions for $title'),
 );
 
+/// Starts the phone shell upright at [viewport]'s width and text scale, then
+/// rotates to [viewport], as a user turning the phone would.
+Future<_ShellFixture> _pumpSelectionShell(
+  WidgetTester tester,
+  PhoneViewport viewport, {
+  Clock? clock,
+}) async {
+  final fixture = await _pumpPhoneShell(
+    tester,
+    PhoneViewport(
+      viewport.shortSide,
+      PhoneOrientation.portrait,
+      viewport.textScale,
+    ),
+    clock: clock,
+  );
+  tester.view.physicalSize = viewport.logicalSize;
+  await tester.pumpAndSettle();
+  expect(tester.takeException(), isNull, reason: '$viewport row layout');
+  return fixture;
+}
+
+/// Scrolls the task row titled [title] into view and taps it by touch.
+Future<void> _tapRowTitle(WidgetTester tester, String title) async {
+  await tester.ensureVisible(find.text(title, skipOffstage: false));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(title).hitTestable());
+  await tester.pumpAndSettle();
+}
+
+/// Scrolls the task row titled [title] into view and long-presses it.
+Future<void> _longPressRowTitle(WidgetTester tester, String title) async {
+  await tester.ensureVisible(find.text(title, skipOffstage: false));
+  await tester.pumpAndSettle();
+  await tester.longPress(find.text(title).hitTestable());
+  await tester.pumpAndSettle();
+}
+
 /// Pumps the real shell with the Android theme at a phone [viewport] and
 /// text scale, so touch-sized tap targets apply.
 Future<_ShellFixture> _pumpPhoneShell(
   WidgetTester tester,
   PhoneViewport viewport, {
   DensityPreference density = DensityPreference.standard,
+  Clock? clock,
 }) async {
   // Android status and navigation bars take room from the shell.
   tester.view
@@ -2531,6 +2800,7 @@ Future<_ShellFixture> _pumpPhoneShell(
     _health(SyncHealthOutcome.good),
     preferencesRepository: preferences,
     taskListsRepository: _TaskListsRepository(),
+    clock: clock,
   );
   addTearDown(fixture.dispose);
   await tester.pumpWidget(
@@ -2736,6 +3006,9 @@ final class _TasksRepository
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
   final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
   final List<BulkExistingTaskCommand> bulkApplied = <BulkExistingTaskCommand>[];
+
+  /// When set, bulk commands are recorded but complete only after it does.
+  Future<void>? bulkGate;
   final List<ClearCompletedTasksCommand> clearedCompleted =
       <ClearCompletedTasksCommand>[];
   final List<UndoTaskDeleteGroupCommand> groupUndos =
@@ -2819,6 +3092,7 @@ final class _TasksRepository
     BulkExistingTaskCommand command,
   ) async {
     bulkApplied.add(command);
+    await bulkGate;
     final summary = BulkOperationSummary(
       operationId: 41,
       kind: switch (command) {

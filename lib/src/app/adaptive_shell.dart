@@ -825,7 +825,11 @@ final class _ApplicationHeader extends StatelessWidget {
             child: Container(
               key: const Key('desktop-application-header'),
               height: tokens.headerHeight,
-              padding: EdgeInsets.symmetric(horizontal: tokens.horizontalInset),
+              // The narrowest phones (320 wide) need the inset for a sixth
+              // 48 × 48 header control.
+              padding: EdgeInsets.symmetric(
+                horizontal: width < 360 ? 8 : tokens.horizontalInset,
+              ),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
                 border: Border(
@@ -1341,16 +1345,134 @@ final class _DesktopWorkspaceSplitter extends StatelessWidget {
   );
 }
 
+enum _CollectionSlot { selection, header, divider, rows }
+
+/// Stacks the collection vertically: the pinned selection toolbar (when
+/// present) at its natural height, the scrolling header within what remains
+/// of the top half, a divider, and the task rows in all remaining height.
+/// The rows therefore keep at least half of the height, while the toolbar
+/// stays whole even when feedback banners leave the collection very short.
+final class _CollectionLayoutDelegate extends MultiChildLayoutDelegate {
+  @override
+  void performLayout(Size size) {
+    final width = size.width;
+    BoxConstraints upTo(double height) => BoxConstraints(
+      minWidth: width,
+      maxWidth: width,
+      maxHeight: math.max(0, height),
+    );
+    var top = 0.0;
+    if (hasChild(_CollectionSlot.selection)) {
+      top = layoutChild(_CollectionSlot.selection, upTo(size.height)).height;
+      positionChild(_CollectionSlot.selection, Offset.zero);
+    }
+    final header = layoutChild(
+      _CollectionSlot.header,
+      upTo(size.height / 2 - top),
+    );
+    positionChild(_CollectionSlot.header, Offset(0, top));
+    top += header.height;
+    final divider = layoutChild(
+      _CollectionSlot.divider,
+      upTo(size.height - top),
+    );
+    positionChild(_CollectionSlot.divider, Offset(0, top));
+    top += divider.height;
+    layoutChild(
+      _CollectionSlot.rows,
+      BoxConstraints.tightFor(
+        width: width,
+        height: math.max(0, size.height - top),
+      ),
+    );
+    positionChild(_CollectionSlot.rows, Offset(0, top));
+  }
+
+  @override
+  bool shouldRelayout(_CollectionLayoutDelegate oldDelegate) => false;
+}
+
+/// Narrowest title width kept beside the labelled selection toolbar.
+const double _minimumHeaderTitleWidth = 96;
+
+/// Selection-mode commands for the visible collection.
+///
+/// Where every labelled button fits on one line (desktop panes) the toolbar
+/// shows text labels. Narrower widths, such as phones in either orientation
+/// or with large text, switch to 48 × 48 icon buttons whose tooltips carry
+/// the names, so the count, Complete, Reschedule, Move, Delete and Exit stay
+/// on screen and reachable by touch without horizontal overflow.
 final class _BulkActionBar extends StatelessWidget {
   const _BulkActionBar({required this.state, required this.viewModel});
 
   final TasksViewState state;
   final TasksViewModel viewModel;
 
+  /// Horizontal padding inside the toolbar.
+  static const double _padding = 12;
+
+  /// Gap between toolbar entries.
+  static const double _spacing = 8;
+
+  /// Upper bound of the one-line width the labelled toolbar needs for
+  /// [state] under [context]'s theme, text style and text scale.
+  static double labeledWidth(BuildContext context, TasksViewState state) {
+    final theme = Theme.of(context);
+    final labelStyle = theme.textTheme.labelLarge;
+    // Material 3 icon buttons pad 16 before the 18 dp icon, 8 between icon
+    // and label, 24 after it, and outline 1 dp on either side; larger text
+    // only shrinks this padding, so the sum is an upper bound.
+    const buttonChrome = 16.0 + 18 + 8 + 24 + 2;
+    var width =
+        2 * _padding +
+        _textWidth(
+          context,
+          _countLabel(state.bulkSelectedTaskIds.length),
+          DefaultTextStyle.of(context).style,
+        ) +
+        kMinInteractiveDimension;
+    for (final label in _actionLabels) {
+      width += math.max(
+        64,
+        buttonChrome + _textWidth(context, label, labelStyle),
+      );
+    }
+    width += _spacing * (_actionLabels.length + 1);
+    if (state.isBulkCommandPending) width += _spacing + _progressSize;
+    return width;
+  }
+
+  static const _actionLabels = <String>[
+    'Complete',
+    'Reschedule',
+    'Move',
+    'Delete',
+  ];
+
+  static const double _progressSize = 18;
+
+  static String _countLabel(int count) => '$count selected';
+
+  static double _textWidth(
+    BuildContext context,
+    String text,
+    TextStyle? style,
+  ) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    try {
+      return painter.width;
+    } finally {
+      painter.dispose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final count = state.bulkSelectedTaskIds.length;
-    final enabled = !state.isBulkCommandPending;
     return FocusTraversalGroup(
       key: const Key('selection-collection-command-bar'),
       policy: OrderedTraversalPolicy(),
@@ -1359,89 +1481,208 @@ final class _BulkActionBar extends StatelessWidget {
         color: Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: <Widget>[
-              Semantics(
-                liveRegion: true,
-                label: '$count tasks selected',
-                child: Text('$count selected'),
-              ),
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(1),
-                child: FilledButton.icon(
-                  key: const Key('bulk-complete-open'),
-                  onPressed: enabled
-                      ? () => unawaited(
-                          _showBulkCompleteConfirmation(context, viewModel),
-                        )
-                      : null,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Complete'),
-                ),
-              ),
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(2),
-                child: OutlinedButton.icon(
-                  key: const Key('bulk-reschedule-open'),
-                  onPressed: enabled
-                      ? () => unawaited(_showBulkDateDialog(context, viewModel))
-                      : null,
-                  icon: const Icon(Icons.event_outlined),
-                  label: const Text('Reschedule'),
-                ),
-              ),
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(3),
-                child: OutlinedButton.icon(
-                  key: const Key('bulk-move-open'),
-                  onPressed: enabled && state.orderedTaskLists.isNotEmpty
-                      ? () => unawaited(
-                          _showBulkMoveDialog(
-                            context,
-                            viewModel,
-                            state.orderedTaskLists,
-                          ),
-                        )
-                      : null,
-                  icon: const Icon(Icons.drive_file_move_outline),
-                  label: const Text('Move'),
-                ),
-              ),
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(4),
-                child: OutlinedButton.icon(
-                  key: const Key('bulk-delete-open'),
-                  onPressed: enabled
-                      ? () => unawaited(
-                          _showBulkDeleteConfirmation(context, viewModel),
-                        )
-                      : null,
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Delete'),
-                ),
-              ),
-              FocusTraversalOrder(
-                order: const NumericFocusOrder(5),
-                child: IconButton(
-                  key: const Key('bulk-selection-close'),
-                  tooltip: 'Exit task selection',
-                  onPressed: enabled ? viewModel.clearBulkSelection : null,
-                  icon: const Icon(Icons.close),
-                ),
-              ),
-              if (state.isBulkCommandPending)
-                const SizedBox.square(
-                  dimension: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-            ],
+          padding: const EdgeInsets.symmetric(
+            horizontal: _padding,
+            vertical: 8,
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final available = constraints.maxWidth + 2 * _padding;
+              if (!constraints.hasBoundedWidth ||
+                  available >= labeledWidth(context, state)) {
+                return _labeled(context);
+              }
+              return _compact(context, constraints.maxWidth);
+            },
           ),
         ),
       ),
+    );
+  }
+
+  bool get _enabled => !state.isBulkCommandPending;
+
+  VoidCallback? _complete(BuildContext context) => _enabled
+      ? () => unawaited(_showBulkCompleteConfirmation(context, viewModel))
+      : null;
+
+  VoidCallback? _reschedule(BuildContext context) => _enabled
+      ? () => unawaited(_showBulkDateDialog(context, viewModel))
+      : null;
+
+  VoidCallback? _move(BuildContext context) =>
+      _enabled && state.orderedTaskLists.isNotEmpty
+      ? () => unawaited(
+          _showBulkMoveDialog(context, viewModel, state.orderedTaskLists),
+        )
+      : null;
+
+  VoidCallback? _delete(BuildContext context) => _enabled
+      ? () => unawaited(_showBulkDeleteConfirmation(context, viewModel))
+      : null;
+
+  VoidCallback? get _exit => _enabled ? viewModel.clearBulkSelection : null;
+
+  Widget _count() {
+    final count = state.bulkSelectedTaskIds.length;
+    return Semantics(
+      liveRegion: true,
+      label: '$count tasks selected',
+      child: Text(_countLabel(count)),
+    );
+  }
+
+  Widget _progress() => const SizedBox.square(
+    dimension: _progressSize,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
+
+  Widget _labeled(BuildContext context) {
+    return Wrap(
+      spacing: _spacing,
+      runSpacing: _spacing,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: <Widget>[
+        _count(),
+        FocusTraversalOrder(
+          order: const NumericFocusOrder(1),
+          child: FilledButton.icon(
+            key: const Key('bulk-complete-open'),
+            onPressed: _complete(context),
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Complete'),
+          ),
+        ),
+        FocusTraversalOrder(
+          order: const NumericFocusOrder(2),
+          child: OutlinedButton.icon(
+            key: const Key('bulk-reschedule-open'),
+            onPressed: _reschedule(context),
+            icon: const Icon(Icons.event_outlined),
+            label: const Text('Reschedule'),
+          ),
+        ),
+        FocusTraversalOrder(
+          order: const NumericFocusOrder(3),
+          child: OutlinedButton.icon(
+            key: const Key('bulk-move-open'),
+            onPressed: _move(context),
+            icon: const Icon(Icons.drive_file_move_outline),
+            label: const Text('Move'),
+          ),
+        ),
+        FocusTraversalOrder(
+          order: const NumericFocusOrder(4),
+          child: OutlinedButton.icon(
+            key: const Key('bulk-delete-open'),
+            onPressed: _delete(context),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
+          ),
+        ),
+        FocusTraversalOrder(
+          order: const NumericFocusOrder(5),
+          child: IconButton(
+            key: const Key('bulk-selection-close'),
+            tooltip: 'Exit task selection',
+            onPressed: _exit,
+            icon: const Icon(Icons.close),
+          ),
+        ),
+        if (state.isBulkCommandPending) _progress(),
+      ],
+    );
+  }
+
+  /// Icon-only layout: Exit and the count lead, then the four actions. They
+  /// share one line when it fits and otherwise take a second line of their
+  /// own, which itself wraps rather than overflowing.
+  Widget _compact(BuildContext context, double width) {
+    final buttonStyle = IconButton.styleFrom(
+      minimumSize: const Size.square(kMinInteractiveDimension),
+      tapTargetSize: MaterialTapTargetSize.padded,
+    );
+    final actions = <Widget>[
+      FocusTraversalOrder(
+        order: const NumericFocusOrder(1),
+        child: IconButton.filled(
+          key: const Key('bulk-complete-open'),
+          style: buttonStyle,
+          tooltip: 'Complete selected tasks',
+          onPressed: _complete(context),
+          icon: const Icon(Icons.check_circle_outline),
+        ),
+      ),
+      FocusTraversalOrder(
+        order: const NumericFocusOrder(2),
+        child: IconButton(
+          key: const Key('bulk-reschedule-open'),
+          style: buttonStyle,
+          tooltip: 'Reschedule selected tasks',
+          onPressed: _reschedule(context),
+          icon: const Icon(Icons.event_outlined),
+        ),
+      ),
+      FocusTraversalOrder(
+        order: const NumericFocusOrder(3),
+        child: IconButton(
+          key: const Key('bulk-move-open'),
+          style: buttonStyle,
+          tooltip: 'Move selected tasks',
+          onPressed: _move(context),
+          icon: const Icon(Icons.drive_file_move_outline),
+        ),
+      ),
+      FocusTraversalOrder(
+        order: const NumericFocusOrder(4),
+        child: IconButton(
+          key: const Key('bulk-delete-open'),
+          style: buttonStyle,
+          tooltip: 'Delete selected tasks',
+          onPressed: _delete(context),
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ),
+    ];
+    final leading = <Widget>[
+      FocusTraversalOrder(
+        order: const NumericFocusOrder(0),
+        child: IconButton(
+          key: const Key('bulk-selection-close'),
+          style: buttonStyle,
+          tooltip: 'Exit task selection',
+          onPressed: _exit,
+          icon: const Icon(Icons.close),
+        ),
+      ),
+      const SizedBox(width: _spacing / 2),
+      Expanded(child: _count()),
+      if (state.isBulkCommandPending) ...<Widget>[
+        const SizedBox(width: _spacing),
+        _progress(),
+      ],
+    ];
+    final countWidth = _textWidth(
+      context,
+      _countLabel(state.bulkSelectedTaskIds.length),
+      DefaultTextStyle.of(context).style,
+    );
+    final oneLine =
+        width >=
+        kMinInteractiveDimension * (actions.length + 1) +
+            _spacing * 2 +
+            countWidth +
+            (state.isBulkCommandPending ? _spacing + _progressSize : 0);
+    if (oneLine) {
+      return Row(children: <Widget>[...leading, ...actions]);
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(children: leading),
+        Wrap(alignment: WrapAlignment.spaceAround, children: actions),
+      ],
     );
   }
 }
@@ -2290,12 +2531,23 @@ final class _TaskCollectionState extends State<_TaskCollection> {
         : clearSelection.completedTaskCount -
               clearSelection.skippedParentTaskIds.length;
     _ensureFocusNodes(tasks.length);
-    final header = Padding(
+    final narrow = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
+    // The selection toolbar sits beside the title only when every labelled
+    // control fits there. Otherwise (phones, large text) it spans the
+    // collection above the title, outside the scrolling header, so no
+    // header content or feedback banner can scroll or clip it away.
+    bool pinsSelection(double headerWidth) =>
+        state.isBulkSelectionActive &&
+        (narrow ||
+            headerWidth <
+                _BulkActionBar.labeledWidth(context, state) +
+                    8 +
+                    _minimumHeaderTitleWidth);
+    Widget header({required bool selectionPinned}) => Padding(
       key: const Key('collection-header'),
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final narrow = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
+      child: Builder(
+        builder: (context) {
           final title = Text(
             switch (state.selectedView) {
               SmartTaskView(:final smartView) => smartView.title,
@@ -2318,7 +2570,9 @@ final class _TaskCollectionState extends State<_TaskCollection> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              if (narrow) ...<Widget>[
+              if (selectionPinned)
+                title
+              else if (narrow) ...<Widget>[
                 title,
                 const SizedBox(height: 4),
                 Align(alignment: Alignment.centerLeft, child: commands),
@@ -2350,100 +2604,116 @@ final class _TaskCollectionState extends State<_TaskCollection> {
       ),
     );
     // On short viewports (phone landscape, large text) the header scrolls
-    // within at most half of the height, so task rows and their controls
-    // always keep room to be seen and tapped.
+    // within what the top half of the height leaves, so task rows and their
+    // controls always keep room to be seen and tapped.
     final content = LayoutBuilder(
-      builder: (context, constraints) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: constraints.maxHeight / 2),
-            child: SingleChildScrollView(
-              key: const Key('collection-header-scroll'),
-              primary: false,
-              child: header,
+      builder: (context, constraints) {
+        final selectionPinned = pinsSelection(constraints.maxWidth - 32);
+        return CustomMultiChildLayout(
+          delegate: _CollectionLayoutDelegate(),
+          children: <Widget>[
+            if (selectionPinned)
+              LayoutId(
+                id: _CollectionSlot.selection,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                  child: _BulkActionBar(state: state, viewModel: viewModel),
+                ),
+              ),
+            LayoutId(
+              id: _CollectionSlot.header,
+              child: SingleChildScrollView(
+                key: const Key('collection-header-scroll'),
+                primary: false,
+                child: header(selectionPinned: selectionPinned),
+              ),
             ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: Stack(
-              key: _scrollViewportKey,
-              children: <Widget>[
-                if (tasks.isEmpty)
-                  const Center(child: Text('No cached tasks in this list'))
-                else
-                  ListView.separated(
-                    key: const Key('desktop-task-scroll'),
-                    controller: _scrollController,
-                    padding: EdgeInsets.symmetric(
-                      vertical: rowMetrics.listInset,
+            LayoutId(
+              id: _CollectionSlot.divider,
+              child: const Divider(height: 1),
+            ),
+            LayoutId(
+              id: _CollectionSlot.rows,
+              child: Stack(
+                key: _scrollViewportKey,
+                children: <Widget>[
+                  if (tasks.isEmpty)
+                    const Center(child: Text('No cached tasks in this list'))
+                  else
+                    ListView.separated(
+                      key: const Key('desktop-task-scroll'),
+                      controller: _scrollController,
+                      padding: EdgeInsets.symmetric(
+                        vertical: rowMetrics.listInset,
+                      ),
+                      itemCount: tasks.length,
+                      separatorBuilder: (_, _) =>
+                          Divider(height: 1, indent: rowMetrics.contentStart),
+                      itemBuilder: (context, index) {
+                        final row = rows[index];
+                        final task = row.task;
+                        final canonicalSiblings = state.tasks
+                            .where(
+                              (candidate) =>
+                                  candidate.taskListId == task.taskListId &&
+                                  candidate.parentTaskId == task.parentTaskId,
+                            )
+                            .toList(growable: false);
+                        final progress = projectDirectChildProgress(
+                          parentTaskId: task.id,
+                          tasks: state.tasks,
+                        );
+                        return _DesktopTaskRow(
+                          key: Key('desktop-task-row-${task.id.value}'),
+                          focusNode: _rowFocusNodes[index],
+                          onFocused: () => widget.onTaskFocused(task.id),
+                          onMoveFocus: (delta) =>
+                              _moveFocus(index, delta, tasks),
+                          onAction: (action) =>
+                              widget.onTaskAction(action, task.id),
+                          canonicalSiblings: canonicalSiblings,
+                          manualOrderEnabled:
+                              state.selectedTaskListId == task.taskListId &&
+                              state.selectedViewPreferences.sort ==
+                                  ViewSort.manual,
+                          dropPreview: widget.dropPreview,
+                          onDragStarted: widget.onDragStarted,
+                          onDragPreview: widget.onDragPreview,
+                          onDragCanceled: widget.onDragCanceled,
+                          onDrop: widget.onDrop,
+                          onDragMove: _autoscroll,
+                          density: widget.density,
+                          task: task,
+                          canMove: state.orderedTaskLists.any(
+                            (list) => list.id != task.taskListId,
+                          ),
+                          enabled:
+                              !state.isTaskCommandPending &&
+                              !state.isBulkCommandPending,
+                          selectionMode: state.isBulkSelectionActive,
+                          bulkSelected: state.bulkSelectedTaskIds.contains(
+                            task.id,
+                          ),
+                          onSelectionToggle: () =>
+                              viewModel.toggleBulkSelection(task.id),
+                          onBeginSelection: () =>
+                              viewModel.beginBulkSelection(task.id),
+                          selected: task.id == state.selectedTaskId,
+                          subtitle: <String>[
+                            if (task.due != null) 'Due ${task.due}',
+                            if (row.effectiveDue.fromChildren != null)
+                              'From subtasks ${row.effectiveDue.fromChildren}',
+                            if (progress.total > 0) progress.label,
+                          ].join(' • '),
+                        );
+                      },
                     ),
-                    itemCount: tasks.length,
-                    separatorBuilder: (_, _) =>
-                        Divider(height: 1, indent: rowMetrics.contentStart),
-                    itemBuilder: (context, index) {
-                      final row = rows[index];
-                      final task = row.task;
-                      final canonicalSiblings = state.tasks
-                          .where(
-                            (candidate) =>
-                                candidate.taskListId == task.taskListId &&
-                                candidate.parentTaskId == task.parentTaskId,
-                          )
-                          .toList(growable: false);
-                      final progress = projectDirectChildProgress(
-                        parentTaskId: task.id,
-                        tasks: state.tasks,
-                      );
-                      return _DesktopTaskRow(
-                        key: Key('desktop-task-row-${task.id.value}'),
-                        focusNode: _rowFocusNodes[index],
-                        onFocused: () => widget.onTaskFocused(task.id),
-                        onMoveFocus: (delta) => _moveFocus(index, delta, tasks),
-                        onAction: (action) =>
-                            widget.onTaskAction(action, task.id),
-                        canonicalSiblings: canonicalSiblings,
-                        manualOrderEnabled:
-                            state.selectedTaskListId == task.taskListId &&
-                            state.selectedViewPreferences.sort ==
-                                ViewSort.manual,
-                        dropPreview: widget.dropPreview,
-                        onDragStarted: widget.onDragStarted,
-                        onDragPreview: widget.onDragPreview,
-                        onDragCanceled: widget.onDragCanceled,
-                        onDrop: widget.onDrop,
-                        onDragMove: _autoscroll,
-                        density: widget.density,
-                        task: task,
-                        canMove: state.orderedTaskLists.any(
-                          (list) => list.id != task.taskListId,
-                        ),
-                        enabled:
-                            !state.isTaskCommandPending &&
-                            !state.isBulkCommandPending,
-                        selectionMode: state.isBulkSelectionActive,
-                        bulkSelected: state.bulkSelectedTaskIds.contains(
-                          task.id,
-                        ),
-                        onSelectionToggle: () =>
-                            viewModel.toggleBulkSelection(task.id),
-                        onBeginSelection: () =>
-                            viewModel.beginBulkSelection(task.id),
-                        selected: task.id == state.selectedTaskId,
-                        subtitle: <String>[
-                          if (task.due != null) 'Due ${task.due}',
-                          if (row.effectiveDue.fromChildren != null)
-                            'From subtasks ${row.effectiveDue.fromChildren}',
-                          if (progress.total > 0) progress.label,
-                        ].join(' • '),
-                      );
-                    },
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
     final feedback = state.transientFeedback;
     if (feedback == null) return content;

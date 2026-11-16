@@ -354,11 +354,21 @@ final class RegressionFixture {
   }
 
   /// Captures the application surface as PNG and streams it to the runner.
-  Future<void> capture(WidgetTester tester, String name) async {
+  /// With [settle] false it captures the current frame, for states such as
+  /// a pending command whose progress indicator never settles.
+  Future<void> capture(
+    WidgetTester tester,
+    String name, {
+    bool settle = true,
+  }) async {
     if (!_capturedNames.add(name)) {
       throw ArgumentError.value(name, 'name', 'was already captured');
     }
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
     final boundary =
         _captureBoundary.currentContext!.findRenderObject()!
             as RenderRepaintBoundary;

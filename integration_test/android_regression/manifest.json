@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 2,
+  "manifest_version": 3,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -133,9 +133,10 @@
       "flow": "Selection and bulk controls",
       "audit_classification": "Blocking interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/selection_test.dart",
       "owner": "android-selection-toolbar",
       "subsets": [

@@ -11,8 +11,10 @@ enum PhoneOrientation { portrait, landscape }
 
 /// A phone screen described by its short side (the portrait width).
 ///
-/// 360 is the narrowest common Android phone width; 443 is the Pixel 10 Pro
-/// XL used by the 2026-11-15 native audit (1080 px at 2.4375 dpr).
+/// 320 is the narrowest Android phone width (a 720 × 1440 panel at 2.25 dpr,
+/// or display size set to largest); 360 is the narrowest common width; 443 is
+/// the Pixel 10 Pro XL used by the 2026-11-15 native audit (1080 px at
+/// 2.4375 dpr).
 final class PhoneViewport {
   const PhoneViewport(this.shortSide, this.orientation, this.textScale);
 
@@ -21,6 +23,7 @@ final class PhoneViewport {
   final double textScale;
 
   double get longSide => switch (shortSide) {
+    320 => 640,
     443 => 986,
     _ => 800,
   };
@@ -40,6 +43,15 @@ final class PhoneViewport {
 /// (Android audit cases 01 and 22) must hold at.
 final phoneViewports = List<PhoneViewport>.unmodifiable(<PhoneViewport>[
   for (final shortSide in <double>[360, 443])
+    for (final orientation in PhoneOrientation.values)
+      for (final textScale in <double>[1, 2])
+        PhoneViewport(shortSide, orientation, textScale),
+]);
+
+/// Every width, orientation and text scale the phone selection toolbar
+/// contract (Android audit case 06) must hold at, from the narrowest phone.
+final selectionViewports = List<PhoneViewport>.unmodifiable(<PhoneViewport>[
+  for (final shortSide in <double>[320, 360, 443])
     for (final orientation in PhoneOrientation.values)
       for (final textScale in <double>[1, 2])
         PhoneViewport(shortSide, orientation, textScale),

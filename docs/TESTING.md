@@ -902,6 +902,19 @@ each control's hit region by real hit tests, checks semantics and taps near
 the edges, captures the open menu, and verifies row-menu Edit, Delete and
 Undo in SQLite. Its cases opt into `phoneOnHost`, so a desktop host renders
 them with the Android theme.
+Case 06 (selection and bulk controls) is corrected by
+`integration_test/android_regression/selection_test.dart`. Long press enters
+selection at 320, 360 and 443 logical-pixel widths, portrait and landscape,
+1x and 2x text, where the count and every toolbar control (Complete,
+Reschedule, Move, Delete, Exit) must lay out without overflow and keep a
+measured, on-screen, non-overlapping 48 × 48 hit region; each layout is
+captured. Exit and system Back alternate as the way out, changing nothing in
+SQLite. It then runs every bulk action on two synthetic tasks: Cancel or Back
+first, then the stored completion, due date, list move, and deletion plus
+Undo all. While the delete waits on a held SQLite transaction, every control
+must be disabled and the progress indicator shown. The host widget tests in
+`test/features/tasks/adaptive_shell_test.dart` repeat the toolbar touch
+contract and each action's command over a fake repository in `flutter test`.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

@@ -48,6 +48,7 @@ const _auditCaseIds = <String>[
 /// with the owning task. They stay out of the audited-pass baseline.
 const _correctedAuditFailures = <String, String>{
   '01_task_menu': 'android-task-row-actions',
+  '06_long_press_selection': 'android-selection-toolbar',
   '22_touch_target_size': 'android-task-row-actions',
 };
 
@@ -123,7 +124,12 @@ void main() {
       expect(entry.owner, owner, reason: id);
       expect(entry.subsets, {'complete'}, reason: id);
       final source = File(entry.testPath).readAsStringSync();
-      expect(source, contains("regressionCase('$id'"), reason: id);
+      // dart format may break the call before the case ID.
+      expect(
+        source,
+        contains(RegExp("regressionCase\\(\\s*'${RegExp.escape(id)}'")),
+        reason: id,
+      );
     }
   });
 

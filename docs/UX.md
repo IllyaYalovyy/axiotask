@@ -110,7 +110,14 @@ collection-actions overflow; infrequent creation, list management, completed
 visibility, and destructive clear commands live in that overflow with text
 labels. Selection mode replaces that normal command row with a selected count,
 explicit Exit selection, and labeled bulk actions. It never leaves both command
-rows visible. A Good collection reports a plain task count; cache/stale wording
+rows visible. When the labeled selection toolbar does not fit beside the title
+(phones in either orientation, large text), it spans the collection above the
+title and stays pinned outside the scrolling header. If the labels still do not
+fit on one line, Complete, Reschedule, Move and Delete become 48 × 48 icon
+buttons whose tooltips and accessibility labels carry the names; Exit and the
+count lead, and the actions take a second line when the width requires it, so
+no control is clipped or overflows. Long press on a row enters selection, and
+system Back exits it. A Good collection reports a plain task count; cache/stale wording
 is reserved for health states that have not established current data. Escape
 exits selection through the existing back route.
 
