@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 1,
+  "manifest_version": 2,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -60,9 +60,10 @@
       "flow": "Task row context menu",
       "audit_classification": "Blocking interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/task_row_test.dart",
       "owner": "android-task-row-actions",
       "subsets": [
@@ -371,9 +372,10 @@
       "flow": "Touch target size",
       "audit_classification": "Touch usability",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/task_row_test.dart",
       "owner": "android-task-row-actions",
       "subsets": [

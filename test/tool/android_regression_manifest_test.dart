@@ -44,6 +44,13 @@ const _auditCaseIds = <String>[
   '36_detail_move_down',
 ];
 
+/// Audit failures whose corrective task landed a passing native contract,
+/// with the owning task. They stay out of the audited-pass baseline.
+const _correctedAuditFailures = <String, String>{
+  '01_task_menu': 'android-task-row-actions',
+  '22_touch_target_size': 'android-task-row-actions',
+};
+
 const _auditPassingNumbers = <String>{
   '04', '07', '10', '12', '13', '16', '19', '21', '24', //
   '25', '26', '27', '28', '29', '30', '31', '36',
@@ -82,16 +89,41 @@ void main() {
     );
   });
 
-  test('audit failures stay outstanding and outside the baseline', () {
+  test('audit failures stay outside the baseline', () {
     final failures = cases.where(
       (entry) => !_auditPassingNumbers.contains(entry.id.substring(0, 2)),
     );
     expect(failures, hasLength(19));
     for (final entry in failures) {
-      expect(entry.expected, ExpectedOutcome.fail, reason: entry.id);
-      expect(entry.contract, ContractState.outstanding, reason: entry.id);
       expect(entry.subsets, {'complete'}, reason: entry.id);
       expect(entry.owner, isNot('android-regression-baseline'));
+    }
+  });
+
+  test('uncorrected audit failures stay outstanding expected failures', () {
+    final outstanding = cases.where(
+      (entry) =>
+          !_auditPassingNumbers.contains(entry.id.substring(0, 2)) &&
+          !_correctedAuditFailures.containsKey(entry.id),
+    );
+    expect(outstanding, hasLength(19 - _correctedAuditFailures.length));
+    for (final entry in outstanding) {
+      expect(entry.expected, ExpectedOutcome.fail, reason: entry.id);
+      expect(entry.contract, ContractState.outstanding, reason: entry.id);
+    }
+  });
+
+  test('corrected audit failures carry an executable passing contract', () {
+    for (final MapEntry(key: id, value: owner)
+        in _correctedAuditFailures.entries) {
+      final entry = cases.singleWhere((candidate) => candidate.id == id);
+      expect(entry.expected, ExpectedOutcome.pass, reason: id);
+      expect(entry.label, CaseLabel.working, reason: id);
+      expect(entry.contract, ContractState.implemented, reason: id);
+      expect(entry.owner, owner, reason: id);
+      expect(entry.subsets, {'complete'}, reason: id);
+      final source = File(entry.testPath).readAsStringSync();
+      expect(source, contains("regressionCase('$id'"), reason: id);
     }
   });
 

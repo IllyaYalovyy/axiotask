@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -899,6 +900,7 @@ final class _ApplicationHeader extends StatelessWidget {
                   _HeaderFocusOrder(
                     order: 5,
                     child: _ApplicationOverflow(
+                      iconOnly: largeText || width < 400,
                       onShowShortcuts: onShowShortcuts,
                       settingsBuilder: settingsBuilder,
                       accountBackupBuilder: accountBackupBuilder,
@@ -934,12 +936,16 @@ final class _HeaderFocusOrder extends StatelessWidget {
 
 final class _ApplicationOverflow extends StatelessWidget {
   const _ApplicationOverflow({
+    required this.iconOnly,
     required this.onShowShortcuts,
     this.settingsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
   });
 
+  /// Drops the "More" label where the header would otherwise overflow a
+  /// narrow phone or large text, keeping a full-size icon button.
+  final bool iconOnly;
   final VoidCallback onShowShortcuts;
   final WidgetBuilder? settingsBuilder;
   final WidgetBuilder? accountBackupBuilder;
@@ -976,14 +982,24 @@ final class _ApplicationOverflow extends StatelessWidget {
           child: const Text('Local data recovery'),
         ),
     ],
-    builder: (context, controller, _) => Tooltip(
-      message: 'More app actions',
-      child: TextButton.icon(
-        onPressed: controller.isOpen ? controller.close : controller.open,
-        icon: const Icon(Icons.more_horiz),
-        label: const Text('More'),
-      ),
-    ),
+    builder: (context, controller, _) {
+      final toggle = controller.isOpen ? controller.close : controller.open;
+      if (iconOnly) {
+        return IconButton(
+          tooltip: 'More app actions',
+          onPressed: toggle,
+          icon: const Icon(Icons.more_horiz),
+        );
+      }
+      return Tooltip(
+        message: 'More app actions',
+        child: TextButton.icon(
+          onPressed: toggle,
+          icon: const Icon(Icons.more_horiz),
+          label: const Text('More'),
+        ),
+      );
+    },
   );
 }
 
@@ -2267,150 +2283,167 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     final projection = state.visibleProjection;
     final rows = projection.rows;
     final tasks = rows.map((row) => row.task).toList(growable: false);
-    final rowMetrics = _DesktopTaskRowMetrics.forDensity(widget.density);
+    final rowMetrics = _DesktopTaskRowMetrics.of(context, widget.density);
     final clearSelection = state.clearCompletedSelection;
     final clearCompletedCount = clearSelection == null
         ? 0
         : clearSelection.completedTaskCount -
               clearSelection.skippedParentTaskIds.length;
     _ensureFocusNodes(tasks.length);
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          key: const Key('collection-header'),
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final narrow =
-                  MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
-              final title = Text(
-                switch (state.selectedView) {
-                  SmartTaskView(:final smartView) => smartView.title,
-                  TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
-                },
-                maxLines: narrow ? 2 : 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w700),
-              );
-              final commands = state.isBulkSelectionActive
-                  ? _BulkActionBar(state: state, viewModel: viewModel)
-                  : _NormalCollectionCommandBar(
-                      state: state,
-                      viewModel: viewModel,
-                      tasks: tasks,
-                      clearCompletedCount: clearCompletedCount,
-                      openBulkAdd: openBulkAdd,
-                    );
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  if (narrow) ...<Widget>[
-                    title,
-                    const SizedBox(height: 4),
-                    Align(alignment: Alignment.centerLeft, child: commands),
-                  ] else
-                    Row(
-                      children: <Widget>[
-                        Expanded(child: title),
-                        const SizedBox(width: 8),
-                        commands,
-                      ],
-                    ),
-                  const SizedBox(height: 2),
-                  QuickAddBar(
-                    viewModel: quickAdd,
-                    lists: state.orderedTaskLists,
-                    focusNode: quickAddFocus,
-                    onPasteMultiple: openBulkAdd,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _collectionCountLabel(state.health, tasks.length),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              );
+    final header = Padding(
+      key: const Key('collection-header'),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final narrow = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
+          final title = Text(
+            switch (state.selectedView) {
+              SmartTaskView(:final smartView) => smartView.title,
+              TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
             },
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: Stack(
-            key: _scrollViewportKey,
+            maxLines: narrow ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700),
+          );
+          final commands = state.isBulkSelectionActive
+              ? _BulkActionBar(state: state, viewModel: viewModel)
+              : _NormalCollectionCommandBar(
+                  state: state,
+                  viewModel: viewModel,
+                  tasks: tasks,
+                  clearCompletedCount: clearCompletedCount,
+                  openBulkAdd: openBulkAdd,
+                );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              if (tasks.isEmpty)
-                const Center(child: Text('No cached tasks in this list'))
-              else
-                ListView.separated(
-                  key: const Key('desktop-task-scroll'),
-                  controller: _scrollController,
-                  padding: EdgeInsets.symmetric(vertical: rowMetrics.listInset),
-                  itemCount: tasks.length,
-                  separatorBuilder: (_, _) =>
-                      Divider(height: 1, indent: rowMetrics.contentStart),
-                  itemBuilder: (context, index) {
-                    final row = rows[index];
-                    final task = row.task;
-                    final canonicalSiblings = state.tasks
-                        .where(
-                          (candidate) =>
-                              candidate.taskListId == task.taskListId &&
-                              candidate.parentTaskId == task.parentTaskId,
-                        )
-                        .toList(growable: false);
-                    final progress = projectDirectChildProgress(
-                      parentTaskId: task.id,
-                      tasks: state.tasks,
-                    );
-                    return _DesktopTaskRow(
-                      key: Key('desktop-task-row-${task.id.value}'),
-                      focusNode: _rowFocusNodes[index],
-                      onFocused: () => widget.onTaskFocused(task.id),
-                      onMoveFocus: (delta) => _moveFocus(index, delta, tasks),
-                      onAction: (action) =>
-                          widget.onTaskAction(action, task.id),
-                      canonicalSiblings: canonicalSiblings,
-                      manualOrderEnabled:
-                          state.selectedTaskListId == task.taskListId &&
-                          state.selectedViewPreferences.sort == ViewSort.manual,
-                      dropPreview: widget.dropPreview,
-                      onDragStarted: widget.onDragStarted,
-                      onDragPreview: widget.onDragPreview,
-                      onDragCanceled: widget.onDragCanceled,
-                      onDrop: widget.onDrop,
-                      onDragMove: _autoscroll,
-                      density: widget.density,
-                      task: task,
-                      canMove: state.orderedTaskLists.any(
-                        (list) => list.id != task.taskListId,
-                      ),
-                      enabled:
-                          !state.isTaskCommandPending &&
-                          !state.isBulkCommandPending,
-                      selectionMode: state.isBulkSelectionActive,
-                      bulkSelected: state.bulkSelectedTaskIds.contains(task.id),
-                      onSelectionToggle: () =>
-                          viewModel.toggleBulkSelection(task.id),
-                      onBeginSelection: () =>
-                          viewModel.beginBulkSelection(task.id),
-                      selected: task.id == state.selectedTaskId,
-                      subtitle: <String>[
-                        if (task.due != null) 'Due ${task.due}',
-                        if (row.effectiveDue.fromChildren != null)
-                          'From subtasks ${row.effectiveDue.fromChildren}',
-                        if (progress.total > 0) progress.label,
-                      ].join(' • '),
-                    );
-                  },
+              if (narrow) ...<Widget>[
+                title,
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerLeft, child: commands),
+              ] else
+                Row(
+                  children: <Widget>[
+                    Expanded(child: title),
+                    const SizedBox(width: 8),
+                    commands,
+                  ],
                 ),
+              const SizedBox(height: 2),
+              QuickAddBar(
+                viewModel: quickAdd,
+                lists: state.orderedTaskLists,
+                focusNode: quickAddFocus,
+                onPasteMultiple: openBulkAdd,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _collectionCountLabel(state.health, tasks.length),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
+          );
+        },
+      ),
+    );
+    // On short viewports (phone landscape, large text) the header scrolls
+    // within at most half of the height, so task rows and their controls
+    // always keep room to be seen and tapped.
+    final content = LayoutBuilder(
+      builder: (context, constraints) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: constraints.maxHeight / 2),
+            child: SingleChildScrollView(
+              key: const Key('collection-header-scroll'),
+              primary: false,
+              child: header,
+            ),
           ),
-        ),
-      ],
+          const Divider(height: 1),
+          Expanded(
+            child: Stack(
+              key: _scrollViewportKey,
+              children: <Widget>[
+                if (tasks.isEmpty)
+                  const Center(child: Text('No cached tasks in this list'))
+                else
+                  ListView.separated(
+                    key: const Key('desktop-task-scroll'),
+                    controller: _scrollController,
+                    padding: EdgeInsets.symmetric(
+                      vertical: rowMetrics.listInset,
+                    ),
+                    itemCount: tasks.length,
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, indent: rowMetrics.contentStart),
+                    itemBuilder: (context, index) {
+                      final row = rows[index];
+                      final task = row.task;
+                      final canonicalSiblings = state.tasks
+                          .where(
+                            (candidate) =>
+                                candidate.taskListId == task.taskListId &&
+                                candidate.parentTaskId == task.parentTaskId,
+                          )
+                          .toList(growable: false);
+                      final progress = projectDirectChildProgress(
+                        parentTaskId: task.id,
+                        tasks: state.tasks,
+                      );
+                      return _DesktopTaskRow(
+                        key: Key('desktop-task-row-${task.id.value}'),
+                        focusNode: _rowFocusNodes[index],
+                        onFocused: () => widget.onTaskFocused(task.id),
+                        onMoveFocus: (delta) => _moveFocus(index, delta, tasks),
+                        onAction: (action) =>
+                            widget.onTaskAction(action, task.id),
+                        canonicalSiblings: canonicalSiblings,
+                        manualOrderEnabled:
+                            state.selectedTaskListId == task.taskListId &&
+                            state.selectedViewPreferences.sort ==
+                                ViewSort.manual,
+                        dropPreview: widget.dropPreview,
+                        onDragStarted: widget.onDragStarted,
+                        onDragPreview: widget.onDragPreview,
+                        onDragCanceled: widget.onDragCanceled,
+                        onDrop: widget.onDrop,
+                        onDragMove: _autoscroll,
+                        density: widget.density,
+                        task: task,
+                        canMove: state.orderedTaskLists.any(
+                          (list) => list.id != task.taskListId,
+                        ),
+                        enabled:
+                            !state.isTaskCommandPending &&
+                            !state.isBulkCommandPending,
+                        selectionMode: state.isBulkSelectionActive,
+                        bulkSelected: state.bulkSelectedTaskIds.contains(
+                          task.id,
+                        ),
+                        onSelectionToggle: () =>
+                            viewModel.toggleBulkSelection(task.id),
+                        onBeginSelection: () =>
+                            viewModel.beginBulkSelection(task.id),
+                        selected: task.id == state.selectedTaskId,
+                        subtitle: <String>[
+                          if (task.due != null) 'Due ${task.due}',
+                          if (row.effectiveDue.fromChildren != null)
+                            'From subtasks ${row.effectiveDue.fromChildren}',
+                          if (progress.total > 0) progress.label,
+                        ].join(' • '),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
     final feedback = state.transientFeedback;
     if (feedback == null) return content;
@@ -2537,6 +2570,7 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
         Rect.fromLTWH(position.dx, position.dy, 0, 0),
         Offset.zero & overlay.size,
       ),
+      constraints: _taskActionMenuConstraints,
       items: _taskActionMenuItems(widget.task, canMove: widget.canMove),
     );
     if (action != null) widget.onAction(action);
@@ -2589,8 +2623,8 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
   }
 
   Widget _tile(CachedTask task) {
-    final metrics = _DesktopTaskRowMetrics.forDensity(widget.density);
     final theme = Theme.of(context);
+    final metrics = _DesktopTaskRowMetrics.of(context, widget.density);
     final focused = widget.focusNode.hasFocus;
     final selected = widget.selected || focused;
     final completed = task.status == TaskStatus.completed;
@@ -2610,22 +2644,24 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       color: theme.colorScheme.onSurfaceVariant,
       decoration: completed ? TextDecoration.lineThrough : null,
     );
+    // The visual control stays dense; on touch platforms the padded tap
+    // target extends each control's hit region to 48 × 48 around it.
     final controlStyle = IconButton.styleFrom(
       minimumSize: Size.square(metrics.controlSize),
       maximumSize: Size.square(metrics.controlSize),
       padding: EdgeInsets.zero,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      tapTargetSize: metrics.tapTargetSize,
       visualDensity: VisualDensity.standard,
     );
     final completion = widget.selectionMode
         ? SizedBox(
-            width: metrics.controlSize,
-            height: metrics.controlSize,
+            width: metrics.hitSize,
+            height: metrics.hitSize,
             child: Checkbox(
               key: Key('bulk-select-task-${task.id.value}'),
               value: widget.bulkSelected,
               visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              materialTapTargetSize: metrics.tapTargetSize,
               onChanged: widget.enabled
                   ? (_) => widget.onSelectionToggle()
                   : null,
@@ -2668,14 +2704,16 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
                   container: true,
                   button: true,
                   label: 'Task actions for ${task.title}',
+                  // The trigger is sized by its button style; the popup
+                  // keeps Material menu sizing so labels are never clipped
+                  // to the trigger's footprint.
                   child: PopupMenuButton<DesktopTaskAction>(
                     tooltip: 'Task actions for ${task.title}',
                     enabled: widget.enabled,
                     iconSize: metrics.iconSize,
-                    constraints: BoxConstraints.tightFor(
-                      width: metrics.controlSize,
-                      height: metrics.controlSize,
-                    ),
+                    padding: EdgeInsets.zero,
+                    style: controlStyle,
+                    constraints: _taskActionMenuConstraints,
                     onSelected: widget.onAction,
                     itemBuilder: (_) =>
                         _taskActionMenuItems(task, canMove: widget.canMove),
@@ -2862,8 +2900,22 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
   }
 }
 
+/// Size of the task actions popup, independent of the trigger that opens it.
+///
+/// Material menus are 112–280 logical pixels wide; the width grows with the
+/// longest label so larger text stays on one line.
+const _taskActionMenuConstraints = BoxConstraints(
+  minWidth: 2 * 56,
+  maxWidth: 5 * 56,
+);
+
 /// Keeps desktop task rows calm and compact while allowing larger text to grow
 /// the row naturally instead of clipping either line or the focus treatment.
+///
+/// Visual control sizes follow the density preference everywhere. Where the
+/// theme pads tap targets (touch platforms such as Android), each control's
+/// hit region and layout slot grow to [kMinInteractiveDimension] so adjacent
+/// targets never overlap.
 final class _DesktopTaskRowMetrics {
   const _DesktopTaskRowMetrics({
     required this.minimumHeight,
@@ -2875,7 +2927,19 @@ final class _DesktopTaskRowMetrics {
     required this.controlSize,
     required this.iconSize,
     required this.listInset,
+    this.tapTargetSize = MaterialTapTargetSize.shrinkWrap,
   });
+
+  factory _DesktopTaskRowMetrics.of(
+    BuildContext context,
+    DensityPreference density,
+  ) {
+    final dense = _DesktopTaskRowMetrics.forDensity(density);
+    return switch (Theme.of(context).materialTapTargetSize) {
+      MaterialTapTargetSize.shrinkWrap => dense,
+      MaterialTapTargetSize.padded => dense._touch(),
+    };
+  }
 
   factory _DesktopTaskRowMetrics.forDensity(DensityPreference density) =>
       switch (density) {
@@ -2912,8 +2976,35 @@ final class _DesktopTaskRowMetrics {
   final double controlSize;
   final double iconSize;
   final double listInset;
+  final MaterialTapTargetSize tapTargetSize;
+
+  /// Side of each control's hit region and layout slot.
+  double get hitSize => switch (tapTargetSize) {
+    MaterialTapTargetSize.padded => math.max(
+      controlSize,
+      kMinInteractiveDimension,
+    ),
+    MaterialTapTargetSize.shrinkWrap => controlSize,
+  };
 
   double get contentStart => horizontalInset + leadingWidth + contentGap;
+
+  _DesktopTaskRowMetrics _touch() {
+    const touch = MaterialTapTargetSize.padded;
+    final hit = math.max(controlSize, kMinInteractiveDimension);
+    return _DesktopTaskRowMetrics(
+      minimumHeight: math.max(minimumHeight, hit),
+      horizontalInset: horizontalInset,
+      verticalInset: verticalInset,
+      leadingWidth: math.max(leadingWidth, hit),
+      contentGap: contentGap,
+      actionSlotWidth: math.max(actionSlotWidth, 2 * hit),
+      controlSize: controlSize,
+      iconSize: iconSize,
+      listInset: listInset,
+      tapTargetSize: touch,
+    );
+  }
 }
 
 final class _DesktopPointerDraggable<T extends Object> extends Draggable<T> {

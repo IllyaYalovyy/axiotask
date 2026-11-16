@@ -889,8 +889,19 @@ versioned, machine-readable contract for all of them: the stable case IDs,
 the audited baseline outcome, the test path, the owning corrective task, the
 `baseline` and `complete` subsets, and four separately tracked findings
 (bottom navigation, task-row metadata, failure-message usability and subtask
-touch reorder). The 19 audit failures and the tracked findings stay
-`outstanding` with an expected `fail` outcome. They never count as passing.
+touch reorder). Audit failures and tracked findings stay `outstanding`
+with an expected `fail` outcome until their corrective task lands a passing
+native contract; they never count as passing. A corrected failure becomes
+`implemented` with an expected pass in the `complete` subset only, so the
+`baseline` subset stays exactly the 17 audited passes. Cases 01 (task-row ⋮
+menu) and 22 (touch target size) are corrected by
+`integration_test/android_regression/task_row_test.dart`. It drives the
+row's completion and overflow controls by touch at 360 and 443 logical-pixel
+phone widths, in portrait and landscape, at 1x and 2x text. It measures
+each control's hit region by real hit tests, checks semantics and taps near
+the edges, captures the open menu, and verifies row-menu Edit, Delete and
+Undo in SQLite. Its cases opt into `phoneOnHost`, so a desktop host renders
+them with the Android theme.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

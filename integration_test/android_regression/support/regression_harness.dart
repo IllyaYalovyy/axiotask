@@ -16,6 +16,7 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +24,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../../test/support/touch_targets.dart';
 import '../../../tool/android_regression/protocol.dart';
 
 export '../../../tool/android_regression/protocol.dart' show CaseLabel;
@@ -48,12 +50,15 @@ void ensureRegressionBinding() =>
 /// Registers one manifest case with deterministic setup and teardown.
 ///
 /// The harness prints protocol events so the host runner can tell an
-/// assertion failure from missing execution or a teardown error.
+/// assertion failure from missing execution or a teardown error. With
+/// [phoneOnHost], a desktop host renders the app as Android does (touch
+/// tap targets and Android theme), so phone touch contracts hold there too.
 void regressionCase(
   String id,
   RegressionBody body, {
   CaseLabel label = CaseLabel.working,
   RegressionSeed seed = const RegressionSeed(),
+  bool phoneOnHost = false,
 }) {
   testWidgets(id, (tester) async {
     final teardown = _Teardown(id);
@@ -62,6 +67,13 @@ void regressionCase(
     StackTrace? failureStack;
     try {
       await _prepareView(tester, teardown);
+      if (phoneOnHost && !Platform.isAndroid) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        teardown.add(
+          'target platform',
+          () async => debugDefaultTargetPlatformOverride = null,
+        );
+      }
       fixture = await RegressionFixture.open(id, seed: seed);
       teardown.add('database and fixture files', fixture.close);
       _emit(
@@ -399,6 +411,41 @@ final class ControlledSyncHealth implements SyncHealthRepository {
   Future<void> close() => _changes.close();
 }
 
+/// Lays the application out at [viewport]'s logical size and text scale,
+/// keeping the device pixel ratio. On Android the device is first rotated to
+/// the viewport's orientation so system insets match a real rotation.
+/// Harness teardown restores the view, text scale and orientation.
+Future<void> usePhoneViewport(
+  WidgetTester tester,
+  PhoneViewport viewport,
+) async {
+  if (Platform.isAndroid) {
+    final landscape = viewport.orientation == PhoneOrientation.landscape;
+    await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+      if (landscape)
+        DeviceOrientation.landscapeLeft
+      else
+        DeviceOrientation.portraitUp,
+    ]);
+    tester.view.resetPhysicalSize();
+    await settleUntil(
+      tester,
+      () =>
+          (tester.view.physicalSize.width > tester.view.physicalSize.height) ==
+          landscape,
+      description: '${viewport.orientation.name} orientation',
+    );
+  }
+  tester.view.physicalSize =
+      viewport.logicalSize * tester.view.devicePixelRatio;
+  tester.platformDispatcher.textScaleFactorTestValue = viewport.textScale;
+  await tester.pumpAndSettle();
+  expect(
+    tester.view.physicalSize / tester.view.devicePixelRatio,
+    viewport.logicalSize,
+  );
+}
+
 /// Pumps frames until [condition] holds, failing with [description] on
 /// timeout instead of sleeping for an arbitrary interval.
 Future<void> settleUntil(
@@ -432,6 +479,7 @@ Future<void> _prepareView(WidgetTester tester, _Teardown teardown) async {
       () => tester.view.physicalSize.height > tester.view.physicalSize.width,
       description: 'portrait orientation',
     );
+    teardown.add('view size', () async => tester.view.reset());
   } else {
     tester.view
       ..physicalSize = _hostPhoneSize

@@ -25,6 +25,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../support/touch_targets.dart';
+
 void main() {
   for (final width in <double>[412, 1280]) {
     testWidgets('routine sync stays compact at width $width', (tester) async {
@@ -2285,6 +2287,270 @@ void main() {
       );
     },
   );
+
+  group('phone task-row touch contract (Android audit 01 and 22)', () {
+    setUpAll(loadAndroidTextFont);
+
+    for (final viewport in phoneViewports) {
+      testWidgets('01 overflow menu is readable and reachable at $viewport', (
+        tester,
+      ) async {
+        final fixture = await _pumpPhoneShell(tester, viewport);
+        await tester.tap(_rowOverflow(11, 'Cached parent'));
+        await tester.pumpAndSettle();
+        await expectReadableMenu(tester, _taskMenuLabels);
+        expect(tester.takeException(), isNull);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.text('Edit task…'), findsNothing);
+        expect(fixture.tasks.applied, isEmpty);
+      });
+
+      testWidgets('22 row controls have separate 48 dp targets at $viewport', (
+        tester,
+      ) async {
+        for (final density in DensityPreference.values) {
+          final fixture = await _pumpPhoneShell(
+            tester,
+            viewport,
+            density: density,
+          );
+          final completion = _rowCompletion(11);
+          final overflow = _rowOverflow(11, 'Cached parent');
+          final completionRegion = expectTouchTarget(
+            tester,
+            completion,
+            label: 'Complete task',
+          );
+          final overflowRegion = expectTouchTarget(
+            tester,
+            overflow,
+            label: 'Task actions for Cached parent',
+          );
+          expect(
+            completionRegion.overlaps(overflowRegion),
+            isFalse,
+            reason: '$density: $completionRegion and $overflowRegion overlap',
+          );
+          for (final probe in edgeProbes(completionRegion)) {
+            expect(reachesControl(tester, overflow, probe), isFalse);
+          }
+          for (final probe in edgeProbes(overflowRegion)) {
+            expect(reachesControl(tester, completion, probe), isFalse);
+          }
+
+          for (final probe in edgeProbes(completionRegion)) {
+            fixture.tasks.applied.clear();
+            await tester.tapAt(probe);
+            await tester.pumpAndSettle();
+            final command =
+                fixture.tasks.applied.single as SetTaskCompletionCommand;
+            expect(command.taskId, const TaskId(11), reason: '$probe');
+            expect(command.status, TaskStatus.completed);
+          }
+          for (final probe in edgeProbes(overflowRegion)) {
+            await tester.tapAt(probe);
+            await tester.pumpAndSettle();
+            expect(
+              find.text('Edit task…').hitTestable(),
+              findsOneWidget,
+              reason: '$density: a tap at $probe opens the menu',
+            );
+            await tester.binding.handlePopRoute();
+            await tester.pumpAndSettle();
+          }
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        }
+      });
+    }
+
+    testWidgets('01 overflow Edit and Delete run their task commands', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.landscape, 2),
+      );
+      await tester.tap(_rowOverflow(11, 'Cached parent'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Edit task…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit task…').hitTestable());
+      await tester.pumpAndSettle();
+      final dialog = find.byType(AlertDialog);
+      expect(
+        find.descendant(of: dialog, matching: find.text('Edit task')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.descendant(
+          of: dialog,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is TextField &&
+                widget.decoration?.labelText == 'Task title',
+          ),
+        ),
+        'Edited parent',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+      final edit = fixture.tasks.applied.single as UpdateTaskContentCommand;
+      expect(edit.taskId, const TaskId(11));
+      expect(edit.title, 'Edited parent');
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.tap(_rowOverflow(11, 'Cached parent'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Delete task'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete task').hitTestable());
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.deleted.single.taskId, const TaskId(11));
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  testWidgets(
+    'desktop rows keep dense controls and a readable secondary-click menu',
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      for (final (density, controlSize) in <(DensityPreference, double)>[
+        (DensityPreference.standard, 40),
+        (DensityPreference.compact, 36),
+      ]) {
+        final preferences = _WorkspacePreferences()
+          ..current = const DevicePreferences.defaults().copyWith(
+            density: density,
+          );
+        final fixture = _ShellFixture(
+          _health(SyncHealthOutcome.pending),
+          preferencesRepository: preferences,
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: axiotaskTheme(Brightness.light, density),
+            home: AdaptiveShell(
+              viewModel: fixture.viewModel,
+              preferencesRepository: preferences,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          Theme.of(tester.element(find.byType(AdaptiveShell))).platform,
+          TargetPlatform.linux,
+        );
+        final completion = measureHitRegion(tester, _rowCompletion(11));
+        final overflow = measureHitRegion(
+          tester,
+          _rowOverflow(11, 'Cached parent'),
+        );
+        for (final region in <Rect>[completion, overflow]) {
+          expect(
+            region.width,
+            closeTo(controlSize, hitRegionTolerance),
+            reason: '$density keeps dense desktop controls: $region',
+          );
+          expect(
+            region.height,
+            closeTo(controlSize, hitRegionTolerance),
+            reason: '$density keeps dense desktop controls: $region',
+          );
+        }
+        expect(completion.overlaps(overflow), isFalse);
+
+        await tester.tap(_rowOverflow(11, 'Cached parent'));
+        await tester.pumpAndSettle();
+        await expectReadableMenu(tester, _taskMenuLabels);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+
+        final row = find.byKey(const Key('desktop-task-row-11'));
+        await tester.tapAt(
+          tester.getCenter(row),
+          buttons: kSecondaryMouseButton,
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pumpAndSettle();
+        await expectReadableMenu(tester, _taskMenuLabels);
+        await tester.tap(find.text('Delete task'));
+        await tester.pumpAndSettle();
+        expect(fixture.tasks.deleted.single.taskId, const TaskId(11));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        fixture.dispose();
+      }
+    },
+  );
+}
+
+const _taskMenuLabels = <String>[
+  'Open details',
+  'Complete task',
+  'Edit task…',
+  'Choose date…',
+  'Move to list…',
+  'Delete task',
+];
+
+Finder _rowCompletion(int taskId) => find.descendant(
+  of: find.byKey(Key('desktop-task-row-$taskId')),
+  matching: find.byTooltip('Complete task'),
+);
+
+Finder _rowOverflow(int taskId, String title) => find.descendant(
+  of: find.byKey(Key('desktop-task-row-$taskId')),
+  matching: find.byTooltip('Task actions for $title'),
+);
+
+/// Pumps the real shell with the Android theme at a phone [viewport] and
+/// text scale, so touch-sized tap targets apply.
+Future<_ShellFixture> _pumpPhoneShell(
+  WidgetTester tester,
+  PhoneViewport viewport, {
+  DensityPreference density = DensityPreference.standard,
+}) async {
+  // Android status and navigation bars take room from the shell.
+  tester.view
+    ..physicalSize = viewport.logicalSize
+    ..devicePixelRatio = 1
+    ..padding = const FakeViewPadding(top: 24, bottom: 48)
+    ..viewPadding = const FakeViewPadding(top: 24, bottom: 48);
+  tester.platformDispatcher.textScaleFactorTestValue = viewport.textScale;
+  addTearDown(tester.view.reset);
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  final preferences = _WorkspacePreferences()
+    ..current = const DevicePreferences.defaults().copyWith(density: density);
+  final fixture = _ShellFixture(
+    _health(SyncHealthOutcome.good),
+    preferencesRepository: preferences,
+    taskListsRepository: _TaskListsRepository(),
+  );
+  addTearDown(fixture.dispose);
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: axiotaskTheme(
+        Brightness.light,
+        density,
+        fontFamily: androidTextFontFamily,
+        platform: TargetPlatform.android,
+      ),
+      home: AdaptiveShell(
+        viewModel: fixture.viewModel,
+        preferencesRepository: preferences,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  expect(find.byKey(const Key('desktop-task-row-11')), findsOneWidget);
+  expect(tester.takeException(), isNull, reason: '$viewport row layout');
+  return fixture;
 }
 
 Future<void> _chooseCollectionAction(WidgetTester tester, String label) async {
