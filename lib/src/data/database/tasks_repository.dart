@@ -1433,7 +1433,7 @@ Uri? _mapAbsoluteUri(String? value) {
   } on FormatException {
     throw const CacheMappingException('malformed_task_web_view_link');
   }
-  if (uri == null || !uri.isAbsolute) {
+  if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
     throw const CacheMappingException('malformed_task_web_view_link');
   }
   return uri;

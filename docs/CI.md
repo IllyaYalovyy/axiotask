@@ -46,7 +46,9 @@ Build jobs run in parallel with validation and upload:
   bundle, desktop metadata, icons, and license, plus `SHA256SUMS`. Extract it and
   run `./axiotask`; preserve the adjacent `lib/` and `data/` directories.
 - `axiotask-android-debug-<commit>`: a development APK plus `SHA256SUMS`. This is
-  debug-signed, not a Play Store release; Android production auth is not ready.
+  debug-signed, not a Play Store release; Google authorization requires an OAuth
+  registration for that debug certificate. Use the signed release APK for the
+  registered production Android client.
 
 Build artifacts expire after 30 days. Coverage, golden failure images, native
 logs, and synthetic screenshots are uploaded even on test failure and expire
@@ -62,7 +64,7 @@ The published release contains those four packages, `ANDROID_SIGNING_CERT.txt`,
 and `SHA256SUMS`; development artifacts remain in Actions only. Publication
 requires every validation and artifact job to pass, including package validation,
 installation of the DEB in Ubuntu 24.04, Flatpak runtime dependency checks, and
-APK application ID, non-debuggable status, and signing-certificate continuity.
+APK application ID, non-debuggable status, and the exact OAuth-registered signing certificate.
 The asset-set guard rejects missing packages, extra files, or incomplete checksums.
 
 The tag must match `pubspec.yaml` and the newest AppStream release. Release notes
@@ -73,7 +75,12 @@ come from `docs/release-notes.md`. Update these together before tagging.
 GitHub Actions must be enabled. Tag builds use the existing repository secrets
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEYSTORE_KEY_ALIAS`, and `ANDROID_KEYSTORE_KEY_PASSWORD`.
-Missing signing secrets fail the build; there is no debug-key fallback.
+Missing signing secrets fail the build; there is no generated-key fallback.
+The secrets contain the historical OAuth-registered key (SHA-256
+`1935e06653e69ddaf6e616a6f2c35b53425f14a3e94cd8daaf219338757cb796`).
+Its certificate subject is `Android Debug`, but the APK is built in release mode
+and must be non-debuggable. Fingerprint validation prevents accidentally using
+another debug key or the unregistered certificate used by v1.5.3–v1.5.5.
 Only the publication job receives repository contents write permission.
 Packaging tools and the GNOME 49 Flatpak runtime/SDK are installed on disposable
 GitHub runners; the workflow does not install anything on the developer machine.

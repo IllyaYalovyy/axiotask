@@ -398,10 +398,10 @@ void main() {
           TaskRemoteLinkRecord(
             type: 'email',
             description: 'Synthetic link',
-            link: Uri.parse('https://example.invalid/link'),
+            link: Uri.parse('https://example.invalid/link#inbox/synthetic'),
           ),
         ],
-        webViewLink: Uri.parse('https://example.invalid/view'),
+        webViewLink: Uri.parse('https://example.invalid/view#task/synthetic'),
       );
 
       final base = await cache.readTaskRemoteBase(account, task);
@@ -416,7 +416,7 @@ void main() {
         TaskRemoteLinkRecord(
           type: 'email',
           description: 'Synthetic link',
-          link: Uri.parse('https://example.invalid/link'),
+          link: Uri.parse('https://example.invalid/link#inbox/synthetic'),
         ),
       ]);
       final projected = await repository
@@ -424,7 +424,7 @@ void main() {
           .first;
       expect(
         projected.tasks.single.webViewLink,
-        Uri.parse('https://example.invalid/view'),
+        Uri.parse('https://example.invalid/view#task/synthetic'),
       );
     },
   );

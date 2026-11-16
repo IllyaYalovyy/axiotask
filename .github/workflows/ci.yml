@@ -256,7 +256,7 @@ jobs:
             apt-get remove -y -qq axiotask
           '
 
-      # The APK must use the existing release keystore; never substitute a debug key.
+      # Pin the exact OAuth-registered signing key; never use a generated fallback.
       - name: Write the Android signing configuration
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -266,7 +266,7 @@ jobs:
         run: |
           if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] \
              || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::the ANDROID_KEYSTORE_* secrets are not set — refusing to publish a debug-signed APK, which cannot sign in (RFC-010)"
+            echo "::error::the ANDROID_KEYSTORE_* secrets are not set — refusing to publish an APK without the OAuth-registered signing key"
             exit 1
           fi
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/axiotask-release.jks"
@@ -288,19 +288,16 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk \
              "dist/axiotask-${GITHUB_REF_NAME#v}.apk"
 
-      - name: Verify the APK is NOT debug-signed
+      - name: Verify the OAuth-registered signing certificate and release identity
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
           "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee dist/ANDROID_SIGNING_CERT.txt
-          if grep -qi 'CN=Android Debug' dist/ANDROID_SIGNING_CERT.txt; then
-            echo "::error::the APK was signed with the debug key — the ANDROID_KEYSTORE_* secrets did not reach the build"
-            exit 1
-          fi
-
-      - name: Verify Android signing continuity and release identity
-        run: |
-          curl -fsSL https://github.com/IllyaYalovyy/axiotask/releases/download/v1.5.3/ANDROID_SIGNING_CERT.txt -o "$RUNNER_TEMP/previous-cert.txt"
-          diff <(grep 'certificate SHA-256 digest:' "$RUNNER_TEMP/previous-cert.txt") <(grep 'certificate SHA-256 digest:' dist/ANDROID_SIGNING_CERT.txt)
+          # This historical certificate is registered with Google for com.axiotask.app.
+          # Its subject says Android Debug, but release builds remain non-debuggable.
+          # Check its fingerprint rather than the subject or the broken 1.5.3 key.
+          expected=1935e06653e69ddaf6e616a6f2c35b53425f14a3e94cd8daaf219338757cb796
+          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' dist/ANDROID_SIGNING_CERT.txt)
+          test "$actual" = "$expected"
           apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
           test "$("$apkanalyzer" manifest application-id dist/*.apk)" = com.axiotask.app
           test "$("$apkanalyzer" manifest debuggable dist/*.apk)" = false

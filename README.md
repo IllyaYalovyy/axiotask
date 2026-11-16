@@ -70,6 +70,32 @@ The destination must not already exist. To uninstall, or before reinstalling:
 To run directly from source, use `./scripts/linux_app.sh run`.
 For downloadable CI builds, see [CI and artifacts](docs/CI.md).
 
+### Android
+
+Android uses Google Play Services authorization for Google Tasks and OpenID
+account identity. Use the signed release APK on a device with Google Play
+Services. Choose **Connect** in the synchronization status panel and approve
+Google access. Subsequent launches restore authorization without prompting.
+The desktop OAuth configuration file is not used on Android.
+
+Local release builds require `android/key.properties` pointing to the OAuth-registered
+signing keystore. Google Cloud must register the Android OAuth client for
+`com.axiotask.app` and that certificate's SHA-1 fingerprint, with the Google Tasks
+API enabled. A debug certificate needs its own registration.
+
+```bash
+flutter build apk --release
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+Version 1.5.6 uses the historical OAuth-registered certificate with SHA-1
+`92:0A:4B:DD:8D:D9:C4:83:08:F5:6F:5A:6B:AB:8B:5E:36:A3:AC:72`.
+The v1.5.3–v1.5.5 GitHub APKs used a different, unregistered certificate. Android
+requires uninstalling those APKs before installing 1.5.6; export any unsynced
+local work first because uninstalling clears local app data. Google Tasks cloud
+data remains available after connecting. Installations already signed with the
+registered certificate can update in place.
+
 ## Development
 
 Run `./scripts/quality.sh` for the standard checks.

@@ -7,6 +7,7 @@ import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
 import '../../data/auth/authorization.dart';
 import '../../data/diagnostics/local_diagnostic_exporter.dart';
+import 'android_read_transport.dart';
 import 'app_composition.dart';
 import 'linux_read_transport.dart';
 
@@ -115,13 +116,19 @@ final class ReleaseComposition implements AppComposition {
   AccountSubject? get configuredAccountSubject => null;
 
   @override
-  Future<ReadSliceTransport> createReadTransport(AccountSubject? subject) =>
-      createLinuxReadTransport(
-        composition: this,
-        configuredSubject: subject,
-        configuration: linuxReadConfiguration,
-        dependencies: linuxReadTransportDependencies,
-      );
+  Future<ReadSliceTransport> createReadTransport(
+    AccountSubject? subject,
+  ) async => Platform.isAndroid
+      ? createAndroidReadTransport(
+          composition: this,
+          configuredSubject: subject,
+        )
+      : createLinuxReadTransport(
+          composition: this,
+          configuredSubject: subject,
+          configuration: linuxReadConfiguration,
+          dependencies: linuxReadTransportDependencies,
+        );
 
   @override
   CompositionBoundary get boundary => _boundary;

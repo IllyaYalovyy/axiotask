@@ -1144,7 +1144,7 @@ final class TasksViewModel extends ChangeNotifier {
       _replaceState(
         _state.copyWith(
           syncControlFailureMessage:
-              'The synchronization setting could not be saved safely.',
+              'Sync could not complete. Open sync details and retry.',
         ),
       );
     } finally {

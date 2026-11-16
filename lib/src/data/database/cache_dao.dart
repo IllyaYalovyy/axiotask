@@ -568,7 +568,7 @@ List<TaskRemoteLinkRecord> _decodeLinks(String encoded) {
 bool _nullableString(Object? value) => value == null || value is String;
 
 void _validateAbsoluteUri(Uri? value, String field) {
-  if (value != null && (!value.isAbsolute || value.host.isEmpty)) {
+  if (value != null && (!value.hasScheme || value.host.isEmpty)) {
     throw CacheInvariantException('invalid_$field');
   }
 }
@@ -576,7 +576,7 @@ void _validateAbsoluteUri(Uri? value, String field) {
 Uri? _readAbsoluteUri(String? value, String field) {
   if (value == null) return null;
   final parsed = Uri.tryParse(value);
-  if (parsed == null || !parsed.isAbsolute || parsed.host.isEmpty) {
+  if (parsed == null || !parsed.hasScheme || parsed.host.isEmpty) {
     throw CacheInvariantException('invalid_$field');
   }
   return parsed;

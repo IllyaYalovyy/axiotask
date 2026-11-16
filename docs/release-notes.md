@@ -1,12 +1,19 @@
-Restores the distribution formats provided by v1.5.3 after v1.5.4 omitted them.
+Restores Android Google sign-in, synchronization, and the original Axiotask icon.
 
-Downloads:
-- RPM for Fedora and compatible Linux distributions
-- DEB for Ubuntu 24.04 and compatible distributions
-- Flatpak for Linux x86_64, using GNOME 49
-- Release-signed Android APK (arm64-v8a, armeabi-v7a, x86_64)
-- Android signing certificate report and SHA256SUMS for every package
+- Connect using native Google Play Services authorization; restore the connection after reopening the app.
+- Accept valid Gmail task links containing URL fragments when parsing, storing, and displaying tasks.
+- Restore authorization after an exhausted retry episode, and let Refresh explicitly retry synchronization.
+- Keep routine background verification compact, and show clearer failure explanations with a diagnostic reference.
+- Restore the purple Axiotask launcher icon, including adaptive, round, and themed variants.
 
-Built with Flutter 3.50.0. The APK retains application ID `com.axiotask.app` and the v1.5.3 signing certificate; CI verifies both and rejects debuggable APKs.
+Android signing: this release uses the historical OAuth-registered certificate
+(SHA-1 `92:0A:4B:DD:8D:D9:C4:83:08:F5:6F:5A:6B:AB:8B:5E:36:A3:AC:72`).
+The APK is an optimized, non-debuggable release build. The v1.5.3–v1.5.5 GitHub
+APKs used a different certificate, so Android requires uninstalling those copies
+before installing this release. Export unsynced local work first: uninstalling
+clears local app data. Google Tasks cloud data is unaffected. Copies already
+signed with the registered certificate can update normally.
 
-This release packages the current Flutter rewrite. Android Google authorization is still in development; release signing does not add that functionality. Linux requires a configured desktop OAuth client in `~/.config/axiotask/config.toml` (Flatpak: `~/.var/app/io.github.IllyaYalovyy.axiotask/config/axiotask/config.toml`), using `config/axiotask.example.toml`, and an unlocked Secret Service.
+Includes RPM, DEB, Flatpak, and Android APK packages, the Android certificate
+report, and SHA256SUMS. Built with Flutter 3.50.0. Linux continues to use the
+configured desktop OAuth client and an unlocked Secret Service.

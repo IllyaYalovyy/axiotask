@@ -196,6 +196,14 @@ final class SyncHealth {
   final int retryAttemptCount;
   final bool automaticRetryExhausted;
 
+  /// Routine verification does not need to move the task list with a banner.
+  bool get usesCompactStatus =>
+      outcome == SyncHealthOutcome.good ||
+      (outcome == SyncHealthOutcome.pending &&
+          pendingReason == SyncPendingReason.verifying &&
+          lastSuccessfulSyncAt != null &&
+          counts.total == 0);
+
   String get summary => switch (outcome) {
     SyncHealthOutcome.inactive => 'Inactive',
     SyncHealthOutcome.pending => 'Pending',
@@ -204,6 +212,10 @@ final class SyncHealth {
   };
 
   String get reasonLabel {
+    if (outcome == SyncHealthOutcome.failed &&
+        diagnosticCode == 'auth.configuration') {
+      return 'Google connection configuration needs repair';
+    }
     if (outcome == SyncHealthOutcome.failed && automaticRetryExhausted) {
       return 'Automatic retry exhausted';
     }
@@ -213,12 +225,28 @@ final class SyncHealth {
         retryAt.toUtc().isAfter(evaluatedAt.toUtc())) {
       return 'Retry ${retryAttemptCount + 1} after ${_exactUtc(retryAt)}';
     }
+    if (outcome == SyncHealthOutcome.failed) {
+      final explanation = switch (diagnosticCode) {
+        'google_tasks.malformed_success' =>
+          'Google returned task data Axiotask could not read',
+        'sync.unsupported_task_depth' => 'A task has too many nested subtasks',
+        'sync.unsupported_task_parent' =>
+          'A subtask refers to a missing parent',
+        'sync.coordinator_run_failed' =>
+          'Sync stopped unexpectedly. Open details',
+        'sync.settings_read_failed' => 'Could not read local sync settings',
+        'sync.run_timeout' => 'Sync took too long. Retry when connected',
+        _ => null,
+      };
+      if (explanation != null) return explanation;
+    }
     return switch ((inactiveReason, failureReason, pendingReason)) {
       (SyncInactiveReason.syncStopped, _, _) => 'Sync stopped',
       (SyncInactiveReason.noAuthorization, _, _) => 'No authorization',
       (_, SyncFailureReason.noConnection, _) => 'No connection',
       (_, SyncFailureReason.remoteFailure, _) => 'Google Tasks failed',
-      (_, SyncFailureReason.applicationFailure, _) => 'Application failure',
+      (_, SyncFailureReason.applicationFailure, _) =>
+        'Sync could not finish. Open details',
       (_, SyncFailureReason.stale, _) => 'Cached data is stale',
       (_, _, SyncPendingReason.checkingAuthorization) =>
         'Checking authorization',

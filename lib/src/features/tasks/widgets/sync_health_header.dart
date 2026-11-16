@@ -18,7 +18,7 @@ final class SyncHealthHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (health.outcome == SyncHealthOutcome.good) {
+    if (health.usesCompactStatus) {
       return _CompactSyncHealth(
         health: health,
         diagnosticsBuilder: diagnosticsBuilder,
@@ -73,7 +73,11 @@ final class _CompactSyncHealth extends StatelessWidget {
         message: 'Sync details',
         child: iconOnly
             ? IconButton(
-                key: const Key('sync-health-good'),
+                key: Key(
+                  health.outcome == SyncHealthOutcome.good
+                      ? 'sync-health-good'
+                      : 'sync-health-pending',
+                ),
                 tooltip: 'Sync details',
                 onPressed: () => _showSyncDetails(
                   context,
@@ -83,7 +87,11 @@ final class _CompactSyncHealth extends StatelessWidget {
                 icon: Icon(visual.icon, color: visual.foreground),
               )
             : TextButton.icon(
-                key: const Key('sync-health-good'),
+                key: Key(
+                  health.outcome == SyncHealthOutcome.good
+                      ? 'sync-health-good'
+                      : 'sync-health-pending',
+                ),
                 onPressed: () => _showSyncDetails(
                   context,
                   health: health,
@@ -94,7 +102,9 @@ final class _CompactSyncHealth extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     Text(
-                      'Synced',
+                      health.outcome == SyncHealthOutcome.good
+                          ? 'Synced'
+                          : 'Syncing',
                       style: TextStyle(
                         color: visual.foreground,
                         fontWeight: FontWeight.w700,
@@ -253,6 +263,9 @@ Future<void> _showSyncDetails(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text('${health.summary}: ${health.reasonLabel}'),
+          if (health.outcome == SyncHealthOutcome.failed &&
+              health.diagnosticCode != null)
+            Text('Reference: ${health.diagnosticCode}'),
           const SizedBox(height: 12),
           const Text('Last successful sync'),
           Text(health.lastSuccessExactLabel),

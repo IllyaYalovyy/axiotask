@@ -3,11 +3,68 @@ import 'dart:convert';
 import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/google_tasks/decoder.dart';
 import 'package:axiotask/src/data/google_tasks/dto.dart';
+import 'package:axiotask/src/sync/read_plan.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('GoogleTasksDecoder', () {
     const decoder = GoogleTasksDecoder();
+
+    test(
+      'source URLs with fragments decode and publish without losing tasks',
+      () {
+        final result = decoder.decodeTaskPage(
+          utf8.encode(
+            jsonEncode({
+              'kind': 'tasks#tasks',
+              'items': [
+                {
+                  ..._liveTask('task-with-mail-link'),
+                  'links': [
+                    {
+                      'type': 'email',
+                      'link': 'https://mail.google.com/mail/u/0/#inbox/synthetic-message',
+                    },
+                  ],
+                  'webViewLink':
+                      'https://tasks.google.com/task/synthetic#details',
+                },
+              ],
+            }),
+          ),
+        );
+        expect(result, isA<Success<RemotePage<RemoteTask>>>());
+        final tasks = (result as Success<RemotePage<RemoteTask>>).value.items;
+        final task = tasks.single as RemoteLiveTask;
+        expect(task.links.single.link!.fragment, 'inbox/synthetic-message');
+        expect(TaskScopeReadPlan().acceptPage(tasks, terminal: true), tasks);
+      },
+    );
+
+    test('relative or hostless source links still fail closed', () {
+      for (final link in [
+        'relative/path#fragment',
+        '//example.test/path',
+        'https:///path',
+      ]) {
+        final result = decoder.decodeTaskPage(
+          utf8.encode(
+            jsonEncode({
+              'kind': 'tasks#tasks',
+              'items': [
+                {
+                  ..._liveTask('task-1'),
+                  'links': [
+                    {'link': link},
+                  ],
+                },
+              ],
+            }),
+          ),
+        );
+        expect(result, isA<Failed<RemotePage<RemoteTask>>>(), reason: link);
+      }
+    });
 
     test('decodes the supported task-list fields and ignores unknowns', () {
       final result = decoder.decodeTaskListPage(

@@ -248,6 +248,9 @@ final class SyncCoordinator
       return;
     }
     if (_retryEpisode != null) {
+      // A persisted retry must not strand a cold-started account in the
+      // initial absent state, hiding Retry behind an unavailable Connect action.
+      if (!await _ensureAuthorization()) return;
       await _restoreRetryEpisode();
       return;
     }
@@ -256,6 +259,10 @@ final class SyncCoordinator
 
   Future<void> refresh() async {
     await _refreshTaskDeleteEligibility();
+    if (_retryEpisode?.automaticRetryExhausted ?? false) {
+      await _retryExplicitly();
+      return;
+    }
     await _requestImmediate(SyncTrigger.refresh);
   }
 
@@ -659,6 +666,29 @@ final class SyncCoordinator
       if (!completer.isCompleted) completer.complete();
     } catch (error, stackTrace) {
       _activeControl = null;
+      diagnostics?.record(
+        DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.failure,
+          code: 'sync.unexpected_exception',
+          operation: 'coordinate_sync',
+          fields: <DiagnosticField>[
+            DiagnosticField.safe('errorType', error.runtimeType.toString()),
+            // Function names only: never log exception text, SQL values, paths,
+            // task content, or credentials from an unexpected failure.
+            DiagnosticField.safe(
+              'functions',
+              stackTrace
+                  .toString()
+                  .split('\n')
+                  .where((line) => line.startsWith('#'))
+                  .take(8)
+                  .map((line) => line.split('(').first.trim())
+                  .join(' > '),
+            ),
+          ],
+        ),
+      );
       _emit(
         _with(
           activity: SyncActivity.idle,

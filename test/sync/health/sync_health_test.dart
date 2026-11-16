@@ -4,6 +4,44 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final t0 = DateTime.utc(2026, 8, 15, 12);
 
+  test(
+    'authorization configuration failure explains why connection is blocked',
+    () {
+      final health = SyncHealth(
+        outcome: SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.applicationFailure,
+        diagnosticCode: 'auth.configuration',
+        counts: const SyncWorkCounts(),
+        lastSuccessfulSyncAt: null,
+        evaluatedAt: t0,
+      );
+      expect(
+        health.reasonLabel,
+        'Google connection configuration needs repair',
+      );
+    },
+  );
+
+  test('known sync failures explain the problem without raw response data', () {
+    for (final entry in <String, String>{
+      'google_tasks.malformed_success':
+          'Google returned task data Axiotask could not read',
+      'sync.unsupported_task_depth': 'A task has too many nested subtasks',
+      'sync.coordinator_run_failed': 'Sync stopped unexpectedly. Open details',
+    }.entries) {
+      final health = SyncHealth(
+        outcome: SyncHealthOutcome.failed,
+        failureReason: SyncFailureReason.applicationFailure,
+        diagnosticCode: entry.key,
+        counts: const SyncWorkCounts(),
+        lastSuccessfulSyncAt: t0,
+        evaluatedAt: t0,
+      );
+      expect(health.reasonLabel, entry.value);
+      expect(health.usesCompactStatus, isFalse);
+    }
+  });
+
   SyncHealth project({
     PersistedSyncFacts facts = const PersistedSyncFacts(),
     SyncRuntimeFacts runtime = const SyncRuntimeFacts(

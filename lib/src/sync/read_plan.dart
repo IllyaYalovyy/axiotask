@@ -213,7 +213,8 @@ void _requireOptionalValue(String? value, String code) {
 }
 
 void _requireAbsoluteUri(Uri? value, String code) {
-  if (value != null && (!value.isAbsolute || value.host.isEmpty)) {
+  // A fully qualified URL can contain a fragment; Uri.isAbsolute excludes it.
+  if (value != null && (!value.hasScheme || value.host.isEmpty)) {
     throw ReadPlanException(_unsupported(code));
   }
 }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive launcher icon (API 26+). The launcher masks these layers itself —
+     circle, squircle, teardrop — so the art must not carry its own silhouette;
+     the background layer is deliberately full-bleed and the foreground keeps the
+     mark inside the safe zone. <monochrome> is the Android 13+ themed icon: the
+     system tints that layer to match the user's wallpaper colours.
+     All three layers are generated from assets/branding/axiotask.svg by
+     tool/gen_icons.py — never hand-edit the mipmap bitmaps. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome"/>
+</adaptive-icon>

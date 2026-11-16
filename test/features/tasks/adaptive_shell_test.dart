@@ -26,6 +26,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  for (final width in <double>[412, 1280]) {
+    testWidgets('routine sync stays compact at width $width', (tester) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        SyncHealth(
+          outcome: SyncHealthOutcome.pending,
+          pendingReason: SyncPendingReason.verifying,
+          counts: const SyncWorkCounts(),
+          lastSuccessfulSyncAt: DateTime.utc(2026, 8, 15, 12),
+          evaluatedAt: DateTime.utc(2026, 8, 15, 12, 1),
+        ),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      expect(find.byKey(const Key('sync-health-pending')), findsOneWidget);
+      expect(find.text('Verifying with Google'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const Key('sync-health-pending')));
+      await tester.pumpAndSettle();
+      expect(find.text('Pending: Verifying with Google'), findsOneWidget);
+    });
+  }
+
   testWidgets('cached Pending shell exposes non-color status semantics', (
     tester,
   ) async {
@@ -90,7 +117,8 @@ void main() {
           switch (reason) {
             SyncFailureReason.noConnection => 'No connection',
             SyncFailureReason.remoteFailure => 'Google Tasks failed',
-            SyncFailureReason.applicationFailure => 'Application failure',
+            SyncFailureReason.applicationFailure =>
+              'Sync could not finish. Open details',
             SyncFailureReason.stale => 'Cached data is stale',
           },
           reason == SyncFailureReason.applicationFailure ? '' : 'Retry',

@@ -18,6 +18,7 @@ coverage/
 
 # Android local state and signing material
 android/.gradle/
+android/.kotlin/
 android/key.properties
 android/local.properties
 android/app/google-services.json

@@ -852,13 +852,13 @@ final class _ApplicationHeader extends StatelessWidget {
                         icon: const Icon(Icons.search),
                       ),
                     ),
-                  if (health.outcome == SyncHealthOutcome.good)
+                  if (health.usesCompactStatus)
                     _HeaderFocusOrder(
                       order: 2.5,
                       child: SyncHealthHeader(
                         health: health,
                         diagnosticsBuilder: diagnosticsBuilder,
-                        iconOnly: largeText,
+                        iconOnly: largeText || width < 600,
                       ),
                     ),
                   _HeaderFocusOrder(
@@ -910,7 +910,7 @@ final class _ApplicationHeader extends StatelessWidget {
             ),
           ),
         ),
-        if (health.outcome != SyncHealthOutcome.good)
+        if (!health.usesCompactStatus)
           SyncHealthHeader(
             health: health,
             onAction: onHealthAction,

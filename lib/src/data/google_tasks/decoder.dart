@@ -136,7 +136,7 @@ final class GoogleTasksDecoder {
     _expectKind(row, 'tasks#taskList');
     final title = _requiredString(row, 'title', allowEmpty: true);
     if (title.length > 1024) {
-      throw const _DecodeFailure.malformed();
+      throw const _DecodeFailure.malformed('list title exceeds limit');
     }
     return RemoteTaskList(
       id: RemoteTaskListId(_requiredString(row, 'id')),
@@ -164,7 +164,7 @@ final class GoogleTasksDecoder {
     final title = _optionalString(row, 'title');
     final notes = _optionalString(row, 'notes');
     if ((title?.length ?? 0) > 1024 || (notes?.length ?? 0) > 8192) {
-      throw const _DecodeFailure.malformed();
+      throw const _DecodeFailure.malformed('task title or notes exceeds limit');
     }
     final parent = _optionalNonEmptyString(row, 'parent');
     final position = _optionalNonEmptyString(row, 'position');
@@ -195,7 +195,13 @@ final class GoogleTasksDecoder {
     }
 
     if (title == null || position == null || status == null) {
-      throw const _DecodeFailure.malformed();
+      throw _DecodeFailure.malformed(
+        title == null
+            ? 'live task title missing'
+            : position == null
+            ? 'live task position missing'
+            : 'live task status missing',
+      );
     }
     return RemoteLiveTask(
       id: id,
@@ -236,7 +242,7 @@ final class GoogleTasksDecoder {
   }) {
     final value = object[key];
     if (value is! String || (!allowEmpty && value.isEmpty)) {
-      throw const _DecodeFailure.malformed();
+      throw _DecodeFailure.malformed('$key missing or invalid string');
     }
     return value;
   }
@@ -244,14 +250,16 @@ final class GoogleTasksDecoder {
   String? _optionalString(Map<String, Object?> object, String key) {
     if (!object.containsKey(key)) return null;
     final value = object[key];
-    if (value is! String) throw const _DecodeFailure.malformed();
+    if (value is! String) {
+      throw _DecodeFailure.malformed('$key is not a string');
+    }
     return value;
   }
 
   String? _optionalNonEmptyString(Map<String, Object?> object, String key) {
     final value = _optionalString(object, key);
     if (value != null && value.isEmpty) {
-      throw const _DecodeFailure.malformed();
+      throw _DecodeFailure.malformed('$key is empty');
     }
     return value;
   }
@@ -259,7 +267,7 @@ final class GoogleTasksDecoder {
   bool? _optionalBoolean(Map<String, Object?> object, String key) {
     if (!object.containsKey(key)) return null;
     final value = object[key];
-    if (value is! bool) throw const _DecodeFailure.malformed();
+    if (value is! bool) throw _DecodeFailure.malformed('$key is not boolean');
     return value;
   }
 
@@ -267,10 +275,12 @@ final class GoogleTasksDecoder {
     final value = _optionalString(object, key);
     if (value == null) return null;
     if (!RegExp(r'(?:Z|[+-][0-9]{2}:[0-9]{2})$').hasMatch(value)) {
-      throw const _DecodeFailure.malformed();
+      throw _DecodeFailure.malformed('$key has no timezone');
     }
     final parsed = DateTime.tryParse(value);
-    if (parsed == null) throw const _DecodeFailure.malformed();
+    if (parsed == null) {
+      throw _DecodeFailure.malformed('$key is not a timestamp');
+    }
     return parsed.toUtc();
   }
 
@@ -278,8 +288,10 @@ final class GoogleTasksDecoder {
     final value = _optionalString(object, key);
     if (value == null) return null;
     final parsed = Uri.tryParse(value);
-    if (parsed == null || !parsed.isAbsolute || parsed.host.isEmpty) {
-      throw const _DecodeFailure.malformed();
+    // Uri.isAbsolute also rejects fragments. Google source links (notably
+    // Gmail message URLs) can legitimately contain a #fragment.
+    if (parsed == null || !parsed.hasScheme || parsed.host.isEmpty) {
+      throw _DecodeFailure.malformed('$key is not an absolute URL');
     }
     return parsed;
   }
@@ -343,9 +355,9 @@ final class GoogleTasksDecoder {
 final class _DecodeFailure implements Exception {
   const _DecodeFailure(this.code, this.summary);
 
-  const _DecodeFailure.malformed()
+  const _DecodeFailure.malformed([String reason = 'invalid response shape'])
     : code = 'google_tasks.malformed_success',
-      summary = 'Google returned malformed task data.';
+      summary = 'Google task schema: $reason.';
 
   final String code;
   final String summary;

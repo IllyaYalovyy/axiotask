@@ -11,12 +11,54 @@ import 'package:axiotask/src/sync/retry/retry_episode.dart';
 import 'package:axiotask/src/sync/run.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../support/fake_auth.dart';
 import '../../support/fake_clock.dart';
 import '../../support/fake_connectivity.dart';
 import '../../support/fake_random.dart';
 
 void main() {
   final t0 = DateTime.utc(2026, 8, 15, 12);
+
+  test(
+    'cold restart restores authorization before exposing exhausted retry',
+    () async {
+      final authorization = FakeAuthorization()
+        ..enqueue(
+          FakeAuthorizationAttempt.restoreSuccess(
+            const AccountSubject('synthetic-retry-coordinator'),
+          ),
+        );
+      final store = _MemoryRetryStore(
+        RetryEpisode(
+          startedAt: t0.subtract(const Duration(minutes: 6)),
+          deadlineAt: t0.subtract(const Duration(minutes: 1)),
+          lastObservedAt: t0,
+          attemptCount: 2,
+          automaticRetryExhausted: true,
+        ),
+      );
+      final harness = _Harness(
+        t0,
+        store: store,
+        runner: _Runner(),
+        authorization: authorization,
+      );
+      addTearDown(harness.close);
+      addTearDown(authorization.close);
+      await harness.coordinator.start();
+      await pumpEventQueue();
+      expect(
+        harness.coordinator.currentFacts.authorization,
+        SyncAuthorization.usable,
+      );
+      expect(harness.health.outcome, SyncHealthOutcome.failed);
+      expect(harness.health.action, SyncHealthAction.retry);
+      expect(harness.runner.calls, 0);
+      await harness.coordinator.refresh();
+      expect(harness.runner.calls, 1);
+      expect(harness.runner.triggers.single, <SyncTrigger>{SyncTrigger.retry});
+    },
+  );
 
   test('REL-009 automatic episode exhausts at exactly five minutes', () async {
     final store = _MemoryRetryStore();
@@ -283,12 +325,15 @@ final class _Harness {
     required this.runner,
     List<Duration> jitter = const <Duration>[],
     FakeConnectivity? connectivity,
+    AuthorizationPort? authorization,
   }) : clock = FakeClock(startedAt) {
     coordinator = SyncCoordinator(
       accountId: const AccountId(1),
-      authorization: const SyntheticAuthorization(
-        AccountSubject('synthetic-retry-coordinator'),
-      ),
+      authorization:
+          authorization ??
+          const SyntheticAuthorization(
+            AccountSubject('synthetic-retry-coordinator'),
+          ),
       clock: clock,
       scheduler: clock,
       random: jitter.isEmpty

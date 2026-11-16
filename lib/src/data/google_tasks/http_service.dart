@@ -969,6 +969,8 @@ final class HttpGoogleTasksService
         fields: <DiagnosticField>[
           DiagnosticField.safe('resourceType', resourceType),
           DiagnosticField.safe('failureCode', failure.code),
+          if (failure.code == 'google_tasks.malformed_success')
+            DiagnosticField.safe('schemaReason', failure.safeSummary),
           if (statusCode != null) DiagnosticField.safe('status', statusCode),
           if (requestUri != null)
             DiagnosticField.private('requestUri', requestUri),
