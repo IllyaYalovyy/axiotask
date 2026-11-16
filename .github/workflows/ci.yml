@@ -295,9 +295,7 @@ jobs:
           # This historical certificate is registered with Google for com.axiotask.app.
           # Its subject says Android Debug, but release builds remain non-debuggable.
           # Check its fingerprint rather than the subject or the broken 1.5.3 key.
-          expected=1935e06653e69ddaf6e616a6f2c35b53425f14a3e94cd8daaf219338757cb796
-          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' dist/ANDROID_SIGNING_CERT.txt)
-          test "$actual" = "$expected"
+          python3 scripts/check_android_signing_cert.py dist/ANDROID_SIGNING_CERT.txt
           apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
           test "$("$apkanalyzer" manifest application-id dist/*.apk)" = com.axiotask.app
           test "$("$apkanalyzer" manifest debuggable dist/*.apk)" = false
