@@ -54,6 +54,13 @@ printf '%s%s\n' "$attribution_start" "$attribution_end" >"$fixture_root/fixture.
 assert_rejected 'AI attribution'
 
 printf 'synthetic task fixture\n' >"$fixture_root/fixture.txt"
+printf 'unreadable synthetic fixture\n' >"$fixture_root/unreadable.txt"
+chmod 000 "$fixture_root/unreadable.txt"
+if [[ ! -r "$fixture_root/unreadable.txt" ]]; then
+  assert_rejected 'scanning for credential-like content exited with status'
+fi
+rm -f -- "$fixture_root/unreadable.txt"
+
 mkdir -p "$fixture_root/.ktask"
 printf 'local orchestration state\n' >"$fixture_root/.ktask/prompt.md"
 assert_rejected 'forbidden repository artifact'

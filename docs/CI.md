@@ -23,6 +23,8 @@ with the SDK constraints and reviewed golden baselines.
 - All `capture_linux_*_screenshots.sh` synthetic desktop capture scripts. Captures
   are evidence for human inspection; golden comparisons run in the Flutter suite.
 - SQLite and preferences native integration probes on an Android API 36 emulator.
+- The 17-case Android behavior regression `baseline` subset on the same emulator,
+  with per-case outcomes, device facts and screenshots in `android-evidence-<commit>`.
 - A Linux release build and an Android debug build, including verification that
   SQLite is packaged for all three Android ABIs.
 

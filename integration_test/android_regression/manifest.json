@@ -1,0 +1,654 @@
+{
+  "schema_version": 1,
+  "manifest_version": 1,
+  "audit": {
+    "date": "2026-11-15",
+    "reference": {
+      "tag": "v1.5.3",
+      "commit": "0b81e18693ad1a108c2b3e8113217f7eb11a5a80"
+    },
+    "audited": {
+      "tag": "v1.5.6",
+      "commit": "aac2d368b077d83ad70fd6894ae2ec1dd151dc3b"
+    },
+    "final_counts": {
+      "failed": 19,
+      "passed": 17
+    },
+    "superseded_by_final_recheck": [
+      "25_date_shortcut_and_undo",
+      "30_completed_filter_and_sort"
+    ]
+  },
+  "provenance": [
+    {
+      "source": "android-audit-2026-11-15/results.json",
+      "sha256": "d97533ce3513de626dd38095fee2dfa321ef10a7623630521b4b85246fc844aa",
+      "imported_as": "Case IDs, flows, classifications and final pass/fail outcomes in this manifest."
+    },
+    {
+      "source": "android-audit-2026-11-15/release_audit_test.dart",
+      "sha256": "4e8bb2e38fbe7396b7e990dea6e141b8f76d807b70a6dd066d9667ae9cad9475",
+      "imported_as": "Synthetic fixture rows (titles, positions, due dates, clock instant) and case interactions adapted into support/regression_harness.dart and baseline_test.dart."
+    },
+    {
+      "source": "android-audit-2026-11-15/report.html",
+      "sha256": "e3d35a1f5f786d511d9803fcff3481e2ea0688fe18f015b765999a6da80bfa59",
+      "imported_as": "Separately tracked findings and limited-pass scopes; not executed."
+    }
+  ],
+  "subsets": {
+    "baseline": "The 17 flows that passed the 2026-11-15 audit. Required until the complete gate lands.",
+    "complete": "All 36 audit cases plus separately tracked findings; fails while any contract is outstanding."
+  },
+  "corrective_tasks": {
+    "android-regression-baseline": "Android: implement isolated native regression fixtures and passing baseline",
+    "android-task-row-actions": "Android: restore a reachable task-row menu and 48 dp touch targets",
+    "android-touch-gestures": "Android: restore swipe complete/schedule, pull to refresh and touch reordering",
+    "android-completion-semantics": "Android: restore completion Undo and parent-to-subtask completion cascade",
+    "android-selection-toolbar": "Android: fit selection and bulk controls to phone widths",
+    "android-capture-composer": "Android: restore the floating add button, on-demand composer and capture notes",
+    "android-task-details": "Android: restore calendar picker, inline editing, Duplicate and Previous/Next in details",
+    "android-export": "Android: restore Markdown/CSV export of the current view",
+    "android-search-navigation": "Android: open the matched subtask from search results",
+    "android-sync-status-feedback": "Android: keep routine pending state compact and explain sync failures",
+    "android-home-navigation": "Android: restore bottom smart-view navigation and task-row metadata"
+  },
+  "cases": [
+    {
+      "id": "01_task_menu",
+      "flow": "Task row context menu",
+      "audit_classification": "Blocking interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_row_test.dart",
+      "owner": "android-task-row-actions",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "02_swipe_complete",
+      "flow": "Swipe to complete",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "owner": "android-touch-gestures",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "03_swipe_schedule",
+      "flow": "Swipe to schedule",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "owner": "android-touch-gestures",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "04_complete_button_persists",
+      "flow": "Completion button",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "05_completion_undo",
+      "flow": "Undo completion",
+      "audit_classification": "Lost safety behavior",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/completion_test.dart",
+      "owner": "android-completion-semantics",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "06_long_press_selection",
+      "flow": "Selection and bulk controls",
+      "audit_classification": "Blocking interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/selection_test.dart",
+      "owner": "android-selection-toolbar",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "07_quick_capture_twice",
+      "flow": "Repeated quick capture",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "08_capture_notes",
+      "flow": "Notes during capture",
+      "audit_classification": "Removed feature",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/capture_test.dart",
+      "owner": "android-capture-composer",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "09_date_calendar",
+      "flow": "Calendar date selection",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_details_test.dart",
+      "owner": "android-task-details",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "10_edit_save_persists",
+      "flow": "Explicit edit and save",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "11_inline_detail_edit",
+      "flow": "Direct editing in details",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_details_test.dart",
+      "owner": "android-task-details",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "12_add_subtask_persists",
+      "flow": "Create subtask",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "13_subtask_back_returns_parent",
+      "flow": "Back from subtask",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "14_duplicate_action",
+      "flow": "Duplicate task",
+      "audit_classification": "Removed feature",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_details_test.dart",
+      "owner": "android-task-details",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "15_export_action",
+      "flow": "Export current view",
+      "audit_classification": "Removed feature",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/export_test.dart",
+      "owner": "android-export",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "16_move_task_persists",
+      "flow": "Move task to another list",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "17_search_open_result",
+      "flow": "Open a subtask search result",
+      "audit_classification": "Changed navigation",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/search_test.dart",
+      "owner": "android-search-navigation",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "18_routine_local_edit_feedback",
+      "flow": "Ordinary pending edit feedback",
+      "audit_classification": "Distracting UI",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/sync_status_test.dart",
+      "owner": "android-sync-status-feedback",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "19_failure_explanation",
+      "flow": "Failure feedback layout",
+      "audit_classification": "Limited pass",
+      "baseline": {
+        "expected": "pass",
+        "label": "limited-pass",
+        "limitation": "Covers only the absence of a native layout exception and a reachable failure message; the large red panel and generic message are tracked separately as failure-message-usability."
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "20_phone_add_affordance",
+      "flow": "Phone add button and composer",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/capture_test.dart",
+      "owner": "android-capture-composer",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "21_delete_and_undo",
+      "flow": "Delete and Undo",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "22_touch_target_size",
+      "flow": "Touch target size",
+      "audit_classification": "Touch usability",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_row_test.dart",
+      "owner": "android-task-row-actions",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "23_detail_previous_next",
+      "flow": "Previous/Next in details",
+      "audit_classification": "Removed feature",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/task_details_test.dart",
+      "owner": "android-task-details",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "24_navigation_drawer",
+      "flow": "Drawer list navigation",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "25_date_shortcut_and_undo",
+      "flow": "Due shortcut and cascade Undo",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "26_large_text_layout",
+      "flow": "Large-text home layout",
+      "audit_classification": "Limited pass",
+      "baseline": {
+        "expected": "pass",
+        "label": "limited-pass",
+        "limitation": "Covers the home screen at 2x text scale only, not every dialog."
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "27_landscape_capture",
+      "flow": "Landscape capture availability",
+      "audit_classification": "Limited pass",
+      "baseline": {
+        "expected": "pass",
+        "label": "limited-pass",
+        "limitation": "Covers capture-field availability in landscape without a rendering exception only."
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "28_create_list",
+      "flow": "Create list",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "29_rename_delete_list",
+      "flow": "Rename and delete list",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "30_completed_filter_and_sort",
+      "flow": "Completed filter and sorting",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "31_settings_theme",
+      "flow": "Settings theme",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    },
+    {
+      "id": "32_subtask_swipe_schedule",
+      "flow": "Subtask swipe scheduling",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "owner": "android-touch-gestures",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "33_parent_completion_cascade",
+      "flow": "Parent completion cascade",
+      "audit_classification": "Changed task semantics",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/completion_test.dart",
+      "owner": "android-completion-semantics",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "34_pull_to_refresh",
+      "flow": "Pull to refresh",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "owner": "android-touch-gestures",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "35_touch_reorder",
+      "flow": "Touch drag reordering",
+      "audit_classification": "Lost interaction",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "owner": "android-touch-gestures",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "36_detail_move_down",
+      "flow": "Move down in details",
+      "audit_classification": "Working",
+      "baseline": {
+        "expected": "pass",
+        "label": "working"
+      },
+      "contract": "implemented",
+      "test_path": "integration_test/android_regression/baseline_test.dart",
+      "owner": "android-regression-baseline",
+      "subsets": [
+        "baseline",
+        "complete"
+      ]
+    }
+  ],
+  "tracked_findings": [
+    {
+      "id": "bottom-navigation",
+      "finding": "Bottom smart-view navigation present in v1.5.3 is absent on phones.",
+      "owner": "android-home-navigation",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/home_navigation_test.dart",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "task-row-metadata",
+      "finding": "Task-row metadata (due date, list, subtask and notes indicators) shown by v1.5.3 is absent on phones.",
+      "owner": "android-home-navigation",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/home_navigation_test.dart",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "failure-message-usability",
+      "finding": "The generic failure state shows a large red panel reading 'Sync could not finish' without explaining what failed; case 19 passes only its narrow layout assertion.",
+      "owner": "android-sync-status-feedback",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/sync_status_test.dart",
+      "subsets": [
+        "complete"
+      ]
+    },
+    {
+      "id": "subtask-touch-reorder",
+      "finding": "Subtasks cannot be reordered by touch drag; case 35 covers only top-level task rows.",
+      "owner": "android-touch-gestures",
+      "baseline": {
+        "expected": "fail"
+      },
+      "contract": "outstanding",
+      "test_path": "integration_test/android_regression/touch_gestures_test.dart",
+      "subsets": [
+        "complete"
+      ]
+    }
+  ]
+}

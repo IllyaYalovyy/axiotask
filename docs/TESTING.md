@@ -881,6 +881,57 @@ packaged for ARM64, ARMv7, and x86_64 without pretending packaging proves
 runtime behavior. Physical-device execution remains mandatory for Android
 authorization and final device gates.
 
+### Android behavior regression gate
+
+The 2026-11-15 native Android audit compared v1.5.6 with the v1.5.3 reference
+in 36 cases. `integration_test/android_regression/manifest.json` is the
+versioned, machine-readable contract for all of them: the stable case IDs,
+the audited baseline outcome, the test path, the owning corrective task, the
+`baseline` and `complete` subsets, and four separately tracked findings
+(bottom navigation, task-row metadata, failure-message usability and subtask
+touch reorder). The 19 audit failures and the tracked findings stay
+`outstanding` with an expected `fail` outcome. They never count as passing.
+The manifest records the SHA-256 of every imported audit file. Its fixtures are
+committed, so running them never needs the audit folder.
+
+`support/regression_harness.dart` gives each case a fresh synthetic account
+in its own file-backed SQLite database, a `ManualClock` fixed at the audit
+instant, an injected `ControlledSyncHealth`, and in-memory device preferences.
+No refresh reaches Google. Setup pins portrait orientation (or a 412 × 900
+logical phone on desktop hosts). Waits use bounded `settleUntil` conditions
+rather than sleeps. Teardown always runs every step, in reverse setup order: the
+widget tree, then the view model, health stream, database and fixture
+directory, then keyboard and focus, text scale, and finally orientation or host
+view size. Each step's error is reported.
+Only Dart entry points under `lib/` build as the production package. Every
+other target gets the Android application ID
+`com.axiotask.app.integrationtest`, set in `android/app/build.gradle.kts`.
+That includes `integration_test/` files and the temporary listener that
+`flutter test` builds in its place. Test runs can therefore never replace or
+uninstall the production installation.
+
+Run the explicitly named baseline subset (the 17 audit passes; 19, 26 and 27
+are labelled `limited-pass`) on an emulator or device:
+
+```text
+dart run tool/android_regression/run.dart --subset baseline \
+  --device <android-device-id> --artifacts <evidence-directory>
+```
+
+The runner records the commit, the device model and API level, and the
+production package's install identity. It builds the test APK and refuses to
+install it unless its application ID is the isolated one. It runs
+`flutter test --reporter json --no-uninstall`, writes per-case outcomes and
+PNG screenshots with checksums to `run.json`, uninstalls only the isolated
+package, and verifies that the production package did not change. It exits
+nonzero when any case fails an assertion, is missing, is skipped, reports a
+different label, fails teardown, or is unexpected. It also exits nonzero on
+infrastructure failure. `--subset complete` is the future full gate, and
+reports every outstanding contract as a failure until those tasks land.
+`test/tool/android_regression_runner_test.dart` exercises these failure modes.
+`--device linux` runs the same cases on the desktop host without the Android
+package steps. CI runs the baseline on its API 36 emulator.
+
 S33 provides the deep synchronization suite:
 
 ```text

@@ -44,22 +44,31 @@ scan_for() {
     return
   fi
 
-  if rg --quiet --no-messages --pcre2 -- "$pattern" "${existing_files[@]}"; then
-    printf 'privacy check failed: %s\n' "$reason" >&2
-    exit 1
-  fi
+  local status=0
+  grep --quiet --extended-regexp -e "$pattern" -- "${existing_files[@]}" || status=$?
+  case "$status" in
+    0)
+      printf 'privacy check failed: %s\n' "$reason" >&2
+      exit 1
+      ;;
+    1) ;;
+    *)
+      printf 'privacy check failed: scanning for %s exited with status %d\n' "$reason" "$status" >&2
+      exit 1
+      ;;
+  esac
 }
 
 private_marker='PRIVATE'
-credential_pattern="-----BEGIN (?:RSA |EC |OPENSSH )?${private_marker} KEY-----"
+credential_pattern="-----BEGIN (RSA |EC |OPENSSH )?${private_marker} KEY-----"
 credential_pattern+='|AIza[0-9A-Za-z_-]{35}|ya29\.[0-9A-Za-z_-]{20,}'
 credential_pattern+='|GOCSPX-[0-9A-Za-z_-]{20,}|Bearer[[:space:]]+[0-9A-Za-z._~+/-]{16,}'
 scan_for 'credential-like content' "$credential_pattern"
 
-scan_for 'absolute local path' '/(?:home|Users)/[A-Za-z0-9._-]+/'
+scan_for 'absolute local path' '/(home|Users)/[A-Za-z0-9._-]+/'
 
 attribution_prefix='Co-authored-'
-attribution_pattern="${attribution_prefix}by:.*(?:AI|ChatGPT|Claude|Codex|Copilot)"
+attribution_pattern="${attribution_prefix}by:.*(AI|ChatGPT|Claude|Codex|Copilot)"
 scan_for 'AI attribution' "$attribution_pattern"
 
 printf 'privacy check passed (%d files scanned)\n' "${#existing_files[@]}"

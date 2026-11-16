@@ -12,6 +12,20 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+// Flutter passes the Dart entry point as the `target` property (default
+// lib/main.dart, relative to the Flutter project). Only the application's own
+// entry points under lib/ build as the production package. Every other target,
+// including integration tests and the temporary listener `flutter test`
+// generates for them, installs under a separate application ID, so a test run
+// can never replace, uninstall or write into the production installation.
+val integrationTestApplicationIdSuffix = ".integrationtest"
+val flutterProjectDir: File = rootProject.projectDir.parentFile
+val dartEntryPoint: File = ((findProperty("target") as String?) ?: "lib/main.dart")
+    .let { File(it).takeIf(File::isAbsolute) ?: flutterProjectDir.resolve(it) }
+    .canonicalFile
+val isApplicationEntryPoint =
+    dartEntryPoint.startsWith(flutterProjectDir.resolve("lib").canonicalFile)
+
 android {
     namespace = "dev.axiotask.axiotask"
     compileSdk = flutter.compileSdkVersion
@@ -28,6 +42,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        if (!isApplicationEntryPoint) {
+            applicationIdSuffix = integrationTestApplicationIdSuffix
+        }
     }
     signingConfigs {
         if (keystorePropertiesFile.exists()) {

@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: warn
 
   android-integration:
-    name: Android emulator native probes
+    name: Android emulator native probes and regression baseline
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -115,6 +115,7 @@ jobs:
           script: |
             mkdir -p test-results
             bash -o pipefail -c 'flutter test --no-pub integration_test/database_native_probe_test.dart integration_test/preferences_native_smoke_test.dart -d emulator-5554 --reporter expanded 2>&1 | tee test-results/android-tests.log'
+            bash -o pipefail -c 'dart run tool/android_regression/run.dart --subset baseline --device emulator-5554 --artifacts test-results/android-regression-baseline --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" 2>&1 | tee test-results/android-regression-baseline.log'
       - name: Upload Android evidence
         if: always()
         uses: actions/upload-artifact@v4

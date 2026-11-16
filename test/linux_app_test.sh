@@ -95,9 +95,14 @@ grep -Fxq -- '--debug' "$flutter_log" || fail 'dev build mode was not forwarded'
 grep -Fxq -- 'lib/main_development.dart' "$flutter_log" ||
   fail 'dev build omitted the development entry point'
 
-if rg -q -- '--dart-define-from-file=|\.ktask/' "$flutter_log"; then
-  fail 'application command depends on task-runner configuration'
-fi
+configuration_status=0
+grep -qE -e '--dart-define-from-file=|\.ktask/' -- "$flutter_log" ||
+  configuration_status=$?
+case "$configuration_status" in
+  0) fail 'application command depends on task-runner configuration' ;;
+  1) ;;
+  *) fail "argument log scan exited with status $configuration_status" ;;
+esac
 
 : >"$flutter_log"
 install_target="$fixture_root/user/.local/opt/axiotask"
