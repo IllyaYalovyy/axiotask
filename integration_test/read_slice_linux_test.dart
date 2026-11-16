@@ -164,7 +164,11 @@ void main() {
       await tester.pumpWidget(AxiotaskApp(viewModel: malformed.viewModel));
       await malformed.start();
       await tester.pumpAndSettle();
-      expect(find.text('Application failure'), findsOneWidget);
+      expect(find.text('Sync could not finish. Open details'), findsOneWidget);
+      expect(
+        malformed.viewModel.state.health.diagnosticCode,
+        'sync.malformed_live_task',
+      );
       expect(find.text('Synced'), findsNothing);
       await malformed.close();
 
