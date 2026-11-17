@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import '../commands/task_commands.dart';
 import 'tasks.dart';
 
 enum BulkOperationKind { complete, reschedule, move, delete, clearCompleted }
@@ -38,10 +39,14 @@ final class BulkOperationReceipt {
     required List<TaskId> taskIds,
     this.deleteGroupId,
     this.notBefore,
+    this.completionUndo,
   }) : taskIds = UnmodifiableListView<TaskId>(taskIds);
 
   final BulkOperationSummary summary;
   final List<TaskId> taskIds;
   final int? deleteGroupId;
   final DateTime? notBefore;
+
+  /// The Undo offer of a bulk completion that completed at least one task.
+  final TaskCompletionUndo? completionUndo;
 }

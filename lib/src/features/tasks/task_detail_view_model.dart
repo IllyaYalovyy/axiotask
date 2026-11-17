@@ -122,13 +122,22 @@ final class TaskDetailViewModel implements Listenable {
     required CachedTask task,
     required String title,
     required String? notes,
-  }) => _tasks.updateTaskContent(
-    taskId: task.id,
-    title: title,
-    notes: notes,
-    status: task.status,
-    due: task.due,
-  );
+  }) {
+    // The editor may have been opened before a completion, Undo or date
+    // change; saving text must not write the editor's stale status or date.
+    final current =
+        _tasks.state.tasks
+            .where((candidate) => candidate.id == task.id)
+            .firstOrNull ??
+        task;
+    return _tasks.updateTaskContent(
+      taskId: task.id,
+      title: title,
+      notes: notes,
+      status: current.status,
+      due: current.due,
+    );
+  }
 
   Future<void> toggleCompletion(TaskId taskId) {
     final task = _tasks.state.tasks

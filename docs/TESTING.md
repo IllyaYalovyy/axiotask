@@ -915,6 +915,22 @@ Undo all. While the delete waits on a held SQLite transaction, every control
 must be disabled and the progress indicator shown. The host widget tests in
 `test/features/tasks/adaptive_shell_test.dart` repeat the toolbar touch
 contract and each action's command over a fake repository in `flutter test`.
+Cases 05 (completion Undo) and 33 (parent completion cascade) are corrected
+by `integration_test/android_regression/completion_test.dart`. A fixture
+parent with one open and one already-completed subtask is completed by touch
+from the row button, the row ⋮ menu and the details pane. Each time, SQLite
+must hold the parent and its open subtask completed, with pending
+desired-state intent for exactly those two tasks, while the completed subtask
+and the unrelated task keep their state and gain no intent. The Undo banner
+must name the subtask count, and its Undo must be hit-testable and reopen
+exactly those two tasks. The case then advances the injected clock past the
+30-second window to prove that the offer expires while the completion stays
+stored, and it completes the subtask alone from details, which leaves the
+parent open. Host coverage is in `test/domain/completion_policy_test.dart`,
+the file-backed `test/data/database/completion_repository_test.dart` (restart,
+stale, expired, concurrent, rollback and idempotent receipts),
+`test/features/tasks/completion_undo_test.dart` and
+`test/sync/completion_sync_engine_test.dart`.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

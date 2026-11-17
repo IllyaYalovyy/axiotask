@@ -127,10 +127,16 @@ void regressionCase(
 
 /// Synthetic rows added to the shared fixture for one case.
 final class RegressionSeed {
-  const RegressionSeed({this.extraTopLevelTitles = const <String>[]});
+  const RegressionSeed({
+    this.extraTopLevelTitles = const <String>[],
+    this.completedChildTitles = const <String>[],
+  });
 
   /// Open top-level tasks appended after the shared rows in manual order.
   final List<String> extraTopLevelTitles;
+
+  /// Already-completed subtasks of the shared parent, after its open child.
+  final List<String> completedChildTitles;
 }
 
 /// Isolated synthetic account in a private file-backed SQLite database.
@@ -151,6 +157,7 @@ final class RegressionFixture {
     required this.second,
     required this.child,
     required this.extraTasks,
+    required this.completedChildren,
   });
 
   final String caseId;
@@ -168,6 +175,7 @@ final class RegressionFixture {
   final TaskId second;
   final TaskId child;
   final List<TaskId> extraTasks;
+  final List<TaskId> completedChildren;
   late final TasksViewModel model;
 
   /// Number of refresh requests the UI issued; nothing reaches Google.
@@ -266,6 +274,18 @@ final class RegressionFixture {
           position: '${4 + index}',
         ),
     ];
+    final completedChildren = <TaskId>[
+      for (final (index, title) in seed.completedChildTitles.indexed)
+        await cache.putTask(
+          accountId: account,
+          taskListId: list,
+          remoteId: TaskRemoteId('audit-completed-child-$index'),
+          title: title,
+          position: '${4 + seed.extraTopLevelTitles.length + index}',
+          parentTaskId: parent,
+          status: TaskStatus.completed,
+        ),
+    ];
 
     final clock = ManualClock(regressionNow);
     final tasksRepository = DatabaseTasksRepository(database, clock: clock);
@@ -317,6 +337,7 @@ final class RegressionFixture {
       second: second,
       child: child,
       extraTasks: extraTasks,
+      completedChildren: completedChildren,
     );
     fixture.model = TasksViewModel(
       accountId: account,

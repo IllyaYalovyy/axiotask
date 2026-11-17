@@ -48,3 +48,15 @@ abstract interface class DestructiveTaskOperationsRepository {
 
   Future<Outcome<void>> undoTaskDeleteGroup(UndoTaskDeleteGroupCommand command);
 }
+
+/// Completion commands that apply the shared parent/subtask policy
+/// (`planTaskCompletion`) atomically and offer a precise Undo.
+abstract interface class TaskCompletionRepository {
+  Future<Outcome<TaskCompletionReceipt>> setTaskCompletion(
+    SetTaskCompletionCommand command,
+  );
+
+  Future<Outcome<TaskCompletionUndoResult>> undoTaskCompletion(
+    UndoTaskCompletionCommand command,
+  );
+}

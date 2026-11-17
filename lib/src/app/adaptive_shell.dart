@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../data/search/supported_task_search_repository.dart';
+import '../domain/commands/task_commands.dart';
 import '../domain/model/bulk_operations.dart';
 import '../domain/model/preferences.dart';
 import '../domain/model/search.dart';
@@ -651,6 +652,23 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                       ),
                                     ),
                               child: const Text('Undo all'),
+                            ),
+                          ],
+                        ),
+                      if (state.taskCompletionUndo case final undo?)
+                        MaterialBanner(
+                          key: const Key('task-completion-undo'),
+                          leading: const Icon(Icons.check_circle_outline),
+                          content: Text(_completionUndoMessage(undo)),
+                          actions: <Widget>[
+                            TextButton(
+                              key: const Key('task-completion-undo-action'),
+                              onPressed: state.isTaskCommandPending
+                                  ? null
+                                  : () => unawaited(
+                                      widget.viewModel.undoTaskCompletion(),
+                                    ),
+                              child: const Text('Undo'),
                             ),
                           ],
                         ),
@@ -1999,6 +2017,19 @@ String _bulkKindLabel(BulkOperationKind kind) => switch (kind) {
   BulkOperationKind.delete => 'Bulk delete',
   BulkOperationKind.clearCompleted => 'Clear completed',
 };
+
+/// Names what one completion changed, so Undo's scope is explicit.
+String _completionUndoMessage(TaskCompletionUndo undo) {
+  final cascaded = undo.cascadedCount;
+  final subtasks = switch (cascaded) {
+    <= 0 => '',
+    1 => ' and 1 subtask',
+    _ => ' and $cascaded subtasks',
+  };
+  if (undo.title case final title?) return '“$title”$subtasks completed';
+  final selected = undo.completedCount - cascaded;
+  return '$selected ${selected == 1 ? 'task' : 'tasks'}$subtasks completed';
+}
 
 String _bulkRemoteNoun(BulkOperationSummary summary) {
   final delete =

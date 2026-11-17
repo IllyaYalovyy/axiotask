@@ -10,6 +10,7 @@ import '../../domain/commands/task_commands.dart';
 import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/policy/bulk_task_operations.dart';
+import '../../domain/policy/completion_policy.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/hierarchy_policy.dart';
 import '../../domain/repository/tasks_repository.dart';
@@ -19,10 +20,12 @@ import 'cache_dao.dart';
 import 'delete_state_dao.dart';
 import 'desired_state_dao.dart';
 import 'due_change_dao.dart';
+import 'task_completion_ledger.dart';
 
 final class DatabaseTasksRepository
     implements
         TasksRepository,
+        TaskCompletionRepository,
         BulkTasksRepository,
         BulkTaskOperationsRepository,
         DestructiveTaskOperationsRepository {
@@ -43,6 +46,7 @@ final class DatabaseTasksRepository
   final DesiredStateDao _desired;
   final DeleteStateDao _deletes;
   final DueChangeDao _dueChanges;
+  final TaskCompletionLedger _completions = TaskCompletionLedger();
   final Clock clock;
   final DesiredStateTransactionControl? transactionControl;
 
@@ -59,16 +63,32 @@ final class DatabaseTasksRepository
       return Outcome<BulkOperationReceipt>.failure(validation);
     }
     try {
+      _CommittedCompletion? completion;
       final receipt = await _database.transaction(() async {
         await _requireAccount(command.accountId);
         final selected = await _requireBulkTasks(command);
         return switch (command) {
-          BulkCompleteTasksCommand() => _completeBulk(command, selected),
+          BulkCompleteTasksCommand() => _completeBulk(
+            command,
+            selected,
+            (committed) => completion = committed,
+          ),
           BulkRescheduleTasksCommand() => _rescheduleBulk(command, selected),
           BulkMoveTasksCommand() => _moveBulk(command, selected),
           BulkDeleteTasksCommand() => _deleteBulk(command, selected),
         };
       });
+      if (completion case final committed?) {
+        return Outcome<BulkOperationReceipt>.success(
+          BulkOperationReceipt(
+            summary: receipt.summary,
+            taskIds: receipt.taskIds,
+            deleteGroupId: receipt.deleteGroupId,
+            notBefore: receipt.notBefore,
+            completionUndo: _recordCompletion(command.accountId, committed),
+          ),
+        );
+      }
       return Outcome<BulkOperationReceipt>.success(receipt);
     } on _TaskCommandException catch (error) {
       return Outcome<BulkOperationReceipt>.failure(error.failure);
@@ -115,53 +135,68 @@ final class DatabaseTasksRepository
   Future<BulkOperationReceipt> _completeBulk(
     BulkCompleteTasksCommand command,
     List<TaskCacheRow> selected,
+    void Function(_CommittedCompletion completion) committed,
   ) async {
-    final changed = selected
-        .where((row) => _taskStatus(row.status) != TaskStatus.completed)
-        .toList(growable: false);
-    for (final row in changed) {
-      await (_database.update(_database.taskCacheRows)..where(
-            (task) =>
-                task.accountId.equals(command.accountId.value) &
-                task.id.equals(row.id),
-          ))
-          .write(
-            const TaskCacheRowsCompanion(status: Value<String>('completed')),
-          );
+    final rows =
+        await (_database.select(_database.taskCacheRows)
+              ..where(
+                (row) =>
+                    row.accountId.equals(command.accountId.value) &
+                    row.projection.equals(CacheProjection.supported.name),
+              )
+              ..orderBy(<OrderingTerm Function($TaskCacheRowsTable)>[
+                (row) => OrderingTerm.asc(row.id),
+              ]))
+            .get();
+    final plan = planCompletionOfTasks(
+      tasks: rows.map(_cachedTask),
+      taskIds: selected.map((row) => TaskId(row.id)),
+      status: TaskStatus.completed,
+    );
+    final rowsById = <TaskId, TaskCacheRow>{
+      for (final row in rows) TaskId(row.id): row,
+    };
+    final selectedIds = <TaskId>{for (final row in selected) TaskId(row.id)};
+    for (final taskId in plan.cascadedTaskIds) {
+      await _requireSynchronizable(command.accountId, rowsById[taskId]!);
     }
-    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
-    final members = <BulkOperationMemberInput>[];
     final modifiedAt = clock.now();
-    for (final row in changed) {
-      final desired = await _desired.writeTaskPresent(
-        accountId: command.accountId,
-        taskId: TaskId(row.id),
-        taskListId: TaskListId(row.taskListId),
-        parentTaskId: row.parentTaskId == null
-            ? null
-            : TaskId(row.parentTaskId!),
-        title: row.title,
-        notes: row.notes,
-        status: TaskStatus.completed,
-        due: _taskDate(row.dueEpochDay),
-        modifiedAt: modifiedAt,
-      );
-      members.add(
-        BulkOperationMemberInput(
-          taskId: TaskId(row.id),
-          desiredStateId: desired.id,
-          generation: desired.generation,
-        ),
-      );
-      await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
-    }
-    return _finishBulk(
+    final written = await _writeStatusChanges(
+      accountId: command.accountId,
+      changes: plan.changes,
+      rowsById: rowsById,
+      modifiedAt: modifiedAt,
+      afterEachDesiredWrite: () =>
+          _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite),
+    );
+    final members = <BulkOperationMemberInput>[
+      for (final change in plan.changes)
+        if (selectedIds.contains(change.taskId))
+          BulkOperationMemberInput(
+            taskId: change.taskId,
+            desiredStateId: written[change.taskId]!.id,
+            generation: written[change.taskId]!.generation,
+          ),
+    ];
+    final receipt = await _finishBulk(
       accountId: command.accountId,
       kind: BulkOperationKind.complete,
       selectedCount: selected.length,
       members: members,
       createdAt: modifiedAt,
     );
+    if (!plan.isEmpty) {
+      committed(
+        _CommittedCompletion(
+          sequence: _completions.reserve(),
+          plan: plan,
+          status: TaskStatus.completed,
+          title: null,
+          createdAt: modifiedAt,
+        ),
+      );
+    }
+    return receipt;
   }
 
   Future<BulkOperationReceipt> _rescheduleBulk(
@@ -580,6 +615,14 @@ final class DatabaseTasksRepository
   Future<Outcome<void>> apply(ExistingTaskCommand command) async {
     final validation = validateTaskCommand(command);
     if (validation != null) return Outcome<void>.failure(validation);
+    if (command is SetTaskCompletionCommand) {
+      return switch (await setTaskCompletion(command)) {
+        Success<TaskCompletionReceipt>() => const Outcome<void>.success(null),
+        Failed<TaskCompletionReceipt>(:final failure) => Outcome<void>.failure(
+          failure,
+        ),
+      };
+    }
     if (command is SetTaskDueCommand) {
       return switch (await setTaskDue(command)) {
         Success<TaskDueChangeReceipt>() => const Outcome<void>.success(null),
@@ -594,7 +637,7 @@ final class DatabaseTasksRepository
       return _applyHierarchy(command);
     }
     try {
-      await _database.transaction(() async {
+      final statusSequence = await _database.transaction(() async {
         await _requireAccount(command.accountId);
         final row =
             await (_database.select(_database.taskCacheRows)..where(
@@ -636,6 +679,31 @@ final class DatabaseTasksRepository
           UpdateTaskContentCommand(:final due) => due,
           _ => _taskDate(row.dueEpochDay),
         };
+        final statusChanged = status != _taskStatus(row.status);
+        // A status edit follows the shared completion policy: completing a
+        // parent here completes its open subtasks too.
+        var cascade = const <TaskStatusChange>[];
+        var cascadeRows = const <TaskId, TaskCacheRow>{};
+        if (statusChanged) {
+          final rows = await _supportedListRows(
+            command.accountId,
+            TaskListId(row.taskListId),
+          );
+          cascade = planTaskCompletion(
+            tasks: rows.map(_cachedTask),
+            taskId: command.taskId,
+            status: status,
+          ).changes.where((change) => change.taskId != command.taskId).toList();
+          cascadeRows = <TaskId, TaskCacheRow>{
+            for (final candidate in rows) TaskId(candidate.id): candidate,
+          };
+          for (final change in cascade) {
+            await _requireSynchronizable(
+              command.accountId,
+              cascadeRows[change.taskId]!,
+            );
+          }
+        }
         await (_database.update(_database.taskCacheRows)..where(
               (row) =>
                   row.accountId.equals(command.accountId.value) &
@@ -649,7 +717,10 @@ final class DatabaseTasksRepository
                 dueEpochDay: Value<int?>(_epochDay(due)),
               ),
             );
-        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        final modifiedAt = clock.now();
+        if (cascade.isEmpty) {
+          await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+        }
         await _desired.writeTaskPresent(
           accountId: command.accountId,
           taskId: command.taskId,
@@ -661,11 +732,23 @@ final class DatabaseTasksRepository
           notes: notes,
           status: status,
           due: due,
-          modifiedAt: clock.now(),
+          modifiedAt: modifiedAt,
         );
+        if (cascade.isNotEmpty) {
+          await _writeStatusChanges(
+            accountId: command.accountId,
+            changes: cascade,
+            rowsById: cascadeRows,
+            modifiedAt: modifiedAt,
+          );
+        }
         await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
         await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return statusChanged ? _completions.reserve() : null;
       });
+      if (statusSequence != null) {
+        _completions.supersede(command.accountId, statusSequence);
+      }
       return const Outcome<void>.success(null);
     } on _TaskCommandException catch (error) {
       return Outcome<void>.failure(error.failure);
@@ -881,6 +964,265 @@ final class DatabaseTasksRepository
       return const Outcome<void>.failure(_persistenceFailure);
     } on SqliteException {
       return const Outcome<void>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<TaskCompletionReceipt>> setTaskCompletion(
+    SetTaskCompletionCommand command,
+  ) async {
+    try {
+      final committed = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final target =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(command.accountId.value) &
+                      row.id.equals(command.taskId.value) &
+                      row.projection.equals(CacheProjection.supported.name),
+                ))
+                .getSingleOrNull();
+        if (target == null) {
+          throw const _TaskCommandException(_taskNotFoundFailure);
+        }
+        await _requireSynchronizable(command.accountId, target);
+        final rows = await _supportedListRows(
+          command.accountId,
+          TaskListId(target.taskListId),
+        );
+        final plan = planTaskCompletion(
+          tasks: rows.map(_cachedTask),
+          taskId: command.taskId,
+          status: command.status,
+        );
+        if (plan.isEmpty) return null;
+        final rowsById = <TaskId, TaskCacheRow>{
+          for (final row in rows) TaskId(row.id): row,
+        };
+        for (final change in plan.changes) {
+          await _requireSynchronizable(
+            command.accountId,
+            rowsById[change.taskId]!,
+          );
+        }
+        final modifiedAt = clock.now();
+        await _writeStatusChanges(
+          accountId: command.accountId,
+          changes: plan.changes,
+          rowsById: rowsById,
+          modifiedAt: modifiedAt,
+        );
+        await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return _CommittedCompletion(
+          sequence: _completions.reserve(),
+          plan: plan,
+          status: command.status,
+          title: target.title,
+          createdAt: modifiedAt,
+        );
+      });
+      if (committed == null) {
+        return Outcome<TaskCompletionReceipt>.success(
+          TaskCompletionReceipt(changedTaskIds: const <TaskId>[]),
+        );
+      }
+      return Outcome<TaskCompletionReceipt>.success(
+        TaskCompletionReceipt(
+          changedTaskIds: committed.plan.changes
+              .map((change) => change.taskId)
+              .toList(growable: false),
+          undo: _recordCompletion(command.accountId, committed),
+        ),
+      );
+    } on _TaskCommandException catch (error) {
+      return Outcome<TaskCompletionReceipt>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<TaskCompletionReceipt>.failure(_persistenceFailure);
+    } on DesiredStateInvariantException {
+      return const Outcome<TaskCompletionReceipt>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<TaskCompletionReceipt>.failure(_persistenceFailure);
+    }
+  }
+
+  @override
+  Future<Outcome<TaskCompletionUndoResult>> undoTaskCompletion(
+    UndoTaskCompletionCommand command,
+  ) async {
+    var claimed = false;
+    try {
+      final result = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final lookup = _completions.lookup(
+          command.accountId,
+          command.operationId,
+          clock.now(),
+        );
+        switch (lookup.kind) {
+          case TaskCompletionLedgerLookupKind.alreadyUndone:
+            return TaskCompletionUndoResult(
+              restoredTaskIds: const <TaskId>[],
+              skippedTaskIds: const <TaskId>[],
+              alreadyUndone: true,
+            );
+          case TaskCompletionLedgerLookupKind.unavailable:
+            throw const _TaskCommandException(_completionUndoUnavailable);
+          case TaskCompletionLedgerLookupKind.expired:
+            throw const _TaskCommandException(_completionUndoExpired);
+          case TaskCompletionLedgerLookupKind.available:
+            break;
+        }
+        _completions.claim(command.accountId, command.operationId);
+        claimed = true;
+        final rowsById = <TaskId, TaskCacheRow>{};
+        for (final change in lookup.changes) {
+          final row =
+              await (_database.select(_database.taskCacheRows)..where(
+                    (row) =>
+                        row.accountId.equals(command.accountId.value) &
+                        row.id.equals(change.taskId.value) &
+                        row.projection.equals(CacheProjection.supported.name),
+                  ))
+                  .getSingleOrNull();
+          if (row != null) rowsById[change.taskId] = row;
+        }
+        final plan = planTaskCompletionUndo(
+          recorded: lookup.changes,
+          current: <TaskId, TaskStatus>{
+            for (final MapEntry(:key, :value) in rowsById.entries)
+              key: _taskStatus(value.status),
+          },
+        );
+        for (final change in plan.restore) {
+          await _requireSynchronizable(
+            command.accountId,
+            rowsById[change.taskId]!,
+          );
+        }
+        if (plan.restore.isNotEmpty) {
+          await _writeStatusChanges(
+            accountId: command.accountId,
+            changes: plan.restore,
+            rowsById: rowsById,
+            modifiedAt: clock.now(),
+          );
+          await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        }
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return TaskCompletionUndoResult(
+          restoredTaskIds: plan.restore
+              .map((change) => change.taskId)
+              .toList(growable: false),
+          skippedTaskIds: plan.skipped,
+        );
+      });
+      if (claimed) {
+        _completions.commitUndo(command.accountId, command.operationId);
+      }
+      return Outcome<TaskCompletionUndoResult>.success(result);
+    } on Object catch (error) {
+      if (claimed) {
+        _completions.release(command.accountId, command.operationId);
+      }
+      final failure = switch (error) {
+        _TaskCommandException(:final failure) => failure,
+        DesiredStatePersistenceException() ||
+        DesiredStateInvariantException() ||
+        SqliteException() => _persistenceFailure,
+        _ => null,
+      };
+      if (failure == null) rethrow;
+      return Outcome<TaskCompletionUndoResult>.failure(failure);
+    }
+  }
+
+  TaskCompletionUndo? _recordCompletion(
+    AccountId accountId,
+    _CommittedCompletion committed,
+  ) {
+    if (committed.status != TaskStatus.completed) {
+      _completions.supersede(accountId, committed.sequence);
+      return null;
+    }
+    return _completions.recordCompletion(
+      accountId: accountId,
+      sequence: committed.sequence,
+      changes: committed.plan.changes,
+      title: committed.title,
+      cascadedCount: committed.plan.cascadedCount,
+      createdAt: committed.createdAt,
+    );
+  }
+
+  /// Writes each status change to the projection, then to durable desired
+  /// state in [changes] order, keeping every other current field.
+  Future<Map<TaskId, TaskDesiredStateRecord>> _writeStatusChanges({
+    required AccountId accountId,
+    required List<TaskStatusChange> changes,
+    required Map<TaskId, TaskCacheRow> rowsById,
+    required DateTime modifiedAt,
+    Future<void> Function()? afterEachDesiredWrite,
+  }) async {
+    for (final change in changes) {
+      await (_database.update(_database.taskCacheRows)..where(
+            (row) =>
+                row.accountId.equals(accountId.value) &
+                row.id.equals(change.taskId.value),
+          ))
+          .write(
+            TaskCacheRowsCompanion(
+              status: Value<String>(_statusValue(change.after)),
+            ),
+          );
+    }
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    final written = <TaskId, TaskDesiredStateRecord>{};
+    for (final change in changes) {
+      final row = rowsById[change.taskId]!;
+      written[change.taskId] = await _desired.writeTaskPresent(
+        accountId: accountId,
+        taskId: change.taskId,
+        taskListId: TaskListId(row.taskListId),
+        parentTaskId: row.parentTaskId == null
+            ? null
+            : TaskId(row.parentTaskId!),
+        title: row.title,
+        notes: row.notes,
+        status: change.after,
+        due: _taskDate(row.dueEpochDay),
+        modifiedAt: modifiedAt,
+      );
+      await afterEachDesiredWrite?.call();
+    }
+    return written;
+  }
+
+  Future<List<TaskCacheRow>> _supportedListRows(
+    AccountId accountId,
+    TaskListId taskListId,
+  ) =>
+      (_database.select(_database.taskCacheRows)
+            ..where(
+              (row) =>
+                  row.accountId.equals(accountId.value) &
+                  row.taskListId.equals(taskListId.value) &
+                  row.projection.equals(CacheProjection.supported.name),
+            )
+            ..orderBy(<OrderingTerm Function($TaskCacheRowsTable)>[
+              (row) => OrderingTerm.asc(row.id),
+            ]))
+          .get();
+
+  Future<void> _requireSynchronizable(
+    AccountId accountId,
+    TaskCacheRow row,
+  ) async {
+    if (row.remoteId == null &&
+        !_isUnresolved(
+          (await _desired.readTask(accountId, TaskId(row.id)))?.state,
+        )) {
+      throw const _TaskCommandException(_unsynchronizableTaskFailure);
     }
   }
 
@@ -1492,6 +1834,22 @@ TaskDate? _mapEpochDay(int? epochDay) {
   return TaskDate(date.year, date.month, date.day);
 }
 
+final class _CommittedCompletion {
+  const _CommittedCompletion({
+    required this.sequence,
+    required this.plan,
+    required this.status,
+    required this.title,
+    required this.createdAt,
+  });
+
+  final int sequence;
+  final TaskCompletionPlan plan;
+  final TaskStatus status;
+  final String? title;
+  final DateTime createdAt;
+}
+
 final class _TaskCommandException implements Exception {
   const _TaskCommandException(this.failure);
 
@@ -1700,6 +2058,24 @@ const Failure _noCompletedTasksFailure = Failure(
   retry: RetryClassification.permanent,
   impact: 'No completed tasks were deleted.',
   safeSummary: 'No safely clearable completed task is available.',
+);
+
+const Failure _completionUndoUnavailable = Failure(
+  code: 'task.completion_undo_unavailable',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The completion was not undone.',
+  safeSummary: 'A later status change superseded the completion Undo.',
+);
+
+const Failure _completionUndoExpired = Failure(
+  code: 'task.completion_undo_expired',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The completion was not undone.',
+  safeSummary: 'The completion Undo window has expired.',
 );
 
 const Failure _dueChangePersistenceFailure = Failure(

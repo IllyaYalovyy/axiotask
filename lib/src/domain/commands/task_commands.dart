@@ -145,6 +145,74 @@ final class SetTaskCompletionCommand extends ExistingTaskCommand {
   final TaskStatus status;
 }
 
+/// Reverses one completion command identified by its receipt.
+final class UndoTaskCompletionCommand extends TaskCommand {
+  const UndoTaskCompletionCommand({
+    required super.accountId,
+    required this.operationId,
+  });
+
+  final int operationId;
+}
+
+/// The outcome of one completion or reopen command.
+///
+/// [changedTaskIds] are exactly the tasks whose status the command wrote, in
+/// the order they were written. [undo] is present only when the command
+/// completed at least one task.
+final class TaskCompletionReceipt {
+  TaskCompletionReceipt({required List<TaskId> changedTaskIds, this.undo})
+    : changedTaskIds = List<TaskId>.unmodifiable(changedTaskIds);
+
+  final List<TaskId> changedTaskIds;
+  final TaskCompletionUndo? undo;
+}
+
+/// The offer to reverse one committed completion command.
+///
+/// The offer belongs to the running application: it is superseded by any
+/// later status change committed through the same repository, and it expires
+/// at [expiresAt]. [title] names the primary task, or is null for a bulk
+/// completion of [completedCount] tasks.
+final class TaskCompletionUndo {
+  const TaskCompletionUndo({
+    required this.operationId,
+    required this.title,
+    required this.completedCount,
+    required this.cascadedCount,
+    required this.createdAt,
+    required this.expiresAt,
+  });
+
+  final int operationId;
+  final String? title;
+  final int completedCount;
+  final int cascadedCount;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+
+  bool isExpiredAt(DateTime now) => !now.toUtc().isBefore(expiresAt);
+}
+
+/// What an Undo of a completion restored.
+///
+/// [skippedTaskIds] were recorded by the completion but were deleted or had
+/// their status changed afterwards, so Undo left them as they are.
+/// [alreadyUndone] marks an idempotent retry of an Undo that already
+/// committed; it changes nothing.
+final class TaskCompletionUndoResult {
+  TaskCompletionUndoResult({
+    required List<TaskId> restoredTaskIds,
+    required List<TaskId> skippedTaskIds,
+    this.alreadyUndone = false,
+  }) : restoredTaskIds = List<TaskId>.unmodifiable(restoredTaskIds),
+       skippedTaskIds = List<TaskId>.unmodifiable(skippedTaskIds);
+
+  final List<TaskId> restoredTaskIds;
+  final List<TaskId> skippedTaskIds;
+  final bool alreadyUndone;
+}
+
 final class PromoteTaskCommand extends ExistingTaskCommand {
   const PromoteTaskCommand({required super.accountId, required super.taskId});
 }

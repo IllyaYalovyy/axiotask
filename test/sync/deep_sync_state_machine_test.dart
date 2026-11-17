@@ -1,3 +1,9 @@
+// Each model test replays every regression seed through file-backed SQLite.
+// That takes about 7 seconds alone but over 30 under full-suite load, so the
+// default timeout would fail a correct run.
+@Timeout(Duration(minutes: 2))
+library;
+
 import 'dart:io';
 
 import 'package:axiotask/src/core/outcome.dart';

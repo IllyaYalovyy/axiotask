@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
+import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
@@ -71,6 +72,7 @@ final class TasksViewState {
     this.bulkCommandFailureMessage,
     this.latestBulkOperation,
     this.transientFeedback,
+    this.taskCompletionUndo,
   });
 
   final bool isLoading;
@@ -101,6 +103,10 @@ final class TasksViewState {
   final String? bulkCommandFailureMessage;
   final BulkOperationSummary? latestBulkOperation;
   final TransientTaskFeedback? transientFeedback;
+
+  /// The Undo offer of the latest completion, until it is used, superseded
+  /// by another status change, or expires.
+  final TaskCompletionUndo? taskCompletionUndo;
 
   bool get isBulkSelectionActive => bulkSelectedTaskIds.isNotEmpty;
 
@@ -203,6 +209,7 @@ final class TasksViewState {
     Object? bulkCommandFailureMessage = _notProvided,
     Object? latestBulkOperation = _notProvided,
     Object? transientFeedback = _notProvided,
+    Object? taskCompletionUndo = _notProvided,
   }) => TasksViewState(
     isLoading: isLoading ?? this.isLoading,
     isRefreshing: isRefreshing ?? this.isRefreshing,
@@ -259,6 +266,9 @@ final class TasksViewState {
     transientFeedback: identical(transientFeedback, _notProvided)
         ? this.transientFeedback
         : transientFeedback as TransientTaskFeedback?,
+    taskCompletionUndo: identical(taskCompletionUndo, _notProvided)
+        ? this.taskCompletionUndo
+        : taskCompletionUndo as TaskCompletionUndo?,
   );
 }
 
@@ -354,6 +364,8 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void>? _bulkCommandInFlight;
   ScheduledTimer? _calendarTimer;
   ScheduledTimer? _transientFeedbackTimer;
+  ScheduledTimer? _completionUndoTimer;
+  var _disposed = false;
   var _transientFeedbackGeneration = 0;
   var _hasReceivedBulkOperationSnapshot = false;
 
@@ -680,16 +692,63 @@ final class TasksViewModel extends ChangeNotifier {
     ),
   );
 
-  Future<void> setTaskCompletion(TaskId taskId, TaskStatus status) =>
-      _performTaskCommand(
-        () => tasksRepository.apply(
-          SetTaskCompletionCommand(
-            accountId: accountId,
-            taskId: taskId,
-            status: status,
-          ),
+  /// Completes or reopens one task through the shared completion policy.
+  ///
+  /// Every single-task entry point (row button, row menu, keyboard, details
+  /// and subtask controls) calls this. Completing offers an Undo; reopening
+  /// withdraws any earlier offer because it supersedes it.
+  Future<void> setTaskCompletion(TaskId taskId, TaskStatus status) {
+    final command = SetTaskCompletionCommand(
+      accountId: accountId,
+      taskId: taskId,
+      status: status,
+    );
+    final repository = tasksRepository;
+    if (repository is! TaskCompletionRepository) {
+      return _performTaskCommand(() => tasksRepository.apply(command));
+    }
+    final completions = repository as TaskCompletionRepository;
+    return _performTaskCommand<TaskCompletionReceipt>(
+      () => completions.setTaskCompletion(command),
+      onSuccess: (receipt) async {
+        if (receipt.changedTaskIds.isNotEmpty) {
+          _offerCompletionUndo(receipt.undo);
+        }
+        await localEditCommitted?.call();
+      },
+    );
+  }
+
+  /// Reverses the offered completion, restoring exactly the statuses it
+  /// changed that no later edit has changed again.
+  Future<void> undoTaskCompletion() {
+    final undo = _state.taskCompletionUndo;
+    final repository = tasksRepository;
+    if (undo == null || repository is! TaskCompletionRepository) {
+      return Future<void>.value();
+    }
+    final completions = repository as TaskCompletionRepository;
+    return _performTaskCommand<TaskCompletionUndoResult>(
+      () => completions.undoTaskCompletion(
+        UndoTaskCompletionCommand(
+          accountId: accountId,
+          operationId: undo.operationId,
         ),
-      );
+      ),
+      onSuccess: (result) async {
+        _withdrawCompletionUndo(undo.operationId);
+        if (result.restoredTaskIds.isNotEmpty) {
+          await localEditCommitted?.call();
+        }
+      },
+      onFailure: (failure) {
+        if (failure.code == 'task.completion_undo_unavailable' ||
+            failure.code == 'task.completion_undo_expired') {
+          _withdrawCompletionUndo(undo.operationId);
+        }
+      },
+    );
+  }
 
   Future<void> setTaskDue(TaskId taskId, TaskDate? due) => _performTaskCommand(
     () => tasksRepository.setTaskDue(
@@ -857,6 +916,7 @@ final class TasksViewModel extends ChangeNotifier {
           ),
         );
         _publishBulkOutcome(value.summary, showSettledSuccess: true);
+        if (value.completionUndo case final undo?) _offerCompletionUndo(undo);
         if (value.notBefore case final notBefore?) {
           await taskDeleteCommitted?.call(notBefore);
         } else {
@@ -911,10 +971,15 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> _performTaskCommand<T>(
     Future<Outcome<T>> Function() action, {
     Future<void> Function(T value)? onSuccess,
+    void Function(Failure failure)? onFailure,
   }) {
     final existing = _taskCommandInFlight;
     if (existing != null) return existing;
-    final operation = _runTaskCommand(action, onSuccess: onSuccess);
+    final operation = _runTaskCommand(
+      action,
+      onSuccess: onSuccess,
+      onFailure: onFailure,
+    );
     _taskCommandInFlight = operation;
     return operation;
   }
@@ -922,6 +987,7 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void> _runTaskCommand<T>(
     Future<Outcome<T>> Function() action, {
     Future<void> Function(T value)? onSuccess,
+    void Function(Failure failure)? onFailure,
   }) async {
     _recordUi('ui.task_command_started', DiagnosticEventKind.transition);
     _replaceState(
@@ -962,10 +1028,15 @@ final class TasksViewModel extends ChangeNotifier {
                   'A deleted task cannot become a parent.',
                 'task.parent_cross_list' || 'task.parent_cross_account' =>
                   'The parent must be in the same Google task list.',
+                'task.completion_undo_expired' =>
+                  'The completion can no longer be undone.',
+                'task.completion_undo_unavailable' =>
+                  'The completion changed again and can no longer be undone.',
                 _ => 'The task could not be saved safely.',
               },
             ),
           );
+          onFailure?.call(failure);
       }
     } finally {
       _taskCommandInFlight = null;
@@ -1237,6 +1308,33 @@ final class TasksViewModel extends ChangeNotifier {
     );
   }
 
+  void _offerCompletionUndo(TaskCompletionUndo? undo) {
+    if (_disposed) return;
+    _completionUndoTimer?.cancel();
+    _completionUndoTimer = null;
+    if (undo == null || undo.isExpiredAt(clock.now())) {
+      _replaceState(_state.copyWith(taskCompletionUndo: null));
+      return;
+    }
+    _replaceState(_state.copyWith(taskCompletionUndo: undo));
+    _completionUndoTimer = feedbackScheduler.schedule(
+      undo.expiresAt.difference(clock.now().toUtc()),
+      () {
+        _completionUndoTimer = null;
+        _withdrawCompletionUndo(undo.operationId);
+      },
+    );
+  }
+
+  void _withdrawCompletionUndo(int operationId) {
+    if (_disposed || _state.taskCompletionUndo?.operationId != operationId) {
+      return;
+    }
+    _completionUndoTimer?.cancel();
+    _completionUndoTimer = null;
+    _replaceState(_state.copyWith(taskCompletionUndo: null));
+  }
+
   void _clearInvalidDropFeedback() {
     if (_state.transientFeedback?.kind !=
         TransientTaskFeedbackKind.invalidDrop) {
@@ -1387,8 +1485,10 @@ final class TasksViewModel extends ChangeNotifier {
     if (bulkOperationSubscription != null) {
       unawaited(bulkOperationSubscription.cancel());
     }
+    _disposed = true;
     _calendarTimer?.cancel();
     _transientFeedbackTimer?.cancel();
+    _completionUndoTimer?.cancel();
     super.dispose();
   }
 }

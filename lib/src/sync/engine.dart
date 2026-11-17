@@ -1194,6 +1194,16 @@ final class SyncEngine {
                     stopOperations = true;
                     break;
                   }
+                  // Subtasks completed locally with their parent now read
+                  // back completed. Confirm them in this run so their base
+                  // records the cascade; a later reopen (such as Undo) is
+                  // then a local change rather than a stale no-op that
+                  // Google's cascade would supersede.
+                  await store.confirmNoOpUpdates(
+                    accountId: request.accountId,
+                    runId: runId.value,
+                    confirmedAt: clock.now().toUtc(),
+                  );
                 }
               } on Object {
                 firstFailure ??= _updateAcknowledgementFailure;

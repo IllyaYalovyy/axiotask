@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 3,
+  "manifest_version": 4,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -119,9 +119,10 @@
       "flow": "Undo completion",
       "audit_classification": "Lost safety behavior",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/completion_test.dart",
       "owner": "android-completion-semantics",
       "subsets": [
@@ -546,9 +547,10 @@
       "flow": "Parent completion cascade",
       "audit_classification": "Changed task semantics",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/completion_test.dart",
       "owner": "android-completion-semantics",
       "subsets": [

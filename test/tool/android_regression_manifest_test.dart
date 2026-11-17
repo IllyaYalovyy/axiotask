@@ -48,8 +48,10 @@ const _auditCaseIds = <String>[
 /// with the owning task. They stay out of the audited-pass baseline.
 const _correctedAuditFailures = <String, String>{
   '01_task_menu': 'android-task-row-actions',
+  '05_completion_undo': 'android-completion-semantics',
   '06_long_press_selection': 'android-selection-toolbar',
   '22_touch_target_size': 'android-task-row-actions',
+  '33_parent_completion_cascade': 'android-completion-semantics',
 };
 
 const _auditPassingNumbers = <String>{
